@@ -178,7 +178,7 @@ def test_stripe_webhook_signature_is_required_when_secret_configured(monkeypatch
         return event
 
     monkeypatch.setattr(
-        "trusted_router.routes.internal.stripe.Webhook.construct_event",
+        "trusted_router.routes.internal.webhook.stripe.Webhook.construct_event",
         construct_event,
     )
 
@@ -202,7 +202,7 @@ def test_stripe_webhook_rejects_bad_signature_when_secret_configured(monkeypatch
         raise ValueError("bad signature")
 
     monkeypatch.setattr(
-        "trusted_router.routes.internal.stripe.Webhook.construct_event",
+        "trusted_router.routes.internal.webhook.stripe.Webhook.construct_event",
         construct_event,
     )
 

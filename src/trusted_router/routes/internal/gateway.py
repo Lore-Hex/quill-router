@@ -1,12 +1,20 @@
+"""/internal/gateway/{authorize,settle,refund} — the cross-request
+reservation handle the attested gateway uses.
+
+Authorize reserves credits + per-key spend cap and returns an
+authorization id. Settle and refund land on a separate request from
+the authorize call (the enclave settles after streaming finishes).
+The reservation is one-shot: a second settle on the same authorization
+returns already_settled=True without double-charging.
+"""
+
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-import stripe
 from fastapi import APIRouter, BackgroundTasks, Request
 
-from trusted_router.auth import SettingsDep, get_authorization_bearer, is_api_key_expired
+from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
@@ -17,113 +25,23 @@ from trusted_router.catalog import (
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.money import MICRODOLLARS_PER_CENT, money_pair, token_cost_microdollars
+from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.regions import choose_region, region_payload
-from trusted_router.routes.helpers import json_body
+from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.schemas import GatewayAuthorizeRequest, GatewaySettleRequest
-from trusted_router.security import constant_time_equal
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
 from trusted_router.types import ErrorType, UsageType
 
 
-def register_internal_routes(router: APIRouter) -> None:
-    @router.post("/internal/stripe/webhook")
-    async def stripe_webhook(request: Request, settings: SettingsDep) -> dict[str, Any]:
-        raw = await request.body()
-        sig = request.headers.get("stripe-signature")
-        if settings.stripe_webhook_secret:
-            try:
-                event = stripe.Webhook.construct_event(raw, sig, settings.stripe_webhook_secret)
-            except Exception as exc:
-                raise api_error(400, "Invalid Stripe webhook", ErrorType.BAD_REQUEST) from exc
-        else:
-            event = await json_body(request)
-        event_id = str(event.get("id") or uuid.uuid4())
-        event_type = event.get("type")
-        if event_type == "checkout.session.completed":
-            obj = event.get("data", {}).get("object", {})
-            workspace_id = obj.get("metadata", {}).get("workspace_id")
-            amount_total = int(obj.get("amount_total") or 0)
-            customer_id = obj.get("customer")
-            if workspace_id and STORE.get_credit_account(workspace_id) is not None:
-                if obj.get("mode") == "setup":
-                    if isinstance(customer_id, str):
-                        STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                    return {"data": {"setup_saved": True, "event_id": event_id}}
-                credited = STORE.credit_workspace_once(
-                    workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
-                )
-                # Capture the Stripe customer the first time they pay so
-                # auto-refill can use it later. The default payment method
-                # arrives separately in `setup_intent.succeeded` (or via the
-                # PaymentIntent's `payment_method` if Checkout was set up
-                # with `setup_future_usage`).
-                if isinstance(customer_id, str):
-                    STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                return {"data": {"credited": credited, "event_id": event_id}}
-        if event_type == "setup_intent.succeeded":
-            obj = event.get("data", {}).get("object", {})
-            metadata = obj.get("metadata") or {}
-            workspace_id = metadata.get("workspace_id")
-            customer_id = obj.get("customer")
-            payment_method = obj.get("payment_method")
-            if (
-                isinstance(workspace_id, str)
-                and isinstance(customer_id, str)
-                and isinstance(payment_method, str)
-                and STORE.get_credit_account(workspace_id) is not None
-            ):
-                STORE.set_stripe_customer(
-                    workspace_id,
-                    customer_id=customer_id,
-                    payment_method_id=payment_method,
-                )
-                return {"data": {"setup_saved": True, "event_id": event_id}}
-        if event_type == "payment_intent.succeeded":
-            obj = event.get("data", {}).get("object", {})
-            metadata = obj.get("metadata") or {}
-            workspace_id = metadata.get("workspace_id")
-            amount_microdollars_raw = metadata.get("amount_microdollars")
-            if (
-                metadata.get("auto_refill") == "true"
-                and isinstance(workspace_id, str)
-                and isinstance(amount_microdollars_raw, str)
-            ):
-                amount_microdollars = int(amount_microdollars_raw)
-                credited = STORE.credit_workspace_once(
-                    workspace_id, amount_microdollars, event_id
-                )
-                STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
-                # Also persist the payment-method if Stripe surfaced one —
-                # first auto-refill after a Checkout that didn't include
-                # setup_future_usage might be the first time we see the PM.
-                payment_method = obj.get("payment_method")
-                if isinstance(payment_method, str):
-                    STORE.set_stripe_customer(
-                        workspace_id,
-                        customer_id=str(obj.get("customer") or ""),
-                        payment_method_id=payment_method,
-                    )
-                return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
-        if event_type == "payment_intent.payment_failed":
-            obj = event.get("data", {}).get("object", {})
-            metadata = obj.get("metadata") or {}
-            workspace_id = metadata.get("workspace_id")
-            if metadata.get("auto_refill") == "true" and isinstance(workspace_id, str):
-                last_error = obj.get("last_payment_error") or {}
-                code = last_error.get("code") or "unknown"
-                STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
-                return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
-        return {"data": {"ignored": True, "event_id": event_id}}
-
+def register(router: APIRouter) -> None:
     @router.post("/internal/gateway/authorize")
     async def gateway_authorize(
         request: Request,
         body: GatewayAuthorizeRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        _require_internal_gateway(request, settings)
+        require_internal_gateway(request, settings)
         api_key = STORE.get_key_by_hash(body.api_key_hash)
         if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
             raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
@@ -225,7 +143,7 @@ def register_internal_routes(router: APIRouter) -> None:
         settings: SettingsDep,
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
-        _require_internal_gateway(request, settings)
+        require_internal_gateway(request, settings)
         return _settle_gateway_authorization(
             body, success=True, settings=settings, background_tasks=background_tasks,
         )
@@ -237,27 +155,10 @@ def register_internal_routes(router: APIRouter) -> None:
         settings: SettingsDep,
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
-        _require_internal_gateway(request, settings)
+        require_internal_gateway(request, settings)
         return _settle_gateway_authorization(
             body, success=False, settings=settings, background_tasks=background_tasks,
         )
-
-    @router.get("/internal/sentry-test")
-    async def sentry_test(request: Request, settings: SettingsDep) -> None:
-        if settings.environment.lower() not in {"local", "test"} and not settings.enable_sentry_test_route:
-            raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
-        _require_internal_gateway(request, settings)
-        raise RuntimeError("synthetic sentry test")
-
-
-def _require_internal_gateway(request: Request, settings: Settings) -> None:
-    if settings.internal_gateway_token:
-        supplied = get_authorization_bearer(request) or request.headers.get("x-trustedrouter-internal-token") or ""
-        if not constant_time_equal(supplied, settings.internal_gateway_token):
-            raise api_error(401, "Invalid internal gateway token", ErrorType.UNAUTHORIZED)
-        return
-    if settings.environment not in {"local", "test"}:
-        raise api_error(403, "Internal gateway token is required", ErrorType.FORBIDDEN)
 
 
 def _settle_gateway_authorization(
