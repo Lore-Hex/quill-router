@@ -302,6 +302,118 @@ def test_world_map_svg_is_served_with_cache(client: httpx.Client) -> None:
     assert len(response.content) > 30_000
 
 
+def test_per_region_api_hostnames_resolve_dns(client: httpx.Client) -> None:
+    """The control plane advertises one api-{region}.quillrouter.com
+    hostname per enabled region. Each one needs a public DNS record so
+    SDK clients can talk to the nearest pool. If a record drops, that
+    region silently disappears for routing."""
+    regions = client.get("/v1/regions").json()["data"]
+    enabled = [r for r in regions if r.get("enabled")]
+    assert len(enabled) >= 10, f"expected ≥10 enabled regions, got {len(enabled)}"
+
+    failures: list[str] = []
+    for region in enabled:
+        host = region["api_base_url"].split("://", 1)[1].split("/", 1)[0]
+        try:
+            socket.getaddrinfo(host, 443)
+        except socket.gaierror as exc:
+            failures.append(f"{host}: {exc}")
+    assert not failures, "per-region DNS failures:\n  " + "\n  ".join(failures)
+
+
+def test_marketing_landing_links_to_github(client: httpx.Client) -> None:
+    """The landing page is the public-facing source-of-truth doc; if a
+    deploy strips the repo links, the trust story breaks."""
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.text
+    assert "github.com/Lore-Hex" in body or "github.com/Lore-Hex/quill-router" in body
+
+
+def test_health_check_response_is_under_one_kilobyte(client: httpx.Client) -> None:
+    """Cloud Run liveness probes hit /health every 10s. If a future
+    deploy made it return a verbose payload, every region pays for it
+    on every probe. Keep it tiny."""
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert len(response.content) < 1024
+
+
+def test_v1_models_exposes_trustedrouter_metadata_block(client: httpx.Client) -> None:
+    """Every model in the catalog has to carry the `trustedrouter` block
+    SDKs use for routing decisions (prepaid vs BYOK availability,
+    attested-gateway flag, microdollar pricing). One model missing the
+    block silently breaks SDK auto-fallback."""
+    response = client.get("/v1/models")
+    models = response.json()["data"]
+    assert len(models) >= 5
+    for model in models:
+        assert "trustedrouter" in model, f"{model.get('id')} missing trustedrouter block"
+        meta = model["trustedrouter"]
+        assert "provider" in meta
+        assert "prepaid_available" in meta
+        assert "byok_available" in meta
+        assert "attested_gateway" in meta
+        assert "stores_content" in meta
+        assert meta["stores_content"] is False, f"{model['id']} claims to store content"
+
+
+def test_attested_gateway_attestation_endpoint_is_anonymous() -> None:
+    """The /attestation endpoint must be reachable without a bearer —
+    clients call it BEFORE pinning the cert. If it ever required auth,
+    nobody could establish trust on first contact.
+
+    The enclave normalizes paths and only serves /attestation (no /v1
+    prefix); going through PROD_API_BASE_URL would hit the chat path
+    and 401. We construct an explicit client at the bare api host."""
+    api_host = PROD_API_BASE_URL.split("/v1", 1)[0]
+    bare = httpx.Client(base_url=api_host, timeout=10.0, follow_redirects=False)
+    try:
+        response = bare.get("/attestation")
+    finally:
+        bare.close()
+    assert response.status_code != 401, response.text
+    assert response.status_code in {200, 404}, response.text
+
+
+def test_console_page_titles_are_distinct_per_route(client: httpx.Client) -> None:
+    """Pages that all serve the same fallback redirect are useless.
+    Every /console/* path must redirect to the sign-in modal — that's
+    proof each route is registered separately and not falling through
+    to a catch-all 404 handler."""
+    paths = [
+        "/console/api-keys",
+        "/console/credits",
+        "/console/byok",
+        "/console/routing",
+        "/console/activity",
+        "/console/settings",
+        "/console/account/preferences",
+    ]
+    for path in paths:
+        response = client.get(path)
+        assert response.status_code == 302, f"{path}: {response.status_code}"
+
+
+def test_trust_page_release_json_includes_compliance_metadata(
+    trust_client: httpx.Client,
+) -> None:
+    """The trust page is the audit doc — it has to declare the data
+    policy and source-repo provenance so external auditors can check
+    what's deployed against what's published."""
+    release = trust_client.get("/trust/gcp-release.json").json()
+
+    assert release["data_policy"]["prompt_output_storage"] is False
+    assert release["data_policy"]["control_plane_prompt_access"] is False
+    assert release["platform"] == "gcp-confidential-space"
+
+    repos = release["source_repositories"]
+    assert repos["control_plane"].endswith("/quill-router")
+    assert repos["attested_gateway"].endswith("/quill-cloud-proxy")
+    assert release["image_digest"].startswith("sha256:")
+    assert release["source_commit"]
+
+
 def test_internal_gateway_routes_require_internal_token(client: httpx.Client) -> None:
     """Every /internal/* route has to gate on the internal token. A
     deploy that accidentally exposed gateway authorize/settle/refund
