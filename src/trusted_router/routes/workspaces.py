@@ -46,7 +46,7 @@ def register_workspace_routes(router: APIRouter) -> None:
         if body.get("content_storage_enabled"):
             raise api_error(
                 400,
-                "Prompt/output content storage is disabled in alpha",
+                "Prompt/output content storage is disabled",
                 ErrorType.CONTENT_STORAGE_DISABLED,
             )
         if "name" in body:

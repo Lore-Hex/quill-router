@@ -1,4 +1,4 @@
-"""TrustedRouter public alpha."""
+"""TrustedRouter."""
 
 __all__ = ["__version__"]
 

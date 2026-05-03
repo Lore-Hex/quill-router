@@ -22,7 +22,7 @@ async def test_mock_provider_path_does_not_require_live_provider_keys(tmp_path) 
     )
 
     assert result.provider_name == "Anthropic"
-    assert result.text == "TrustedRouter alpha response from anthropic/claude-3-5-sonnet."
+    assert result.text == "TrustedRouter response from anthropic/claude-3-5-sonnet."
     assert result.usage_estimated is True
 
 

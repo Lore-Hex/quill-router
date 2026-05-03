@@ -297,7 +297,7 @@ class Generation:
                 else 0
             ),
             "latency": self.first_token_milliseconds,
-            "router": "trustedrouter/alpha",
+            "router": "trustedrouter/v1",
             "usage_type": self.usage_type,
             "usage_estimated": self.usage_estimated,
         }

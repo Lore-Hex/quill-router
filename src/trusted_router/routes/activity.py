@@ -44,6 +44,6 @@ def register_activity_routes(router: APIRouter) -> None:
         _ = id
         return error_response(
             404,
-            "TrustedRouter alpha does not store prompt or output content",
+            "TrustedRouter does not store prompt or output content",
             ErrorType.CONTENT_NOT_STORED,
         )

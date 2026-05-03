@@ -37,6 +37,7 @@ from trusted_router.services.inference_quota import (
     reserved_quota,
 )
 from trusted_router.storage import STORE, Generation
+from trusted_router.types import UsageType
 
 
 def provider_client(settings: Settings) -> ProviderClient:
@@ -50,6 +51,7 @@ async def run_chat_stream(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None = None,
 ) -> AsyncIterator[bytes]:
     async for chunk in _run_stream(
         body,
@@ -57,6 +59,7 @@ async def run_chat_stream(
         principal,
         settings,
         app_name=app_name,
+        usage_type=usage_type,
         stream_provider=lambda client, stream_model, stream_body, state: client.stream_chat(
             stream_model, stream_body, state
         ),
@@ -88,12 +91,20 @@ async def run_chat_candidates_stream(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None = None,
 ) -> AsyncIterator[tuple[Model, bytes]]:
     errors: list[str] = []
     last_error: HTTPException | None = None
     for index, model in enumerate(candidates):
         candidate_body = {**body, "model": model.id}
-        stream = run_chat_stream(candidate_body, model, principal, settings, app_name=app_name)
+        stream = run_chat_stream(
+            candidate_body,
+            model,
+            principal,
+            settings,
+            app_name=app_name,
+            usage_type=usage_type,
+        )
         try:
             first = await anext(stream)
         except StopAsyncIteration:
@@ -120,6 +131,7 @@ async def run_messages_stream(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None = None,
 ) -> AsyncIterator[bytes]:
     async for chunk in _run_stream(
         body,
@@ -127,6 +139,7 @@ async def run_messages_stream(
         principal,
         settings,
         app_name=app_name,
+        usage_type=usage_type,
         stream_provider=lambda client, stream_model, stream_body, state: client.stream_messages(
             stream_model, stream_body, state
         ),
@@ -141,6 +154,7 @@ async def _run_stream(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None,
     stream_provider: Callable[
         [ProviderClient, Model, dict[str, Any], Any],
         AsyncIterator[bytes],
@@ -157,6 +171,7 @@ async def _run_stream(
         input_tokens=input_estimate,
         streamed=True,
         region=settings.primary_region,
+        usage_type_override=usage_type,
     ) as ticket:
         state = client.new_stream_state(model, body)
         async for chunk in stream_provider(client, model, body, state):
@@ -187,6 +202,7 @@ async def run_chat(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None = None,
 ) -> tuple[Any, Generation]:
     assert principal.api_key is not None
     client = provider_client(settings)
@@ -199,6 +215,7 @@ async def run_chat(
         input_tokens=input_estimate,
         streamed=bool(body.get("stream")),
         region=settings.primary_region,
+        usage_type_override=usage_type,
     ) as ticket:
         result = await client.chat(model, body)
         actual_cost = cost_microdollars(model, result.input_tokens, result.output_tokens)
@@ -242,6 +259,7 @@ async def run_chat_candidates(
     settings: Settings,
     *,
     app_name: str,
+    usage_type: UsageType | None = None,
 ) -> tuple[Any, Generation, Model, list[str]]:
     errors: list[str] = []
     last_error: HTTPException | None = None
@@ -254,6 +272,7 @@ async def run_chat_candidates(
                 principal,
                 settings,
                 app_name=app_name,
+                usage_type=usage_type,
             )
             return result, generation, model, errors
         except HTTPException as exc:

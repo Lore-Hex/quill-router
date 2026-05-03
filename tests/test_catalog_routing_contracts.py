@@ -22,6 +22,17 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "kimi/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "kimi/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
     assert "kimi/kimi-k2.6" in [model.id for model in auto_candidate_models()]
+    for model_id, provider in [
+        ("anthropic/claude-3-5-sonnet", "anthropic"),
+        ("openai/gpt-4o-mini", "openai"),
+        ("google/gemini-1.5-flash", "gemini"),
+        ("deepseek/deepseek-v4-flash", "deepseek"),
+        ("mistral/mistral-small-2603", "mistral"),
+        ("cerebras/llama3.1-8b", "cerebras"),
+        ("kimi/kimi-k2.6", "kimi"),
+    ]:
+        assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
     for model in MODELS.values():
         assert model.provider in PROVIDERS
         assert isinstance(model.prompt_price_microdollars_per_million_tokens, int)
@@ -99,24 +110,36 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     ]
 
 
-def test_endpoint_candidates_make_dual_mode_models_explicit() -> None:
+@pytest.mark.parametrize(
+    ("model_id", "provider"),
+    [
+        ("kimi/kimi-k2.6", "kimi"),
+        ("openai/gpt-4o-mini", "openai"),
+        ("mistral/mistral-small-2603", "mistral"),
+        ("deepseek/deepseek-v4-flash", "deepseek"),
+        ("cerebras/llama3.1-8b", "cerebras"),
+        ("google/gemini-1.5-flash", "gemini"),
+        ("anthropic/claude-3-5-sonnet", "anthropic"),
+    ],
+)
+def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provider: str) -> None:
     endpoints = chat_route_endpoint_candidates(
-        {"model": "kimi/kimi-k2.6"},
+        {"model": model_id},
         Settings(environment="test"),
     )
     assert [endpoint.id for _model, endpoint in endpoints] == [
-        "kimi/kimi-k2.6@kimi/prepaid",
-        "kimi/kimi-k2.6@kimi/byok",
+        f"{model_id}@{provider}/prepaid",
+        f"{model_id}@{provider}/byok",
     ]
 
     byok_only = chat_route_endpoint_candidates(
-        {"model": "kimi/kimi-k2.6", "provider": {"usage": "byok"}},
+        {"model": model_id, "provider": {"usage": "byok"}},
         Settings(environment="test"),
     )
     assert [endpoint.usage_type for _model, endpoint in byok_only] == ["BYOK"]
-    assert [endpoint.id for endpoint in endpoints_for_model("kimi/kimi-k2.6")] == [
-        "kimi/kimi-k2.6@kimi/prepaid",
-        "kimi/kimi-k2.6@kimi/byok",
+    assert [endpoint.id for endpoint in endpoints_for_model(model_id)] == [
+        f"{model_id}@{provider}/prepaid",
+        f"{model_id}@{provider}/byok",
     ]
 
 

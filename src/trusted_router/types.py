@@ -53,7 +53,7 @@ class ErrorType(StrEnum):
     PROVIDER_RATE_LIMITED = "provider_rate_limited"
     PROVIDER_NOT_SUPPORTED = "provider_not_supported"
     RATE_LIMITED = "rate_limited"
-    NOT_SUPPORTED_IN_ALPHA = "not_supported_in_alpha"
+    ENDPOINT_NOT_SUPPORTED = "endpoint_not_supported"
     PRIVATE_MODELS_NOT_SUPPORTED = "private_models_not_supported"
     DEPRECATED = "deprecated"
     CONTENT_NOT_STORED = "content_not_stored"

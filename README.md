@@ -1,7 +1,7 @@
 # TrustedRouter
 
-TrustedRouter is an OpenRouter-compatible public alpha with an attested API
-plane and a regular SaaS control plane.
+TrustedRouter is an OpenRouter-compatible production LLM router with an
+attested API plane and a regular SaaS control plane.
 
 - Product: `trustedrouter.com`
 - API base: `https://api.quillrouter.com/v1`
@@ -73,7 +73,7 @@ explicit patent grant.
 
 ## Security Defaults
 
-- Prompt and output content are never stored in alpha.
+- Prompt and output content are never stored.
 - Usage logs contain metadata only.
 - API keys are stored as salted SHA-256 hashes with opaque key IDs.
 - BYOK provider keys are never stored in the control-plane state. The API stores
@@ -118,12 +118,12 @@ The goal is to support OpenRouter-class scale:
 - 60+ providers.
 - Global routing overhead competitive with edge-deployed routers.
 
-The current public alpha deployment does **not** meet that target yet. It has a
-production-shaped control plane, region-aware routing metadata for
-`us-central1` and `europe-west4`, and a single live prompt gateway until
-additional attested regional pools are deployed. It is suitable for
-correctness, trust, billing, and SDK compatibility validation, not for
-unconstrained public signup.
+The current production deployment does **not** meet that target yet. It runs
+the control plane in 10 GCP regions behind a global LB with per-region
+Serverless NEGs, and a single live prompt gateway until additional attested
+regional pools are deployed. Capacity scales horizontally as more attested
+pools come online; correctness, trust, billing, and SDK compatibility are
+in steady-state.
 
 Request volume depends heavily on average generation size. At 1 trillion
 tokens/day:

@@ -187,7 +187,7 @@ def test_all_stubbed_coverage_routes_have_stable_error_shapes(client: TestClient
             assert payload["error"]["type"] == "private_models_not_supported", item
         else:
             assert response.status_code == 501, item
-            assert payload["error"]["type"] == "not_supported_in_alpha", item
+            assert payload["error"]["type"] == "endpoint_not_supported", item
 
 
 def _production_app():

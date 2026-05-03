@@ -81,13 +81,14 @@ async def reserved_quota(
     input_tokens: int,
     streamed: bool,
     region: str | None,
+    usage_type_override: UsageType | None = None,
 ) -> AsyncIterator[QuotaTicket]:
     """Acquire a reservation against the principal's key limit and (for
     prepaid models) the workspace credit account, yield a `QuotaTicket`,
     and refund automatically if the body raises or doesn't settle.
     """
     assert principal.api_key is not None
-    usage_type = UsageType.for_model(model)
+    usage_type = usage_type_override or UsageType.for_model(model)
     try:
         STORE.reserve_key_limit(
             principal.api_key.hash,

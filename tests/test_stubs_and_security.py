@@ -15,10 +15,10 @@ from trusted_router.storage import STORE
 
 def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
     cases = [
-        ("POST", "/v1/rerank", 501, "not_supported_in_alpha"),
-        ("POST", "/v1/audio/speech", 501, "not_supported_in_alpha"),
-        ("POST", "/v1/videos", 501, "not_supported_in_alpha"),
-        ("GET", "/v1/guardrails", 501, "not_supported_in_alpha"),
+        ("POST", "/v1/rerank", 501, "endpoint_not_supported"),
+        ("POST", "/v1/audio/speech", 501, "endpoint_not_supported"),
+        ("POST", "/v1/videos", 501, "endpoint_not_supported"),
+        ("GET", "/v1/guardrails", 501, "endpoint_not_supported"),
         ("POST", "/v1/credits/coinbase", 410, "deprecated"),
         ("GET", "/v1/private/models/foo/bar", 404, "private_models_not_supported"),
     ]

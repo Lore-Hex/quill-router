@@ -37,7 +37,11 @@ from trusted_router.routes.ses_notifications import register_ses_notification_ro
 from trusted_router.routes.signup import register_signup_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
-from trusted_router.routing import chat_route_candidates
+from trusted_router.routing import (
+    chat_route_candidates,
+    chat_route_endpoint_candidates,
+    provider_route_preferences,
+)
 from trusted_router.sentry_config import init_sentry
 from trusted_router.services.inference import (
     provider_client,
@@ -48,7 +52,7 @@ from trusted_router.services.inference import (
     run_messages_stream,
 )
 from trusted_router.storage import STORE, configure_store, create_store
-from trusted_router.types import ErrorType
+from trusted_router.types import ErrorType, UsageType
 
 
 def create_app(
@@ -201,7 +205,12 @@ def _make_api_router(settings: Settings) -> APIRouter:
     ) -> Any:
         body = await json_body(request)
         _validate_chat_messages(body)
-        candidates = chat_route_candidates(body, settings)
+        provider_prefs = provider_route_preferences(body)
+        usage_type = UsageType.coerce(provider_prefs.usage_type) if provider_prefs.usage_type else None
+        if usage_type is None:
+            candidates = chat_route_candidates(body, settings)
+        else:
+            candidates = [model for model, _endpoint in chat_route_endpoint_candidates(body, settings)]
         requested_model = str(body.get("model") or (body.get("models") or [""])[0])
         if len(candidates) > 1 or requested_model == AUTO_MODEL_ID:
             if body.get("stream") is True:
@@ -213,6 +222,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
                         principal=principal,
                         settings=settings,
                         app_name=_app_name(request),
+                        usage_type=usage_type,
                     ),
                     media_type="text/event-stream",
                     headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
@@ -223,6 +233,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
                 principal,
                 settings,
                 app_name=_app_name(request),
+                usage_type=usage_type,
             )
             return JSONResponse(
                 {
@@ -260,11 +271,19 @@ def _make_api_router(settings: Settings) -> APIRouter:
                     principal,
                     settings,
                     app_name=_app_name(request),
+                    usage_type=usage_type,
                 ),
                 media_type="text/event-stream",
                 headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
             )
-        result, generation = await run_chat(body, model, principal, settings, app_name=_app_name(request))
+        result, generation = await run_chat(
+            body,
+            model,
+            principal,
+            settings,
+            app_name=_app_name(request),
+            usage_type=usage_type,
+        )
         return JSONResponse(
             {
                 "id": result.request_id,
@@ -473,6 +492,7 @@ async def _candidate_stream_bytes(
     principal: Principal,
     settings: Settings,
     app_name: str,
+    usage_type: UsageType | None = None,
 ):
     selected: str | None = None
     async for model, chunk in run_chat_candidates_stream(
@@ -481,6 +501,7 @@ async def _candidate_stream_bytes(
         principal,
         settings,
         app_name=app_name,
+        usage_type=usage_type,
     ):
         if selected is None:
             selected = model.id

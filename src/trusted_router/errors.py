@@ -19,7 +19,7 @@ def error_response(code: int, message: str, type_: str) -> JSONResponse:
 
 
 def not_supported() -> JSONResponse:
-    return error_response(501, "Endpoint is not supported in the TrustedRouter alpha", "not_supported_in_alpha")
+    return error_response(501, "Endpoint is not supported by TrustedRouter", "endpoint_not_supported")
 
 
 def deprecated() -> JSONResponse:

@@ -86,7 +86,7 @@ def _require_byok_provider(provider: str) -> str:
     if catalog_provider is None or not catalog_provider.supports_byok:
         raise api_error(
             400,
-            "Provider does not support BYOK in TrustedRouter alpha",
+            "Provider does not support BYOK",
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
     return slug

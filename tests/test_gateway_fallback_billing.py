@@ -48,13 +48,17 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
         "anthropic/claude-opus-4.7",
         "mistral/mistral-small-2603",
     ]
-    assert auth_data["route_candidates"][1]["byok_secret_ref"] == "env://MISTRAL_API_KEY"  # noqa: S105
+    mistral_byok = next(
+        item for item in auth_data["route_candidates"]
+        if item["model"] == "mistral/mistral-small-2603" and item["usage_type"] == "BYOK"
+    )
+    assert mistral_byok["byok_secret_ref"] == "env://MISTRAL_API_KEY"  # noqa: S105
 
     settle = client.post(
         "/v1/internal/gateway/settle",
         json={
             "authorization_id": auth_data["authorization_id"],
-            "selected_model": "mistral/mistral-small-2603",
+            "selected_endpoint": mistral_byok["endpoint_id"],
             "actual_input_tokens": 12_345,
             "actual_output_tokens": 6_789,
             "request_id": "gw-fallback-mistral",
@@ -172,7 +176,7 @@ def test_gateway_refund_records_provider_benchmark_without_generation() -> None:
     assert sample.streamed is True
 
 
-def test_gateway_missing_byok_primary_skips_to_prepaid_candidate() -> None:
+def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
     client, key = _client_and_key()
     authorize = client.post(
         "/v1/internal/gateway/authorize",
@@ -186,12 +190,13 @@ def test_gateway_missing_byok_primary_skips_to_prepaid_candidate() -> None:
     )
     assert authorize.status_code == 200, authorize.text
     auth_data = authorize.json()["data"]
-    assert auth_data["model"] == "anthropic/claude-opus-4.7"
+    assert auth_data["model"] == "mistral/mistral-small-2603"
     assert auth_data["usage_type"] == "Credits"
     assert auth_data["limit_usage_type"] == "Credits"
     assert auth_data["credit_reservation_id"]
     assert [item["model"] for item in auth_data["route_candidates"]] == [
-        "anthropic/claude-opus-4.7"
+        "mistral/mistral-small-2603",
+        "anthropic/claude-opus-4.7",
     ]
 
     settle = client.post(
@@ -222,7 +227,7 @@ def test_gateway_missing_byok_primary_skips_to_prepaid_candidate() -> None:
     assert refreshed_key.byok_usage_microdollars == 0
 
 
-def test_gateway_byok_only_without_workspace_config_is_rejected() -> None:
+def test_gateway_byok_preference_without_workspace_config_is_rejected() -> None:
     client, key = _client_and_key()
 
     authorize = client.post(
@@ -230,6 +235,7 @@ def test_gateway_byok_only_without_workspace_config_is_rejected() -> None:
         json={
             "api_key_hash": key["hash"],
             "model": "mistral/mistral-small-2603",
+            "provider": {"usage": "byok"},
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
         },

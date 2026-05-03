@@ -2,7 +2,7 @@
 
 ## Prompt And Output Data
 
-TrustedRouter alpha does not store prompt or output content. Metadata rows are
+TrustedRouter does not store prompt or output content. Metadata rows are
 limited to generation ID, workspace, key hash, model, provider, token counts,
 cost, usage type, speed, finish reason, and status.
 

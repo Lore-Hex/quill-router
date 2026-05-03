@@ -305,7 +305,7 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
             "api_key_hash": created["data"]["hash"],
             "model": "openai/gpt-4o-mini",
             "models": ["mistral/mistral-small-2603", "deepseek/deepseek-v4-flash"],
-            "provider": {"order": ["mistral"], "ignore": ["openai"]},
+            "provider": {"order": ["mistral"], "ignore": ["openai"], "usage": "byok"},
             "estimated_input_tokens": 10,
             "max_output_tokens": 4,
         },

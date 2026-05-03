@@ -302,6 +302,7 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
         json={
             "api_key_hash": key_hash,
             "model": "cerebras/llama3.1-8b",
+            "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
         },

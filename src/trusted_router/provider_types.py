@@ -85,4 +85,4 @@ def estimate_tokens_from_text(text: str) -> int:
 
 
 def mock_text(model_id: str) -> str:
-    return f"TrustedRouter alpha response from {model_id}."
+    return f"TrustedRouter response from {model_id}."

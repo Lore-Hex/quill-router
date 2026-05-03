@@ -386,6 +386,13 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
         "BYOK",
     ]
 
+    openai = client.get("/v1/models/openai/gpt-4o-mini/endpoints")
+    assert openai.status_code == 200
+    assert [item["trustedrouter"]["usage_type"] for item in openai.json()["data"]] == [
+        "Credits",
+        "BYOK",
+    ]
+
     missing = client.get("/v1/models/nope/missing/endpoints")
     assert missing.status_code == 200
     assert missing.json()["data"] == []
@@ -456,6 +463,7 @@ def test_api_key_limit_blocks_credit_and_byok_usage(
         headers=headers,
         json={
             "model": "cerebras/llama3.1-8b",
+            "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -479,6 +487,7 @@ def test_api_key_limit_can_exclude_byok_usage(
         headers=headers,
         json={
             "model": "cerebras/llama3.1-8b",
+            "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -553,6 +562,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert {"vertex", "deepseek", "kimi", "mistral"}.issubset(provider_flags)
     assert provider_flags["vertex"]["supports_prepaid"] is True
     assert provider_flags["vertex"]["supports_byok"] is False
+    assert provider_flags["openai"]["supports_prepaid"] is True
     assert provider_flags["deepseek"]["supports_byok"] is True
     assert provider_flags["kimi"]["supports_byok"] is True
     assert provider_flags["mistral"]["supports_byok"] is True
