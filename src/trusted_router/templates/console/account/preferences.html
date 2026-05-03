@@ -1,0 +1,21 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Account preferences</h2></div>
+  <div class="panel-body">
+    <table>
+      <tbody>
+        <tr><th>Email</th><td>{{ user.email or 'not set' }} {% if user.email_verified %}<span class="pill good">verified</span>{% else %}<span class="pill warn">unverified</span>{% endif %}</td></tr>
+        <tr><th>Sign-in method</th><td>{{ provider }}</td></tr>
+        {% if user.wallet_address %}
+        <tr><th>Wallet</th><td><code>{{ user.wallet_address }}</code></td></tr>
+        {% endif %}
+        <tr><th>Environment</th><td>{{ environment }}</td></tr>
+      </tbody>
+    </table>
+    <form method="post" action="/auth/logout" style="margin-top:14px">
+      <button class="btn" type="submit">Sign out</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

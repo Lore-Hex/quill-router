@@ -1,0 +1,10 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>Check your email</h1>
+{% if dev_link %}
+<p>Email delivery is not configured. Open this link in your browser to verify:</p>
+<p><a href="{{ dev_link }}" class="dev-link">{{ dev_link }}</a></p>
+{% else %}
+<p>We sent a verification link to <strong>{{ email }}</strong>. Click it to finish signing in.</p>
+{% endif %}
+{% endblock %}

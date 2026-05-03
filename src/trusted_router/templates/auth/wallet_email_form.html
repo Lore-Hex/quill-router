@@ -1,0 +1,11 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>One last step</h1>
+<p>Wallet <code>{{ address }}</code> verified. Add an email so we can deliver
+receipts and recovery messages.</p>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+<form method="post" action="/auth/wallet/email" enctype="application/x-www-form-urlencoded">
+  <input type="email" name="email" required placeholder="you@example.com" autofocus>
+  <button class="btn" type="submit">Send verification link</button>
+</form>
+{% endblock %}

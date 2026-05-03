@@ -1,0 +1,1 @@
+"""Test fakes for SpannerBigtableStore."""

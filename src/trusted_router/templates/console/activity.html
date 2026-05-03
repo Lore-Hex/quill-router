@@ -1,0 +1,27 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Recent activity</h2><span class="pill">metadata only</span></div>
+  <div class="panel-body">
+    <table>
+      <thead><tr><th>Time</th><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Cost</th><th>Finish</th></tr></thead>
+      <tbody>
+        {% for a in activity %}
+        <tr>
+          <td>{{ a.created_at }}</td>
+          <td>{{ a.model }}</td>
+          <td>{{ a.provider_name }}</td>
+          <td>{{ a.input_tokens }}</td>
+          <td>{{ a.output_tokens }}</td>
+          <td>{{ a.cost_display }}</td>
+          <td>{{ a.finish_reason or '' }}</td>
+        </tr>
+        {% endfor %}
+        {% if not activity %}
+        <tr><td class="empty" colspan="7">No activity yet — make a request with your API key to see it here.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

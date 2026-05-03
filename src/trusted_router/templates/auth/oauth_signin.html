@@ -1,0 +1,15 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>Sign in to authorize {{ app_name }}</h1>
+<p>This app wants a delegated API key that spends from your TrustedRouter
+workspace credits.</p>
+<div class="actions">
+  {% if google_enabled %}
+  <a class="btn" href="/v1/auth/google/login?next={{ next_path_encoded }}">Continue with Google</a>
+  {% endif %}
+  {% if github_enabled %}
+  <a class="btn" href="/v1/auth/github/login?next={{ next_path_encoded }}">Continue with GitHub</a>
+  {% endif %}
+  <a class="btn secondary" href="/?reason=signin&amp;next={{ next_path_encoded }}">Other sign-in methods</a>
+</div>
+{% endblock %}

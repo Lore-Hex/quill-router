@@ -1,0 +1,27 @@
+{
+  "name": "trusted-router-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static frontend assets for the TrustedRouter dashboard",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint frontend/src",
+    "lint:css": "stylelint src/trusted_router/static/*.css",
+    "test:browser": "playwright test",
+    "build:world-map": "node scripts/build-world-svg.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "alpinejs": "^3.14.1",
+    "eslint": "^9.17.0",
+    "stylelint": "^16.12.0",
+    "stylelint-config-standard": "^36.0.1",
+    "typescript": "^5.7.2",
+    "world-atlas": "^2.0.2",
+    "d3-geo": "^3.1.1",
+    "topojson-client": "^3.1.0"
+  }
+}

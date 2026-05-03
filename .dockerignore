@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+node_modules
+tests
+docs
+*.private
+.env
+.env.*
+!.env.example

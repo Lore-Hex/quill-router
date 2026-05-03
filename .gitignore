@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+*.private
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+dist/
+build/
+htmlcov/
+.coverage
+node_modules/
+

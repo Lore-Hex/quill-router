@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }} — TrustedRouter</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body class="console">
+  <header class="console-topbar">
+    <a class="brand" href="/console/api-keys"><span class="mark">TR</span><span>TrustedRouter</span></a>
+    <nav class="console-topnav">
+      <a href="{{ api_base_url }}/models">Models</a>
+      <a href="https://trust.trustedrouter.com">Trust</a>
+      <a href="https://github.com/Lore-Hex/trusted-router-py">SDK</a>
+    </nav>
+    <div class="console-user">
+      <span class="console-user-email">{{ user_email or 'no email' }}</span>
+      <form class="inline-form" method="post" action="/auth/logout">
+        <button class="btn" type="submit">Sign out</button>
+      </form>
+    </div>
+  </header>
+  <div class="console-shell">
+    <aside class="console-sidebar" aria-label="Workspace navigation">
+      <div class="sidebar-group">
+        <div class="sidebar-label">Workspace</div>
+        <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
+        <a href="/console/byok" class="sidebar-link {{ 'active' if active == 'byok' else '' }}">BYOK</a>
+        <a href="/console/routing" class="sidebar-link {{ 'active' if active == 'routing' else '' }}">Routing</a>
+        <a href="/console/activity" class="sidebar-link {{ 'active' if active == 'activity' else '' }}">Observability</a>
+        <a href="/console/settings" class="sidebar-link {{ 'active' if active == 'settings' else '' }}">Settings</a>
+      </div>
+      <div class="sidebar-group">
+        <div class="sidebar-label">Account</div>
+        <a href="/console/credits" class="sidebar-link {{ 'active' if active == 'credits' else '' }}">Credits</a>
+        <a href="/console/account/preferences" class="sidebar-link {{ 'active' if active == 'preferences' else '' }}">Preferences</a>
+        <form class="sidebar-link sidebar-signout" method="post" action="/auth/logout">
+          <button type="submit">Sign out</button>
+        </form>
+      </div>
+    </aside>
+    <main class="console-main">
+      <header class="console-page-head">
+        <h1>{{ page_title }}</h1>
+        {% if page_subtitle %}<p>{{ page_subtitle }}</p>{% endif %}
+      </header>
+      <div class="console-page-body">
+        {% block body %}{% endblock %}
+      </div>
+    </main>
+  </div>
+</body>
+</html>

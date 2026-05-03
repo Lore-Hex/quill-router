@@ -1,0 +1,21 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "rules": {
+    "selector-class-pattern": null,
+    "no-descending-specificity": null,
+    "alpha-value-notation": null,
+    "color-function-notation": null,
+    "color-hex-length": null,
+    "declaration-block-no-redundant-longhand-properties": null,
+    "declaration-block-single-line-max-declarations": null,
+    "shorthand-property-no-redundant-values": null,
+    "media-feature-range-notation": null,
+    "value-keyword-case": null,
+    "comment-empty-line-before": null,
+    "rule-empty-line-before": null,
+    "no-duplicate-selectors": null,
+    "font-family-name-quotes": null,
+    "function-name-case": null
+  },
+  "ignoreFiles": ["node_modules/**", ".venv/**"]
+}

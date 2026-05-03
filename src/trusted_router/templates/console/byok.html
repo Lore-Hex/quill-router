@@ -1,0 +1,55 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Connect your own provider account</h2></div>
+  <div class="panel-body">
+    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
+      BYOK ("bring your own key") routes requests through TrustedRouter using
+      <em>your</em> account at the upstream provider. You keep the billing
+      relationship; we just relay the call. Paste an API key from the provider
+      below — we encrypt it and never display it again.
+    </p>
+    <form class="form" method="post" action="/console/byok">
+      <label>Provider
+        <select name="provider">
+          <option value="anthropic">Anthropic (claude.ai console)</option>
+          <option value="openai">OpenAI (platform.openai.com)</option>
+          <option value="gemini">Google Gemini (aistudio.google.com)</option>
+          <option value="cerebras">Cerebras (cloud.cerebras.ai)</option>
+          <option value="deepseek">DeepSeek (platform.deepseek.com)</option>
+          <option value="kimi">Kimi (platform.kimi.ai)</option>
+          <option value="mistral">Mistral (console.mistral.ai)</option>
+        </select>
+      </label>
+      <label>Provider API key
+        <input name="api_key" type="password" autocomplete="off" required
+               placeholder="paste your API key — e.g. sk-ant-api03-..., sk-proj-..., AIza...">
+      </label>
+      <p style="color:var(--muted);font-size:12px;margin:-4px 0 0">
+        Stored encrypted. Only the last 4 characters are ever shown again, as a hint to help you identify the key.
+      </p>
+      <button class="btn primary" type="submit">Save provider</button>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Connected providers</h2></div>
+  <div class="panel-body">
+    <table>
+      <thead><tr><th>Provider</th><th>Key</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for p in providers %}
+        <tr>
+          <td>{{ p.provider_name }}</td>
+          <td><code>{{ p.key_hint or '—' }}</code></td>
+          <td><span class="pill good">active</span></td>
+        </tr>
+        {% endfor %}
+        {% if not providers %}
+        <tr><td class="empty" colspan="3">No providers connected yet.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

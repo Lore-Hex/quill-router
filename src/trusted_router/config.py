@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+from pydantic import model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="TR_", env_file=".env", extra="ignore")
+
+    environment: str = "local"
+    release: str = "local"
+    service_name: str = "trusted-router"
+    api_base_url: str = "https://api.quillrouter.com/v1"
+    trusted_domain: str = "trustedrouter.com"
+
+    enable_live_providers: bool = False
+    local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
+    storage_backend: str = "memory"
+    gcp_project_id: str = "quill-cloud-proxy"
+    spanner_instance_id: str | None = None
+    spanner_database_id: str | None = None
+    bigtable_instance_id: str | None = None
+    bigtable_generation_table: str = "trustedrouter-generations"
+
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.05
+    enable_sentry_test_route: bool = False
+
+    trust_gcp_source_commit: str | None = None
+    trust_gcp_image_reference: str | None = None
+    trust_gcp_image_digest: str | None = None
+
+    rate_limit_enabled: bool = True
+    rate_limit_window_seconds: int = 60
+    rate_limit_ip_per_window: int = 240
+    rate_limit_key_per_window: int = 1200
+    rate_limit_internal_per_window: int = 6000
+
+    internal_gateway_token: str | None = None
+    stripe_webhook_secret: str | None = None
+    stripe_secret_key: str | None = None
+    bootstrap_management_key: str | None = None
+
+    auth_session_ttl_seconds: int = 60 * 60 * 24 * 30
+    oauth_authorization_code_ttl_seconds: int = 10 * 60
+
+    # OAuth providers — independently optional. Each is enabled iff both
+    # client_id and client_secret are present. Routes 404 if disabled.
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_oauth_redirect_url: str | None = None
+    github_client_id: str | None = None
+    github_client_secret: str | None = None
+    github_oauth_redirect_url: str | None = None
+    # MetaMask uses public-key crypto (no shared secret). The SIWE message
+    # carries this domain so wallet UIs show the right hostname.
+    siwe_domain: str | None = None
+
+    # Amazon SES — only required by the wallet email-verification path.
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region: str = "us-east-1"
+    ses_from_email: str | None = None
+    ses_from_name: str = "TrustedRouter"
+    # Configuration set used on every SendEmail call so SES emits bounce +
+    # complaint events to our SNS topic (subscribed at /internal/ses/notifications).
+    ses_configuration_set: str | None = "trustedrouter-default"
+
+    stablecoin_checkout_enabled: bool = True
+    multi_region_enabled: bool = True
+    # Cloud Run regions the attested gateway is deployed to. Cloud Run
+    # scales to zero so adding more is essentially free at idle. Spanner
+    # + Bigtable stay in `primary_region`; cross-region requests hit
+    # the primary's database tier with the usual ~30-100ms penalty
+    # until we justify a second instance.
+    regions: str = (
+        "us-central1,us-east4,us-west1,northamerica-northeast1,southamerica-east1,"
+        "europe-west2,europe-west4,asia-northeast1,asia-southeast1,australia-southeast1"
+    )
+    primary_region: str = "us-central1"
+    regional_api_hostname_template: str = "api-{region}.quillrouter.com"
+    auto_model_order: str = (
+        "anthropic/claude-opus-4.7,anthropic/claude-3-5-sonnet,"
+        "openai/gpt-4o-mini,google/gemini-1.5-flash,"
+        "deepseek/deepseek-v4-flash,kimi/kimi-k2.6,"
+        "mistral/mistral-small-2603,cerebras/llama3.1-8b"
+    )
+
+    max_request_body_bytes: int = 4 * 1024 * 1024
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Order = priority (highest first). Init kwargs and env vars still
+        # win; the local key file is a fallback when neither is set, before
+        # built-in defaults take over.
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _LocalKeyFileSource(settings_cls),
+            file_secret_settings,
+        )
+
+    @model_validator(mode="after")
+    def production_is_fail_closed(self) -> Settings:
+        if self.environment.lower() != "production":
+            return self
+        missing = []
+        if not self.internal_gateway_token:
+            missing.append("TR_INTERNAL_GATEWAY_TOKEN")
+        if not self.stripe_webhook_secret:
+            missing.append("TR_STRIPE_WEBHOOK_SECRET")
+        if not self.stripe_secret_key:
+            missing.append("TR_STRIPE_SECRET_KEY")
+        if not self.sentry_dsn:
+            missing.append("TR_SENTRY_DSN")
+        if self.bootstrap_management_key:
+            missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
+        if self.storage_backend == "memory":
+            missing.append("TR_STORAGE_BACKEND=spanner-bigtable")
+        if self.storage_backend == "spanner-bigtable":
+            if not self.spanner_instance_id:
+                missing.append("TR_SPANNER_INSTANCE_ID")
+            if not self.spanner_database_id:
+                missing.append("TR_SPANNER_DATABASE_ID")
+            if not self.bigtable_instance_id:
+                missing.append("TR_BIGTABLE_INSTANCE_ID")
+        # OAuth providers are independently optional in production. We DO
+        # enforce that no provider is half-configured: a client_id without
+        # the matching client_secret would cause silent runtime failures.
+        if bool(self.google_client_id) != bool(self.google_client_secret):
+            missing.append("TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET must both be set or both unset")
+        if bool(self.github_client_id) != bool(self.github_client_secret):
+            missing.append("TR_GITHUB_CLIENT_ID and TR_GITHUB_CLIENT_SECRET must both be set or both unset")
+        if missing:
+            joined = ", ".join(missing)
+            raise ValueError(f"production configuration is not fail-closed: {joined}")
+        return self
+
+    @property
+    def google_oauth_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
+
+    @property
+    def github_oauth_enabled(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
+
+    @property
+    def ses_enabled(self) -> bool:
+        return bool(self.aws_access_key_id and self.aws_secret_access_key and self.ses_from_email)
+
+
+# Names that flow from `~/.quill_cloud_keys.private` into Settings as a
+# fallback when the matching `TR_<UPPER>` env var isn't set. Provider API
+# keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.) stay in the LocalKeyFile
+# flow used by ProviderClient — those don't belong in Settings.
+_LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
+    "google_client_id",
+    "google_client_secret",
+    "google_oauth_redirect_url",
+    "github_client_id",
+    "github_client_secret",
+    "github_oauth_redirect_url",
+    "siwe_domain",
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_region",
+    "ses_from_email",
+    "ses_from_name",
+    "internal_gateway_token",
+    "stripe_webhook_secret",
+    "stripe_secret_key",
+    "sentry_dsn",
+    "bootstrap_management_key",
+)
+
+
+class _LocalKeyFileSource(PydanticBaseSettingsSource):
+    """Pydantic settings source that reads `~/.quill_cloud_keys.private` so
+    a single dotenv-style file can carry OAuth + SES creds for local dev
+    without us mutating `os.environ` from a getter. Lower-priority than
+    env vars and `.env`, so a developer can still override anything
+    locally without touching the keys file."""
+
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        super().__init__(settings_cls)
+        self._values: dict[str, str] = {}
+        if _running_under_pytest() and os.environ.get("TR_ALLOW_LOCAL_KEY_FILE_IN_TESTS") != "1":
+            return
+        path = settings_cls.model_fields["local_keys_file"].default
+        if isinstance(path, Path) and path.exists():
+            from trusted_router.secrets import LocalKeyFile
+
+            keys = LocalKeyFile(path)
+            for field in _LOCAL_KEY_FALLBACKS:
+                value = keys.get(field.upper())
+                if value:
+                    self._values[field] = value
+
+    def get_field_value(
+        self,
+        field: Any,  # FieldInfo — typed loosely so we don't depend on pydantic-internal symbols.
+        field_name: str,
+    ) -> tuple[Any, str, bool]:
+        return self._values.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return dict(self._values)
+
+
+def _running_under_pytest() -> bool:
+    return "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def get_settings() -> Settings:
+    """Build Settings. The LocalKeyFile source is wired in via
+    `_settings_customise_sources` on Settings itself, so this is now a
+    pure factory with no side effects."""
+    return Settings()

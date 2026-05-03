@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "none",
+    "moduleResolution": "node",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "lib": ["es2020", "dom", "dom.iterable"],
+    "rootDir": "frontend/src",
+    "outDir": "src/trusted_router/static",
+    "declaration": false,
+    "sourceMap": false,
+    "newLine": "lf",
+    "removeComments": false,
+    "skipLibCheck": true
+  },
+  "include": ["frontend/src/**/*.ts"]
+}

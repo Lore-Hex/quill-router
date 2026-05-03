@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Ruff
+        run: uv run ruff check .
+      - name: Mypy
+        run: uv run mypy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install npm deps
+        run: npm ci
+      - name: TypeScript build (verify dashboard.js matches dashboard.ts)
+        run: |
+          npx tsc
+          git diff --exit-code -- src/trusted_router/static/dashboard.js
+      - name: ESLint
+        run: npx eslint frontend/src
+      - name: Stylelint
+        run: npx stylelint "src/trusted_router/static/*.css"
+      - name: Tests
+        run: uv run pytest -q
+      - name: Coverage
+        run: uv run pytest --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser smoke
+        run: npm run test:browser

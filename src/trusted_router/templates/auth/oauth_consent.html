@@ -1,0 +1,18 @@
+{% extends "auth/_base.html" %}
+{% block body %}
+<h1>Authorize {{ key_label }}</h1>
+<p><strong>{{ callback_host }}</strong> will receive a delegated API key for
+<strong>{{ workspace_name }}</strong>.</p>
+<ul>
+  <li>{{ limit_text }}</li>
+  <li>Prompts and outputs still go through the attested API path.</li>
+  <li>You can revoke the key from the console.</li>
+</ul>
+<form method="post" action="/auth/approve">
+  {% for name, value in hidden_fields %}
+  <input type="hidden" name="{{ name }}" value="{{ value }}">
+  {% endfor %}
+  <button class="btn" type="submit">Authorize app</button>
+  <a class="btn secondary" href="/console/api-keys">Cancel</a>
+</form>
+{% endblock %}

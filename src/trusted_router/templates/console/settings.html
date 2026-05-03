@@ -1,0 +1,18 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Workspace settings</h2></div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/settings">
+      <label>Workspace name<input name="name" value="{{ workspace.name }}" maxlength="120"></label>
+      <button class="btn primary" type="submit">Save</button>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Content storage</h2><span class="pill">{{ 'enabled' if workspace.content_storage_enabled else 'disabled' }}</span></div>
+  <div class="panel-body">
+    <p>TrustedRouter does not log prompt or completion content by default. Content storage is opt-in per workspace and currently <b>{{ 'enabled' if workspace.content_storage_enabled else 'disabled' }}</b>.</p>
+  </div>
+</section>
+{% endblock %}

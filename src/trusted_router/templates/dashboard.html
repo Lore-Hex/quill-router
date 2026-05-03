@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ og_title }}</title>
+  <meta name="description" content="{{ og_description }}">
+  <link rel="canonical" href="{{ site_url }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TrustedRouter">
+  <meta property="og:title" content="{{ og_title }}">
+  <meta property="og:description" content="{{ og_description }}">
+  <meta property="og:url" content="{{ site_url }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="{{ og_image_width }}">
+  <meta property="og:image:height" content="{{ og_image_height }}">
+  <meta property="og:image:alt" content="TrustedRouter — verifiable, hosted, OpenRouter-compatible">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ og_title }}">
+  <meta name="twitter:description" content="{{ og_description }}">
+  <meta name="twitter:image" content="{{ og_image }}">
+  <meta name="twitter:image:alt" content="TrustedRouter — verifiable, hosted, OpenRouter-compatible">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script>window.__TR__ = {{ tr_config | safe }};</script>
+  <script src="/static/dashboard.js"></script>
+</head>
+<body>
+  <header class="top">
+    <nav class="nav">
+      <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
+      <div class="links">
+        <a href="#pricing">Pricing</a>
+        <a href="#uptime">Uptime</a>
+        <a href="https://quill.lorehex.co">Quill</a>
+        <a href="https://trust.trustedrouter.com">Trust</a>
+        <a class="btn" href="{{ api_base_url }}/models">API</a>
+        <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
+      </div>
+    </nav>
+  </header>
+  <section class="hero">
+    <div class="hero-inner">
+      <div>
+        <span class="eyebrow">Hosted, attested, OpenRouter-compatible.</span>
+        <h1>One API. Every LLM. Provable privacy.</h1>
+        <p class="lead">One OpenAI-compatible key for Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt path is cryptographically attested non-logging.</p>
+        <div class="hero-actions">
+          <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+        </div>
+        <p class="signup-foot">Includes trial credit. No credit card required. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
+        <div class="proof">
+          <div class="proof-card" id="pricing"><b>Better prices</b><span><span class="term">$0.01 less per 1M tokens</span> than the published provider price on prepaid routes.</span></div>
+          <div class="proof-card" id="uptime"><b>Auto rollover</b><span><span class="mono">trustedrouter/auto</span> is the multi-provider failover target.</span></div>
+          <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage-based billing. No monthly plan required.</span></div>
+          <div class="proof-card"><b>Hosted OSS</b><span>Hosted service backed by open-source control plane and attested gateway code.</span></div>
+          <div class="proof-card"><b>Verifiable API</b><span>The trust page publishes source commit, image reference, and image digest.</span></div>
+        </div>
+      </div>
+      <aside class="code-card">
+        <div class="code-head"><span>OpenAI SDK compatible</span><span>base_url</span></div>
+        <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "hello"}],
+)
+print(resp.choices[0].message.content)</code></pre>
+        <div class="sdk-links">
+          <a class="pill" href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a>
+          <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
+        </div>
+      </aside>
+    </div>
+  </section>
+  <main class="wrap">
+    <aside class="quill-ad" aria-label="Sponsored: Quill">
+      <div class="quill-ad-inner">
+        <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill">
+          <img src="/static/quill.jpg" alt="Quill device" loading="lazy" decoding="async" width="180" height="180">
+        </a>
+        <div>
+          <span class="quill-ad-eyebrow">Sponsored · Powered by Quill</span>
+          <h2 class="quill-ad-title">Quill — Personal, private Agents you can verify.</h2>
+          <p class="quill-ad-lead">TrustedRouter is the hosted, attested API path Quill ships to its customers. Run Quill in the cloud or on-prem, prove non-logging end-to-end, ship to compliance with the same OpenAI-shaped client.</p>
+        </div>
+        <div class="quill-ad-cta">
+          <a class="btn" href="https://quill.lorehex.co">Open Quill →</a>
+          <a class="pill" href="https://github.com/Lore-Hex/quill">github.com/Lore-Hex/quill</a>
+        </div>
+      </div>
+    </aside>
+    <section class="band">
+      <div class="panel">
+        <div class="panel-head"><h2>Trust Boundary</h2><span class="pill good">no prompt logs</span></div>
+        <div class="panel-body">
+          <p>Production inference belongs on <span class="mono">api.quillrouter.com</span>. The SaaS control plane stores metadata and billing records only. Every model in the catalog — Anthropic Claude, OpenAI GPT, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras — runs through the same attested non-logging gateway.</p>
+          <a class="btn" href="https://trust.trustedrouter.com">Open trust page</a>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Payments</h2><span class="pill">credits + BYOK</span></div>
+        <div class="panel-body">
+          <p>Stripe Checkout is wired for prepaid credits, including <strong>$25 USDC</strong> stablecoin checkout through Stripe Crypto. Auto-refill keeps prepaid routes flowing once you've saved a card.</p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Public Alpha</h2><span class="pill good">multi-region</span></div>
+        <div class="panel-body">
+          <p>The attested gateway runs in {{ map_regions|length }} GCP regions. Pick one explicitly via the <span class="mono">region</span> header or let the router pick the closest active one for you.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="regions-map">
+      <div class="regions-map-head">
+        <h2>Inference, attested, in {{ map_regions|length }} regions</h2>
+        <p>Decentralized low-latency routing. High availability in {{ map_regions|length }} regions.</p>
+      </div>
+      <div class="regions-map-stage">
+        <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
+          <image href="/static/world-map.svg" x="0" y="0" width="1000" height="500"/>
+          {% for region in map_regions %}
+          <g class="region-marker {{ 'is-primary' if region.primary else '' }}">
+            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '14' if region.primary else '8' }}" class="region-pulse"/>
+            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '6' if region.primary else '4' }}" class="region-dot"/>
+            <title>{{ region.id }} — {{ region.city }}{% if region.primary %} (primary){% endif %}</title>
+          </g>
+          {% endfor %}
+        </svg>
+        <ul class="region-list">
+          {% for region in map_regions %}
+          <li class="{{ 'is-primary' if region.primary else '' }}">
+            <span class="region-list-id">{{ region.id }}</span>
+            <span class="region-list-city">{{ region.city }}</span>
+            {% if region.primary %}<span class="pill good">primary</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
+    <form method="dialog">
+      <button class="signin-close" type="submit" aria-label="Close">×</button>
+    </form>
+    <h2 id="signinTitle">Sign in</h2>
+    <p class="signin-sub">Choose a sign-in method. We'll send you to a verified provider — no passwords stored here.</p>
+    <div class="signin-providers">
+      {% if google_enabled %}
+      <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">
+        <span aria-hidden="true">G</span> Continue with Google
+      </a>
+      {% endif %}
+      {% if github_enabled %}
+      <a class="signin-btn signin-github" href="/auth/github/login" data-provider="github">
+        <span aria-hidden="true">≡</span> Continue with GitHub
+      </a>
+      {% endif %}
+      <button class="signin-btn signin-metamask" type="button" data-action="metamask-signin">
+        <span aria-hidden="true">Ⓜ</span> Continue with MetaMask
+      </button>
+      <div id="signinError" class="signup-error" hidden></div>
+    </div>
+    <p class="signin-foot">By signing in you agree to our terms of service and privacy policy.</p>
+  </dialog>
+</body>
+</html>

@@ -1,0 +1,92 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Credits</h2></div>
+  <div class="panel-body">
+    <div class="metrics">
+      <div class="metric"><div class="label">Available</div><div class="value">{{ credits_available }}</div><div class="sub">prepaid balance</div></div>
+      <div class="metric"><div class="label">Lifetime usage</div><div class="value">{{ credits_usage }}</div><div class="sub">all-time spend</div></div>
+    </div>
+    <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
+      <div class="row">
+        <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>
+        <label>Payment method
+          <select name="payment_method">
+            <option value="auto">Stripe card</option>
+            <option value="stablecoin">Stripe USDC / stablecoin</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn primary" type="submit">Continue to checkout</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Payment methods</h2>
+    <span class="pill {{ 'good' if has_payment_method else '' }}">
+      {{ 'saved' if has_payment_method else ('pending' if payment_method_pending else 'none saved') }}
+    </span>
+  </div>
+  <div class="panel-body">
+    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
+      Save a Stripe card for auto-refill. One-time credit purchases and USDC checkout still happen above.
+      {% if payment_method_pending %}
+      <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
+      {% endif %}
+    </p>
+    <div class="button-row">
+      <form method="post" action="/console/credits/payment-methods/add">
+        <button class="btn primary" type="submit">
+          {{ 'Replace card' if has_payment_method else ('Complete setup' if payment_method_pending else 'Add payment method') }}
+        </button>
+      </form>
+      {% if has_stripe_customer %}
+      <form method="post" action="/console/credits/payment-methods/manage">
+        <button class="btn" type="submit">Manage in Stripe</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Auto-refill</h2>
+    <span class="pill {{ 'good' if auto_refill_enabled else '' }}">{{ 'enabled' if auto_refill_enabled else 'disabled' }}</span>
+  </div>
+  <div class="panel-body">
+    <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
+      When your available balance drops below the threshold, we'll charge
+      your saved card and add the refill amount automatically. Disabling
+      stops future charges but keeps your saved payment method.
+      {% if payment_method_pending %}
+      <br><strong>Stripe is still confirming your payment method.</strong>
+      {% elif not has_payment_method %}
+      <br><strong>Add a Stripe payment method before enabling auto-refill.</strong>
+      {% endif %}
+    </p>
+    <form class="form" method="post" action="/console/credits/auto-refill">
+      <label class="checkbox-row">
+        <input type="checkbox" name="enabled" value="1" {% if auto_refill_enabled %}checked{% endif %}>
+        Enable auto-refill
+      </label>
+      <div class="row">
+        <label>When balance drops below (USD)
+          <input name="threshold" type="number" min="10" max="500" step="1" value="{{ auto_refill_threshold_dollars }}" required>
+        </label>
+        <label>Refill amount (USD)
+          <input name="amount" type="number" min="5" max="2000" step="1" value="{{ auto_refill_amount_dollars }}" required>
+        </label>
+      </div>
+      <button class="btn primary" type="submit" {% if not has_payment_method %}disabled{% endif %}>Save</button>
+    </form>
+    {% if last_auto_refill_at %}
+    <p style="color:var(--muted);font-size:12px;margin-top:14px">
+      Last attempt: {{ last_auto_refill_at }} — {{ last_auto_refill_status }}
+    </p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

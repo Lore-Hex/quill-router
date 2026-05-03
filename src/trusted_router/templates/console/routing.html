@@ -1,0 +1,31 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Auto-rollover</h2><span class="pill good">active</span></div>
+  <div class="panel-body">
+    <p>Set <code>model="trustedrouter/auto"</code> to route across multiple providers with automatic failover. The current order:</p>
+    <ol>
+      {% for model_id in auto_order %}
+      <li><code>{{ model_id }}</code></li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Regions</h2></div>
+  <div class="panel-body">
+    <table>
+      <thead><tr><th>Region</th><th>Hostname</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for region in regions %}
+        <tr>
+          <td>{{ region.id }}{% if region.primary %} <span class="pill good">primary</span>{% endif %}</td>
+          <td><code>{{ region.hostname }}</code></td>
+          <td><span class="pill good">live</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

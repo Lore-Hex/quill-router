@@ -1,0 +1,46 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+{% if created_key %}
+<section class="panel">
+  <div class="panel-head"><h2>Save this key — it won't be shown again</h2><span class="pill warn">one-time reveal</span></div>
+  <div class="panel-body">
+    <div class="signup-reveal">
+      <div class="secret-row"><code>{{ created_key }}</code></div>
+    </div>
+  </div>
+</section>
+{% endif %}
+<section class="panel">
+  <div class="panel-head"><h2>Create a new API key</h2></div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/api-keys">
+      <div class="row">
+        <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
+        <label>Monthly limit (USD, optional)<input name="limit" type="number" min="0" step="1" placeholder="e.g. 100"></label>
+      </div>
+      <button class="btn primary" type="submit">Create key</button>
+    </form>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} active</span></div>
+  <div class="panel-body">
+    <table>
+      <thead><tr><th>Name</th><th>Label</th><th>Limit</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for k in keys %}
+        <tr>
+          <td>{{ k.name }}</td>
+          <td><code>{{ k.label }}</code></td>
+          <td>{{ k.limit_display }}</td>
+          <td>{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        {% if not keys %}
+        <tr><td class="empty" colspan="4">No keys yet. Create one above.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

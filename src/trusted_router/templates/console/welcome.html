@@ -1,0 +1,19 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Save this key — it won't be shown again</h2><span class="pill warn">one-time reveal</span></div>
+  <div class="panel-body">
+    {% if revealed_key %}
+    <div class="signup-reveal">
+      <div class="signup-reveal-head">Your TrustedRouter API key</div>
+      <div class="secret-row"><code>{{ revealed_key }}</code></div>
+      <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span> · Trial <span class="mono">{{ trial_credit }}</span></div>
+    </div>
+    <p>Use this key in the OpenAI SDK by setting <code>base_url={{ api_base_url }}</code>.</p>
+    {% else %}
+    <p>This key has already been displayed. Generate a new one from <a href="/console/api-keys">API Keys</a>.</p>
+    {% endif %}
+    <a class="btn primary" href="/console/api-keys">Continue to console</a>
+  </div>
+</section>
+{% endblock %}

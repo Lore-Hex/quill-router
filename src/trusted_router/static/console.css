@@ -1,0 +1,180 @@
+/* Console-specific styles. The console reuses the panel/btn/pill/table
+   primitives from dashboard.css and only adds the topbar + sidebar shell. */
+
+body.console {
+  background: var(--bg);
+}
+
+.console-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  backdrop-filter: blur(12px);
+}
+
+.console-topbar .brand {
+  flex: 0 0 auto;
+}
+
+.console-topnav {
+  display: flex;
+  gap: 18px;
+  font-size: 14px;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.console-topnav a {
+  color: #304151;
+}
+
+.console-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.console-user-email {
+  color: var(--muted);
+}
+
+.console-user .inline-form {
+  margin: 0;
+}
+
+.console-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 0;
+  min-height: calc(100vh - 60px);
+}
+
+.console-sidebar {
+  border-right: 1px solid var(--line);
+  background: #fbfcfd;
+  padding: 20px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+  padding: 0 8px;
+}
+
+.sidebar-link {
+  display: block;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #23313d;
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.sidebar-link:hover {
+  background: #eef3f8;
+}
+
+.sidebar-link.active {
+  background: var(--soft);
+  color: var(--blue);
+  font-weight: 600;
+}
+
+.sidebar-signout {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.sidebar-signout button {
+  background: none;
+  border: 0;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #23313d;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  border-radius: 6px;
+}
+
+.sidebar-signout button:hover {
+  background: #eef3f8;
+}
+
+.console-main {
+  padding: 24px 32px 48px;
+  max-width: 1100px;
+  width: 100%;
+}
+
+.console-page-head {
+  margin-bottom: 22px;
+}
+
+.console-page-head h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.console-page-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.console-page-body {
+  display: grid;
+  gap: 18px;
+}
+
+.signup-reveal code {
+  display: block;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #c9e3d5;
+  border-radius: 7px;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+@media (max-width: 800px) {
+  .console-shell {
+    grid-template-columns: 1fr;
+  }
+  .console-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .sidebar-group {
+    flex: 1 1 200px;
+  }
+  .console-topnav {
+    display: none;
+  }
+}
