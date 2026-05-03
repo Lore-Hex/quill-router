@@ -368,8 +368,8 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
         headers=inference_headers,
         json={"model": "openai/gpt-4o-mini", "input": ["a", "b"]},
     )
-    assert embeddings.status_code == 200
-    assert len(embeddings.json()["data"]) == 2
+    assert embeddings.status_code == 501
+    assert embeddings.json()["error"]["type"] == "endpoint_not_supported"
 
     models = client.get("/v1/embeddings/models")
     assert models.status_code == 200

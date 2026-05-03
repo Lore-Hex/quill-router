@@ -64,6 +64,14 @@ class SpannerAuthSessions:
         self._io.write_entity("auth_session", session.hash, session)
         return session
 
+    def set_workspace(self, raw_token: str, workspace_id: str) -> AuthSession | None:
+        session = self.get_by_raw(raw_token)
+        if session is None:
+            return None
+        session.workspace_id = workspace_id
+        self._io.write_entity("auth_session", session.hash, session)
+        return session
+
     def get_by_raw(self, raw_token: str) -> AuthSession | None:
         lookup_hash = lookup_hash_api_key(raw_token)
         lookup = self._io.read_entity("auth_session_lookup", lookup_hash, dict)

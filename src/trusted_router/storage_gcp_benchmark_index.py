@@ -13,6 +13,7 @@ def write_provider_benchmark(table: Any, family: str, sample: ProviderBenchmarkS
     reverse_time = reverse_time_key(sample.created_at)
     keys = [
         f"benchmark#{day}#{sample.provider}#{sample.model}#{reverse_time}#{sample.id}",
+        f"benchmark_day_recent#{day}#{reverse_time}#{sample.id}",
         f"benchmark_provider_day#{day}#{sample.provider}#{reverse_time}#{sample.id}",
         f"benchmark_recent#{reverse_time}#{sample.id}",
         f"benchmark_provider_recent#{sample.provider}#{reverse_time}#{sample.id}",
@@ -37,6 +38,15 @@ def provider_benchmark_samples(
     read_limit = max(limit, 1) if precise else min(max(limit * 10, limit, 1), 5000)
     rows = table.read_rows(start_key=prefix, end_key=prefix + b"~", limit=read_limit)
     samples = _samples_from_rows(rows, family)
+    if date is not None and provider is None and model is None and not samples:
+        legacy_prefix = f"benchmark#{date}#".encode()
+        legacy_read_limit = min(max(limit * 100, limit, 1), 50_000)
+        legacy_rows = table.read_rows(
+            start_key=legacy_prefix,
+            end_key=legacy_prefix + b"~",
+            limit=legacy_read_limit,
+        )
+        samples = _samples_from_rows(legacy_rows, family)
     filtered = [
         sample
         for sample in samples
@@ -59,7 +69,7 @@ def _benchmark_prefix(
             return f"benchmark#{date}#{provider}#{model}#".encode(), True
         if provider is not None:
             return f"benchmark_provider_day#{date}#{provider}#".encode(), True
-        return f"benchmark#{date}#".encode(), False
+        return f"benchmark_day_recent#{date}#".encode(), True
     if provider is not None and model is not None:
         return f"benchmark_model_recent#{provider}#{model}#".encode(), True
     if provider is not None:

@@ -49,6 +49,36 @@ body.console {
   margin: 0;
 }
 
+.workspace-selector {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 210px;
+}
+
+.workspace-selector label {
+  gap: 4px;
+  min-width: 170px;
+}
+
+.workspace-selector label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.workspace-selector select {
+  min-height: 34px;
+  padding: 6px 30px 6px 9px;
+}
+
+.workspace-selector-submit {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 .console-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -176,5 +206,12 @@ body.console {
   }
   .console-topnav {
     display: none;
+  }
+  .workspace-selector {
+    order: 3;
+    width: 100%;
+  }
+  .workspace-selector label {
+    flex: 1 1 auto;
   }
 }

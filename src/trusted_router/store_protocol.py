@@ -89,6 +89,9 @@ class Store(Protocol):
     def upgrade_auth_session(
         self, raw_token: str, *, state: str
     ) -> AuthSession | None: ...
+    def set_auth_session_workspace(
+        self, raw_token: str, workspace_id: str
+    ) -> AuthSession | None: ...
 
     # Wallet challenges (SIWE) ------------------------------------------------
     def create_wallet_challenge(

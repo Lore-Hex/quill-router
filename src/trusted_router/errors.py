@@ -24,4 +24,3 @@ def not_supported() -> JSONResponse:
 
 def deprecated() -> JSONResponse:
     return error_response(410, "Endpoint is deprecated and not supported", "deprecated")
-

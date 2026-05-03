@@ -75,6 +75,14 @@ class InMemoryAuthSessions:
             session.state = state
             return session
 
+    def set_workspace(self, raw_token: str, workspace_id: str) -> AuthSession | None:
+        with self._lock:
+            session = self.get_by_raw(raw_token)
+            if session is None:
+                return None
+            session.workspace_id = workspace_id
+            return session
+
     def get_by_raw(self, raw_token: str) -> AuthSession | None:
         with self._lock:
             lookup_hash = lookup_hash_api_key(raw_token)

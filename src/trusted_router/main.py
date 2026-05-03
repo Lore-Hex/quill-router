@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from hashlib import sha256
 from typing import Any
 
@@ -18,7 +19,7 @@ from trusted_router.auth import (
 )
 from trusted_router.catalog import AUTO_MODEL_ID, MODELS, Model
 from trusted_router.config import Settings, get_settings
-from trusted_router.errors import api_error, error_response
+from trusted_router.errors import api_error, error_response, not_supported
 from trusted_router.routes.activity import register_activity_routes
 from trusted_router.routes.auth import register_auth_routes
 from trusted_router.routes.billing import register_billing_routes
@@ -44,7 +45,6 @@ from trusted_router.routing import (
 )
 from trusted_router.sentry_config import init_sentry
 from trusted_router.services.inference import (
-    provider_client,
     run_chat,
     run_chat_candidates,
     run_chat_candidates_stream,
@@ -70,14 +70,20 @@ def create_app(
     app.state.settings = settings
 
     @app.middleware("http")
-    async def rate_limit_middleware(request: Request, call_next):
+    async def rate_limit_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         limited = _rate_limit_request(request, settings)
         if limited is not None:
             return limited
         return await call_next(request)
 
     @app.middleware("http")
-    async def security_headers_middleware(request: Request, call_next):
+    async def security_headers_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         """Set HSTS so browsers remember to skip http:// on subsequent
         visits. The HTTP→HTTPS redirect at the LB still handles the
         first visit; HSTS protects every visit after that. We use a
@@ -346,18 +352,8 @@ def _make_api_router(settings: Settings) -> APIRouter:
         )
 
     @inference_router.post("/embeddings")
-    async def embeddings(
-        request: Request,
-        _principal: InferencePrincipal,
-        settings: SettingsDep,
-    ) -> JSONResponse:
-        body = await json_body(request)
-        model_id = body.get("model") or "openai/gpt-4o-mini"
-        model = MODELS.get(str(model_id))
-        if model is None or not model.supports_embeddings:
-            raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
-        client = provider_client(settings)
-        return JSONResponse(await client.embeddings(model, body))
+    async def embeddings() -> JSONResponse:
+        return not_supported()
 
     register_catalog_routes(router)
     register_auth_routes(router)
@@ -493,7 +489,7 @@ async def _candidate_stream_bytes(
     settings: Settings,
     app_name: str,
     usage_type: UsageType | None = None,
-):
+) -> AsyncIterator[bytes]:
     selected: str | None = None
     async for model, chunk in run_chat_candidates_stream(
         body,

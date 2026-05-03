@@ -43,7 +43,7 @@ def test_generation_lookup_is_workspace_scoped(
     assert content.json()["error"]["type"] == "content_not_stored"
 
 
-def test_embeddings_reject_unsupported_model_without_writing_generation(
+def test_embeddings_are_explicitly_not_implemented_without_writing_generation(
     client: TestClient,
     inference_headers: dict[str, str],
 ) -> None:
@@ -53,8 +53,8 @@ def test_embeddings_reject_unsupported_model_without_writing_generation(
         json={"model": "mistral/mistral-small-2603", "input": "hello"},
     )
 
-    assert resp.status_code == 400
-    assert resp.json()["error"]["type"] == "model_not_supported"
+    assert resp.status_code == 501
+    assert resp.json()["error"]["type"] == "endpoint_not_supported"
     assert STORE.generation_store.generations == {}
 
 
@@ -134,7 +134,7 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
     assert metadata_marker not in response.text
 
 
-def test_embeddings_accept_scalar_and_array_inputs_without_generation_rows(
+def test_embeddings_stub_accepts_any_input_shape_without_generation_rows(
     client: TestClient,
     inference_headers: dict[str, str],
 ) -> None:
@@ -149,8 +149,8 @@ def test_embeddings_accept_scalar_and_array_inputs_without_generation_rows(
         json={"model": "openai/gpt-4o-mini", "input": ["hello", "world"]},
     )
 
-    assert scalar.status_code == 200, scalar.text
-    assert array.status_code == 200, array.text
-    assert len(scalar.json()["data"]) == 1
-    assert len(array.json()["data"]) == 2
+    assert scalar.status_code == 501, scalar.text
+    assert array.status_code == 501, array.text
+    assert scalar.json()["error"]["type"] == "endpoint_not_supported"
+    assert array.json()["error"]["type"] == "endpoint_not_supported"
     assert STORE.generation_store.generations == {}

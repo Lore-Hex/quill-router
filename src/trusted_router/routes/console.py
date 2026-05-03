@@ -50,6 +50,7 @@ class ConsoleContext:
     user: User
     session: AuthSession
     workspace: Workspace
+    workspaces: list[Workspace]
 
 
 def require_console_context(request: Request) -> ConsoleContext:
@@ -65,7 +66,8 @@ def require_console_context(request: Request) -> ConsoleContext:
     workspaces = STORE.list_workspaces_for_user(user.id)
     if not workspaces:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
-    return ConsoleContext(user=user, session=session, workspace=workspaces[0])
+    workspace = _selected_console_workspace(session, workspaces)
+    return ConsoleContext(user=user, session=session, workspace=workspace, workspaces=workspaces)
 
 
 ConsoleDep = Annotated[ConsoleContext, Depends(require_console_context)]
@@ -75,6 +77,20 @@ def register_console_routes(app: FastAPI) -> None:
     @app.get("/console")
     async def console_root() -> Response:
         return RedirectResponse(url="/console/api-keys", status_code=302)
+
+    @app.post("/console/workspaces/select")
+    async def console_select_workspace(
+        request: Request,
+        ctx: ConsoleDep,
+        workspace_id: str = Form(..., min_length=1, max_length=128),
+        next_path: str = Form("/console/api-keys", alias="next"),
+    ) -> Response:
+        if not any(workspace.id == workspace_id for workspace in ctx.workspaces):
+            return RedirectResponse(url="/console/settings?error=workspace", status_code=303)
+        cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
+        if cookie_token:
+            STORE.set_auth_session_workspace(cookie_token, workspace_id)
+        return RedirectResponse(url=_safe_console_next(next_path), status_code=303)
 
     @app.get("/console/welcome")
     async def console_welcome(
@@ -397,11 +413,20 @@ def register_console_routes(app: FastAPI) -> None:
 def _render(template: str, **context: Any) -> str:
     settings: Settings = context.pop("settings")
     user: User = context.pop("user")
+    active = str(context.get("active") or "")
+    workspaces = STORE.list_workspaces_for_user(user.id)
+    current_workspace = context.get("workspace")
+    if not isinstance(current_workspace, Workspace):
+        current_workspace = workspaces[0] if workspaces else None
     return render_template(
         template,
         api_base_url=context.pop("api_base_url", settings.api_base_url),
         user=user,
         user_email=user.email,
+        workspaces=workspaces,
+        current_workspace=current_workspace,
+        current_workspace_id=current_workspace.id if current_workspace else "",
+        console_next_path=_console_path_for_active(active),
         **context,
     )
 
@@ -440,6 +465,32 @@ def _reveal_first_key(workspace: Workspace) -> str | None:
     welcome page falls back to a static "go to API Keys" message."""
     _ = workspace
     return None
+
+
+def _selected_console_workspace(session: AuthSession, workspaces: list[Workspace]) -> Workspace:
+    if session.workspace_id:
+        for workspace in workspaces:
+            if workspace.id == session.workspace_id:
+                return workspace
+    return workspaces[0]
+
+
+def _console_path_for_active(active: str) -> str:
+    return {
+        "api-keys": "/console/api-keys",
+        "byok": "/console/byok",
+        "routing": "/console/routing",
+        "activity": "/console/activity",
+        "settings": "/console/settings",
+        "credits": "/console/credits",
+        "preferences": "/console/account/preferences",
+    }.get(active, "/console/api-keys")
+
+
+def _safe_console_next(next_path: str) -> str:
+    if not next_path.startswith("/console/") or next_path.startswith("//"):
+        return "/console/api-keys"
+    return next_path
 
 
 def register_console_route_module(app: FastAPI, _router: APIRouter) -> None:

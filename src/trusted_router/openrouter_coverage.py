@@ -23,7 +23,7 @@ ROUTE_COVERAGE: tuple[RouteCoverage, ...] = (
     RouteCoverage("/chat/completions", "POST", "real", "OpenAI-compatible chat."),
     RouteCoverage("/credits", "GET", "real", "Workspace credits and usage."),
     RouteCoverage("/credits/coinbase", "POST", "deprecated-stub", "Deprecated Coinbase endpoint."),
-    RouteCoverage("/embeddings", "POST", "real", "Embeddings for supported providers."),
+    RouteCoverage("/embeddings", "POST", "stub", "Embeddings are not implemented yet."),
     RouteCoverage("/embeddings/models", "GET", "real", "Embedding-capable model catalog."),
     RouteCoverage("/endpoints/zdr", "GET", "real", "No-retention/attested eligibility report."),
     RouteCoverage("/generation", "GET", "real", "Generation metadata by ID."),

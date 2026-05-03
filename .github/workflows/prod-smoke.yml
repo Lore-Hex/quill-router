@@ -1,0 +1,32 @@
+name: Prod Smoke
+
+on:
+  # Run after every push to main (post-commit hook on the deployed service).
+  push:
+    branches: [main]
+  # Periodic uptime + drift check between deploys.
+  schedule:
+    - cron: "*/30 * * * *"
+  # Manual trigger for ad-hoc runs from the Actions UI.
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: tests/test_smoke_prod.py
+    runs-on: ubuntu-latest
+    # Don't fail PRs on prod issues — only main + scheduled + manual runs
+    # touch the live service. PRs run the offline suite via ci.yml.
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Smoke against https://trustedrouter.com
+        env:
+          TR_PROD_SMOKE: "1"
+        # Show every test by name so deploy regressions are obvious in
+        # the workflow log without clicking into the failed step.
+        run: uv run pytest tests/test_smoke_prod.py -v --tb=short

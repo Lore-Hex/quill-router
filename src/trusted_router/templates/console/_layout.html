@@ -16,6 +16,22 @@
       <a href="https://trust.trustedrouter.com">Trust</a>
       <a href="https://github.com/Lore-Hex/trusted-router-py">SDK</a>
     </nav>
+    {% if workspaces %}
+    <form class="workspace-selector" method="post" action="/console/workspaces/select">
+      <input type="hidden" name="next" value="{{ console_next_path }}">
+      <label>
+        <span>Workspace</span>
+        <select name="workspace_id" onchange="this.form.requestSubmit()">
+          {% for workspace_option in workspaces %}
+          <option value="{{ workspace_option.id }}" {{ 'selected' if workspace_option.id == current_workspace_id else '' }}>
+            {{ workspace_option.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="btn workspace-selector-submit" type="submit">Switch</button>
+    </form>
+    {% endif %}
     <div class="console-user">
       <span class="console-user-email">{{ user_email or 'no email' }}</span>
       <form class="inline-form" method="post" action="/auth/logout">

@@ -568,6 +568,57 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert keys[0].limit_microdollars == 1
 
 
+def test_console_workspace_selector_persists_session_workspace(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, raw_token = console_session
+    session = STORE.get_auth_session_by_raw(raw_token)
+    assert session is not None
+    personal = STORE.list_workspaces_for_user(session.user_id)[0]
+    org = STORE.create_workspace(owner_user_id=session.user_id, name="Org Workspace")
+
+    page = client.get("/console/api-keys")
+    assert page.status_code == 200
+    assert "Org Workspace" in page.text
+
+    selected = client.post(
+        "/console/workspaces/select",
+        data={"workspace_id": org.id, "next": "/console/byok"},
+        follow_redirects=False,
+    )
+    assert selected.status_code == 303
+    assert selected.headers["location"] == "/console/byok"
+    refreshed = STORE.get_auth_session_by_raw(raw_token)
+    assert refreshed is not None
+    assert refreshed.workspace_id == org.id
+
+    created = client.post(
+        "/console/api-keys",
+        data={"name": "org-key", "limit": ""},
+    )
+    assert created.status_code == 200
+    assert [key.name for key in STORE.list_keys(org.id)] == ["org-key"]
+    assert STORE.list_keys(personal.id) == []
+
+
+def test_console_workspace_selector_rejects_open_redirect(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, raw_token = console_session
+    session = STORE.get_auth_session_by_raw(raw_token)
+    assert session is not None
+    workspace = STORE.list_workspaces_for_user(session.user_id)[0]
+
+    selected = client.post(
+        "/console/workspaces/select",
+        data={"workspace_id": workspace.id, "next": "https://evil.example"},
+        follow_redirects=False,
+    )
+
+    assert selected.status_code == 303
+    assert selected.headers["location"] == "/console/api-keys"
+
+
 def test_console_byok_form_stores_only_secret_reference_and_hint(
     console_session: tuple[TestClient, str],
 ) -> None:

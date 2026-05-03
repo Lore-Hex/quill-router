@@ -223,13 +223,20 @@ class _FakeDirectRow:
 
 
 class _FakeBigtable:
-    def __init__(self, rows: list[_FakeReadRow] | None = None) -> None:
+    def __init__(
+        self,
+        rows: list[_FakeReadRow] | None = None,
+        read_batches: list[list[_FakeReadRow]] | None = None,
+    ) -> None:
         self.rows = rows or []
+        self.read_batches = read_batches or []
         self.reads: list[tuple[bytes, bytes, int]] = []
         self.committed: list[bytes] = []
 
     def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int):
         self.reads.append((start_key, end_key, limit))
+        if self.read_batches:
+            return self.read_batches.pop(0)[:limit]
         return self.rows[:limit]
 
     def direct_row(self, key: bytes) -> _FakeDirectRow:
@@ -344,6 +351,7 @@ def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
 
     assert table.committed == [
         f"benchmark#2026-05-02#openai#openai/gpt-4o-mini#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
+        f"benchmark_day_recent#2026-05-02#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_provider_day#2026-05-02#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_recent#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_provider_recent#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
@@ -387,6 +395,63 @@ def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
             b"benchmark_provider_day#2026-05-02#openai#~",
             10,
         )
+    ]
+
+
+def test_gcp_provider_benchmark_date_only_uses_daily_recent_index() -> None:
+    older_openai = ProviderBenchmarkSample(
+        id="bench_openai",
+        model="openai/gpt-4o-mini",
+        provider="openai",
+        provider_name="OpenAI",
+        status="success",
+        usage_type="Credits",
+        streamed=False,
+        created_at="2026-05-02T12:00:00Z",
+    )
+    newer_mistral = ProviderBenchmarkSample(
+        id="bench_mistral",
+        model="mistral/mistral-small-2603",
+        provider="mistral",
+        provider_name="Mistral",
+        status="success",
+        usage_type="BYOK",
+        streamed=True,
+        created_at="2026-05-02T12:01:00Z",
+    )
+    table = _FakeBigtable([_FakeReadRow(newer_mistral), _FakeReadRow(older_openai)])
+
+    rows = _bt_provider_benchmark_samples(
+        table, "m", date="2026-05-02", provider=None, model=None, limit=1
+    )
+
+    assert [row.id for row in rows] == ["bench_mistral"]
+    assert table.reads == [
+        (b"benchmark_day_recent#2026-05-02#", b"benchmark_day_recent#2026-05-02#~", 1)
+    ]
+
+
+def test_gcp_provider_benchmark_date_only_falls_back_to_legacy_overread() -> None:
+    openai = ProviderBenchmarkSample(
+        id="bench_openai",
+        model="openai/gpt-4o-mini",
+        provider="openai",
+        provider_name="OpenAI",
+        status="success",
+        usage_type="Credits",
+        streamed=False,
+        created_at="2026-05-02T12:00:00Z",
+    )
+    table = _FakeBigtable(read_batches=[[], [_FakeReadRow(openai)]])
+
+    rows = _bt_provider_benchmark_samples(
+        table, "m", date="2026-05-02", provider=None, model=None, limit=10
+    )
+
+    assert [row.id for row in rows] == ["bench_openai"]
+    assert table.reads == [
+        (b"benchmark_day_recent#2026-05-02#", b"benchmark_day_recent#2026-05-02#~", 10),
+        (b"benchmark#2026-05-02#", b"benchmark#2026-05-02#~", 1000),
     ]
 
 

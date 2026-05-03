@@ -218,6 +218,9 @@ class SpannerBigtableStore:
     def upgrade_auth_session(self, raw_token: str, *, state: str) -> AuthSession | None:
         return self.auth_session_store.upgrade(raw_token, state=state)
 
+    def set_auth_session_workspace(self, raw_token: str, workspace_id: str) -> AuthSession | None:
+        return self.auth_session_store.set_workspace(raw_token, workspace_id)
+
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None:
         return self.auth_session_store.get_by_raw(raw_token)
 
