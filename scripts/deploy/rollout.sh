@@ -115,7 +115,13 @@ deploy_one_region() {
 log_dir="$(mktemp -d "${TMPDIR:-/tmp}/tr-deploy-XXXXXX")"
 log "parallel deploy logs in ${log_dir}"
 
-IFS=',' read -ra _REGION_LIST <<<"$TR_REGIONS"
+if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
+  echo "ERROR: image ${IMAGE} does not exist. Run scripts/deploy/image.sh before rollout." >&2
+  exit 1
+fi
+
+DEPLOY_TARGET_REGIONS="${TR_DEPLOY_TARGET_REGIONS:-$TR_REGIONS}"
+IFS=',' read -ra _REGION_LIST <<<"$DEPLOY_TARGET_REGIONS"
 TARGETS=()
 for r in "${_REGION_LIST[@]}"; do
   [ -n "$r" ] && TARGETS+=("$r")
