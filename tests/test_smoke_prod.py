@@ -149,18 +149,24 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
     assert response.status_code == 200
     regions = {item["id"]: item for item in response.json()["data"]}
 
-    expected = {
-        "us-central1", "us-east4", "us-west1", "northamerica-northeast1",
-        "southamerica-east1", "europe-west2", "europe-west4",
-        "asia-northeast1", "asia-southeast1", "australia-southeast1",
-    }
-    assert expected.issubset(set(regions.keys()))
-    primary = [r for r in regions.values() if r.get("primary")]
-    assert len(primary) == 1, f"expected exactly one primary region, got {primary}"
+    # Only enumerate regions where a real attested-gateway VM is deployed.
+    # See deploy/_lib.sh: TR_REGIONS is intentionally narrow because every
+    # advertised region implies an enclave VM with an ACME-issued cert.
+    expected = {"us-central1", "europe-west4"}
+    assert expected.issubset(set(regions.keys())), regions.keys()
+    primary_regions = [r for r in regions.values() if r.get("primary")]
+    assert len(primary_regions) == 1, f"expected exactly one primary region, got {primary_regions}"
+    primary = primary_regions[0]
+    # The primary region uses the canonical api.quillrouter.com, NOT
+    # api-{primary}.quillrouter.com — that alias would TLS-fail because
+    # the enclave's ACME cert covers the canonical name only.
+    assert primary["api_base_url"] == "https://api.quillrouter.com/v1", primary
     for region in regions.values():
         assert region.get("enabled") is True, region
-        assert region["api_base_url"].startswith("https://api-")
-        assert region["api_base_url"].endswith(".quillrouter.com/v1")
+        if region["id"] == primary["id"]:
+            continue
+        assert region["api_base_url"].startswith("https://api-"), region
+        assert region["api_base_url"].endswith(".quillrouter.com/v1"), region
 
 
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
@@ -300,6 +306,30 @@ def test_world_map_svg_is_served_with_cache(client: httpx.Client) -> None:
     assert b"<svg" in response.content
     # Sanity: real Natural Earth SVG is at least 30KB, hand-drawn is way smaller.
     assert len(response.content) > 30_000
+
+
+def test_per_region_api_hostnames_complete_tls_handshake(client: httpx.Client) -> None:
+    """Every advertised api_base_url has to actually serve TLS — DNS
+    resolution alone isn't enough. A SAN-mismatched cert (e.g. the
+    enclave's ACME cert covers `api.quillrouter.com` only but DNS for
+    `api-us-central1.quillrouter.com` lands at the same IP) fails the
+    handshake silently and breaks every SDK that pins the per-region
+    hostname. /attestation is anonymous, so we can confirm TLS + a real
+    response without needing a key."""
+    regions = client.get("/v1/regions").json()["data"]
+    enabled = [r for r in regions if r.get("enabled")]
+    failures: list[str] = []
+    for region in enabled:
+        host = region["api_base_url"].split("://", 1)[1].split("/", 1)[0]
+        with httpx.Client(timeout=10.0) as direct:
+            try:
+                response = direct.get(f"https://{host}/attestation")
+            except Exception as exc:  # noqa: BLE001 - any TLS/connection error is a failure.
+                failures.append(f"{host}: {type(exc).__name__}: {exc}")
+                continue
+        if response.status_code != 200:
+            failures.append(f"{host}: /attestation returned {response.status_code}")
+    assert not failures, "per-region attestation failures:\n  " + "\n  ".join(failures)
 
 
 def test_per_region_api_hostnames_resolve_dns(client: httpx.Client) -> None:

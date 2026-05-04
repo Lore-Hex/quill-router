@@ -78,7 +78,17 @@ def region_payload(settings: Settings) -> list[dict[str, Any]]:
             "name": region,
             "primary": region == primary,
             "enabled": settings.multi_region_enabled or region == primary,
-            "api_base_url": f"https://{settings.regional_api_hostname_template.format(region=region)}/v1",
+            # The primary region uses the canonical settings.api_base_url
+            # (e.g. https://api.quillrouter.com/v1) — that hostname's
+            # ACME-issued cert covers the canonical name only, so the
+            # api-{primary}.quillrouter.com alias would TLS-fail. Non-primary
+            # regions advertise their own per-region hostname which has its
+            # own enclave-issued cert (api-europe-west4.quillrouter.com etc).
+            "api_base_url": (
+                settings.api_base_url
+                if region == primary
+                else f"https://{settings.regional_api_hostname_template.format(region=region)}/v1"
+            ),
         }
         for region in configured_regions(settings)
     ]

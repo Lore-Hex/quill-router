@@ -15,10 +15,19 @@ def register(app: FastAPI) -> None:
     async def console_routing(ctx: ConsoleDep, settings: SettingsDep) -> Response:
         regions = []
         for region in region_payload(settings):
+            # Strip the scheme + /v1 from api_base_url so the routing
+            # page can show a bare hostname. region_payload already
+            # routes the primary region to the canonical hostname.
+            host = (
+                region["api_base_url"]
+                .removeprefix("https://")
+                .removeprefix("http://")
+                .removesuffix("/v1")
+            )
             regions.append({
                 "id": region["id"],
                 "primary": region["primary"],
-                "hostname": settings.regional_api_hostname_template.format(region=region["id"]),
+                "hostname": host,
             })
         auto_order = [item.strip() for item in settings.auto_model_order.split(",") if item.strip()]
         return HTMLResponse(render(
