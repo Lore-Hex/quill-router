@@ -20,6 +20,8 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         response = client.get(path)
         assert response.status_code == 200
         assert marker in response.text
+        assert "Approved short copy only" not in response.text
+        assert "99.9% router availability" in response.text
         assert "Invalid API key" not in response.text
         assert "Continue with MetaMask" in response.text
 
@@ -57,6 +59,8 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert 'href="https://api.quillrouter.com/v1/models"' not in response.text
     assert "Migration credit" in response.text
     assert "spending more than $100/month on LLMs" in response.text
+    assert "99.9% availability" in response.text
+    assert "higher than individual LLM endpoints" in response.text
 
 
 def test_console_credit_note_is_manual(client: TestClient) -> None:

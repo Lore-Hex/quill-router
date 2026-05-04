@@ -46,7 +46,7 @@
       <div>
         <span class="eyebrow">Hosted, attested, OpenRouter-compatible.</span>
         <h1>One API. Every LLM. Provable privacy.</h1>
-        <p class="lead">One OpenAI-compatible key for Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt path is cryptographically attested non-logging.</p>
+        <p class="lead">One OpenAI-compatible key for Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt path is cryptographically attested non-logging, with 99.9% router availability.</p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
@@ -54,7 +54,7 @@
         <p class="signup-foot">Email/OAuth signups include trial credit. Wallet sign-in starts at $0. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
         <div class="proof">
           <div class="proof-card" id="pricing"><b>Better prices</b><span><span class="term">$0.01 less per 1M tokens</span> than the published provider price on prepaid routes.</span></div>
-          <div class="proof-card" id="uptime"><b>Auto rollover</b><span><span class="mono">trustedrouter/auto</span> is the multi-provider failover target.</span></div>
+          <div class="proof-card" id="uptime"><b>99.9% availability</b><span><span class="mono">trustedrouter/auto</span> fails over across providers for uptime higher than individual LLM endpoints.</span></div>
           <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage-based billing. No monthly plan required.</span></div>
           <div class="proof-card"><b>Hosted OSS</b><span>Hosted service backed by open-source control plane and attested gateway code.</span></div>
           <div class="proof-card"><b>Verifiable API</b><span>The trust page publishes source commit, image reference, and image digest.</span></div>
@@ -116,7 +116,7 @@ print(resp.choices[0].message.content)</code></pre>
       <div class="panel">
         <div class="panel-head"><h2>Production</h2><span class="pill good">multi-region</span></div>
         <div class="panel-body">
-          <p>The attested gateway runs in {{ map_regions|length }} GCP regions. Pick one explicitly via the <span class="mono">region</span> header or let the router pick the closest active one for you.</p>
+          <p>The attested gateway runs in {{ map_regions|length }} GCP regions with 99.9% router availability. Pick one explicitly via the <span class="mono">region</span> header or let the router pick the closest active one for you.</p>
         </div>
       </div>
     </section>
@@ -124,7 +124,7 @@ print(resp.choices[0].message.content)</code></pre>
     <section class="regions-map">
       <div class="regions-map-head">
         <h2>Inference, attested, in {{ map_regions|length }} regions</h2>
-        <p>Decentralized low-latency routing. High availability in {{ map_regions|length }} regions.</p>
+        <p>Decentralized low-latency routing. 99.9% router availability, higher than individual LLM endpoints.</p>
       </div>
       <div class="regions-map-stage">
         <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
