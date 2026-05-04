@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 
 
@@ -429,6 +430,33 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
     )
     assert deleted.status_code == 400
     assert deleted.json()["error"]["type"] == "provider_not_supported"
+
+
+def test_internal_gateway_authorizes_by_lookup_hash_without_raw_key(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={"name": "gateway lookup"},
+    ).json()
+    raw_key = created["key"]
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": lookup_hash_api_key(raw_key),
+            "model": "openai/gpt-4o-mini",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["api_key_hash"] == created["data"]["hash"]
+    assert raw_key not in str(data)
 
 
 def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], client) -> None:

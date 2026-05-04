@@ -110,6 +110,11 @@ class InMemoryApiKeys:
         with self._lock:
             return self.keys.get(key_hash)
 
+    def get_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
+        with self._lock:
+            key_id = self.key_ids_by_lookup_hash.get(lookup_hash)
+            return self.keys.get(key_id) if key_id is not None else None
+
     def get_by_raw(self, raw_key: str) -> ApiKey | None:
         with self._lock:
             lookup_hash = lookup_hash_api_key(raw_key)

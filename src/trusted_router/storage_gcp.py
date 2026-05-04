@@ -470,6 +470,9 @@ class SpannerBigtableStore:
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
 
+    def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
+        return self.api_keys.get_by_lookup_hash(lookup_hash)
+
     def get_key_by_raw(self, raw_key: str) -> ApiKey | None:
         return self.api_keys.get_by_raw(raw_key)
 

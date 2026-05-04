@@ -12,7 +12,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
@@ -104,7 +104,8 @@ class UpsertByokRequest(_Strict):
 
 
 class GatewayAuthorizeRequest(_Lenient):
-    api_key_hash: str = Field(min_length=1)
+    api_key_hash: str | None = Field(default=None, min_length=1)
+    api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     model: str = Field(min_length=1)
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
@@ -112,6 +113,12 @@ class GatewayAuthorizeRequest(_Lenient):
     max_output_tokens: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
     region: str | None = None
+
+    @model_validator(mode="after")
+    def key_identifier_required(self) -> GatewayAuthorizeRequest:
+        if not self.api_key_hash and not self.api_key_lookup_hash:
+            raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        return self
 
     @property
     def output_estimate(self) -> int:

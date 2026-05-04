@@ -86,6 +86,12 @@ class SpannerApiKeys:
     def get_by_hash(self, key_hash: str) -> ApiKey | None:
         return self._io.read_entity("api_key", key_hash, ApiKey)
 
+    def get_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
+        lookup = self._io.read_entity("api_key_lookup", lookup_hash, dict)
+        if not lookup:
+            return None
+        return self.get_by_hash(str(lookup["key_id"]))
+
     def get_by_raw(self, raw_key: str) -> ApiKey | None:
         lookup = self._io.read_entity("api_key_lookup", lookup_hash_api_key(raw_key), dict)
         if not lookup:

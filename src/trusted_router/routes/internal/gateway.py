@@ -43,7 +43,7 @@ def register(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        api_key = STORE.get_key_by_hash(body.api_key_hash)
+        api_key = _api_key_for_gateway_authorization(body)
         if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
             raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
         workspace = STORE.get_workspace(api_key.workspace_id)
@@ -159,6 +159,16 @@ def register(router: APIRouter) -> None:
         return _settle_gateway_authorization(
             body, success=False, settings=settings, background_tasks=background_tasks,
         )
+
+
+def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
+    if body.api_key_hash:
+        api_key = STORE.get_key_by_hash(body.api_key_hash)
+        if api_key is not None:
+            return api_key
+    if body.api_key_lookup_hash:
+        return STORE.get_key_by_lookup_hash(body.api_key_lookup_hash)
+    return None
 
 
 def _settle_gateway_authorization(
