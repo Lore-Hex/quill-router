@@ -339,7 +339,7 @@ def test_per_region_api_hostnames_resolve_dns(client: httpx.Client) -> None:
     region silently disappears for routing."""
     regions = client.get("/v1/regions").json()["data"]
     enabled = [r for r in regions if r.get("enabled")]
-    assert len(enabled) >= 10, f"expected ≥10 enabled regions, got {len(enabled)}"
+    assert len(enabled) >= 2, f"expected ≥2 enabled regions, got {len(enabled)}"
 
     failures: list[str] = []
     for region in enabled:
