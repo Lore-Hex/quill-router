@@ -1,0 +1,13 @@
+# Customer And Migration Interview
+
+Date: 2026-05-04
+
+## Raw Transcript
+
+Migration is very very simple it's very easy to migrate from just calling a single llm an openai compatible lm including openai or anthropic or deepsync or anything else or open router or something like it to us is as simple as changing one url so one line of code and then you can see it working flawlessly you can measure the uptime the latency the time the first token and see that it's all really good and fast and you can bring your own keys as well so this is a few simple copy and paste of your secure keys into our system our secure system what stack do you expect customers to have i let them have anything when people use llns for anything from everything from python to javascript to anything else and there's no expectations because all we do is implement a fully open ai compatible api you can be using open claw or hermes agent or any number of other things a lot of our users use both of those as well or any agent what would you personally do for a qualified team using open router today today we are looking for design partners and we are therefore willing to give a hundred dollar credit for those teams to switch over a part of their workflows to us and if they really really like it then we also happy to help work with them to add whatever features that they need specifically and since we're a small company we can really tailor the product to you also open source so we just make it very easy for anyone to you know give a suggestion and an issue and then for us to build that and we move very fast so we're really eager to have the time partners give us their their most juicy problems and solving them we've already had experience with our first couple customers and we're looking for more what makes someone qualify for migration credit well if you spend more than a hundred dollars a month on lms then you should come over and i'll give you 100 credit what should the first 30 minutes after sign up feel like 30 minutes i mean 30 seconds after sign up you'll have an api key and then you'll drop it into your app and you'll see that it's operating much better faster cheaper more uptime what's the shortest useful message to say send a lead this is all the benefits of open router with none of the risks
+
+## Publication Notes
+
+- Keep "none of the risks" as an outreach quote candidate, not as the main public claim.
+- Avoid publishing raw "secure system" repetition without the surrounding attestation/open-source context.
+- "OpenClaw" and "Hermes Agent" are examples of compatible clients, not the Codex revenue loop.

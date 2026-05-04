@@ -1,0 +1,62 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Base URL Swap</h2><span class="pill">5 minutes</span></div>
+  <div class="panel-body">
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)</code></pre>
+    <blockquote>Migration is very, very simple. It's very easy to migrate from just calling a single LLM, an OpenAI-compatible LLM, including OpenAI or Anthropic or DeepSeek or anything else, or OpenRouter or something like it, to us. It is as simple as changing one URL, so one line of code.</blockquote>
+    <blockquote>The wedge: we make it super easy to one-line replace your call to any direct LLM and immediately have it be a router that can handle all of it transparently.</blockquote>
+    <p>Start with <span class="mono">trustedrouter/auto</span> or a model from <a href="/models">the catalog</a>.</p>
+  </div>
+</section>
+
+<section class="band public-band">
+  <div class="panel">
+    <div class="panel-head"><h2>Check Trust</h2></div>
+    <div class="panel-body">
+      <p>Open the trust page before moving production traffic.</p>
+      <blockquote>Customers can verify that the code that they're reaching out to and talking to is in fact what they're seeing in the open source repo and that stated commit hash.</blockquote>
+      <blockquote>You can't really know whereas for our code you know end to end what's happening with open source and you know that it's running.</blockquote>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Credit</h2><span class="pill warn">manual</span></div>
+    <div class="panel-body">
+      <p>Migration credits are available by approval for qualified design partners.</p>
+      <blockquote>Today we are looking for design partners and we are therefore willing to give a hundred dollar credit for those teams to switch over a part of their workflows to us.</blockquote>
+      <blockquote>If you spend more than a hundred dollars a month on LLMs, then you should come over and I'll give you 100 credit.</blockquote>
+      <p>No automatic grant. Apply one-off credit manually.</p>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Bring Your Stack</h2></div>
+    <div class="panel-body">
+      <blockquote>I let them have anything. People use LLMs for everything from Python to JavaScript to anything else, and there's no expectations because all we do is implement a fully OpenAI-compatible API.</blockquote>
+      <blockquote>You can bring your own keys as well. This is a few simple copy and paste of your secure keys into our system.</blockquote>
+    </div>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Why Switch</h2><span class="pill">founder words</span></div>
+  <div class="panel-body">
+    <blockquote>Then you can see it working flawlessly. You can measure the uptime, the latency, the time to first token, and see that it's all really good and fast.</blockquote>
+    <blockquote>Thirty minutes? I mean, 30 seconds after signup you'll have an API key and then you'll drop it into your app and you'll see that it's operating much better, faster, cheaper, more uptime.</blockquote>
+    <blockquote>We're meeting a lot of people who are using OpenRouter or something like it but only for a fraction of their use cases. They would love to send other traffic, other use cases to something like it but they can't really trust its security so they don't.</blockquote>
+    <blockquote>What we want is for proliferation of these routers to exist because it's important that people have the safety, security, uptime, and cost savings from this.</blockquote>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Design Partners</h2><span class="pill good">founder words</span></div>
+  <div class="panel-body">
+    <blockquote>If they really, really like it, then we are also happy to help work with them to add whatever features that they need specifically.</blockquote>
+    <blockquote>Since we're a small company we can really tailor the product to you.</blockquote>
+    <blockquote>We move very fast, so we're really eager to have design partners give us their most juicy problems and solve them.</blockquote>
+  </div>
+</section>
+{% endblock %}

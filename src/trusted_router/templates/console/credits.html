@@ -7,6 +7,9 @@
       <div class="metric"><div class="label">Available</div><div class="value">{{ credits_available }}</div><div class="sub">prepaid balance</div></div>
       <div class="metric"><div class="label">Lifetime usage</div><div class="value">{{ credits_usage }}</div><div class="sub">all-time spend</div></div>
     </div>
+    <div class="notice warn" style="margin-top:18px">
+      Migration credits are available by approval for qualified design partners spending more than $100/month on LLMs. This console does not grant them automatically; apply one-off credits manually after approval.
+    </div>
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
       <div class="row">
         <label>Amount (USD)<input name="amount" type="number" min="1" max="10000" step="1" value="25" required></label>

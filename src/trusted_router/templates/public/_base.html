@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ description }}">
+  <link rel="canonical" href="{{ site_url }}">
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header class="top">
+    <nav class="nav">
+      <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
+      <div class="links">
+        <a href="/compare/openrouter">OpenRouter</a>
+        <a href="/docs/migrate-from-openrouter">Migrate</a>
+        <a href="/security">Security</a>
+        <a href="/models">Models</a>
+        <a href="https://trust.trustedrouter.com">Trust</a>
+        <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
+      </div>
+    </nav>
+  </header>
+  <main class="wrap public-wrap">
+    <section class="public-hero">
+      <span class="eyebrow">Approved short copy only.</span>
+      <h1>{{ heading }}</h1>
+      <p class="lead">{{ description }}</p>
+      <div class="hero-actions">
+        <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+        <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+      </div>
+    </section>
+    {% block body %}{% endblock %}
+  </main>
+  <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
+    <form method="dialog">
+      <button class="signin-close" type="submit" aria-label="Close">x</button>
+    </form>
+    <h2 id="signinTitle">Sign in</h2>
+    <p class="signin-sub">Choose a sign-in method.</p>
+    <div class="signin-providers">
+      {% if google_enabled %}
+      <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">
+        <span aria-hidden="true">G</span> Continue with Google
+      </a>
+      {% endif %}
+      {% if github_enabled %}
+      <a class="signin-btn signin-github" href="/auth/github/login" data-provider="github">
+        <span aria-hidden="true">=</span> Continue with GitHub
+      </a>
+      {% endif %}
+      <button class="signin-btn signin-metamask" type="button" data-action="metamask-signin">
+        <span aria-hidden="true">M</span> Continue with MetaMask
+      </button>
+    </div>
+  </dialog>
+  <script>window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>

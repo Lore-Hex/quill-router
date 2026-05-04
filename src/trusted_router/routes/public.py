@@ -9,7 +9,12 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from trusted_router.config import Settings
-from trusted_router.dashboard import STATIC_DIR, dashboard_html
+from trusted_router.dashboard import (
+    STATIC_DIR,
+    dashboard_html,
+    public_models_html,
+    public_page_html,
+)
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.trust import gcp_release, trust_html
 
@@ -52,6 +57,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @app.get("/trust", response_class=HTMLResponse)
     async def trust_page() -> str:
         return trust_html(settings)
+
+    @app.get("/compare/openrouter", response_class=HTMLResponse)
+    async def compare_openrouter() -> str:
+        return public_page_html(settings, "compare/openrouter")
+
+    @app.get("/compare/vercel-ai-gateway", response_class=HTMLResponse)
+    async def compare_vercel_ai_gateway() -> str:
+        return public_page_html(settings, "compare/vercel-ai-gateway")
+
+    @app.get("/compare/litellm", response_class=HTMLResponse)
+    async def compare_litellm() -> str:
+        return public_page_html(settings, "compare/litellm")
+
+    @app.get("/docs/migrate-from-openrouter", response_class=HTMLResponse)
+    async def migrate_from_openrouter() -> str:
+        return public_page_html(settings, "docs/migrate-from-openrouter")
+
+    @app.get("/security", response_class=HTMLResponse)
+    async def security() -> str:
+        return public_page_html(settings, "security")
+
+    @app.get("/models", response_class=HTMLResponse)
+    async def models() -> str:
+        return public_models_html(settings)
 
     @app.get("/og.png")
     async def og_image() -> FileResponse:

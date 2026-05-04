@@ -1,0 +1,60 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Public Catalog</h2><span class="pill good">no auth needed</span></div>
+  <div class="panel-body">
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Provider</th>
+          <th>Context</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+          <th>Routes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in models %}
+        <tr>
+          <td><code>{{ model.id }}</code><br>{{ model.name }}</td>
+          <td>{{ model.provider }}</td>
+          <td>{{ model.context_length }}</td>
+          <td>{{ model.prompt_price }}</td>
+          <td>{{ model.completion_price }}</td>
+          <td>
+            {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
+            {% if model.byok %}<span class="pill">BYOK</span>{% endif %}
+            {% if model.attested %}<span class="pill good">attested</span>{% endif %}
+            {% if model.stores_content %}<span class="pill warn">stores content</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="signup-foot">OpenRouter-compatible JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
+  </div>
+</section>
+<section class="band public-band">
+  <div class="panel">
+    <div class="panel-head"><h2>Coverage</h2></div>
+    <div class="panel-body">
+      <blockquote>We cover the top models that people are using and we're adding more every day.</blockquote>
+      <blockquote>We're open source as well, so we accept people submitting issues and suggestions for other providers to add, other models to add.</blockquote>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Latency</h2></div>
+    <div class="panel-body">
+      <blockquote>The LLMs often have multi-second time to first token latency on their own.</blockquote>
+      <blockquote>We do full streaming chat so that we're not buffering anything. You're immediately getting it as soon as we get it.</blockquote>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Price</h2></div>
+    <div class="panel-body">
+      <blockquote>We offer a price that's competitive with OpenRouter.</blockquote>
+    </div>
+  </div>
+</section>
+{% endblock %}

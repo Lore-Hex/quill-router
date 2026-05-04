@@ -1,0 +1,41 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="band public-band">
+  <div class="panel">
+    <div class="panel-head"><h2>Position</h2><span class="pill good">quote</span></div>
+    <div class="panel-body">
+      <p>OpenRouter-compatible, but verifiable.</p>
+      <blockquote>TrustedRouter is one API, all the LLMs, provably private.</blockquote>
+      <blockquote>TrustedRouter lets you route to any LLM very easily. Switch between all your LLMs, have higher uptime, have backups, and try out much cheaper models, saving you money without needing to trust TrustedRouter servers as an intermediary any more than you need to.</blockquote>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Migration</h2><span class="pill">base_url</span></div>
+    <div class="panel-body">
+      <blockquote>Migration is very, very simple. It's very easy to migrate from just calling a single LLM, an OpenAI-compatible LLM, including OpenAI or Anthropic or DeepSeek or anything else, or OpenRouter or something like it, to us. It is as simple as changing one URL, so one line of code.</blockquote>
+      <blockquote>The wedge: we make it super easy to one-line replace your call to any direct LLM and immediately have it be a router that can handle all of it transparently.</blockquote>
+      <blockquote>Now that we have an API equivalent drop-in replacement that looks and feels even better and is entirely open source, then they can easily switch to it.</blockquote>
+      <a class="btn" href="/docs/migrate-from-openrouter">Open migration guide</a>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Proof</h2><span class="pill good">attested</span></div>
+    <div class="panel-body">
+      <blockquote>The trust page also lists the commit hash of what code exactly is running on the confidential computing computer as well as the attestation instructions so that you can verify yourself that open source code is actually running in confidential computing.</blockquote>
+      <blockquote>You can't really know whereas for our code you know end to end what's happening with open source and you know that it's running.</blockquote>
+      <blockquote>Most importantly it's all open source software. Every part of the backend infrastructure, configuration, bring up, and UI is entirely open source.</blockquote>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+    </div>
+  </div>
+</section>
+<section class="panel">
+  <div class="panel-head"><h2>Who Switches First</h2><span class="pill">founder words</span></div>
+  <div class="panel-body">
+    <blockquote>We're meeting a lot of people who are using OpenRouter or something like it but only for a fraction of their use cases. They would love to send other traffic, other use cases to something like it but they can't really trust its security so they don't.</blockquote>
+    <blockquote>Many engineers are using OpenRouter but only for low-security non-sensitive data because they know it's not so safe to put sensitive data in this third-party router.</blockquote>
+    <blockquote>The most common feedback I hear from engineers is that they don't use OpenRouter at all because of their security and privacy concerns, especially for sensitive prompts, or they use it only for low-sensitivity prompts.</blockquote>
+    <blockquote>They have a lot more other prompts that they would love to use something like OpenRouter for, but they're not able to have that trust with OpenRouter. So then they are looking for an alternative solution in TrustedRouter.</blockquote>
+    <blockquote>Then you can see it working flawlessly. You can measure the uptime, the latency, the time to first token, and see that it's all really good and fast.</blockquote>
+  </div>
+</section>
+{% endblock %}

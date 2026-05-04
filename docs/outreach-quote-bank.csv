@@ -1,0 +1,11 @@
+tag,quote,source,context_link
+core,"TrustedRouter is one API, all the LLMs, provably private.",interviews/excerpts/2026-05-04-positioning.md,/compare/openrouter
+migration,"Migration is very, very simple.",interviews/excerpts/2026-05-04-customer-migration.md,/docs/migrate-from-openrouter
+migration,"It is as simple as changing one URL, so one line of code.",interviews/excerpts/2026-05-04-customer-migration.md,/docs/migrate-from-openrouter
+openrouter,"The most common feedback I hear from engineers is that they don't use OpenRouter at all because of their security and privacy concerns, especially for sensitive prompts, or they use it only for low-sensitivity prompts.",interviews/excerpts/2026-05-04-objections.md,/compare/openrouter
+trust,"We never log your prompt or the output.",interviews/excerpts/2026-05-04-security-trust.md,/security
+trust,"Customers can verify that the code that they're reaching out to and talking to is in fact what they're seeing in the open source repo and that stated commit hash.",interviews/excerpts/2026-05-04-security-trust.md,/security
+open_source,"Most importantly it's all open source software.",interviews/excerpts/2026-05-04-positioning.md,/security
+design_partner,"We move very fast, so we're really eager to have design partners give us their most juicy problems and solve them.",interviews/excerpts/2026-05-04-customer-migration.md,/docs/migrate-from-openrouter
+self_host,"If you need to have something that you host yourself, then please use our open source software and host it yourself.",interviews/excerpts/2026-05-04-objections.md,/compare/litellm
+outreach,"This is all the benefits of OpenRouter with none of the risks.",interviews/excerpts/2026-05-04-customer-migration.md,/compare/openrouter

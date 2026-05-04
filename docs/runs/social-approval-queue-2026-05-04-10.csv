@@ -1,0 +1,4 @@
+channel,target_url,action_type,short_context,relevant_quote,context_link,approved_message,status,approved_at,posted_at,result_url,notes
+X,https://trustedrouter.com/compare/openrouter,post,"Positioning: privacy/trust wedge vs OpenRouter for sensitive prompts","The most common feedback I hear from engineers is that they don't use OpenRouter at all because of their security and privacy concerns, especially for sensitive prompts, or they use it only for low-sensitivity prompts.",https://trustedrouter.com/compare/openrouter,"(see approval packet)",proposed,,,,"Quote-only post; do not post without explicit approval."
+LinkedIn,https://trustedrouter.com/security,post,"Trust claim: non-logging + verifiability (quote-only)","We never log your prompt or the output.",https://trustedrouter.com/security,"(see approval packet)",proposed,,,,"Quote-only post; do not post without explicit approval."
+
