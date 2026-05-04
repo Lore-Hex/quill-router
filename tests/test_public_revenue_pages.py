@@ -61,6 +61,9 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "spending more than $100/month on LLMs" in response.text
     assert "99.9% availability" in response.text
     assert "higher than individual LLM endpoints" in response.text
+    assert "/static/hero-router-scene.js" in response.text
+    assert "data-router-scene" in response.text
+    assert "Change <span class=\"mono\">base_url</span>" in response.text
 
 
 def test_console_credit_note_is_manual(client: TestClient) -> None:

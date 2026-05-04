@@ -1,35 +1,44 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<section class="band public-band">
-  <div class="panel">
-    <div class="panel-head"><h2>Use Vercel For</h2></div>
-    <div class="panel-body">
-      <p>Vercel-native frontend and dev workflows.</p>
-      <blockquote>Vercel AI Gateway is also great, but again, not open source. You don't know what's running.</blockquote>
-    </div>
+<section class="compare-matrix" aria-label="Vercel AI Gateway comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Vercel AI Gateway</strong><strong>TrustedRouter</strong>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Use TrustedRouter For</h2></div>
-    <div class="panel-body">
-      <blockquote>Switch between all your LLMs, have higher uptime, have backups, and try out much cheaper models, saving you money without needing to trust TrustedRouter servers as an intermediary any more than you need to.</blockquote>
-      <blockquote>The wedge: we make it super easy to one-line replace your call to any direct LLM and immediately have it be a router that can handle all of it transparently.</blockquote>
-      <blockquote>Even if you had the source, again, they don't use an attested gateway.</blockquote>
-      <blockquote>It's that trust that really gives you confidence that it's going to keep working.</blockquote>
-    </div>
+  <div class="matrix-row">
+    <span>Use for</span><span>Vercel-native frontend and dev workflows</span><span>Verifiable private model routing</span>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Next</h2></div>
-    <div class="panel-body">
-      <blockquote>We can never claim that we're perfectly secure but we can claim that we're perfectly transparent and being open source and open about everything that we're doing.</blockquote>
-      <a class="btn" href="/security">Open security notes</a>
-    </div>
+  <div class="matrix-row">
+    <span>Source</span><span>Hosted platform</span><span>Open source backend and UI</span>
+  </div>
+  <div class="matrix-row">
+    <span>Gateway proof</span><span>You trust the service</span><span>Trust page plus attested gateway</span>
   </div>
 </section>
-<section class="panel">
-  <div class="panel-head"><h2>The Alternative</h2><span class="pill">founder words</span></div>
-  <div class="panel-body">
+
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">When trust matters</span>
+    <h2>Use Vercel where it fits. Use TrustedRouter when the gateway itself needs proof.</h2>
+    <blockquote>Vercel AI Gateway is also great, but again, not open source. You don't know what's running.</blockquote>
+    <blockquote>Even if you had the source, again, they don't use an attested gateway.</blockquote>
+  </div>
+  <div class="marketing-card featured">
+    <span class="card-label">TrustedRouter</span>
+    <h3>Switch between all your LLMs.</h3>
+    <p>Have higher uptime, have backups, and try out much cheaper models.</p>
+    <a class="btn" href="/security">Open security notes</a>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">Alternative</span>
+    <h2>Less centralization, more verifiable infrastructure.</h2>
+  </div>
+  <div>
     <blockquote>Especially today when we're seeing increasing amounts of centralization, that's very concerning for the future and a lot of people are feeling a lot of anxiety about AI because of this.</blockquote>
     <blockquote>By creating these tools and open sourcing them then we can create a way for people to have alternatives.</blockquote>
+    <blockquote>It's that trust that really gives you confidence that it's going to keep working.</blockquote>
   </div>
 </section>
 {% endblock %}

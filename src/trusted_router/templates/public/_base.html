@@ -23,13 +23,20 @@
     </nav>
   </header>
   <main class="wrap public-wrap">
-    <section class="public-hero">
-      <span class="eyebrow">OpenRouter-compatible. Attested. 99.9% router availability.</span>
-      <h1>{{ heading }}</h1>
-      <p class="lead">{{ description }}</p>
-      <div class="hero-actions">
-        <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
-        <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+    <section class="public-hero marketing-hero">
+      <div>
+        <span class="eyebrow">OpenRouter-compatible. Attested. 99.9% router availability.</span>
+        <h1>{{ heading }}</h1>
+        <p class="lead">{{ description }}</p>
+        <div class="hero-actions">
+          <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+        </div>
+      </div>
+      <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
+        <div><strong>1 line</strong><span>base_url migration</span></div>
+        <div><strong>99.9%</strong><span>router availability</span></div>
+        <div><strong>0</strong><span>prompt/output logs</span></div>
       </div>
     </section>
     {% block body %}{% endblock %}

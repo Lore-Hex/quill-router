@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="/static/dashboard.css">
   <script>window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js"></script>
+  <script type="module" src="/static/hero-router-scene.js"></script>
 </head>
 <body>
   <header class="top">
@@ -42,8 +43,8 @@
     </nav>
   </header>
   <section class="hero">
-    <div class="hero-inner">
-      <div>
+    <div class="hero-inner hero-inner-visual">
+      <div class="hero-copy">
         <span class="eyebrow">Hosted, attested, OpenRouter-compatible.</span>
         <h1>One API. Every LLM. Provable privacy.</h1>
         <p class="lead">One OpenAI-compatible key for Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt path is cryptographically attested non-logging, with 99.9% router availability.</p>
@@ -61,28 +62,44 @@
           <div class="proof-card"><b>Migration credit</b><span>Available by approval for qualified design partners spending more than $100/month on LLMs.</span></div>
         </div>
       </div>
-      <aside class="code-card">
-        <div class="code-head"><span>OpenAI SDK compatible</span><span>base_url</span></div>
-        <pre><code>from openai import OpenAI
-
-client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
-)
-
-resp = client.chat.completions.create(
-    model="trustedrouter/auto",
-    messages=[{"role": "user", "content": "hello"}],
-)
-print(resp.choices[0].message.content)</code></pre>
-        <div class="sdk-links">
-          <a class="pill" href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a>
-          <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
+      <aside class="router-scene-shell" aria-label="Live visualization of attested model routing">
+        <div class="router-scene" data-router-scene>
+          <canvas class="router-scene-canvas" data-router-scene-canvas aria-hidden="true"></canvas>
+          <div class="scene-copy">
+            <span class="scene-kicker">Live routing path</span>
+            <strong>Attested enclave routes to the best healthy model.</strong>
+            <span>Move or tap to inspect routes.</span>
+          </div>
+          <div class="scene-tags" aria-hidden="true">
+            <span>OpenAI</span>
+            <span>Claude</span>
+            <span>Gemini</span>
+            <span>DeepSeek</span>
+            <span>BYOK</span>
+          </div>
         </div>
       </aside>
     </div>
   </section>
   <main class="wrap">
+    <section class="code-strip" aria-label="OpenAI SDK compatible example">
+      <div>
+        <span class="eyebrow">One-line migration</span>
+        <h2>Change <span class="mono">base_url</span>. Keep your models.</h2>
+      </div>
+      <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=messages,
+)</code></pre>
+      <div class="sdk-links">
+        <a class="pill" href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a>
+        <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
+      </div>
+    </section>
     <aside class="quill-ad" aria-label="Sponsored: Quill">
       <div class="quill-ad-inner">
         <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill">

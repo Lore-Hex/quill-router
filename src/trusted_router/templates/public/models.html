@@ -1,8 +1,21 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<section class="panel">
-  <div class="panel-head"><h2>Public Catalog</h2><span class="pill good">no auth needed</span></div>
-  <div class="panel-body">
+<section class="public-proof-strip">
+  <div><strong>Public Catalog</strong><span>No auth needed to inspect routes.</span></div>
+  <div><strong>trustedrouter/auto</strong><span>Multi-provider failover target.</span></div>
+  <div><strong>Streaming</strong><span>No buffering in the prompt path.</span></div>
+  <div><strong>More daily</strong><span>Open source model requests welcome.</span></div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Models</span>
+      <h2>Route by model, provider, price, or privacy posture.</h2>
+    </div>
+    <p>OpenRouter-compatible JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
+  </div>
+  <div class="model-table-wrap">
     <table>
       <thead>
         <tr>
@@ -37,29 +50,24 @@
         {% endfor %}
       </tbody>
     </table>
-    <p class="signup-foot">OpenRouter-compatible JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
   </div>
 </section>
-<section class="band public-band">
-  <div class="panel">
-    <div class="panel-head"><h2>Coverage</h2></div>
-    <div class="panel-body">
-      <blockquote>We cover the top models that people are using and we're adding more every day.</blockquote>
-      <blockquote>We're open source as well, so we accept people submitting issues and suggestions for other providers to add, other models to add.</blockquote>
-    </div>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Coverage</span>
+    <h3>Top models first.</h3>
+    <p>We cover the top models that people are using and we're adding more every day.</p>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Latency</h2></div>
-    <div class="panel-body">
-      <blockquote>The LLMs often have multi-second time to first token latency on their own.</blockquote>
-      <blockquote>We do full streaming chat so that we're not buffering anything. You're immediately getting it as soon as we get it.</blockquote>
-    </div>
+  <div class="marketing-card">
+    <span class="card-label">Latency</span>
+    <h3>Streaming path.</h3>
+    <p>We do full streaming chat so that we're not buffering anything.</p>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Price</h2></div>
-    <div class="panel-body">
-      <blockquote>We offer a price that's competitive with OpenRouter.</blockquote>
-    </div>
+  <div class="marketing-card">
+    <span class="card-label">Price</span>
+    <h3>Competitive with OpenRouter.</h3>
+    <p>We offer a price that's competitive with OpenRouter.</p>
   </div>
 </section>
 {% endblock %}

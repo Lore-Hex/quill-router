@@ -1,36 +1,55 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<section class="band public-band">
-  <div class="panel">
-    <div class="panel-head"><h2>LiteLLM</h2></div>
-    <div class="panel-body">
-      <p>LiteLLM if you want to self-host.</p>
-      <blockquote>LiteLLM has been around for a while, and you can also just take our open source code and use that as well. It's also a battle-tested solution.</blockquote>
-      <blockquote>A lot of teams love to self-host and if you're that type of team, then you should totally do that.</blockquote>
-    </div>
+<section class="public-proof-strip">
+  <div><strong>LiteLLM if you want to self-host.</strong><span>Keep owning the flow yourself.</span></div>
+  <div><strong>TrustedRouter if you want hosted plus attested.</strong><span>Open-source service with a verifiable prompt path.</span></div>
+  <div><strong>Apache licensed</strong><span>Run it yourself or build another service.</span></div>
+</section>
+
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">Hosted or self-hosted</span>
+    <h2>Use the shape that matches your team.</h2>
+    <blockquote>LiteLLM has been around for a while, and you can also just take our open source code and use that as well. It's also a battle-tested solution.</blockquote>
+    <blockquote>A lot of teams love to self-host and if you're that type of team, then you should totally do that.</blockquote>
   </div>
-  <div class="panel">
-    <div class="panel-head"><h2>TrustedRouter</h2></div>
-    <div class="panel-body">
-      <blockquote>They can take the open source project and run it themselves on their hardware. They can run it themselves internally. They can run it hosted. Someone else can take this and run it.</blockquote>
-      <blockquote>You can also take our code and create another version of TrustedRouter that you run as a service.</blockquote>
-      <blockquote>We're very happy with that because we want to let so many other companies have this service and be open, fully Apache licensed open source.</blockquote>
-    </div>
-  </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Shared Shape</h2></div>
-    <div class="panel-body">
-      <blockquote>What we want is for proliferation of these routers to exist because it's important that people have the safety, security, uptime, and cost savings from this.</blockquote>
-    </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Hosted route</span><span>OpenAI-compatible</span></div>
+    <pre><code>base_url="{{ api_base_url }}"
+model="trustedrouter/auto"
+
+# same client shape
+# verifiable hosted path</code></pre>
   </div>
 </section>
-<section class="panel">
-  <div class="panel-head"><h2>Why Open Source Matters</h2><span class="pill">founder words</span></div>
-  <div class="panel-body">
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Self-host</span>
+    <h3>Own every part.</h3>
+    <p>If you're looking to just own your flow and make something very custom, that's something that you want to own.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Hosted</span>
+    <h3>Use attested routing now.</h3>
+    <p>They can run it hosted. Someone else can take this and run it.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Open source</span>
+    <h3>Fork the router.</h3>
+    <p>You can also take our code and create another version of TrustedRouter that you run as a service.</p>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">Why open source matters</span>
+    <h2>Router infrastructure should proliferate.</h2>
+  </div>
+  <div>
+    <blockquote>What we want is for proliferation of these routers to exist because it's important that people have the safety, security, uptime, and cost savings from this.</blockquote>
     <blockquote>We should really demand that all routers be totally open source. That's really the only way to be sure that it is running things that are safe and secure.</blockquote>
-    <blockquote>By creating these tools and open sourcing them then we can create a way for people to have alternatives.</blockquote>
-    <blockquote>The main reason would be if you aren't looking for a hosted solution. If you need to have something that you host yourself, then please use our open source software and host it yourself.</blockquote>
-    <blockquote>If you're looking to just own your flow and make something that's very custom then that's something that you want to own.</blockquote>
+    <blockquote>We're very happy with that because we want to let so many other companies have this service and be open, fully Apache licensed open source.</blockquote>
   </div>
 </section>
 {% endblock %}
