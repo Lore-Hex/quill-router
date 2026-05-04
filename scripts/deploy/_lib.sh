@@ -9,7 +9,13 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 REGION="${REGION:-us-central1}"
-TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,us-west1,northamerica-northeast1,southamerica-east1,europe-west2,europe-west4,asia-northeast1,asia-southeast1,australia-southeast1}"
+# Only enumerate regions where a real attested-gateway VM is deployed.
+# The control plane (this Cloud Run service) gets deployed to each of
+# these for low-latency dashboard reads, AND each entry shows up in
+# /v1/regions which the SDK's region= shortcut resolves against. Adding
+# a region without a backing gateway VM gives callers a TLS-broken
+# `api-<region>.quillrouter.com` and weakens the trust story.
+TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
