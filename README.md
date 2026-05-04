@@ -92,7 +92,9 @@ explicit patent grant.
   `/messages`, `/responses`, or `/embeddings`; those belong on the attested API
   plane.
 - Sentry is control-plane-only and scrubs request bodies, auth headers, API
-  keys, BYOK keys, prompt messages, and output text.
+  keys, BYOK keys, prompt messages, and output text. A client-side Sentry flood
+  gate caps repeated issues per fingerprint and total events per process/window
+  so a single noisy integration cannot consume the whole error budget again.
 - No Sentry configuration belongs in the attested enclave.
 
 ## Public Positioning

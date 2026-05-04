@@ -17,6 +17,7 @@ from trusted_router.sentry_config import (
     before_send,
     before_send_log,
     init_sentry,
+    reset_sentry_floodgate_for_tests,
 )
 from trusted_router.storage import STORE
 
@@ -298,6 +299,87 @@ def test_sentry_drops_spanner_client_metrics_export_noise() -> None:
     assert before_send(noisy, {}) is None
     assert before_send_log(noisy, {}) is None
     assert before_breadcrumb(noisy, {}) is None
+
+
+def test_sentry_floodgate_drops_repeated_issue_after_per_fingerprint_limit() -> None:
+    now = 1000.0
+
+    def clock() -> float:
+        return now
+
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            sentry_floodgate_window_seconds=60,
+            sentry_floodgate_max_events_per_fingerprint=2,
+            sentry_floodgate_max_events_per_window=100,
+        ),
+        clock=clock,
+    )
+    event = {
+        "level": "error",
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": "provider unavailable",
+                    "stacktrace": {"frames": [{"filename": "providers.py", "function": "chat", "lineno": 42}]},
+                }
+            ]
+        },
+    }
+
+    assert before_send(event, {}) is not None
+    assert before_send(event, {}) is not None
+    assert before_send(event, {}) is None
+
+    now = 1061.0
+    assert before_send(event, {}) is not None
+    reset_sentry_floodgate_for_tests()
+
+
+def test_sentry_floodgate_global_window_caps_repeats_but_keeps_new_issue_discovery() -> None:
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            sentry_floodgate_window_seconds=60,
+            sentry_floodgate_max_events_per_fingerprint=10,
+            sentry_floodgate_max_events_per_window=2,
+        ),
+        clock=lambda: 2000.0,
+    )
+
+    assert before_send({"level": "error", "message": "issue a"}, {}) is not None
+    assert before_send({"level": "error", "message": "issue b"}, {}) is not None
+    assert before_send({"level": "error", "message": "issue a"}, {}) is None
+    assert before_send({"level": "error", "message": "issue c"}, {}) is not None
+    reset_sentry_floodgate_for_tests()
+
+
+def test_sentry_floodgate_groups_logs_after_scrubbing_secret_values() -> None:
+    reset_sentry_floodgate_for_tests(
+        settings=Settings(
+            environment="test",
+            sentry_floodgate_window_seconds=60,
+            sentry_floodgate_max_events_per_fingerprint=1,
+            sentry_floodgate_max_events_per_window=100,
+        ),
+        clock=lambda: 3000.0,
+    )
+
+    first = before_send_log(
+        {"level": "error", "message": "provider failed", "extra": {"api_key": "sk-tr-v1-one"}},
+        {},
+    )
+    second = before_send_log(
+        {"level": "error", "message": "provider failed", "extra": {"api_key": "sk-tr-v1-two"}},
+        {},
+    )
+
+    assert first is not None
+    assert json.dumps(first).count("[Filtered]") == 1
+    assert second is None
+    reset_sentry_floodgate_for_tests()
 
 
 def test_sentry_init_is_noop_under_pytest_even_with_local_dsn(monkeypatch) -> None:

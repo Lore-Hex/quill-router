@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     enable_sentry_test_route: bool = False
+    sentry_floodgate_enabled: bool = True
+    sentry_floodgate_window_seconds: int = 60 * 60
+    sentry_floodgate_max_events_per_fingerprint: int = 3
+    sentry_floodgate_max_events_per_window: int = 50
+    sentry_floodgate_max_fingerprints: int = 2048
 
     trust_gcp_source_commit: str | None = None
     trust_gcp_image_reference: str | None = None

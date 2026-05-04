@@ -72,6 +72,18 @@ or any attested workload image. The FastAPI control plane initializes Sentry
 with request bodies disabled and scrubbers for auth headers, API keys, BYOK
 keys, prompt fields, output fields, cookies, and Stripe raw payloads.
 
+Sentry also has a client-side flood gate so one noisy issue cannot burn the
+monthly error budget before an operator can respond. By default each Cloud Run
+process sends at most 3 events per fingerprint and 50 total events per hour
+(`TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_FINGERPRINT`,
+`TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_WINDOW`,
+`TR_SENTRY_FLOODGATE_WINDOW_SECONDS`). The process-level cap drops repeats but
+still lets the first event for a new fingerprint through so new issues remain
+discoverable. This is an emergency backstop; keep a Sentry project quota/PAYG
+cap as the global protection. To temporarily drop all new Sentry events during
+an incident, set
+`TR_SENTRY_FLOODGATE_MAX_EVENTS_PER_WINDOW=0` and redeploy.
+
 ## Cloudflare
 
 `trustedrouter.com` can be Cloudflare proxied. `api.quillrouter.com` must be
