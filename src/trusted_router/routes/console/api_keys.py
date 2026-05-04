@@ -7,9 +7,10 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Form
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
+from trusted_router.money import dollars_to_microdollars
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.storage import STORE, ApiKey
 
@@ -40,9 +41,11 @@ def register(app: FastAPI) -> None:
         limit_microdollars = None
         if limit:
             try:
-                limit_microdollars = int(float(limit) * 1_000_000)
+                limit_microdollars = dollars_to_microdollars(limit)
             except ValueError:
-                limit_microdollars = None
+                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+            if limit_microdollars < 0:
+                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
         raw, _ = STORE.create_api_key(
             workspace_id=ctx.workspace.id,
             name=name,

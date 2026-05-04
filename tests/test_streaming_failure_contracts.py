@@ -219,3 +219,59 @@ def test_route_stream_failure_refunds_reserved_quota(
     assert account.reserved_microdollars == 0
     assert key.reserved_microdollars == 0
     assert STORE.generation_store.generations == {}
+
+
+def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    monkeypatch,
+) -> None:
+    def route_stream(self, model, body, state):
+        async def iterator():
+            if model.id == "openai/gpt-4o-mini":
+                if False:
+                    yield b""
+                return
+            state.request_id = "second-provider-stream"
+            state.input_tokens = 7
+            state.output_tokens = 2
+            state.finish_reason = "stop"
+            state.usage_estimated = False
+            state.record_text("ok")
+            yield (
+                b'data: {"id":"second-provider-stream","choices":[{"delta":{"content":"ok"},'
+                b'"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":2}}\n\n'
+            )
+            yield b"data: [DONE]\n\n"
+
+        return iterator()
+
+    monkeypatch.setattr(ProviderClient, "stream_chat", route_stream)
+    key = next(iter(STORE.api_keys.keys.values()))
+    account = STORE.credits[key.workspace_id]
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        headers=inference_headers,
+        json={
+            "models": ["openai/gpt-4o-mini", "cerebras/llama3.1-8b"],
+            "stream": True,
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    ) as response:
+        assert response.status_code == 200
+        body = b"".join(response.iter_bytes())
+
+    assert b'"selected_model":"cerebras/llama3.1-8b"' in body
+    assert b"second-provider-stream" in body
+    generations = list(STORE.generation_store.generations.values())
+    assert len(generations) == 1
+    assert generations[0].model == "cerebras/llama3.1-8b"
+    assert generations[0].request_id == "second-provider-stream"
+    assert account.reserved_microdollars == 0
+    assert key.reserved_microdollars == 0
+    samples = STORE.provider_benchmark_samples(provider="openai")
+    assert len(samples) == 1
+    assert samples[0].status == "error"
+    assert samples[0].error_type == "provider_error"

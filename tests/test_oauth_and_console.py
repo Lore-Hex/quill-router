@@ -610,6 +610,32 @@ def test_console_create_api_key_form_shows_raw_key_once(
     assert keys[0].limit_microdollars == 1
 
 
+def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    precise = client.post(
+        "/console/api-keys",
+        data={"name": "precise-limit", "limit": "25.123456"},
+    )
+
+    assert precise.status_code == 200
+    workspace_id = next(iter(STORE.workspaces))
+    keys = STORE.list_keys(workspace_id)
+    assert len(keys) == 1
+    assert keys[0].limit_microdollars == 25_123_456
+
+    invalid = client.post(
+        "/console/api-keys",
+        data={"name": "bad-limit", "limit": "not-a-number"},
+        follow_redirects=False,
+    )
+
+    assert invalid.status_code == 303
+    assert invalid.headers["location"] == "/console/api-keys?error=limit"
+    assert [key.name for key in STORE.list_keys(workspace_id)] == ["precise-limit"]
+
+
 def test_console_workspace_selector_persists_session_workspace(
     console_session: tuple[TestClient, str],
 ) -> None:

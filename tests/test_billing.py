@@ -326,7 +326,11 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
 def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     user_headers: dict[str, str],
     client,
+    test_settings,
 ) -> None:
+    from trusted_router.byok_crypto import decrypt_byok_secret
+    from trusted_router.storage_models import EncryptedSecretEnvelope
+
     raw_key = "csk-live-user-owned-key-9999"
     byok = client.put(
         "/v1/byok/providers/cerebras",
@@ -359,6 +363,12 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     assert data["byok_encrypted_secret"]["algorithm"].startswith("TR-BYOK-ENVELOPE")
     assert data["byok_encrypted_secret"]["ciphertext"]
     assert raw_key not in str(data)
+    assert decrypt_byok_secret(
+        EncryptedSecretEnvelope(**data["byok_encrypted_secret"]),
+        test_settings,
+        workspace_id=data["workspace_id"],
+        provider="cerebras",
+    ) == raw_key
 
 
 def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], client) -> None:

@@ -14,6 +14,76 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await expect(page.locator("#signinError")).toContainText("MetaMask is not installed");
 });
 
+test("wallet sign-in completes without email gate", async ({ page }) => {
+  const address = "0x1111111111111111111111111111111111111111";
+  let emailRequests = 0;
+
+  await page.addInitScript((walletAddress) => {
+    window.ethereum = {
+      request: async ({ method }) => {
+        if (method === "eth_requestAccounts") return [walletAddress];
+        if (method === "personal_sign") return "0xsigned";
+        throw new Error(`unexpected ethereum method ${method}`);
+      },
+    };
+  }, address);
+
+  await page.route("**/auth/wallet/email", async (route) => {
+    emailRequests += 1;
+    await route.fulfill({ status: 500, body: "email gate should not be reached" });
+  });
+  await page.route("**/v1/auth/wallet/challenge", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.address).toBe(address);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          message: "trustedrouter.com wants you to sign in",
+          nonce: "wallet-nonce",
+          expires_at: "2026-05-04T00:00:00Z",
+        },
+      }),
+    });
+  });
+  await page.route("**/v1/auth/wallet/verify", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body).toEqual({
+      address,
+      signature: "0xsigned",
+      nonce: "wallet-nonce",
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          redirect: "/console/api-keys",
+          state: "active",
+          email_required: false,
+          workspace_id: "ws_wallet",
+        },
+      }),
+    });
+  });
+  await page.route("**/console/api-keys", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<main><h1>API Keys</h1><p>$0.00</p></main>",
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.getByRole("button", { name: /MetaMask/ }).click();
+
+  await expect(page).toHaveURL(/\/console\/api-keys$/);
+  await expect(page.getByRole("heading", { name: "API Keys" })).toBeVisible();
+  expect(emailRequests).toBe(0);
+});
+
 test("console redirects unauthenticated users and auto-opens sign-in", async ({ page }) => {
   await page.goto("/console/api-keys");
 

@@ -20,6 +20,7 @@ from trusted_router.catalog import MODELS, PROVIDERS, Model, auto_candidate_mode
 from trusted_router.config import Settings
 from trusted_router.providers import (
     ProviderClient,
+    ProviderError,
     estimate_tokens_from_messages,
 )
 from trusted_router.routes.helpers import cost_microdollars, integer_body_field
@@ -174,8 +175,12 @@ async def _run_stream(
         usage_type_override=usage_type,
     ) as ticket:
         state = client.new_stream_state(model, body)
+        saw_chunk = False
         async for chunk in stream_provider(client, model, body, state):
+            saw_chunk = True
             yield chunk
+        if not saw_chunk:
+            raise ProviderError(model.provider, 502, "empty provider stream")
         result = state.to_result()
         actual_cost = cost_microdollars(model, result.input_tokens, result.output_tokens)
         ticket.settle(actual_cost)
