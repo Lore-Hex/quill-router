@@ -98,6 +98,45 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
     assert calls == [("api_key_by_workspace", "ws_1#")]
 
 
+def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
+    from google.cloud import bigtable, spanner
+
+    spanner_calls: list[dict[str, Any]] = []
+
+    class FakeSpannerClient:
+        def __init__(self, **kwargs: Any) -> None:
+            spanner_calls.append(kwargs)
+
+        def instance(self, _instance_id: str) -> FakeSpannerClient:
+            return self
+
+        def database(self, _database_id: str) -> object:
+            return object()
+
+    class FakeBigtableClient:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def instance(self, _instance_id: str) -> FakeBigtableClient:
+            return self
+
+        def table(self, _table_id: str) -> object:
+            return object()
+
+    monkeypatch.setattr(spanner, "Client", FakeSpannerClient)
+    monkeypatch.setattr(bigtable, "Client", FakeBigtableClient)
+
+    SpannerBigtableStore(
+        project_id="project",
+        spanner_instance_id="spanner",
+        spanner_database_id="database",
+        bigtable_instance_id="bigtable",
+        generation_table="generations",
+    )
+
+    assert spanner_calls == [{"project": "project", "disable_builtin_metrics": True}]
+
+
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     store, db, _ = make_fake_store()
 

@@ -97,7 +97,7 @@ class SpannerBigtableStore:
         self._spanner = spanner
         self._param_types = param_types
         self._database = (
-            spanner.Client(project=project_id)
+            spanner.Client(project=project_id, disable_builtin_metrics=True)
             .instance(spanner_instance_id)
             .database(spanner_database_id)
         )

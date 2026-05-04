@@ -284,6 +284,22 @@ def test_sentry_hooks_scrub_logs_breadcrumbs_and_request_bodies_without_mutating
     assert "private prompt" not in json.dumps(crumb)
 
 
+def test_sentry_drops_spanner_client_metrics_export_noise() -> None:
+    noisy = {
+        "level": "error",
+        "message": (
+            "Failed to export metrics to Cloud Monitoring: 400 One or more TimeSeries "
+            "could not be written: metric.type=\"spanner.googleapis.com/internal/client/"
+            "operation_latencies\", resource.type=\"spanner_instance_client\": "
+            "the set of resource labels is incomplete, missing (instance_id)"
+        ),
+    }
+
+    assert before_send(noisy, {}) is None
+    assert before_send_log(noisy, {}) is None
+    assert before_breadcrumb(noisy, {}) is None
+
+
 def test_sentry_init_is_noop_under_pytest_even_with_local_dsn(monkeypatch) -> None:
     """Importing trusted_router.main creates the module-level ASGI app.
 

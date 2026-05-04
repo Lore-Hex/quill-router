@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections.abc import MutableMapping
@@ -70,6 +71,7 @@ def init_sentry(settings: Settings) -> None:
         return
     import sentry_sdk
     from sentry_sdk.integrations.fastapi import FastApiIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
     from sentry_sdk.integrations.starlette import StarletteIntegration
 
     sentry_sdk.init(
@@ -82,6 +84,7 @@ def init_sentry(settings: Settings) -> None:
         enable_logs=True,
         traces_sample_rate=settings.sentry_traces_sample_rate,
         integrations=[
+            LoggingIntegration(level=None, event_level=None),
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
         ],
@@ -103,6 +106,8 @@ def _running_under_pytest(settings: Settings) -> bool:
 
 
 def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if _is_dropped_noise(event):
+        return None
     event = _scrub(event)
     request = event.get("request")
     if isinstance(request, MutableMapping):
@@ -112,11 +117,24 @@ def before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> di
 
 
 def before_send_log(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if _is_dropped_noise(event):
+        return None
     return _scrub(event)
 
 
 def before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if _is_dropped_noise(crumb):
+        return None
     return _scrub(crumb)
+
+
+def _is_dropped_noise(event: dict[str, Any]) -> bool:
+    text = json.dumps(event, default=str)
+    return (
+        "Failed to export metrics to Cloud Monitoring" in text
+        and "spanner.googleapis.com/internal/client/" in text
+        and "missing (instance_id)" in text
+    )
 
 
 def _scrub(value: Any) -> Any:
