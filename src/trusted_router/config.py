@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # carries this domain so wallet UIs show the right hostname.
     siwe_domain: str | None = None
 
-    # Amazon SES — only required by the wallet email-verification path.
+    # Amazon SES — used for optional wallet email attach/verification.
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_region: str = "us-east-1"

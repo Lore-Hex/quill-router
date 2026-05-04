@@ -227,12 +227,22 @@ class SpannerBigtableStore:
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
 
-    def create_workspace(self, owner_user_id: str, name: str) -> Workspace:
+    def create_workspace(
+        self,
+        owner_user_id: str,
+        name: str,
+        *,
+        trial_credit_microdollars: int | None = None,
+    ) -> Workspace:
         workspace = Workspace(id=str(uuid.uuid4()), name=name, owner_user_id=owner_user_id)
         member = Member(workspace_id=workspace.id, user_id=owner_user_id, role="owner")
         credit = CreditAccount(
             workspace_id=workspace.id,
-            total_credits_microdollars=DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
+            total_credits_microdollars=(
+                DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+                if trial_credit_microdollars is None
+                else trial_credit_microdollars
+            ),
         )
         with self._database.batch() as batch:
             self._write_entity_batch(batch, "workspace", workspace.id, workspace)
@@ -345,7 +355,7 @@ class SpannerBigtableStore:
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
             credit = CreditAccount(
                 workspace_id=workspace.id,
-                total_credits_microdollars=DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
+                total_credits_microdollars=0,
             )
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "wallet_user", normalized, {"user_id": new_user.id})

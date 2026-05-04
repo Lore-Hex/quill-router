@@ -1,8 +1,7 @@
 """Spanner-backed one-shot verification tokens.
 
 Sibling of InMemoryVerificationTokens (storage_verification_tokens.py).
-Used today by the wallet sign-in email-confirmation flow; reusable for
-password reset / email change."""
+Used by optional email attach, password reset, and email change flows."""
 
 from __future__ import annotations
 

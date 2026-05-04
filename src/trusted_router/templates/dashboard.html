@@ -49,7 +49,7 @@
           <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
         </div>
-        <p class="signup-foot">Includes trial credit. No credit card required. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
+        <p class="signup-foot">Email/OAuth signups include trial credit. Wallet sign-in starts at $0. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
         <div class="proof">
           <div class="proof-card" id="pricing"><b>Better prices</b><span><span class="term">$0.01 less per 1M tokens</span> than the published provider price on prepaid routes.</span></div>
           <div class="proof-card" id="uptime"><b>Auto rollover</b><span><span class="mono">trustedrouter/auto</span> is the multi-provider failover target.</span></div>
@@ -152,7 +152,7 @@ print(resp.choices[0].message.content)</code></pre>
       <button class="signin-close" type="submit" aria-label="Close">×</button>
     </form>
     <h2 id="signinTitle">Sign in</h2>
-    <p class="signin-sub">Choose a sign-in method. We'll send you to a verified provider — no passwords stored here.</p>
+    <p class="signin-sub">Choose a sign-in method. Wallet sign-in requires only a signature and starts with $0 credits.</p>
     <div class="signin-providers">
       {% if google_enabled %}
       <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">

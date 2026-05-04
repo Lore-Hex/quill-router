@@ -1,5 +1,5 @@
-"""One-shot verification tokens — used today by the wallet sign-in
-email-confirmation flow, reusable for password reset / email change."""
+"""One-shot verification tokens — used by optional email attach,
+password reset, and email change flows."""
 
 from __future__ import annotations
 

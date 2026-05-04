@@ -324,7 +324,9 @@ def test_wallet_challenge_returns_siwe_message(client: TestClient) -> None:
     assert data["expires_at"]
 
 
-def test_wallet_verify_success_creates_pending_session(client: TestClient) -> None:
+def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_credits(
+    client: TestClient,
+) -> None:
     private_key = "0x" + "1" * 64
     address = Account.from_key(private_key).address
     challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
@@ -338,12 +340,27 @@ def test_wallet_verify_success_creates_pending_session(client: TestClient) -> No
     )
     assert verify.status_code == 200, verify.text
     data = verify.json()["data"]
-    assert data["redirect"] == "/auth/wallet/email"
-    assert data["state"] == "pending_email"
+    assert data["redirect"] == "/console/api-keys"
+    assert data["state"] == "active"
+    assert data["email_required"] is False
     assert "tr_session=" in verify.headers.get("set-cookie", "")
     user = STORE.find_user_by_wallet(address)
     assert user is not None
+    assert user.email is None
     assert user.email_verified is False
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    assert data["workspace_id"] == workspace.id
+    assert STORE.get_credit_account(workspace.id).total_credits_microdollars == 0
+    session_cookie = client.cookies.get("tr_session")
+    assert session_cookie is not None
+    session = STORE.get_auth_session_by_raw(session_cookie)
+    assert session is not None
+    assert session.state == "active"
+    assert session.workspace_id == workspace.id
+
+    console = client.get("/console/api-keys")
+    assert console.status_code == 200
+    assert "API Keys" in console.text
 
 
 def test_wallet_verify_replay_rejects_second_use(client: TestClient) -> None:
@@ -365,6 +382,31 @@ def test_wallet_verify_replay_rejects_second_use(client: TestClient) -> None:
         json={"address": address, "signature": signature, "nonce": nonce},
     )
     assert second.status_code == 400
+
+
+def test_wallet_user_created_workspaces_do_not_receive_trial_credits(
+    client: TestClient,
+) -> None:
+    private_key = "0x" + "7" * 64
+    address = Account.from_key(private_key).address
+    challenge = client.post("/v1/auth/wallet/challenge", json={"address": address})
+    message = challenge.json()["data"]["message"]
+    nonce = challenge.json()["data"]["nonce"]
+    signature = "0x" + Account.sign_message(
+        encode_defunct(text=message), private_key=private_key
+    ).signature.hex()
+
+    verify = client.post(
+        "/v1/auth/wallet/verify",
+        json={"address": address, "signature": signature, "nonce": nonce},
+    )
+    assert verify.status_code == 200
+
+    created = client.post("/v1/workspaces", json={"name": "Wallet org"})
+
+    assert created.status_code == 201, created.text
+    workspace_id = created.json()["data"]["id"]
+    assert STORE.get_credit_account(workspace_id).total_credits_microdollars == 0
 
 
 def test_wallet_verify_rejects_wrong_address(client: TestClient) -> None:

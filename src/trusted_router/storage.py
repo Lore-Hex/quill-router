@@ -169,7 +169,13 @@ class InMemoryStore:
     def delete_auth_session_by_raw(self, raw_token: str) -> bool:
         return self.auth_session_store.delete_by_raw(raw_token)
 
-    def create_workspace(self, owner_user_id: str, name: str) -> Workspace:
+    def create_workspace(
+        self,
+        owner_user_id: str,
+        name: str,
+        *,
+        trial_credit_microdollars: int | None = None,
+    ) -> Workspace:
         with self._lock:
             workspace = Workspace(id=str(uuid.uuid4()), name=name, owner_user_id=owner_user_id)
             self.workspaces[workspace.id] = workspace
@@ -178,7 +184,11 @@ class InMemoryStore:
             )
             self.credits[workspace.id] = CreditAccount(
                 workspace_id=workspace.id,
-                total_credits_microdollars=DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
+                total_credits_microdollars=(
+                    DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+                    if trial_credit_microdollars is None
+                    else trial_credit_microdollars
+                ),
             )
             return workspace
 
@@ -278,7 +288,11 @@ class InMemoryStore:
             new_id = str(uuid.uuid4())
             self.users[new_id] = User(id=new_id, email=None, wallet_address=normalized)
             self.user_ids_by_wallet[normalized] = new_id
-            self.create_workspace(owner_user_id=new_id, name="Personal Workspace")
+            self.create_workspace(
+                owner_user_id=new_id,
+                name="Personal Workspace",
+                trial_credit_microdollars=0,
+            )
             return self.users[new_id]
 
     def set_user_email(self, user_id: str, email: str) -> User | None:

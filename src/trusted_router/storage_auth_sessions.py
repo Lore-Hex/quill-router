@@ -2,8 +2,8 @@
 
 Sessions live keyed by an opaque ID; the raw token is salted+hashed and
 indexed by `lookup_hash` so the cookie value lookup is O(1) without ever
-storing the raw token. Sessions can be `pending_email` (wallet sign-in
-mid-flow) or `active`."""
+storing the raw token. Sessions can be `pending_email` (legacy optional
+wallet email attach) or `active`."""
 
 from __future__ import annotations
 
@@ -66,8 +66,8 @@ class InMemoryAuthSessions:
             return raw, session
 
     def upgrade(self, raw_token: str, *, state: str) -> AuthSession | None:
-        """Promote a pending session to active (or any other state). Returns
-        the updated session or None if the token is invalid/expired."""
+        """Change a session state. Returns the updated session or None if
+        the token is invalid/expired."""
         with self._lock:
             session = self.get_by_raw(raw_token)
             if session is None:

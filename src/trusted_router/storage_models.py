@@ -422,7 +422,7 @@ class AuthSession:
     workspace_id: str | None = None
     created_at: str = field(default_factory=iso_now)
     expires_at: str | None = None
-    state: str = "active"  # "active" | "pending_email" (for fresh wallet logins)
+    state: str = "active"  # "active" | "pending_email" (legacy wallet email attach)
 
 
 @dataclass

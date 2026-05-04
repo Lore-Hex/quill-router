@@ -1,16 +1,13 @@
-"""MetaMask SIWE sign-in + email-verification step for wallet users.
+"""MetaMask SIWE sign-in.
 
-Three states a wallet user can be in:
+Wallet users authenticate fully with a signed SIWE challenge. We do not
+require email before creating an active console session: crypto-native
+users expect wallet-only auth. The resulting workspace starts with $0
+credits; email/OAuth signup remains the path that gets the trial grant.
 
-1. Fresh — no row, no session. `/v1/auth/wallet/challenge` mints a SIWE
-   message; `/v1/auth/wallet/verify` validates the signature, creates a
-   user keyed by wallet address, mints a `pending_email` cookie session,
-   and tells the frontend to redirect to `/auth/wallet/email`.
-2. Wallet-authed but email-pending — has a pending session cookie,
-   visited `/auth/wallet/email`, submitted an email; we store it, mint a
-   24-hour magic-link token, send via SES.
-3. Active — clicked the link, hit `/auth/verify-email?token=…`, session
-   was upgraded in place. Console accessible.
+The `/auth/wallet/email` page remains as a legacy/optional email attach
+flow for old pending sessions, but new wallet logins no longer enter
+`pending_email`.
 """
 
 from __future__ import annotations
@@ -108,28 +105,32 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if recovered != body.address.strip().lower():
             raise api_error(400, "Signature does not match address", ErrorType.BAD_REQUEST)
 
-        existing_user = STORE.find_user_by_wallet(body.address)
-        if existing_user is None:
-            user = STORE.create_wallet_user(body.address)
-            redirect = "/auth/wallet/email"
-            session_state = "pending_email"
-        elif not existing_user.email_verified:
-            user = existing_user
-            redirect = "/auth/wallet/email"
-            session_state = "pending_email"
-        else:
-            user = existing_user
-            redirect = "/console/api-keys"
-            session_state = "active"
+        user = STORE.find_user_by_wallet(body.address) or STORE.create_wallet_user(body.address)
+        workspaces = STORE.list_workspaces_for_user(user.id)
+        workspace = workspaces[0] if workspaces else STORE.create_workspace(
+            user.id,
+            "Personal Workspace",
+            trial_credit_microdollars=0,
+        )
 
         raw_token, _ = STORE.create_auth_session(
             user_id=user.id,
             provider="metamask",
             label=body.address.lower(),
             ttl_seconds=settings.auth_session_ttl_seconds,
-            state=session_state,
+            workspace_id=workspace.id,
+            state="active",
         )
-        response = JSONResponse({"data": {"redirect": redirect, "state": session_state}})
+        response = JSONResponse(
+            {
+                "data": {
+                    "redirect": "/console/api-keys",
+                    "state": "active",
+                    "email_required": False,
+                    "workspace_id": workspace.id,
+                }
+            }
+        )
         set_session_cookie(response, raw_token, settings)
         return response
 

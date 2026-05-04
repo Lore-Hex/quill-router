@@ -27,7 +27,11 @@ def register_workspace_routes(router: APIRouter) -> None:
         if principal.user is None:
             raise api_error(403, "User auth is required to create workspaces", ErrorType.FORBIDDEN)
         body = await json_body(request)
-        workspace = STORE.create_workspace(principal.user.id, str(body.get("name") or "Workspace"))
+        workspace = STORE.create_workspace(
+            principal.user.id,
+            str(body.get("name") or "Workspace"),
+            trial_credit_microdollars=0 if principal.user.wallet_address else None,
+        )
         return JSONResponse({"data": workspace_shape(workspace)}, status_code=201)
 
     @router.get("/workspaces/{id}")

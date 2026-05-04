@@ -1,10 +1,10 @@
-"""Email verification landing page for wallet users.
+"""Email verification landing page.
 
-When a wallet user signs in via MetaMask we send them a magic link that
-points here. Clicking it consumes the one-shot token, marks the user's
-email verified, and upgrades their pending session to active. The
-response is HTML — they're in a browser tab from clicking a link in their
-email — and 302s them on to the welcome page.
+The current MetaMask sign-in path is wallet-only and does not require
+email. This route remains for optional email attach/change flows and for
+old pending-email wallet sessions. Clicking the link consumes the
+one-shot token, marks the user's email verified, and upgrades any
+pending session cookie in place.
 """
 
 from __future__ import annotations

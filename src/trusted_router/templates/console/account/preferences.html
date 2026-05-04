@@ -5,7 +5,13 @@
   <div class="panel-body">
     <table>
       <tbody>
-        <tr><th>Email</th><td>{{ user.email or 'not set' }} {% if user.email_verified %}<span class="pill good">verified</span>{% else %}<span class="pill warn">unverified</span>{% endif %}</td></tr>
+        <tr><th>Email</th><td>
+          {% if user.email %}
+          {{ user.email }} {% if user.email_verified %}<span class="pill good">verified</span>{% else %}<span class="pill warn">unverified</span>{% endif %}
+          {% else %}
+          not set
+          {% endif %}
+        </td></tr>
         <tr><th>Sign-in method</th><td>{{ provider }}</td></tr>
         {% if user.wallet_address %}
         <tr><th>Wallet</th><td><code>{{ user.wallet_address }}</code></td></tr>
