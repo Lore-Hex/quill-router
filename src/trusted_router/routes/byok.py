@@ -5,7 +5,8 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal
+from trusted_router.auth import ManagementPrincipal, SettingsDep
+from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
 from trusted_router.schemas import UpsertByokRequest
@@ -34,22 +35,41 @@ def register_byok_routes(router: APIRouter) -> None:
         provider: str,
         body: UpsertByokRequest,
         principal: ManagementPrincipal,
+        settings: SettingsDep,
     ) -> JSONResponse:
         slug = _require_byok_provider(provider)
         api_key = body.api_key or body.key
         secret_ref = body.secret_ref
         key_hint = body.key_hint
+        encrypted_secret = None
 
         if api_key is not None:
-            if secret_ref is None:
-                secret_ref = _default_byok_secret_ref(principal.workspace.id, slug)
+            if secret_ref is not None and secret_ref.strip() and not secret_ref.strip().startswith("byok://"):
+                raise api_error(
+                    400,
+                    "raw api_key uploads are stored as TrustedRouter BYOK envelopes; omit secret_ref",
+                    ErrorType.BAD_REQUEST,
+                )
+            secret_ref = _default_byok_secret_ref(principal.workspace.id, slug)
             if key_hint is None:
                 key_hint = _secret_hint(api_key)
+            encrypted_secret = encrypt_byok_secret(
+                api_key,
+                settings,
+                workspace_id=principal.workspace.id,
+                provider=slug,
+            )
         elif secret_ref is None:
             raise api_error(400, "api_key or secret_ref is required", ErrorType.BAD_REQUEST)
 
         if not secret_ref:
             raise api_error(400, "secret_ref must be a non-empty string", ErrorType.BAD_REQUEST)
+        if encrypted_secret is None and secret_ref.startswith("byok://"):
+            raise api_error(
+                400,
+                "byok:// refs are generated from raw api_key uploads",
+                ErrorType.BAD_REQUEST,
+            )
         if _looks_like_raw_secret(secret_ref):
             raise api_error(
                 400,
@@ -63,6 +83,7 @@ def register_byok_routes(router: APIRouter) -> None:
             provider=slug,
             secret_ref=secret_ref,
             key_hint=key_hint,
+            encrypted_secret=encrypted_secret,
         )
         return JSONResponse(
             {"data": byok_provider_shape(config)},
@@ -93,7 +114,7 @@ def _require_byok_provider(provider: str) -> str:
 
 
 def _default_byok_secret_ref(workspace_id: str, provider: str) -> str:
-    return f"secretmanager://trustedrouter/workspaces/{workspace_id}/providers/{provider}"
+    return f"byok://workspaces/{workspace_id}/providers/{provider}"
 
 
 def _secret_hint(api_key: str) -> str:

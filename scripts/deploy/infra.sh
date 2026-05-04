@@ -11,6 +11,7 @@ gc services enable \
   artifactregistry.googleapis.com \
   run.googleapis.com \
   secretmanager.googleapis.com \
+  cloudkms.googleapis.com \
   spanner.googleapis.com \
   bigtableadmin.googleapis.com \
   cloudbuild.googleapis.com
@@ -43,3 +44,21 @@ if ! gc bigtable instances tables describe "$BIGTABLE_GENERATION_TABLE" --instan
     --instance="$BIGTABLE_INSTANCE_ID" \
     --column-families=m
 fi
+
+log "ensuring BYOK envelope KMS key"
+if ! gc kms keyrings describe "$KMS_KEYRING_ID" --location "$REGION" >/dev/null 2>&1; then
+  gc kms keyrings create "$KMS_KEYRING_ID" --location "$REGION"
+fi
+if ! gc kms keys describe "$BYOK_KMS_KEY_ID" \
+    --keyring "$KMS_KEYRING_ID" --location "$REGION" >/dev/null 2>&1; then
+  gc kms keys create "$BYOK_KMS_KEY_ID" \
+    --keyring "$KMS_KEYRING_ID" \
+    --location "$REGION" \
+    --purpose=encryption
+fi
+gc kms keys add-iam-policy-binding "$BYOK_KMS_KEY_ID" \
+  --keyring "$KMS_KEYRING_ID" \
+  --location "$REGION" \
+  --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
+  --role="roles/cloudkms.cryptoKeyEncrypter" \
+  --quiet >/dev/null

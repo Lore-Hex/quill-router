@@ -901,6 +901,23 @@ wheels = [
 ]
 
 [[package]]
+name = "google-cloud-kms"
+version = "3.12.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpc-google-iam-v1" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/94/8d9f04fc95c5617daeafe76cffc2ee6d666102f89d45a302c1346bc34c94/google_cloud_kms-3.12.0.tar.gz", hash = "sha256:c9445aac1e35a9f76efb4a7d57c9a2aa7b73034b6afec339ba0862fe4993ff25", size = 440013, upload-time = "2026-03-26T22:17:24.254Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/b6/d5ee113aeacc91d42be2fcb0fda4a6edb5f28887892e8d7a7d8c8306883d/google_cloud_kms-3.12.0-py3-none-any.whl", hash = "sha256:93ae05ff3a3de49ced4f234a5da0d118cf29b5dfcb9f790f85ccdaeab03eeadc", size = 353800, upload-time = "2026-03-26T22:16:01.543Z" },
+]
+
+[[package]]
 name = "google-cloud-monitoring"
 version = "2.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2302,6 +2319,7 @@ dependencies = [
     { name = "eth-account" },
     { name = "fastapi" },
     { name = "google-cloud-bigtable" },
+    { name = "google-cloud-kms" },
     { name = "google-cloud-spanner" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -2331,6 +2349,7 @@ requires-dist = [
     { name = "eth-account", specifier = ">=0.13.7" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-cloud-bigtable", specifier = ">=2.26.0" },
+    { name = "google-cloud-kms", specifier = ">=3.0.0" },
     { name = "google-cloud-spanner", specifier = ">=3.50.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.0" },

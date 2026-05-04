@@ -17,6 +17,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CreditAccount,
     EmailSendBlock,
+    EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
     Member,
@@ -409,12 +410,14 @@ class InMemoryStore:
         provider: str,
         secret_ref: str,
         key_hint: str | None,
+        encrypted_secret: EncryptedSecretEnvelope | None = None,
     ) -> ByokProviderConfig:
         return self.byok_store.upsert(
             workspace_id=workspace_id,
             provider=provider,
             secret_ref=secret_ref,
             key_hint=key_hint,
+            encrypted_secret=encrypted_secret,
         )
 
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:

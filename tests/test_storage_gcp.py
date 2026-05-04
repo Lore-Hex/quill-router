@@ -5,6 +5,8 @@ from dataclasses import asdict
 from typing import Any
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.byok_crypto import decrypt_byok_secret, encrypt_byok_secret
+from trusted_router.config import Settings
 from trusted_router.storage import ApiKey, Generation, ProviderBenchmarkSample
 from trusted_router.storage_gcp import SpannerBigtableStore
 from trusted_router.storage_gcp_activity_index import (
@@ -136,6 +138,44 @@ def test_gcp_byok_upsert_updates_secret_ref_and_hint() -> None:
     stored = json.loads(db.rows[("byok", "ws_1#mistral")].body)
     assert stored["secret_ref"] == "secretmanager://new"  # noqa: S105 - placeholder secret ref.
     assert stored["updated_at"] is not None
+
+
+def test_gcp_byok_upsert_persists_encrypted_envelope_without_raw_key() -> None:
+    store, db, _ = make_fake_store()
+    settings = Settings(environment="test")
+    raw_key = "sk-storage-gcp-byok-secret-1111"
+    envelope = encrypt_byok_secret(
+        raw_key,
+        settings,
+        workspace_id="ws_1",
+        provider="openai",
+    )
+
+    config = store.upsert_byok_provider(
+        workspace_id="ws_1",
+        provider="openai",
+        secret_ref="byok://workspaces/ws_1/providers/openai",  # noqa: S106 - encrypted ref.
+        key_hint="sk-sto...1111",
+        encrypted_secret=envelope,
+    )
+
+    serialized = "\n".join(row.body for row in db.rows.values())
+    assert raw_key not in serialized
+    assert config.encrypted_secret is not None
+    assert decrypt_byok_secret(
+        config.encrypted_secret,
+        settings,
+        workspace_id="ws_1",
+        provider="openai",
+    ) == raw_key
+    refetched = store.get_byok_provider("ws_1", "openai")
+    assert refetched is not None and refetched.encrypted_secret is not None
+    assert decrypt_byok_secret(
+        refetched.encrypted_secret,
+        settings,
+        workspace_id="ws_1",
+        provider="openai",
+    ) == raw_key
 
 
 def test_gcp_verification_tokens_are_one_time_wrong_purpose_safe_and_hash_only() -> None:

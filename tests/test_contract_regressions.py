@@ -7,6 +7,10 @@ from trusted_router.main import create_app
 from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 from trusted_router.storage import STORE
 
+TEST_BYOK_KMS_KEY_NAME = (
+    "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
+)
+
 
 def test_catalog_prices_keep_integer_discount_and_exact_openrouter_decimal(client: TestClient) -> None:
     models = client.get("/v1/models")
@@ -205,6 +209,7 @@ def _production_app():
             spanner_instance_id="trusted-router",
             spanner_database_id="trusted-router",
             bigtable_instance_id="trusted-router-logs",
+            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         ),
         configure_store_arg=False,
         init_observability=False,

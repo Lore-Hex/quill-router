@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from trusted_router.auth import SettingsDep, is_api_key_expired
+from trusted_router.byok_crypto import encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
@@ -125,6 +126,9 @@ def register(router: APIRouter) -> None:
                 **money_pair("estimated_cost", estimate),
                 "credit_reservation_id": credit_reservation_id,
                 "byok_secret_ref": byok_config.secret_ref if byok_config else None,
+                "byok_encrypted_secret": (
+                    encrypted_secret_payload(byok_config.encrypted_secret) if byok_config else None
+                ),
                 "byok_key_hint": byok_config.key_hint if byok_config else None,
                 "content_storage_enabled": False,
                 "region": region,
@@ -265,6 +269,7 @@ def _gateway_candidate_payload(
         "provider_name": PROVIDERS[endpoint.provider].name,
         "usage_type": usage_type.value,
         "byok_secret_ref": byok_config.secret_ref if byok_config else None,
+        "byok_encrypted_secret": encrypted_secret_payload(byok_config.encrypted_secret) if byok_config else None,
         "byok_key_hint": byok_config.key_hint if byok_config else None,
         "region": region,
     }

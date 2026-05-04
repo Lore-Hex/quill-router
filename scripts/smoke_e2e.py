@@ -102,6 +102,8 @@ def main() -> int:
     )["data"]
     if byok["key_hint"] != "csk-te...9999" or "csk-test-secret-value-9999" in json.dumps(byok):
         raise SmokeError("BYOK key handling leaked raw provider key")
+    if byok.get("secret_storage") != "envelope" or not byok["secret_ref"].startswith("byok://"):
+        raise SmokeError("BYOK raw key was not stored as an encrypted envelope")
 
     internal_headers = {}
     if INTERNAL_TOKEN:
@@ -119,6 +121,8 @@ def main() -> int:
     )["data"]
     if authz["usage_type"] != "BYOK" or authz["byok_key_hint"] != "csk-te...9999":
         raise SmokeError("gateway authorization did not return expected BYOK metadata")
+    if not authz.get("byok_encrypted_secret"):
+        raise SmokeError("gateway authorization did not include encrypted BYOK envelope")
 
     settle = request(
         "POST",

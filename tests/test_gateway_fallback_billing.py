@@ -271,7 +271,9 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
     assert data["usage_type"] == "Credits"
     assert data["byok_secret_ref"] is None
     assert data["byok_key_hint"] is None
+    assert data["byok_encrypted_secret"] is None
     assert data["route_candidates"][0]["byok_secret_ref"] is None
+    assert data["route_candidates"][0]["byok_encrypted_secret"] is None
     assert [item["usage_type"] for item in data["route_candidates"]] == ["Credits", "BYOK"]
 
 
@@ -310,6 +312,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
             "provider_name": "Kimi",
             "usage_type": "BYOK",
             "byok_secret_ref": "env://KIMI_API_KEY",
+            "byok_encrypted_secret": None,
             "byok_key_hint": "kim...1234",
             "region": "us-central1",
         }

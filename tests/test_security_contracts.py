@@ -20,6 +20,10 @@ from trusted_router.sentry_config import (
 )
 from trusted_router.storage import STORE
 
+TEST_BYOK_KMS_KEY_NAME = (
+    "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
+)
+
 
 def test_bootstrap_management_key_is_opt_in_and_idempotent() -> None:
     assert bootstrap_management_key(Settings(environment="test")) is None
@@ -97,6 +101,7 @@ def test_sentry_test_route_is_disabled_in_production_unless_explicitly_enabled()
         spanner_instance_id="trusted-router",
         spanner_database_id="trusted-router",
         bigtable_instance_id="trusted-router-logs",
+        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     disabled = TestClient(
         create_app(
@@ -144,6 +149,7 @@ def test_production_rejects_spoofable_user_header_auth() -> None:
                 spanner_instance_id="trusted-router",
                 spanner_database_id="trusted-router",
                 bigtable_instance_id="trusted-router-logs",
+                byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
             ),
             configure_store_arg=False,
             init_observability=False,

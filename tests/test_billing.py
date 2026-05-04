@@ -323,6 +323,44 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
     assert STORE.api_keys.keys[key_hash].byok_usage_microdollars == 0
 
 
+def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    raw_key = "csk-live-user-owned-key-9999"
+    byok = client.put(
+        "/v1/byok/providers/cerebras",
+        headers=user_headers,
+        json={"api_key": raw_key},
+    )
+    assert byok.status_code == 201, byok.text
+    created = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={"name": "gateway encrypted byok", "limit": 0.01, "include_byok_in_limit": True},
+    ).json()
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "cerebras/llama3.1-8b",
+            "provider": {"usage": "byok"},
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["usage_type"] == "BYOK"
+    assert data["byok_secret_ref"].startswith("byok://")
+    assert data["byok_key_hint"] == "csk-li...9999"
+    assert data["byok_encrypted_secret"]["algorithm"].startswith("TR-BYOK-ENVELOPE")
+    assert data["byok_encrypted_secret"]["ciphertext"]
+    assert raw_key not in str(data)
+
+
 def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], client) -> None:
     created = client.post("/v1/keys", headers=user_headers, json={"name": "disabled gateway"}).json()
     key_hash = created["data"]["hash"]

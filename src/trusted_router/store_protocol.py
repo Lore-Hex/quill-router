@@ -18,6 +18,7 @@ from trusted_router.storage_models import (
     ByokProviderConfig,
     CreditAccount,
     EmailSendBlock,
+    EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
     Member,
@@ -205,6 +206,7 @@ class Store(Protocol):
         provider: str,
         secret_ref: str,
         key_hint: str | None,
+        encrypted_secret: EncryptedSecretEnvelope | None = ...,
     ) -> ByokProviderConfig: ...
     def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]: ...
     def get_byok_provider(

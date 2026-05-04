@@ -90,13 +90,28 @@ class ApiKey:
 
 
 @dataclass
+class EncryptedSecretEnvelope:
+    algorithm: str
+    key_ref: str
+    encrypted_dek: str
+    dek_nonce: str
+    ciphertext: str
+    nonce: str
+
+
+@dataclass
 class ByokProviderConfig:
     workspace_id: str
     provider: str
     secret_ref: str
     key_hint: str | None = None
+    encrypted_secret: EncryptedSecretEnvelope | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_secret, dict):
+            self.encrypted_secret = EncryptedSecretEnvelope(**self.encrypted_secret)
 
 
 @dataclass

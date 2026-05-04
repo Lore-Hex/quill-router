@@ -2,13 +2,18 @@
 
 Bring-your-own-key provider configs (Anthropic, OpenAI, Mistral, etc.)
 keyed by (workspace_id, provider). One row per workspace per provider;
-upsert preserves the original created_at, replaces secret_ref + hint."""
+upsert preserves the original created_at, replaces secret_ref, hint, and
+optional envelope-encrypted secret material."""
 
 from __future__ import annotations
 
 import threading
 
-from trusted_router.storage_models import ByokProviderConfig, iso_now
+from trusted_router.storage_models import (
+    ByokProviderConfig,
+    EncryptedSecretEnvelope,
+    iso_now,
+)
 
 
 class InMemoryByok:
@@ -26,6 +31,7 @@ class InMemoryByok:
         provider: str,
         secret_ref: str,
         key_hint: str | None,
+        encrypted_secret: EncryptedSecretEnvelope | None = None,
     ) -> ByokProviderConfig:
         with self._lock:
             existing = self.providers.get((workspace_id, provider))
@@ -35,11 +41,13 @@ class InMemoryByok:
                     provider=provider,
                     secret_ref=secret_ref,
                     key_hint=key_hint,
+                    encrypted_secret=encrypted_secret,
                 )
                 self.providers[(workspace_id, provider)] = config
                 return config
             existing.secret_ref = secret_ref
             existing.key_hint = key_hint
+            existing.encrypted_secret = encrypted_secret
             existing.updated_at = iso_now()
             return existing
 

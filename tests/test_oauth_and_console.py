@@ -683,6 +683,36 @@ def test_console_byok_form_stores_only_secret_reference_and_hint(
     assert "MISTRAL_API_KEY" not in page.text
 
 
+def test_console_byok_raw_key_is_envelope_encrypted(
+    console_session: tuple[TestClient, str],
+    test_settings,
+) -> None:
+    from trusted_router.byok_crypto import decrypt_byok_secret
+
+    client, _ = console_session
+    raw_key = "sk-ant-console-user-key-4321"
+    resp = client.post(
+        "/console/byok",
+        data={"provider": "anthropic", "api_key": raw_key},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    workspace_id = next(iter(STORE.workspaces))
+    config = STORE.get_byok_provider(workspace_id, "anthropic")
+    assert config is not None
+    assert config.secret_ref.startswith("byok://")
+    assert config.key_hint == "sk-ant...4321"
+    assert config.encrypted_secret is not None
+    assert raw_key not in str(STORE.byok_store.providers)
+    assert decrypt_byok_secret(
+        config.encrypted_secret,
+        test_settings,
+        workspace_id=workspace_id,
+        provider="anthropic",
+    ) == raw_key
+
+
 def test_console_activity_displays_microdollar_costs(
     console_session: tuple[TestClient, str],
 ) -> None:

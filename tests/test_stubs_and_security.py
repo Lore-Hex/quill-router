@@ -12,6 +12,10 @@ from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE
 
+TEST_BYOK_KMS_KEY_NAME = (
+    "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
+)
+
 
 def test_stubbed_endpoints_are_explicit(client: TestClient) -> None:
     cases = [
@@ -249,6 +253,7 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
             spanner_instance_id="trusted-router",
             spanner_database_id="trusted-router",
             bigtable_instance_id="trusted-router-logs",
+            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         )
     )
 
@@ -331,6 +336,7 @@ def test_production_config_fails_closed() -> None:
             stripe_secret_key=stripe_key,
             sentry_dsn=sentry_dsn,
             storage_backend="memory",
+            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         )
     with pytest.raises(ValidationError):
         Settings(
@@ -340,6 +346,7 @@ def test_production_config_fails_closed() -> None:
             stripe_secret_key=stripe_key,
             sentry_dsn=sentry_dsn,
             storage_backend="spanner-bigtable",
+            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         )
 
 
@@ -359,6 +366,7 @@ def test_production_control_plane_does_not_register_inference_routes() -> None:
             spanner_instance_id="trusted-router",
             spanner_database_id="trusted-router",
             bigtable_instance_id="trusted-router-logs",
+            byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
         ),
         configure_store_arg=False,
         init_observability=False,

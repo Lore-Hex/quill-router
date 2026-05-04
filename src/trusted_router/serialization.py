@@ -81,6 +81,7 @@ def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
         "provider_name": PROVIDERS[config.provider].name,
         "configured": True,
         "secret_ref": config.secret_ref,
+        "secret_storage": "envelope" if config.encrypted_secret is not None else "external_ref",
         "key_hint": config.key_hint,
         "created_at": config.created_at,
         "updated_at": config.updated_at,

@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from trusted_router.storage_gcp_codec import byok_id
 from trusted_router.storage_gcp_io import SpannerIO
-from trusted_router.storage_models import ByokProviderConfig, iso_now
+from trusted_router.storage_models import (
+    ByokProviderConfig,
+    EncryptedSecretEnvelope,
+    iso_now,
+)
 
 
 class SpannerByok:
@@ -22,6 +26,7 @@ class SpannerByok:
         provider: str,
         secret_ref: str,
         key_hint: str | None,
+        encrypted_secret: EncryptedSecretEnvelope | None = None,
     ) -> ByokProviderConfig:
         existing = self.get(workspace_id, provider)
         if existing is None:
@@ -30,11 +35,13 @@ class SpannerByok:
                 provider=provider,
                 secret_ref=secret_ref,
                 key_hint=key_hint,
+                encrypted_secret=encrypted_secret,
             )
         else:
             config = existing
             config.secret_ref = secret_ref
             config.key_hint = key_hint
+            config.encrypted_secret = encrypted_secret
             config.updated_at = iso_now()
         self._io.write_entity("byok", byok_id(workspace_id, provider), config)
         return config

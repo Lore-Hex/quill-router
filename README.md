@@ -76,8 +76,12 @@ explicit patent grant.
 - Prompt and output content are never stored.
 - Usage logs contain metadata only.
 - API keys are stored as salted SHA-256 hashes with opaque key IDs.
-- BYOK provider keys are never stored in the control-plane state. The API stores
-  Secret Manager/environment references and a short first/last key hint only.
+- User-submitted BYOK provider keys are stored as envelope-encrypted ciphertext
+  rows, not one Secret Manager object per key. In production, Cloud KMS wraps
+  the per-key DEK; external `env://...` references remain supported for
+  operator-managed keys.
+- BYOK raw keys are one-time input only; public/control-plane responses expose
+  a short first/last key hint and encrypted reference metadata, never plaintext.
 - Production config fails closed without an internal gateway token, signed
   Stripe webhook secret, and a non-memory storage backend.
 - Production control-plane apps do not register `/chat/completions`,

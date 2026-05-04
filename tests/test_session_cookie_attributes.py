@@ -16,6 +16,10 @@ from fastapi.testclient import TestClient
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 
+TEST_BYOK_KMS_KEY_NAME = (
+    "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
+)
+
 
 def _parse_cookies(set_cookie_header: str) -> dict[str, dict[str, str | bool]]:
     """Tiny `Set-Cookie` parser. Returns {cookie_name: {attr: value}}.
@@ -70,6 +74,7 @@ def production_settings() -> Settings:
         google_client_id="g-prod",
         google_client_secret="g-prod-secret",  # noqa: S106 - test fixture.
         google_oauth_redirect_url="https://trustedrouter.com/google_oauth_callback",
+        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
 
 
@@ -119,6 +124,7 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
         spanner_instance_id="i",
         spanner_database_id="d",
         bigtable_instance_id="b",
+        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
     )
     response = Response()
     set_session_cookie(response, "trsess-v1-test-secret-token", settings)  # noqa: S106 - test fixture.

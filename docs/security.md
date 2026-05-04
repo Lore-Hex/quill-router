@@ -13,12 +13,22 @@ returns `content_not_stored`.
 
 The management API accepts BYOK setup as either a raw `api_key` or a
 `secret_ref`. Raw keys are treated as one-time input: the control plane derives
-a short first/last display hint and stores only a Secret Manager-style
-reference. Stored BYOK config must never contain raw provider keys.
+a short first/last display hint, creates a random data-encryption key (DEK),
+encrypts the provider key with AES-256-GCM, wraps the DEK with the configured
+BYOK envelope key, and stores only ciphertext + non-secret metadata. In
+production the DEK wrap is a Cloud KMS Encrypt call; local/test can use an
+in-process wrapper for deterministic CI. Stored BYOK config must never contain
+raw provider keys.
 
-The attested gateway contract returns only the secret reference and key hint
-needed for routing. Prompt/output content stays in the gateway path and is not
-included in authorize, settle, refund, activity, or generation metadata calls.
+At production scale BYOK keys are normal encrypted database rows, not one GCP
+Secret Manager secret per customer key. The deploy infra provisions a single
+KMS crypto key for the envelope wrap, so Secret Manager is not the per-user BYOK
+object store.
+
+The attested gateway contract returns the encrypted BYOK envelope, secret
+reference, and key hint needed for routing. Prompt/output content stays in the
+gateway path and is not included in authorize, settle, refund, activity, or
+generation metadata calls.
 
 ## API Keys
 

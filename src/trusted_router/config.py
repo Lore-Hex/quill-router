@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
     bootstrap_management_key: str | None = None
+    byok_kms_key_name: str | None = None
+    byok_envelope_key_b64: str | None = None
+    byok_envelope_key_ref: str = "trustedrouter/byok-envelope-key/v1"
 
     auth_session_ttl_seconds: int = 60 * 60 * 24 * 30
     oauth_authorization_code_ttl_seconds: int = 10 * 60
@@ -141,6 +144,8 @@ class Settings(BaseSettings):
                 missing.append("TR_SPANNER_DATABASE_ID")
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
+        if not self.byok_kms_key_name:
+            missing.append("TR_BYOK_KMS_KEY_NAME")
         # OAuth providers are independently optional in production. We DO
         # enforce that no provider is half-configured: a client_id without
         # the matching client_secret would cause silent runtime failures.
@@ -188,6 +193,9 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "stripe_secret_key",
     "sentry_dsn",
     "bootstrap_management_key",
+    "byok_kms_key_name",
+    "byok_envelope_key_b64",
+    "byok_envelope_key_ref",
 )
 
 

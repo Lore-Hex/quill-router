@@ -575,7 +575,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
 def test_byok_provider_config_never_stores_or_returns_raw_key(
     client: TestClient,
     user_headers: dict[str, str],
+    test_settings,
 ) -> None:
+    from trusted_router.byok_crypto import decrypt_byok_secret
     from trusted_router.storage import STORE
 
     raw_key = "csk-test-secret-value-1234"
@@ -588,18 +590,34 @@ def test_byok_provider_config_never_stores_or_returns_raw_key(
     payload = upsert.json()["data"]
     assert payload["provider"] == "cerebras"
     assert payload["key_hint"] == "csk-te...1234"
-    assert payload["secret_ref"].startswith("secretmanager://")
+    assert payload["secret_ref"].startswith("byok://")
+    assert payload["secret_storage"] == "envelope"  # noqa: S105 - storage kind, not a secret.
     assert raw_key not in str(payload)
     assert raw_key not in str(STORE.byok_store.providers)
+    config = STORE.get_byok_provider(payload["workspace_id"], "cerebras") if "workspace_id" in payload else None
+    if config is None:
+        workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+        config = STORE.get_byok_provider(workspace_id, "cerebras")
+    assert config is not None
+    assert config.encrypted_secret is not None
+    assert config.secret_ref == payload["secret_ref"]
+    assert decrypt_byok_secret(
+        config.encrypted_secret,
+        test_settings,
+        workspace_id=config.workspace_id,
+        provider=config.provider,
+    ) == raw_key
 
     listed = client.get("/v1/byok/providers", headers=user_headers)
     assert listed.status_code == 200
     assert listed.json()["data"][0]["provider"] == "cerebras"
+    assert listed.json()["data"][0]["secret_storage"] == "envelope"  # noqa: S105
     assert raw_key not in str(listed.json())
 
     fetched = client.get("/v1/byok/providers/cerebras", headers=user_headers)
     assert fetched.status_code == 200
     assert fetched.json()["data"]["key_hint"] == "csk-te...1234"
+    assert "encrypted_secret" not in str(fetched.json())
 
 
 def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
