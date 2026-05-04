@@ -80,15 +80,14 @@ class Settings(BaseSettings):
 
     stablecoin_checkout_enabled: bool = True
     multi_region_enabled: bool = True
-    # Cloud Run regions the attested gateway is deployed to. Cloud Run
-    # scales to zero so adding more is essentially free at idle. Spanner
-    # + Bigtable stay in `primary_region`; cross-region requests hit
-    # the primary's database tier with the usual ~30-100ms penalty
-    # until we justify a second instance.
-    regions: str = (
-        "us-central1,us-east4,us-west1,northamerica-northeast1,southamerica-east1,"
-        "europe-west2,europe-west4,asia-northeast1,asia-southeast1,australia-southeast1"
-    )
+    # Attested gateway regions. Each entry is a Confidential Space VM
+    # that terminates TLS *inside the enclave* — the trust property the
+    # product is sold on (no third party ever sees prompt plaintext, not
+    # even GCP edge). VMs run 24/7 (~$144/mo each), so we only enumerate
+    # regions where we've actually deployed a VM. Adding a region here
+    # without an actual VM in that region is dishonest — the cert SAN
+    # mismatch breaks TLS and the attestation page lies.
+    regions: str = "us-central1,europe-west4"
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
     auto_model_order: str = (

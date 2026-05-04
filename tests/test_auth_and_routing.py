@@ -320,15 +320,17 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
     ]
 
 
-def test_default_regions_include_eu_region(client: TestClient) -> None:
+def test_default_regions_only_list_actual_attested_deployments(client: TestClient) -> None:
+    """We only enumerate regions where a Confidential Space VM is
+    actually deployed. Listing aspirational regions broke TLS for
+    callers (cert SAN mismatch) and weakened the trust story —
+    customers were sold "10 attested regions" but 8 were CNAME aliases
+    to us-central1 with broken TLS. Today: 2 honest regions."""
     response = client.get("/v1/regions")
 
     assert response.status_code == 200
     ids = [item["id"] for item in response.json()["data"]]
-    # The default region list is the marketing-facing set the home-page
-    # map renders. Pin the must-haves rather than the exact list so adding
-    # a region doesn't trip the test.
     assert ids[0] == "us-central1", "primary region must lead the list"
-    for required in ("us-central1", "europe-west4", "asia-northeast1", "australia-southeast1"):
-        assert required in ids, f"missing required region {required}"
+    assert "us-central1" in ids
+    assert "europe-west4" in ids
     assert response.json()["trustedrouter"]["primary_region"] == "us-central1"
