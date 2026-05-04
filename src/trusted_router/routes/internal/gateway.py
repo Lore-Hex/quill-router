@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from trusted_router.auth import SettingsDep, is_api_key_expired
-from trusted_router.byok_crypto import encrypted_secret_payload
+from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
@@ -125,11 +125,7 @@ def register(router: APIRouter) -> None:
                 "limit_usage_type": reservation_usage_type.value,
                 **money_pair("estimated_cost", estimate),
                 "credit_reservation_id": credit_reservation_id,
-                "byok_secret_ref": byok_config.secret_ref if byok_config else None,
-                "byok_encrypted_secret": (
-                    encrypted_secret_payload(byok_config.encrypted_secret) if byok_config else None
-                ),
-                "byok_key_hint": byok_config.key_hint if byok_config else None,
+                **_gateway_byok_payload(byok_config, workspace.id, endpoint.provider),
                 "content_storage_enabled": False,
                 "region": region,
                 "regions": region_payload(settings),
@@ -268,10 +264,28 @@ def _gateway_candidate_payload(
         "provider": endpoint.provider,
         "provider_name": PROVIDERS[endpoint.provider].name,
         "usage_type": usage_type.value,
-        "byok_secret_ref": byok_config.secret_ref if byok_config else None,
-        "byok_encrypted_secret": encrypted_secret_payload(byok_config.encrypted_secret) if byok_config else None,
-        "byok_key_hint": byok_config.key_hint if byok_config else None,
+        **_gateway_byok_payload(byok_config, workspace_id, endpoint.provider),
         "region": region,
+    }
+
+
+def _gateway_byok_payload(byok_config: Any | None, workspace_id: str, provider: str) -> dict[str, Any]:
+    if byok_config is None:
+        return {
+            "byok_secret_ref": None,
+            "byok_encrypted_secret": None,
+            "byok_cache_key": None,
+            "byok_key_hint": None,
+        }
+    return {
+        "byok_secret_ref": byok_config.secret_ref,
+        "byok_encrypted_secret": encrypted_secret_payload(byok_config.encrypted_secret),
+        "byok_cache_key": byok_cache_key(
+            byok_config.encrypted_secret,
+            workspace_id=workspace_id,
+            provider=provider,
+        ),
+        "byok_key_hint": byok_config.key_hint,
     }
 
 

@@ -80,6 +80,10 @@ explicit patent grant.
   rows, not one Secret Manager object per key. In production, Cloud KMS wraps
   the per-key DEK; external `env://...` references remain supported for
   operator-managed keys.
+- Gateway authorizations include a non-secret `byok_cache_key` for encrypted
+  BYOK envelopes. Attested gateways use it for short TTL, memory-only decrypted
+  key caching; BYOK rotation changes the key and delete stops returning the
+  envelope.
 - BYOK raw keys are one-time input only; public/control-plane responses expose
   a short first/last key hint and encrypted reference metadata, never plaintext.
 - Production config fails closed without an internal gateway token, signed

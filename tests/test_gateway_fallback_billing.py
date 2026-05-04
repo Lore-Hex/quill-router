@@ -313,6 +313,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
             "usage_type": "BYOK",
             "byok_secret_ref": "env://KIMI_API_KEY",
             "byok_encrypted_secret": None,
+            "byok_cache_key": None,
             "byok_key_hint": "kim...1234",
             "region": "us-central1",
         }

@@ -360,8 +360,10 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
     assert data["usage_type"] == "BYOK"
     assert data["byok_secret_ref"].startswith("byok://")
     assert data["byok_key_hint"] == "csk-li...9999"
+    assert data["byok_cache_key"].startswith("byokcache:v1:")
     assert data["byok_encrypted_secret"]["algorithm"].startswith("TR-BYOK-ENVELOPE")
     assert data["byok_encrypted_secret"]["ciphertext"]
+    assert data["route_candidates"][0]["byok_cache_key"] == data["byok_cache_key"]
     assert raw_key not in str(data)
     assert decrypt_byok_secret(
         EncryptedSecretEnvelope(**data["byok_encrypted_secret"]),
@@ -369,6 +371,64 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
         workspace_id=data["workspace_id"],
         provider="cerebras",
     ) == raw_key
+
+
+def test_internal_gateway_byok_cache_key_changes_on_rotation(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    first_key = "csk-live-user-owned-key-1111"
+    rotated_key = "csk-live-user-owned-key-2222"
+    assert client.put(
+        "/v1/byok/providers/cerebras",
+        headers=user_headers,
+        json={"api_key": first_key},
+    ).status_code == 201
+    created = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={"name": "gateway byok rotation", "limit": 0.02, "include_byok_in_limit": True},
+    ).json()
+
+    def authorize_cache_key() -> str:
+        resp = client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": created["data"]["hash"],
+                "model": "cerebras/llama3.1-8b",
+                "provider": {"usage": "byok"},
+                "estimated_input_tokens": 1,
+                "max_output_tokens": 1,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["byok_cache_key"].startswith("byokcache:v1:")
+        assert rotated_key not in str(data)
+        assert first_key not in str(data)
+        return data["byok_cache_key"]
+
+    first_cache_key = authorize_cache_key()
+    assert client.put(
+        "/v1/byok/providers/cerebras",
+        headers=user_headers,
+        json={"api_key": rotated_key},
+    ).status_code == 200
+
+    assert authorize_cache_key() != first_cache_key
+    assert client.delete("/v1/byok/providers/cerebras", headers=user_headers).status_code == 200
+    deleted = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "cerebras/llama3.1-8b",
+            "provider": {"usage": "byok"},
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert deleted.status_code == 400
+    assert deleted.json()["error"]["type"] == "provider_not_supported"
 
 
 def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], client) -> None:

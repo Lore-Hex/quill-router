@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import secrets
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -74,6 +75,36 @@ def encrypted_secret_payload(envelope: EncryptedSecretEnvelope | None) -> dict[s
         "ciphertext": envelope.ciphertext,
         "nonce": envelope.nonce,
     }
+
+
+def byok_cache_key(
+    envelope: EncryptedSecretEnvelope | None,
+    *,
+    workspace_id: str,
+    provider: str,
+) -> str | None:
+    """Stable, non-secret cache key for one encrypted BYOK envelope version.
+
+    Gateways use this to cache decrypted BYOK material briefly in enclave
+    memory. A raw-key rotation creates a new ciphertext/DEK, therefore a new
+    cache key; deleting BYOK stops returning an envelope at authorization time.
+    """
+    if envelope is None:
+        return None
+    digest = hashlib.sha256()
+    for part in (
+        workspace_id,
+        provider,
+        envelope.algorithm,
+        envelope.key_ref,
+        envelope.encrypted_dek,
+        envelope.dek_nonce,
+        envelope.ciphertext,
+        envelope.nonce,
+    ):
+        digest.update(part.encode("utf-8"))
+        digest.update(b"\x00")
+    return "byokcache:v1:" + digest.hexdigest()
 
 
 def _wrapping_key(settings: Settings) -> bytes:

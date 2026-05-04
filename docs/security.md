@@ -26,9 +26,16 @@ KMS crypto key for the envelope wrap, so Secret Manager is not the per-user BYOK
 object store.
 
 The attested gateway contract returns the encrypted BYOK envelope, secret
-reference, and key hint needed for routing. Prompt/output content stays in the
-gateway path and is not included in authorize, settle, refund, activity, or
-generation metadata calls.
+reference, key hint, and a non-secret `byok_cache_key` needed for routing.
+Prompt/output content stays in the gateway path and is not included in
+authorize, settle, refund, activity, or generation metadata calls.
+
+Gateways should decrypt BYOK envelopes only inside the attested runtime and
+keep the resulting provider key in short-lived process memory. The cache key is
+derived from the workspace, provider, and encrypted envelope bytes; rotating a
+BYOK key produces a different cache key and forces a new KMS unwrap. Deleting a
+BYOK key stops returning an envelope in `/internal/gateway/authorize`, so stale
+cache entries are no longer reachable and expire by TTL.
 
 ## API Keys
 
