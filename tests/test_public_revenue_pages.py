@@ -24,6 +24,22 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert "Continue with MetaMask" in response.text
 
 
+def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
+    paths = [
+        "/compare/openrouter",
+        "/compare/vercel-ai-gateway",
+        "/compare/litellm",
+        "/docs/migrate-from-openrouter",
+        "/security",
+        "/models",
+    ]
+
+    for path in paths:
+        assert client.head(path).status_code == 200
+        slash_response = client.get(f"{path}/", follow_redirects=False)
+        assert slash_response.status_code == 200
+
+
 def test_public_models_page_does_not_require_api_key(client: TestClient) -> None:
     response = client.get("/models")
 

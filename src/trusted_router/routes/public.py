@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -47,38 +48,54 @@ class _CachedStaticFiles(StaticFiles):
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
 
-    @app.get("/", response_class=HTMLResponse)
+    def public_html_route(
+        path: str, *, include_slash: bool = True
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            app.api_route(path, methods=["GET", "HEAD"], response_class=HTMLResponse)(func)
+            if include_slash and not path.endswith("/"):
+                app.api_route(
+                    f"{path}/",
+                    methods=["GET", "HEAD"],
+                    response_class=HTMLResponse,
+                    include_in_schema=False,
+                )(func)
+            return func
+
+        return decorator
+
+    @public_html_route("/", include_slash=False)
     async def dashboard(request: Request) -> str:
         host = request.headers.get("host", "")
         if host.split(":", 1)[0].lower() == "trust.trustedrouter.com":
             return trust_html(settings)
         return dashboard_html(settings)
 
-    @app.get("/trust", response_class=HTMLResponse)
+    @public_html_route("/trust")
     async def trust_page() -> str:
         return trust_html(settings)
 
-    @app.get("/compare/openrouter", response_class=HTMLResponse)
+    @public_html_route("/compare/openrouter")
     async def compare_openrouter() -> str:
         return public_page_html(settings, "compare/openrouter")
 
-    @app.get("/compare/vercel-ai-gateway", response_class=HTMLResponse)
+    @public_html_route("/compare/vercel-ai-gateway")
     async def compare_vercel_ai_gateway() -> str:
         return public_page_html(settings, "compare/vercel-ai-gateway")
 
-    @app.get("/compare/litellm", response_class=HTMLResponse)
+    @public_html_route("/compare/litellm")
     async def compare_litellm() -> str:
         return public_page_html(settings, "compare/litellm")
 
-    @app.get("/docs/migrate-from-openrouter", response_class=HTMLResponse)
+    @public_html_route("/docs/migrate-from-openrouter")
     async def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
-    @app.get("/security", response_class=HTMLResponse)
+    @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
 
-    @app.get("/models", response_class=HTMLResponse)
+    @public_html_route("/models")
     async def models() -> str:
         return public_models_html(settings)
 
