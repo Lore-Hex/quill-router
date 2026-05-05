@@ -107,9 +107,16 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
     assert providers.status_code == 200, providers.text
     assert regions.status_code == 200, regions.text
     assert any(item["id"] == "trustedrouter/auto" for item in models.json()["data"])
-    assert {"anthropic", "openai", "gemini", "cerebras", "deepseek", "mistral", "vertex"}.issubset(
-        {item["id"] for item in providers.json()["data"]}
-    )
+    assert {
+        "anthropic",
+        "openai",
+        "gemini",
+        "cerebras",
+        "deepseek",
+        "mistral",
+        "kimi",
+        "zai",
+    }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
 
 
@@ -137,8 +144,12 @@ def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
     assert "anthropic/claude-opus-4.7" in candidates
+    assert "openai/gpt-4o-mini" in candidates
+    assert "google/gemini-2.5-flash" in candidates
+    assert "deepseek/deepseek-v4-flash" in candidates
     assert "moonshotai/kimi-k2.6" in candidates
-    assert "meta-llama/llama-3.1-8b-instruct" in candidates
+    assert "mistralai/mistral-small-2603" in candidates
+    assert "z-ai/glm-4.6" in candidates
 
 
 def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
