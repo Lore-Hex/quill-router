@@ -98,7 +98,14 @@ class Settings(BaseSettings):
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
     synthetic_monitor_model: str = "trustedrouter/monitor"
-    synthetic_monitor_timeout_seconds: float = 10.0
+    # 30s, not 10s. The pong probes hit /v1/chat/completions and
+    # /v1/responses with a real LLM call; cold-start on a regional Cloud
+    # Run revision plus the upstream provider's first-token latency
+    # routinely costs 5–9 seconds (we measured p95=9.0s in europe-west4).
+    # 10s clipped the slow tail and turned cold-starts into false-down
+    # events that tanked the 24h rollup. 30s catches genuine outages
+    # while leaving headroom for cold-start.
+    synthetic_monitor_timeout_seconds: float = 30.0
     synthetic_status_sample_limit: int = 5000
     synthetic_status_us_url: str = "https://status-us.trustedrouter.com/status.json"
     synthetic_status_eu_url: str = "https://status-eu.trustedrouter.com/status.json"

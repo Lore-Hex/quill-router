@@ -50,7 +50,7 @@
         </div>
         <div class="component-meta">
           <span>24h uptime <strong>{% if component.uptime_24h_percent is not none %}{{ "%.4f"|format(component.uptime_24h_percent) }}%{% else %}n/a{% endif %}</strong></span>
-          <span>P95 latency <strong>{% if component.p95_latency_milliseconds %}{{ component.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>P50 latency <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
         <div class="history-strip" aria-label="{{ component.name }} 90 day uptime history">

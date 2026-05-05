@@ -171,7 +171,7 @@ async def openai_chat_pong_probe(
         response = await client.post(url, json=body, headers=_auth_headers(api_key))
         latency_ms = _elapsed_ms(started)
         text = _chat_text(response)
-        ok = response.status_code == 200 and text.strip() == "PONG"
+        ok = response.status_code == 200 and _pong_matches(text)
         return _sample(
             "openai_sdk_pong",
             target,
@@ -220,7 +220,7 @@ async def responses_pong_probe(
         response = await client.post(url, json=body, headers=_auth_headers(api_key))
         latency_ms = _elapsed_ms(started)
         text = _responses_text(response)
-        ok = response.status_code == 200 and text.strip() == "PONG"
+        ok = response.status_code == 200 and _pong_matches(text)
         return _sample(
             "responses_pong",
             target,
@@ -530,6 +530,15 @@ def _invalid_api_key(response: httpx.Response) -> bool:
         return "invalid api key" in str(error.get("message", "")).lower()
     except ValueError:
         return False
+
+
+def _pong_matches(text: str) -> bool:
+    """Accept any output that contains the literal word PONG (case
+    insensitive). LLMs reliably emit the word but sometimes wrap it in
+    quotes, append punctuation, or prefix a token of whitespace. We only
+    want to flag a hard miss (model returned something unrelated, empty
+    body, or wrong language)."""
+    return "pong" in text.casefold()
 
 
 def _chat_text(response: httpx.Response) -> str:
