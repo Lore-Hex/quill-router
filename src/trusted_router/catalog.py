@@ -118,7 +118,11 @@ MODELS: dict[str, Model] = {
     "anthropic/claude-opus-4.7": Model(
         id="anthropic/claude-opus-4.7",
         name="Claude Opus 4.7",
-        provider="vertex",
+        # Default to direct Anthropic (api.anthropic.com). Users who want
+        # Vertex routing can pin per-request with provider.only=["vertex"].
+        # Was "vertex" historically; switched after 2026-05-04 because the
+        # GCP project doesn't yet have Anthropic-on-Vertex quota approved.
+        provider="anthropic",
         context_length=200_000,
         supports_messages=True,
         prepaid_available=True,
