@@ -115,6 +115,50 @@ def test_chat_to_gemini_input_audio_becomes_inline_audio_data() -> None:
     assert out[0]["parts"][0] == {"inline_data": {"mime_type": "audio/mp3", "data": "QUJD"}}
 
 
+def test_gemini_response_inline_data_becomes_data_url_in_content() -> None:
+    """forty.news's StoryImageNode posts to a Gemini image-gen model
+    (e.g. gemini-3.1-flash-image-preview) and parses the response with:
+
+      content?.match(/data:image\\/[^;]+;base64,[A-Za-z0-9+/=]+/)
+      data.choices?.[0]?.message?.images?.[0]?.image_url?.url
+      data.choices?.[0]?.message?.parts?.[].inline_data?.data
+
+    Gemini returns the image via `candidates[0].content.parts[].inline_data`.
+    Pre-fix, TR's adapter only concatenated `text` parts, so the image
+    bytes were dropped and forty.news got an empty content. Now image
+    parts emerge as `data:<mime>;base64,<body>` URLs in `content` —
+    forty.news's first regex match catches them."""
+    from trusted_router.provider_adapters import _gemini_parts_to_openai_content
+
+    parts = [
+        {"text": "Here is the requested newspaper photograph:"},
+        {"inline_data": {"mime_type": "image/png", "data": "UE5HRGF0YQ=="}},
+    ]
+    out = _gemini_parts_to_openai_content(parts)
+    assert "Here is the requested newspaper photograph:" in out
+    assert "data:image/png;base64,UE5HRGF0YQ==" in out
+
+
+def test_gemini_response_inline_data_handles_camelcase_inlineData_alias() -> None:
+    """Gemini's REST API has shipped both spellings (`inline_data` snake
+    case and `inlineData` camelCase) at different times; accept both."""
+    from trusted_router.provider_adapters import _gemini_parts_to_openai_content
+
+    parts = [{"inlineData": {"mimeType": "image/jpeg", "data": "Zm9v"}}]
+    out = _gemini_parts_to_openai_content(parts)
+    assert out == "data:image/jpeg;base64,Zm9v"
+
+
+def test_gemini_response_text_only_unchanged() -> None:
+    """Pure-text responses (the OCR / chat case) keep their content
+    intact — joining multiple text parts with newlines, no extra
+    artifacts from the image-handling branch."""
+    from trusted_router.provider_adapters import _gemini_parts_to_openai_content
+
+    parts = [{"text": "line one"}, {"text": "line two"}]
+    assert _gemini_parts_to_openai_content(parts) == "line one\nline two"
+
+
 @pytest.mark.asyncio
 async def test_forty_news_ocr_request_reaches_gemini_with_inline_image_data(
     tmp_path, monkeypatch,

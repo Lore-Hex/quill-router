@@ -255,7 +255,7 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
     data = resp.json()
     candidate = (data.get("candidates") or [{}])[0]
     parts = ((candidate.get("content") or {}).get("parts") or [])
-    text = "".join(str(part.get("text", "")) for part in parts)
+    text = _gemini_parts_to_openai_content(parts)
     usage = data.get("usageMetadata") or {}
     return ProviderResult(
         text=text,
@@ -267,6 +267,34 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
     )
+
+
+def _gemini_parts_to_openai_content(parts: list[Any]) -> str:
+    """Flatten Gemini response `parts` into an OpenAI-shaped `content`
+    string. Text parts join with newlines; image parts (Nano Banana,
+    `gemini-3.1-flash-image-preview`, etc.) are emitted as
+    `data:<mime>;base64,<body>` URLs so callers like forty.news that
+    regex-scan `choices[0].message.content` for `data:image/...;base64,...`
+    pick up the image without needing a separate `images` array.
+
+    Without this, Gemini's `inline_data` parts were silently dropped and
+    image-generation requests through TR returned an empty content
+    string."""
+    chunks: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            chunks.append(text)
+        # Gemini's REST API has historically returned both spellings.
+        inline = part.get("inline_data") or part.get("inlineData")
+        if isinstance(inline, dict):
+            mime_type = inline.get("mime_type") or inline.get("mimeType") or "application/octet-stream"
+            body = inline.get("data")
+            if isinstance(body, str) and body:
+                chunks.append(f"data:{mime_type};base64,{body}")
+    return "\n".join(chunks)
 
 
 async def gemini_chat_stream(
