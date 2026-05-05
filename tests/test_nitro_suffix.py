@@ -113,7 +113,7 @@ def test_nitro_suffix_in_models_array_is_also_applied() -> None:
     """Suffix on a fallback entry should still set sort=throughput."""
     _ids, prefs = _routing_for_body(
         {
-            "model": "anthropic/claude-3-5-sonnet",
+            "model": "anthropic/claude-sonnet-4.6",
             "models": ["openai/gpt-4o-mini:nitro"],
         },
         Settings(environment="test"),

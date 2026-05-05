@@ -9,320 +9,10 @@
     "kimi",
     "mistral",
     "openai",
-    "vertex",
     "zai"
   ],
-  "model_count": 148,
+  "model_count": 132,
   "models": [
-    {
-      "id": "anthropic/claude-3-haiku",
-      "name": "Anthropic: Claude 3 Haiku",
-      "created": 1710288000,
-      "description": "Claude 3 Haiku is Anthropic's fastest and most compact model for\nnear-instant responsiveness. Quick and accurate targeted performance.\n\nSee the launch announcement and benchmark results [here](https://www.anthropic.com/news/claude-3-haiku)\n\n#multimodal",
-      "context_length": 200000,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Claude",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000025",
-        "completion": "0.00000125",
-        "input_cache_read": "0.00000003",
-        "input_cache_write": "0.0000003"
-      },
-      "top_provider": {
-        "context_length": 200000,
-        "max_completion_tokens": 4096,
-        "is_moderated": true
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | anthropic/claude-3-haiku",
-          "model_id": "anthropic/claude-3-haiku",
-          "model_name": "Anthropic: Claude 3 Haiku",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.00000125",
-            "input_cache_read": "0.00000003",
-            "input_cache_write": "0.0000003",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 4096,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "top_k",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": null,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "anthropic/claude-3.5-haiku",
-      "name": "Anthropic: Claude 3.5 Haiku",
-      "created": 1730678400,
-      "description": "Claude 3.5 Haiku features offers enhanced capabilities in speed, coding accuracy, and tool use. Engineered to excel in real-time applications, it delivers quick response times that are essential for dynamic...",
-      "context_length": 200000,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Claude",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000008",
-        "completion": "0.000004",
-        "web_search": "0.01",
-        "input_cache_read": "0.00000008",
-        "input_cache_write": "0.000001"
-      },
-      "top_provider": {
-        "context_length": 200000,
-        "max_completion_tokens": 8192,
-        "is_moderated": true
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | anthropic/claude-3-5-haiku",
-          "model_id": "anthropic/claude-3.5-haiku",
-          "model_name": "Anthropic: Claude 3.5 Haiku",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.0000008",
-            "completion": "0.000004",
-            "web_search": "0.01",
-            "input_cache_read": "0.00000008",
-            "input_cache_write": "0.000001",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "top_k",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": null,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "anthropic/claude-3.7-sonnet",
-      "name": "Anthropic: Claude 3.7 Sonnet",
-      "created": 1740422110,
-      "description": "Claude 3.7 Sonnet is an advanced large language model with improved reasoning, coding, and problem-solving capabilities. It introduces a hybrid reasoning approach, allowing users to choose between rapid responses and...",
-      "context_length": 200000,
-      "architecture": {
-        "modality": "text+image+file->text",
-        "input_modalities": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Claude",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.000003",
-        "completion": "0.000015",
-        "web_search": "0.01",
-        "input_cache_read": "0.0000003",
-        "input_cache_write": "0.00000375"
-      },
-      "top_provider": {
-        "context_length": 200000,
-        "max_completion_tokens": 64000,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | anthropic/claude-3-7-sonnet-20250219",
-          "model_id": "anthropic/claude-3.7-sonnet",
-          "model_name": "Anthropic: Claude 3.7 Sonnet",
-          "provider_name": "Google",
-          "tag": "google-vertex/us",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.2441302701338,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-3-7-sonnet-20250219",
-          "model_id": "anthropic/claude-3.7-sonnet",
-          "model_name": "Anthropic: Claude 3.7 Sonnet",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.07989193361635,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "anthropic/claude-3.7-sonnet:thinking",
-      "name": "Anthropic: Claude 3.7 Sonnet (thinking)",
-      "created": 1740422110,
-      "description": "Claude 3.7 Sonnet is an advanced large language model with improved reasoning, coding, and problem-solving capabilities. It introduces a hybrid reasoning approach, allowing users to choose between rapid responses and...",
-      "context_length": 200000,
-      "architecture": {
-        "modality": "text+image+file->text",
-        "input_modalities": [
-          "text",
-          "image",
-          "file"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Claude",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.000003",
-        "completion": "0.000015",
-        "web_search": "0.01",
-        "input_cache_read": "0.0000003",
-        "input_cache_write": "0.00000375"
-      },
-      "top_provider": {
-        "context_length": 200000,
-        "max_completion_tokens": 64000,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | anthropic/claude-3-7-sonnet-20250219:thinking",
-          "model_id": "anthropic/claude-3.7-sonnet:thinking",
-          "model_name": "Anthropic: Claude 3.7 Sonnet",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 100,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
     {
       "id": "anthropic/claude-haiku-4.5",
       "name": "Anthropic: Claude Haiku 4.5",
@@ -389,81 +79,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93797487982633,
+          "uptime_last_1d": 99.94313064173619,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.5-haiku-20251001",
-          "model_id": "anthropic/claude-haiku-4.5",
-          "model_name": "Anthropic: Claude Haiku 4.5",
-          "provider_name": "Google",
-          "tag": "google-vertex/europe",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000001",
-            "completion": "0.000005",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000001",
-            "input_cache_write": "0.00000125",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.87507807620237,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.78922886837707,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.5-haiku-20251001",
-          "model_id": "anthropic/claude-haiku-4.5",
-          "model_name": "Anthropic: Claude Haiku 4.5",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000001",
-            "completion": "0.000005",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000001",
-            "input_cache_write": "0.00000125",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.50466200466201,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -531,44 +149,9 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.9390243902439,
+          "uptime_last_1d": 99.93714644877436,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4-opus-20250522",
-          "model_id": "anthropic/claude-opus-4",
-          "model_name": "Anthropic: Claude Opus 4",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000015",
-            "completion": "0.000075",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000015",
-            "input_cache_write": "0.00001875",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.85734664764621,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -640,76 +223,6 @@
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.1-opus-20250805",
-          "model_id": "anthropic/claude-opus-4.1",
-          "model_name": "Anthropic: Claude Opus 4.1",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000015",
-            "completion": "0.000075",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000015",
-            "input_cache_write": "0.00001875",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": null,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.1-opus-20250805",
-          "model_id": "anthropic/claude-opus-4.1",
-          "model_name": "Anthropic: Claude Opus 4.1",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000015",
-            "completion": "0.000075",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000015",
-            "input_cache_write": "0.00001875",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.78345498783455,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -777,9 +290,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90162321692081,
-          "uptime_last_5m": 99.66216216216216,
-          "uptime_last_1d": 97.1383030331031,
+          "uptime_last_30m": 99.94536514296121,
+          "uptime_last_5m": 99.88095238095238,
+          "uptime_last_1d": 97.15034001102738,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -816,44 +329,9 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.80389370470371,
+          "uptime_last_1d": 99.80396056482087,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.5-opus-20251124",
-          "model_id": "anthropic/claude-opus-4.5",
-          "model_name": "Anthropic: Claude Opus 4.5",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000005",
-            "input_cache_write": "0.00000625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.25522710886806,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -921,9 +399,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.91423670668954,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94595039185967,
+          "uptime_last_1d": 99.92060091245935,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -960,84 +438,10 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.78467611699264,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.35679152478244,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.6-opus-20260205",
-          "model_id": "anthropic/claude-opus-4.6",
-          "model_name": "Anthropic: Claude Opus 4.6",
-          "provider_name": "Google",
-          "tag": "google-vertex/europe",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000005",
-            "input_cache_write": "0.00000625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.93899204244032,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.74934372089085,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.6-opus-20260205",
-          "model_id": "anthropic/claude-opus-4.6",
-          "model_name": "Anthropic: Claude Opus 4.6",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000005",
-            "input_cache_write": "0.00000625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.73569651741293,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -1105,7 +509,7 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -1177,7 +581,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95259379655967,
+          "uptime_last_1d": 99.9504652726179,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -1211,81 +615,11 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.8661311914324,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94776001266425,
+          "uptime_last_30m": 99.52978056426332,
+          "uptime_last_5m": 98.64864864864865,
+          "uptime_last_1d": 99.93956385246865,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.7-opus-20260416",
-          "model_id": "anthropic/claude-opus-4.7",
-          "model_name": "Anthropic: Claude Opus 4.7",
-          "provider_name": "Google",
-          "tag": "google-vertex/europe",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000005",
-            "input_cache_write": "0.00000625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.581589958159,
-          "uptime_last_5m": 98.9010989010989,
-          "uptime_last_1d": 99.81252343457068,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.7-opus-20260416",
-          "model_id": "anthropic/claude-opus-4.7",
-          "model_name": "Anthropic: Claude Opus 4.7",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000005",
-            "input_cache_write": "0.00000625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.92818863879957,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -1353,114 +687,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99864581217415,
+          "uptime_last_1d": 99.99863643181477,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4-sonnet-20250522",
-          "model_id": "anthropic/claude-sonnet-4",
-          "model_name": "Anthropic: Claude Sonnet 4",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.79101358411702,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4-sonnet-20250522",
-          "model_id": "anthropic/claude-sonnet-4",
-          "model_name": "Anthropic: Claude Sonnet 4",
-          "provider_name": "Google",
-          "tag": "google-vertex/europe",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.21383647798741,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4-sonnet-20250522",
-          "model_id": "anthropic/claude-sonnet-4",
-          "model_name": "Anthropic: Claude Sonnet 4",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 97.3913043478261,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -1529,9 +758,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.76580796252928,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.84647739221872,
+          "uptime_last_30m": 99.86168741355463,
+          "uptime_last_5m": 99.03846153846155,
+          "uptime_last_1d": 99.8330550918197,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -1569,81 +798,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.92076518195711,
+          "uptime_last_1d": 99.91308126901347,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.5-sonnet-20250929",
-          "model_id": "anthropic/claude-sonnet-4.5",
-          "model_name": "Anthropic: Claude Sonnet 4.5",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.6571216754703,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.5-sonnet-20250929",
-          "model_id": "anthropic/claude-sonnet-4.5",
-          "model_name": "Anthropic: Claude Sonnet 4.5",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 64000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.12280701754386,
-          "uptime_last_5m": 94.73684210526315,
-          "uptime_last_1d": 98.89011268321613,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -1711,9 +868,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97540277948592,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96241273566527,
+          "uptime_last_30m": 99.95095635115253,
+          "uptime_last_5m": 99.91902834008097,
+          "uptime_last_1d": 99.96147695560444,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -1749,261 +906,11 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.83365949119374,
-          "uptime_last_5m": 99.8911860718172,
-          "uptime_last_1d": 99.90606224326622,
+          "uptime_last_30m": 99.82431096958383,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.90216356257613,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
-        },
-        {
-          "name": "Google | anthropic/claude-4.6-sonnet-20260217",
-          "model_id": "anthropic/claude-sonnet-4.6",
-          "model_name": "Anthropic: Claude Sonnet 4.6",
-          "provider_name": "Google",
-          "tag": "google-vertex/europe",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.67529266789894,
-          "uptime_last_5m": 99.14772727272727,
-          "uptime_last_1d": 99.76696263850079,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.6-sonnet-20260217",
-          "model_id": "anthropic/claude-sonnet-4.6",
-          "model_name": "Anthropic: Claude Sonnet 4.6",
-          "provider_name": "Google",
-          "tag": "google-vertex/us-east5",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tool_choice",
-            "tools",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.99305024671624,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96216399183719,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | anthropic/claude-4.6-sonnet-20260217",
-          "model_id": "anthropic/claude-sonnet-4.6",
-          "model_name": "Anthropic: Claude Sonnet 4.6",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000003",
-            "completion": "0.000015",
-            "web_search": "0.01",
-            "input_cache_read": "0.0000003",
-            "input_cache_write": "0.00000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "top_p",
-            "temperature",
-            "stop",
-            "reasoning",
-            "include_reasoning",
-            "tools",
-            "tool_choice",
-            "response_format",
-            "verbosity"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95842300919585,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "deepseek/deepseek-chat-v3.1",
-      "name": "DeepSeek: DeepSeek V3.1",
-      "created": 1755779628,
-      "description": "DeepSeek-V3.1 is a large hybrid reasoning model (671B parameters, 37B active) that supports both thinking and non-thinking modes via prompt templates. It extends the DeepSeek-V3 base with a two-phase long-context...",
-      "context_length": 32768,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "DeepSeek",
-        "instruct_type": "deepseek-v3.1"
-      },
-      "pricing": {
-        "prompt": "0.00000015",
-        "completion": "0.00000075"
-      },
-      "top_provider": {
-        "context_length": 32768,
-        "max_completion_tokens": 7168,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | deepseek/deepseek-chat-v3.1",
-          "model_id": "deepseek/deepseek-chat-v3.1",
-          "model_name": "DeepSeek: DeepSeek V3.1",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 163840,
-          "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.0000017",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32768,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.88672833679442,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.2989532315375,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "deepseek/deepseek-v3.2",
-      "name": "DeepSeek: DeepSeek V3.2",
-      "created": 1764594642,
-      "description": "DeepSeek-V3.2 is a large language model designed to harmonize high computational efficiency with strong reasoning and agentic tool-use performance. It introduces DeepSeek Sparse Attention (DSA), a fine-grained sparse attention mechanism...",
-      "context_length": 131072,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "DeepSeek",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.000000252",
-        "completion": "0.000000378",
-        "input_cache_read": "0.0000000252"
-      },
-      "top_provider": {
-        "context_length": 131072,
-        "max_completion_tokens": 65536,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | deepseek/deepseek-v3.2-20251201",
-          "model_id": "deepseek/deepseek-v3.2",
-          "model_name": "DeepSeek: DeepSeek V3.2",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 163840,
-          "pricing": {
-            "prompt": "0.00000056",
-            "completion": "0.00000168",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.97022036926742,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.471328686765,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -2068,9 +975,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99808755187516,
+          "uptime_last_30m": 99.99606616706988,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99553556911297,
+          "uptime_last_1d": 99.99551247782021,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek"
         }
@@ -2137,9 +1044,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.98350107243029,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98943804295061,
+          "uptime_last_1d": 99.9892085832355,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek"
         }
@@ -2150,7 +1057,7 @@
       "name": "Google: Gemini 2.0 Flash",
       "created": 1738769413,
       "description": "Gemini Flash 2.0 offers a significantly faster time to first token (TTFT) compared to [Gemini Flash 1.5](/google/gemini-flash-1.5), while maintaining quality on par with larger models like [Gemini Pro 1.5](/google/gemini-pro-1.5). It...",
-      "context_length": 1048576,
+      "context_length": 1000000,
       "architecture": {
         "modality": "text+image+file+audio+video->text",
         "input_modalities": [
@@ -2177,52 +1084,12 @@
         "input_cache_write": "0.00000008333333333333334"
       },
       "top_provider": {
-        "context_length": 1048576,
+        "context_length": 1000000,
         "max_completion_tokens": 8192,
         "is_moderated": false
       },
       "per_request_limits": null,
       "endpoints": [
-        {
-          "name": "Google | google/gemini-2.0-flash-001",
-          "model_id": "google/gemini-2.0-flash-001",
-          "model_name": "Google: Gemini 2.0 Flash",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.0000001",
-            "audio": "0.0000007",
-            "input_audio_cache": "0.000000175",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000004",
-            "input_cache_read": "0.000000025",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.95633187772926,
-          "uptime_last_5m": 99.96089166992569,
-          "uptime_last_1d": 99.37201373217552,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
         {
           "name": "Google AI Studio | google/gemini-2.0-flash-001",
           "model_id": "google/gemini-2.0-flash-001",
@@ -2257,9 +1124,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9269699846637,
-          "uptime_last_5m": 99.97559189650964,
-          "uptime_last_1d": 99.73396227245325,
+          "uptime_last_30m": 99.28862474955538,
+          "uptime_last_5m": 99.73293273243198,
+          "uptime_last_1d": 99.718913341168,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2302,43 +1169,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.0-flash-lite-001",
-          "model_id": "google/gemini-2.0-flash-lite-001",
-          "model_name": "Google: Gemini 2.0 Flash Lite",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000000075",
-            "completion": "0.0000003",
-            "image": "0.000000075",
-            "audio": "0.000000075",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000003",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.3486127132536,
-          "uptime_last_5m": 99.1830985915493,
-          "uptime_last_1d": 97.26739975439345,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.0-flash-lite-001",
           "model_id": "google/gemini-2.0-flash-lite-001",
           "model_name": "Google: Gemini 2.0 Flash Lite",
@@ -2369,9 +1199,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.6923076923077,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.32376146136896,
+          "uptime_last_30m": 97.6824034334764,
+          "uptime_last_5m": 98.17351598173516,
+          "uptime_last_1d": 96.04961685332786,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2416,132 +1246,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-flash",
-          "model_id": "google/gemini-2.5-flash",
-          "model_name": "Google: Gemini 2.5 Flash",
-          "provider_name": "Google",
-          "tag": "google-vertex/eu",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.0000003",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000025",
-            "input_cache_read": "0.00000003",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.7673926834426,
-          "uptime_last_5m": 99.8168060533652,
-          "uptime_last_1d": 99.41037285134166,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-flash",
-          "model_id": "google/gemini-2.5-flash",
-          "model_name": "Google: Gemini 2.5 Flash",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.0000003",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000025",
-            "input_cache_read": "0.00000003",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.82099293476539,
-          "uptime_last_5m": 99.8795292373274,
-          "uptime_last_1d": 99.64258441132455,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-flash",
-          "model_id": "google/gemini-2.5-flash",
-          "model_name": "Google: Gemini 2.5 Flash",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.0000003",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000025",
-            "input_cache_read": "0.00000003",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": -5,
-          "uptime_last_30m": 75.60975609756098,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 86.97743509938459,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-flash",
           "model_id": "google/gemini-2.5-flash",
           "model_name": "Google: Gemini 2.5 Flash",
@@ -2577,9 +1281,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95061430031234,
-          "uptime_last_5m": 99.98232505824697,
-          "uptime_last_1d": 99.897345548963,
+          "uptime_last_30m": 99.91611864179305,
+          "uptime_last_5m": 99.84499328304226,
+          "uptime_last_1d": 99.8876104599456,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2622,45 +1326,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-flash-image",
-          "model_id": "google/gemini-2.5-flash-image",
-          "model_name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 32768,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.0000003",
-            "image_output": "0.00003",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000025",
-            "input_cache_read": "0.00000003",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.9805900621118,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91851372618373,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-flash-image",
           "model_id": "google/gemini-2.5-flash-image",
           "model_name": "Google: Nano Banana (Gemini 2.5 Flash Image)",
@@ -2693,9 +1358,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.9715882185813,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.97150726564726,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2740,90 +1405,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-flash-lite",
-          "model_id": "google/gemini-2.5-flash-lite",
-          "model_name": "Google: Gemini 2.5 Flash Lite",
-          "provider_name": "Google",
-          "tag": "google-vertex/eu",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.0000001",
-            "audio": "0.0000003",
-            "input_audio_cache": "0.00000003",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000004",
-            "input_cache_read": "0.00000001",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.82179714733252,
-          "uptime_last_5m": 99.82713480128893,
-          "uptime_last_1d": 99.82651822401432,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-flash-lite",
-          "model_id": "google/gemini-2.5-flash-lite",
-          "model_name": "Google: Gemini 2.5 Flash Lite",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.0000001",
-            "audio": "0.0000003",
-            "input_audio_cache": "0.00000003",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000004",
-            "input_cache_read": "0.00000001",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.83071249418524,
-          "uptime_last_5m": 99.8437263699148,
-          "uptime_last_1d": 99.89594452220632,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-flash-lite",
           "model_id": "google/gemini-2.5-flash-lite",
           "model_name": "Google: Gemini 2.5 Flash Lite",
@@ -2859,91 +1440,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.94741586538461,
-          "uptime_last_5m": 99.67159277504105,
-          "uptime_last_1d": 99.82090050704934,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemini-2.5-flash-lite-preview-09-2025",
-      "name": "Google: Gemini 2.5 Flash Lite Preview 09-2025",
-      "created": 1758819686,
-      "description": "Gemini 2.5 Flash-Lite is a lightweight reasoning model in the Gemini 2.5 family, optimized for ultra-low latency and cost efficiency. It offers improved throughput, faster token generation, and better performance...",
-      "context_length": 1048576,
-      "architecture": {
-        "modality": "text+image+file+audio+video->text",
-        "input_modalities": [
-          "text",
-          "image",
-          "file",
-          "audio",
-          "video"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Gemini",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000001",
-        "completion": "0.0000004",
-        "image": "0.0000001",
-        "audio": "0.0000003",
-        "web_search": "0.014",
-        "internal_reasoning": "0.0000004",
-        "input_cache_read": "0.00000001",
-        "input_cache_write": "0.00000008333333333333334"
-      },
-      "top_provider": {
-        "context_length": 1048576,
-        "max_completion_tokens": 65535,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | google/gemini-2.5-flash-lite-preview-09-2025",
-          "model_id": "google/gemini-2.5-flash-lite-preview-09-2025",
-          "model_name": "Google: Gemini 2.5 Flash Lite Preview 09-2025",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.0000001",
-            "audio": "0.0000003",
-            "input_audio_cache": "0.00000003",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000004",
-            "input_cache_read": "0.00000001",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.99492694805194,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96367340613894,
+          "uptime_last_30m": 99.41211052322163,
+          "uptime_last_5m": 99.15254237288136,
+          "uptime_last_1d": 99.77206806694079,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2988,132 +1487,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.16862182462656,
-          "uptime_last_5m": 98.13414019162884,
-          "uptime_last_1d": 95.95398435031683,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/eu",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": -5,
-          "uptime_last_30m": 74.12935323383084,
-          "uptime_last_5m": 80.55555555555556,
-          "uptime_last_1d": 73.8612773800769,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/us",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.63459196102315,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.67816036132291,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-pro",
           "model_id": "google/gemini-2.5-pro",
           "model_name": "Google: Gemini 2.5 Pro",
@@ -3149,9 +1522,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.36619718309859,
-          "uptime_last_5m": 96.36363636363636,
-          "uptime_last_1d": 97.63396802442355,
+          "uptime_last_30m": 94.58823529411765,
+          "uptime_last_5m": 95.45454545454545,
+          "uptime_last_1d": 97.88212993279338,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -3195,132 +1568,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.16862182462656,
-          "uptime_last_5m": 98.13414019162884,
-          "uptime_last_1d": 95.95398435031683,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/eu",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": -5,
-          "uptime_last_30m": 74.12935323383084,
-          "uptime_last_5m": 80.55555555555556,
-          "uptime_last_1d": 73.8612773800769,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/us",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.63459196102315,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.67816036132291,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-pro",
           "model_id": "google/gemini-2.5-pro",
           "model_name": "Google: Gemini 2.5 Pro",
@@ -3356,9 +1603,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.36619718309859,
-          "uptime_last_5m": 96.36363636363636,
-          "uptime_last_1d": 97.63396802442355,
+          "uptime_last_30m": 94.58823529411765,
+          "uptime_last_5m": 95.45454545454545,
+          "uptime_last_1d": 97.88212993279338,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -3403,132 +1650,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/global",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.16862182462656,
-          "uptime_last_5m": 98.13414019162884,
-          "uptime_last_1d": 95.95398435031683,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/eu",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": -5,
-          "uptime_last_30m": 74.12935323383084,
-          "uptime_last_5m": 80.55555555555556,
-          "uptime_last_1d": 73.8612773800769,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google",
-          "tag": "google-vertex/us",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000125",
-            "audio": "0.00000125",
-            "input_audio_cache": "0.000000125",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00001",
-            "input_cache_read": "0.000000125",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.63459196102315,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.67816036132291,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-2.5-pro",
           "model_id": "google/gemini-2.5-pro",
           "model_name": "Google: Gemini 2.5 Pro",
@@ -3564,9 +1685,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.36619718309859,
-          "uptime_last_5m": 96.36363636363636,
-          "uptime_last_1d": 97.63396802442355,
+          "uptime_last_30m": 94.58823529411765,
+          "uptime_last_5m": 95.45454545454545,
+          "uptime_last_1d": 97.88212993279338,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -3611,48 +1732,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-3-flash-preview-20251217",
-          "model_id": "google/gemini-3-flash-preview",
-          "model_name": "Google: Gemini 3 Flash Preview",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000005",
-            "completion": "0.000003",
-            "image": "0.0000005",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000003",
-            "input_cache_read": "0.00000005",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tool_choice",
-            "tools",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.92248347213396,
-          "uptime_last_5m": 98.84241971620612,
-          "uptime_last_1d": 98.59855207215033,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-3-flash-preview-20251217",
           "model_id": "google/gemini-3-flash-preview",
           "model_name": "Google: Gemini 3 Flash Preview",
@@ -3688,9 +1767,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7428889563721,
-          "uptime_last_5m": 99.94751344967851,
-          "uptime_last_1d": 99.77229783797193,
+          "uptime_last_30m": 99.89629108806469,
+          "uptime_last_5m": 99.85891035380942,
+          "uptime_last_1d": 99.77686310458435,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini"
         }
@@ -3733,47 +1812,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-3-pro-image-preview-20251120",
-          "model_id": "google/gemini-3-pro-image-preview",
-          "model_name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 65536,
-          "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.000012",
-            "image": "0.000002",
-            "image_output": "0.00012",
-            "audio": "0.000002",
-            "input_audio_cache": "0.0000002",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000012",
-            "input_cache_read": "0.0000002",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32768,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.50746268656717,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 92.64348598448235,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-3-pro-image-preview-20251120",
           "model_id": "google/gemini-3-pro-image-preview",
           "model_name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
@@ -3810,7 +1848,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.55252363508741,
+          "uptime_last_1d": 99.58670922334069,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -3848,39 +1886,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-3.1-flash-image-preview-20260226",
-          "model_id": "google/gemini-3.1-flash-image-preview",
-          "model_name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0.0000005",
-            "completion": "0.000003",
-            "image_output": "0.00006",
-            "web_search": "0.014",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32768,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.85883681535856,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 96.95526217553379,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-3.1-flash-image-preview-20260226",
           "model_id": "google/gemini-3.1-flash-image-preview",
           "model_name": "Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview)",
@@ -3909,9 +1914,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.62894248608535,
-          "uptime_last_5m": 99.36708860759494,
-          "uptime_last_1d": 98.98749418493283,
+          "uptime_last_30m": 96.759941089838,
+          "uptime_last_5m": 96.51741293532339,
+          "uptime_last_1d": 98.99759896086175,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -3956,48 +1961,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-3.1-flash-lite-preview-20260303",
-          "model_id": "google/gemini-3.1-flash-lite-preview",
-          "model_name": "Google: Gemini 3.1 Flash Lite Preview",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.0000015",
-            "image": "0.00000025",
-            "audio": "0.0000005",
-            "input_audio_cache": "0.00000005",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000015",
-            "input_cache_read": "0.000000025",
-            "input_cache_write": "0.00000008333333333333334",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "stop",
-            "structured_outputs",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.15368494119846,
-          "uptime_last_5m": 99.06800410710055,
-          "uptime_last_1d": 98.99100122308282,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-3.1-flash-lite-preview-20260303",
           "model_id": "google/gemini-3.1-flash-lite-preview",
           "model_name": "Google: Gemini 3.1 Flash Lite Preview",
@@ -4033,9 +1996,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.26348129221793,
-          "uptime_last_5m": 99.14519477347662,
-          "uptime_last_1d": 99.3409792355605,
+          "uptime_last_30m": 99.43722350546138,
+          "uptime_last_5m": 99.40722445199135,
+          "uptime_last_1d": 99.34105766671314,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini"
         }
@@ -4080,48 +2043,6 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google | google/gemini-3.1-pro-preview-20260219",
-          "model_id": "google/gemini-3.1-pro-preview",
-          "model_name": "Google: Gemini 3.1 Pro Preview",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.000012",
-            "image": "0.000002",
-            "audio": "0.000002",
-            "input_audio_cache": "0.0000002",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000012",
-            "input_cache_read": "0.0000002",
-            "input_cache_write": "0.000000375",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "stop",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.52770474242867,
-          "uptime_last_5m": 99.87688519544476,
-          "uptime_last_1d": 98.81148862462074,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
           "name": "Google AI Studio | google/gemini-3.1-pro-preview-20260219",
           "model_id": "google/gemini-3.1-pro-preview",
           "model_name": "Google: Gemini 3.1 Pro Preview",
@@ -4157,9 +2078,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.14314652261984,
-          "uptime_last_5m": 96.1864406779661,
-          "uptime_last_1d": 97.94117370936095,
+          "uptime_last_30m": 99.8299801643525,
+          "uptime_last_5m": 99.41520467836257,
+          "uptime_last_1d": 97.88978869961835,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4240,7 +2161,7 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
@@ -4299,9 +2220,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.80342275670675,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.80376313055524,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4360,9 +2281,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.97446373850867,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.97446047758906,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4423,7 +2344,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94681165415756,
+          "uptime_last_1d": 99.94347088750708,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4480,9 +2401,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.96843766438717,
+          "uptime_last_30m": 99.21259842519686,
+          "uptime_last_5m": 97.91666666666666,
+          "uptime_last_1d": 99.95761813943632,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4539,80 +2460,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91001124859392,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemma-4-26b-a4b-it",
-      "name": "Google: Gemma 4 26B A4B ",
-      "created": 1775227989,
-      "description": "Gemma 4 26B A4B IT is an instruction-tuned Mixture-of-Experts (MoE) model from Google DeepMind. Despite 25.2B total parameters, only 3.8B activate per token during inference — delivering near-31B quality at...",
-      "context_length": 262144,
-      "architecture": {
-        "modality": "text+image+video->text",
-        "input_modalities": [
-          "image",
-          "text",
-          "video"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Gemma",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000006",
-        "completion": "0.00000033"
-      },
-      "top_provider": {
-        "context_length": 262144,
-        "max_completion_tokens": null,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | google/gemma-4-26b-a4b-it-20260403",
-          "model_id": "google/gemma-4-26b-a4b-it",
-          "model_name": "Google: Gemma 4 26B A4B ",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.0000006",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 262144,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice",
-            "structured_outputs"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.96175908221797,
-          "uptime_last_5m": 99.71181556195965,
-          "uptime_last_1d": 99.95086397510441,
+          "uptime_last_1d": 99.88914890996428,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4675,9 +2525,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.9060014461316,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.91299303944315,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4740,9 +2590,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.92940844275024,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.93432574430823,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4864,7 +2714,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 96.20253164556962,
+          "uptime_last_1d": 96.3855421686747,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -4931,243 +2781,11 @@
             "logit_bias"
           ],
           "status": -5,
-          "uptime_last_30m": 14.690265486725664,
-          "uptime_last_5m": 10.227272727272728,
-          "uptime_last_1d": 13.445891465291862,
+          "uptime_last_30m": 6.946264744429882,
+          "uptime_last_5m": 7.563025210084033,
+          "uptime_last_1d": 14.003379243254313,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
-        }
-      ]
-    },
-    {
-      "id": "meta-llama/llama-3.3-70b-instruct",
-      "name": "Meta: Llama 3.3 70B Instruct",
-      "created": 1733506137,
-      "description": "The Meta Llama 3.3 multilingual large language model (LLM) is a pretrained and instruction tuned generative model in 70B (text in/text out). The Llama 3.3 instruction tuned text only model...",
-      "context_length": 131072,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Llama3",
-        "instruct_type": "llama3"
-      },
-      "pricing": {
-        "prompt": "0.0000001",
-        "completion": "0.00000032"
-      },
-      "top_provider": {
-        "context_length": 131072,
-        "max_completion_tokens": 16384,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | meta-llama/llama-3.3-70b-instruct",
-          "model_id": "meta-llama/llama-3.3-70b-instruct",
-          "model_name": "Meta: Llama 3.3 70B Instruct",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 128000,
-          "pricing": {
-            "prompt": "0.00000072",
-            "completion": "0.00000072",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": null,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format"
-          ],
-          "status": -2,
-          "uptime_last_30m": 94.02173913043478,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 93.38620591984139,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | meta-llama/llama-3.3-70b-instruct",
-          "model_id": "meta-llama/llama-3.3-70b-instruct",
-          "model_name": "Meta: Llama 3.3 70B Instruct",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 128000,
-          "pricing": {
-            "prompt": "0.00000072",
-            "completion": "0.00000072",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.40119760479041,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.9778098302452,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "meta-llama/llama-4-scout",
-      "name": "Meta: Llama 4 Scout",
-      "created": 1743881519,
-      "description": "Llama 4 Scout 17B Instruct (16E) is a mixture-of-experts (MoE) language model developed by Meta, activating 17 billion parameters out of a total of 109B. It supports native multimodal input...",
-      "context_length": 327680,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Llama4",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000008",
-        "completion": "0.0000003"
-      },
-      "top_provider": {
-        "context_length": 327680,
-        "max_completion_tokens": 16384,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | meta-llama/llama-4-scout-17b-16e-instruct",
-          "model_id": "meta-llama/llama-4-scout",
-          "model_name": "Meta: Llama 4 Scout",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 1310720,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.0000007",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91128354960432,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "minimax/minimax-m2",
-      "name": "MiniMax: MiniMax M2",
-      "created": 1761252093,
-      "description": "MiniMax-M2 is a compact, high-efficiency large language model optimized for end-to-end coding and agentic workflows. With 10 billion activated parameters (230 billion total), it delivers near-frontier intelligence across general reasoning,...",
-      "context_length": 196608,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.000000255",
-        "completion": "0.000001",
-        "input_cache_read": "0.00000003"
-      },
-      "top_provider": {
-        "context_length": 196608,
-        "max_completion_tokens": 196608,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | minimax/minimax-m2",
-          "model_id": "minimax/minimax-m2",
-          "model_name": "MiniMax: MiniMax M2",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 196608,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 196608,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "structured_outputs",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.97216035634744,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -5231,8 +2849,8 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.82359474704357,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.83446631941379,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5299,7 +2917,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87444833358697,
+          "uptime_last_1d": 99.90198397945043,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5366,7 +2984,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.61259079903148,
+          "uptime_last_1d": 99.55334987593052,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5433,7 +3051,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98973152608193,
+          "uptime_last_1d": 99.99080848560608,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5499,9 +3117,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.09706546275395,
-          "uptime_last_5m": 97.67441860465115,
-          "uptime_last_1d": 99.34861301540462,
+          "uptime_last_30m": 99.02702702702703,
+          "uptime_last_5m": 98.24281150159744,
+          "uptime_last_1d": 99.50036039578009,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5567,9 +3185,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.94395665981692,
-          "uptime_last_5m": 99.93564993564993,
-          "uptime_last_1d": 99.80274245168262,
+          "uptime_last_30m": 99.95491687799381,
+          "uptime_last_5m": 99.96527777777777,
+          "uptime_last_1d": 99.80270940001209,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5635,9 +3253,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.72639249209656,
+          "uptime_last_30m": 99.8720682302772,
+          "uptime_last_5m": 99.86807387862797,
+          "uptime_last_1d": 99.80097571792882,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5704,7 +3322,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95487619155057,
+          "uptime_last_1d": 99.96252074744338,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5838,7 +3456,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98685637301612,
+          "uptime_last_1d": 99.98731028881782,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -5904,9 +3522,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.87856709168184,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97200905040704,
+          "uptime_last_1d": 99.97069421090559,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6042,7 +3660,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.9770194185913,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6108,9 +3726,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.83361064891847,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95993351932094,
+          "uptime_last_1d": 99.9599251936949,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6174,9 +3792,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.660671869698,
-          "uptime_last_5m": 99.16817359855334,
-          "uptime_last_1d": 99.90677044778062,
+          "uptime_last_30m": 99.98521803399852,
+          "uptime_last_5m": 99.9686176055233,
+          "uptime_last_1d": 99.93072334642102,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6311,9 +3929,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.84984984984985,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.83292906291767,
+          "uptime_last_30m": 99.90470139771284,
+          "uptime_last_5m": 99.86301369863013,
+          "uptime_last_1d": 99.84583195683295,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6378,9 +3996,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98407643312102,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.54495782291072,
+          "uptime_last_30m": 99.96914056472767,
+          "uptime_last_5m": 99.82352941176471,
+          "uptime_last_1d": 99.57057590025039,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6445,7 +4063,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -6513,9 +4131,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.97336647727273,
+          "uptime_last_1d": 99.97349823321555,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -6585,79 +4203,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.66229410278206,
+          "uptime_last_1d": 99.67852643468439,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
-        }
-      ]
-    },
-    {
-      "id": "moonshotai/kimi-k2-thinking",
-      "name": "MoonshotAI: Kimi K2 Thinking",
-      "created": 1762440622,
-      "description": "Kimi K2 Thinking is Moonshot AI’s most advanced open reasoning model to date, extending the K2 series into agentic, long-horizon reasoning. Built on the trillion-parameter Mixture-of-Experts (MoE) architecture introduced in...",
-      "context_length": 262144,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000006",
-        "completion": "0.0000025",
-        "input_cache_read": "0.00000015"
-      },
-      "top_provider": {
-        "context_length": 262144,
-        "max_completion_tokens": 262144,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | moonshotai/kimi-k2-thinking-20251106",
-          "model_id": "moonshotai/kimi-k2-thinking",
-          "model_name": "MoonshotAI: Kimi K2 Thinking",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.0000025",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 262144,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "structured_outputs",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.02345942305534,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -6720,9 +4268,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95162070633768,
-          "uptime_last_5m": 99.67532467532467,
-          "uptime_last_1d": 99.94250782657127,
+          "uptime_last_30m": 99.89637305699482,
+          "uptime_last_5m": 99.80430528375733,
+          "uptime_last_1d": 99.94218020949589,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi"
         }
@@ -6787,9 +4335,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96659707724426,
-          "uptime_last_5m": 99.97717416115042,
-          "uptime_last_1d": 99.85553995166218,
+          "uptime_last_30m": 99.81532779316713,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.86604066330338,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi"
         }
@@ -6925,7 +4473,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.53703703703704,
+          "uptime_last_1d": 99.52153110047847,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7059,7 +4607,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.91628997153859,
+          "uptime_last_1d": 99.7584541062802,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7262,7 +4810,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -7397,9 +4945,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99080755618881,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97307088605712,
+          "uptime_last_30m": 98.85239783541707,
+          "uptime_last_5m": 97.68602540834846,
+          "uptime_last_1d": 99.90898112724454,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7465,9 +5013,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 96.61224177895514,
-          "uptime_last_5m": 96.61527556264399,
-          "uptime_last_1d": 97.91879291507321,
+          "uptime_last_30m": 97.08611639282987,
+          "uptime_last_5m": 96.8636102052561,
+          "uptime_last_1d": 97.89555803287688,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7532,10 +5080,10 @@
             "temperature",
             "top_p"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.00368500068241,
-          "uptime_last_5m": 98.45897542690545,
-          "uptime_last_1d": 96.75381145202054,
+          "status": -5,
+          "uptime_last_30m": 77.1008849557522,
+          "uptime_last_5m": 78.15564364698518,
+          "uptime_last_1d": 96.1370727655469,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7605,9 +5153,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97273718647764,
-          "uptime_last_5m": 99.80217606330366,
-          "uptime_last_1d": 99.91169205578375,
+          "uptime_last_30m": 99.71849643980791,
+          "uptime_last_5m": 99.57841483979763,
+          "uptime_last_1d": 99.90588053274197,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7749,9 +5297,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.93561886367294,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.92934360206317,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7968,9 +5516,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96846420687481,
-          "uptime_last_5m": 99.93125179031796,
-          "uptime_last_1d": 99.96745368903034,
+          "uptime_last_30m": 99.97397796801292,
+          "uptime_last_5m": 99.97802761196762,
+          "uptime_last_1d": 99.95277838006703,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -8043,7 +5591,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99991944422962,
+          "uptime_last_1d": 99.99991837480981,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -8102,7 +5650,7 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
@@ -8161,7 +5709,7 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -8228,9 +5776,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.93958920660492,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95717344753747,
+          "uptime_last_30m": 99.95773202101323,
+          "uptime_last_5m": 99.86437613019892,
+          "uptime_last_1d": 99.94620654656178,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8357,7 +5905,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
@@ -8577,9 +6125,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.78918837524469,
-          "uptime_last_5m": 99.68147230578658,
-          "uptime_last_1d": 99.66560354456927,
+          "uptime_last_30m": 99.49174342378227,
+          "uptime_last_5m": 99.49903660886321,
+          "uptime_last_1d": 99.6117559632547,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8644,9 +6192,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.79560888771675,
-          "uptime_last_5m": 99.92125984251969,
-          "uptime_last_1d": 99.76021396844985,
+          "uptime_last_30m": 97.80755176613886,
+          "uptime_last_5m": 97.90502793296089,
+          "uptime_last_1d": 99.5426215043124,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8777,9 +6325,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95695839311334,
+          "uptime_last_30m": 99.97816667226496,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.58288783155378,
+          "uptime_last_1d": 99.77442581115567,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8843,9 +6391,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.93961352657004,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9663914701038,
+          "uptime_last_30m": 99.915611814346,
+          "uptime_last_5m": 99.91228070175438,
+          "uptime_last_1d": 99.95437595740397,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8908,9 +6456,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.28571428571429,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.75296165291113,
+          "uptime_last_30m": 98.78048780487805,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.74959172563963,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -8977,7 +6525,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.91035410129987,
+          "uptime_last_1d": 99.89373007438896,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -9039,10 +6587,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 97.97297297297297,
+          "status": -2,
+          "uptime_last_30m": 92.51336898395722,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.75356618169755,
+          "uptime_last_1d": 99.69566438805131,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9107,9 +6655,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.5200639914678,
-          "uptime_last_5m": 99.47970863683663,
-          "uptime_last_1d": 96.63993927370295,
+          "uptime_last_30m": 99.40095846645367,
+          "uptime_last_5m": 99.31880108991825,
+          "uptime_last_1d": 96.96465996018023,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -9172,9 +6720,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.24385633270322,
+          "uptime_last_30m": 99.83093829247676,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.77521824739932,
+          "uptime_last_1d": 99.77217881431729,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -9238,9 +6786,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.7012987012987,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.70689055591436,
+          "uptime_last_30m": 99.67532467532467,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.66687587505432,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -9306,7 +6854,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.98252969951083,
+          "uptime_last_1d": 99.98252664686353,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9370,9 +6918,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97662459093034,
-          "uptime_last_5m": 99.7340425531915,
-          "uptime_last_1d": 99.9499663353738,
+          "uptime_last_30m": 99.91967871485944,
+          "uptime_last_5m": 99.82332155477032,
+          "uptime_last_1d": 99.95056125650467,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -9438,9 +6986,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.71202303815694,
-          "uptime_last_5m": 99.6845425867508,
-          "uptime_last_1d": 99.17885980773094,
+          "uptime_last_30m": 99.42517723701857,
+          "uptime_last_5m": 99.32157394843962,
+          "uptime_last_1d": 99.21930186314101,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9506,9 +7054,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.46902654867257,
-          "uptime_last_5m": 99.56761950516454,
-          "uptime_last_1d": 96.06209233342582,
+          "uptime_last_30m": 97.54180513794377,
+          "uptime_last_5m": 98.37291939405274,
+          "uptime_last_1d": 95.95308735852409,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9580,9 +7128,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.40652818991099,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9491016440169,
+          "uptime_last_1d": 99.93819530284301,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9648,9 +7196,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.32102022867194,
-          "uptime_last_5m": 98.84411121524523,
-          "uptime_last_1d": 98.76645407816366,
+          "uptime_last_30m": 98.32595101615425,
+          "uptime_last_5m": 98.44146429865893,
+          "uptime_last_1d": 98.75126967207976,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9716,9 +7264,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.62728785357737,
-          "uptime_last_5m": 98.21005917159763,
-          "uptime_last_1d": 97.08179024120169,
+          "uptime_last_30m": 98.31082576931591,
+          "uptime_last_5m": 99.47775976949397,
+          "uptime_last_1d": 97.12742664949829,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9781,10 +7329,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -5,
-          "uptime_last_30m": 7.538601271571299,
-          "uptime_last_5m": 7.207207207207207,
-          "uptime_last_1d": 50.11352578657152,
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 46.57101668154047,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -9849,10 +7397,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 95.43422429373157,
-          "uptime_last_5m": 83.31102186523873,
-          "uptime_last_1d": 93.89305093974727,
+          "status": -2,
+          "uptime_last_30m": 88.67887763055339,
+          "uptime_last_5m": 78.857421875,
+          "uptime_last_1d": 93.56154574238307,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -10062,7 +7610,7 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -10133,109 +7681,11 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.97498592958539,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97865663264903,
+          "uptime_last_1d": 99.97900436488204,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
-        },
-        {
-          "name": "Google | openai/gpt-oss-120b",
-          "model_id": "openai/gpt-oss-120b",
-          "model_name": "OpenAI: gpt-oss-120b",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0.00000009",
-            "completion": "0.00000036",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "repetition_penalty",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.64446165762975,
-          "uptime_last_5m": 99.57264957264957,
-          "uptime_last_1d": 99.0799134263175,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "openai/gpt-oss-20b",
-      "name": "OpenAI: gpt-oss-20b",
-      "created": 1754414229,
-      "description": "gpt-oss-20b is an open-weight 21B parameter model released by OpenAI under the Apache 2.0 license. It uses a Mixture-of-Experts (MoE) architecture with 3.6B active parameters per forward pass, optimized for...",
-      "context_length": 131072,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "GPT",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000003",
-        "completion": "0.00000014"
-      },
-      "top_provider": {
-        "context_length": 131072,
-        "max_completion_tokens": 131072,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | openai/gpt-oss-20b",
-          "model_id": "openai/gpt-oss-20b",
-          "model_name": "OpenAI: gpt-oss-20b",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0.00000007",
-            "completion": "0.00000025",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 32768,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "repetition_penalty",
-            "top_k"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99697939950462,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -10428,7 +7878,7 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
@@ -10911,8 +8361,8 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
@@ -10982,278 +8432,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95494942048573,
+          "uptime_last_1d": 99.94538503549973,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
-        },
-        {
-          "name": "Google | qwen/qwen3-235b-a22b-07-25",
-          "model_id": "qwen/qwen3-235b-a22b-2507",
-          "model_name": "Qwen: Qwen3 235B A22B Instruct 2507",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000022",
-            "completion": "0.00000088",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 16384,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.7134670487106,
-          "uptime_last_5m": 98.02371541501977,
-          "uptime_last_1d": 99.84698942942242,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        },
-        {
-          "name": "Google | qwen/qwen3-235b-a22b-07-25",
-          "model_id": "qwen/qwen3-235b-a22b-2507",
-          "model_name": "Qwen: Qwen3 235B A22B Instruct 2507",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.000001",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 16384,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.87541528239203,
-          "uptime_last_5m": 99.19137466307278,
-          "uptime_last_1d": 99.79970273342182,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "qwen/qwen3-coder",
-      "name": "Qwen: Qwen3 Coder 480B A35B",
-      "created": 1753230546,
-      "description": "Qwen3-Coder-480B-A35B-Instruct is a Mixture-of-Experts (MoE) code generation model developed by the Qwen team. It is optimized for agentic coding tasks such as function calling, tool use, and long-context reasoning over...",
-      "context_length": 262144,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Qwen3",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000022",
-        "completion": "0.0000018"
-      },
-      "top_provider": {
-        "context_length": 262144,
-        "max_completion_tokens": 65536,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | qwen/qwen3-coder-480b-a35b-07-25",
-          "model_id": "qwen/qwen3-coder",
-          "model_name": "Qwen: Qwen3 Coder 480B A35B",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000022",
-            "completion": "0.0000018",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9496533829054,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "qwen/qwen3-next-80b-a3b-instruct",
-      "name": "Qwen: Qwen3 Next 80B A3B Instruct",
-      "created": 1757612213,
-      "description": "Qwen3-Next-80B-A3B-Instruct is an instruction-tuned chat model in the Qwen3-Next series optimized for fast, stable responses without “thinking” traces. It targets complex tasks across reasoning, code generation, knowledge QA, and multilingual...",
-      "context_length": 262144,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Qwen3",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.00000009",
-        "completion": "0.0000011"
-      },
-      "top_provider": {
-        "context_length": 262144,
-        "max_completion_tokens": 16384,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | qwen/qwen3-next-80b-a3b-instruct-2509",
-          "model_id": "qwen/qwen3-next-80b-a3b-instruct",
-          "model_name": "Qwen: Qwen3 Next 80B A3B Instruct",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.0000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 262144,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.88051558055682,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "qwen/qwen3-next-80b-a3b-thinking",
-      "name": "Qwen: Qwen3 Next 80B A3B Thinking",
-      "created": 1757612284,
-      "description": "Qwen3-Next-80B-A3B-Thinking is a reasoning-first chat model in the Qwen3-Next line that outputs structured “thinking” traces by default. It’s designed for hard multi-step problems; math proofs, code synthesis/debugging, logic, and agentic...",
-      "context_length": 131072,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Qwen3",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000000975",
-        "completion": "0.00000078"
-      },
-      "top_provider": {
-        "context_length": 131072,
-        "max_completion_tokens": 32768,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google | qwen/qwen3-next-80b-a3b-thinking-2509",
-          "model_id": "qwen/qwen3-next-80b-a3b-thinking",
-          "model_name": "Qwen: Qwen3 Next 80B A3B Thinking",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.0000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 262144,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.28897338403041,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         }
       ]
     },
@@ -11372,9 +8553,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.62742510228323,
+          "uptime_last_30m": 98.6046511627907,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.1708353320085,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11435,9 +8616,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99498082675822,
-          "uptime_last_5m": 99.98102946756039,
-          "uptime_last_1d": 99.98721468588056,
+          "uptime_last_30m": 99.99196249162759,
+          "uptime_last_5m": 99.99107541276217,
+          "uptime_last_1d": 99.98960642449568,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11496,9 +8677,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.3475641974004,
-          "uptime_last_5m": 97.68115942028986,
-          "uptime_last_1d": 98.27220697141753,
+          "uptime_last_30m": 98.02453732584738,
+          "uptime_last_5m": 97.08097928436912,
+          "uptime_last_1d": 98.17060854677837,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11562,7 +8743,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.51706910907578,
+          "uptime_last_1d": 99.41751612232162,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai"
         }
@@ -11622,9 +8803,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 95.55555555555556,
-          "uptime_last_5m": 94.87179487179486,
-          "uptime_last_1d": 97.49283319566591,
+          "uptime_last_30m": 96.26436781609196,
+          "uptime_last_5m": 94.44444444444444,
+          "uptime_last_1d": 97.45464906448855,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11687,9 +8868,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 98.85057471264368,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.7635294912506,
+          "uptime_last_1d": 99.73546848059709,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai"
         }
@@ -11760,48 +8941,9 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96987951807229,
+          "uptime_last_1d": 99.97267572921648,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
-        },
-        {
-          "name": "Google | z-ai/glm-4.7-20251222",
-          "model_id": "z-ai/glm-4.7",
-          "model_name": "Z.ai: GLM 4.7",
-          "provider_name": "Google",
-          "tag": "google-vertex",
-          "context_length": 200000,
-          "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.0000022",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "top_k",
-            "repetition_penalty",
-            "frequency_penalty",
-            "presence_penalty",
-            "stop",
-            "structured_outputs",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.92461705463755,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
         },
         {
           "name": "Z.AI | z-ai/glm-4.7-20251222",
@@ -11829,10 +8971,10 @@
             "tool_choice",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.59148446490218,
-          "uptime_last_5m": 97.97979797979798,
-          "uptime_last_1d": 95.11925886188256,
+          "status": 0,
+          "uptime_last_30m": 97.02474162229878,
+          "uptime_last_5m": 92.71844660194175,
+          "uptime_last_1d": 95.02826720489347,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11893,10 +9035,10 @@
             "tool_choice",
             "response_format"
           ],
-          "status": -5,
-          "uptime_last_30m": 68.98148148148148,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 74.66579005040543,
+          "status": -2,
+          "uptime_last_30m": 88.04347826086956,
+          "uptime_last_5m": 79.16666666666666,
+          "uptime_last_1d": 75.19589604825526,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -11960,7 +9102,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87674891014082,
+          "uptime_last_1d": 99.87619293267991,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -12022,9 +9164,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.49874686716792,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.1292596140687,
+          "uptime_last_30m": 99.14383561643835,
+          "uptime_last_5m": 98.40637450199203,
+          "uptime_last_1d": 99.08164295085275,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -12086,9 +9228,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.48749397695913,
-          "uptime_last_5m": 99.6124031007752,
-          "uptime_last_1d": 99.39841821053652,
+          "uptime_last_30m": 99.36734528347799,
+          "uptime_last_5m": 99.4155154091392,
+          "uptime_last_1d": 99.39990569555015,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -12154,7 +9296,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99828273114439,
+          "uptime_last_1d": 99.99791048518534,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }

@@ -17,18 +17,18 @@ from trusted_router.routing import chat_route_candidates, chat_route_endpoint_ca
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert len(PROVIDERS) >= 8
     assert "kimi" in PROVIDERS
-    assert "kimi/kimi-k2.6" in MODELS
-    assert "kimi/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
-    assert "kimi/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
-    assert "kimi/kimi-k2.6" in [model.id for model in auto_candidate_models()]
+    assert "moonshotai/kimi-k2.6" in MODELS
+    assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
     for model_id, provider in [
-        ("anthropic/claude-3-5-sonnet", "anthropic"),
+        ("anthropic/claude-sonnet-4.6", "anthropic"),
         ("openai/gpt-4o-mini", "openai"),
-        ("google/gemini-1.5-flash", "gemini"),
+        ("google/gemini-2.5-flash", "gemini"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
-        ("mistral/mistral-small-2603", "mistral"),
-        ("cerebras/llama3.1-8b", "cerebras"),
-        ("kimi/kimi-k2.6", "kimi"),
+        ("mistralai/mistral-small-2603", "mistral"),
+        ("meta-llama/llama-3.1-8b-instruct", "cerebras"),
+        ("moonshotai/kimi-k2.6", "kimi"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
@@ -76,15 +76,15 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
             [
                 AUTO_MODEL_ID,
                 "missing/provider",
-                "mistral/mistral-small-2603",
-                "mistral/mistral-small-2603",
+                "mistralai/mistral-small-2603",
+                "mistralai/mistral-small-2603",
                 "deepseek/deepseek-v4-flash",
             ]
         )
     )
 
     assert [model.id for model in candidates] == [
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
         "deepseek/deepseek-v4-flash",
     ]
 
@@ -94,7 +94,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
         {
             "model": "openai/gpt-4o-mini",
             "models": [
-                "mistral/mistral-small-2603",
+                "mistralai/mistral-small-2603",
                 "openai/gpt-4o-mini",
                 "deepseek/deepseek-v4-flash",
             ],
@@ -107,23 +107,29 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
         Settings(environment="test"),
     )
 
+    # provider.order=["deepseek"] pins deepseek first. The remaining two
+    # tie on price under the uniform formula (gpt-4o-mini and
+    # mistral-small-2603 both net out to $0.165/M prompt + $0.66/M
+    # completion), so original-index breaks the tie: openai was the
+    # body's `model` field (index 0), mistral was the first `models`
+    # entry (index 1).
     assert [model.id for model in candidates] == [
         "deepseek/deepseek-v4-flash",
-        "mistral/mistral-small-2603",
         "openai/gpt-4o-mini",
+        "mistralai/mistral-small-2603",
     ]
 
 
 @pytest.mark.parametrize(
     ("model_id", "provider"),
     [
-        ("kimi/kimi-k2.6", "kimi"),
+        ("moonshotai/kimi-k2.6", "kimi"),
         ("openai/gpt-4o-mini", "openai"),
-        ("mistral/mistral-small-2603", "mistral"),
+        ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
-        ("cerebras/llama3.1-8b", "cerebras"),
-        ("google/gemini-1.5-flash", "gemini"),
-        ("anthropic/claude-3-5-sonnet", "anthropic"),
+        ("meta-llama/llama-3.1-8b-instruct", "cerebras"),
+        ("google/gemini-2.5-flash", "gemini"),
+        ("anthropic/claude-sonnet-4.6", "anthropic"),
     ],
 )
 def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provider: str) -> None:

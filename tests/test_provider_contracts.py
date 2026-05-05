@@ -115,11 +115,11 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
             "gpt-4o-mini",
         ),
         (
-            "cerebras/llama3.1-8b",
+            "meta-llama/llama-3.1-8b-instruct",
             "CEREBRAS_API_KEY",
             "cerebras-value",
             "https://api.cerebras.ai/v1/chat/completions",
-            "llama3.1-8b",
+            "llama-3.1-8b-instruct",
         ),
         (
             "deepseek/deepseek-v4-flash",
@@ -129,14 +129,14 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
             "deepseek-v4-flash",
         ),
         (
-            "mistral/mistral-small-2603",
+            "mistralai/mistral-small-2603",
             "MISTRAL_API_KEY",
             "mistral-value",
             "https://api.mistral.ai/v1/chat/completions",
             "mistral-small-2603",
         ),
         (
-            "kimi/kimi-k2.6",
+            "moonshotai/kimi-k2.6",
             "MOONSHOT_API_KEY",
             "kimi-value",
             "https://api.moonshot.ai/v1/chat/completions",
@@ -238,7 +238,7 @@ async def test_kimi_prefers_kimi_api_key_but_accepts_moonshot_alias(tmp_path, mo
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["kimi/kimi-k2.6"],
+        MODELS["moonshotai/kimi-k2.6"],
         {"messages": [{"role": "user", "content": "hello"}]},
     )
 
@@ -246,6 +246,12 @@ async def test_kimi_prefers_kimi_api_key_but_accepts_moonshot_alias(tmp_path, mo
     assert calls[0]["headers"] == {"authorization": "Bearer kimi-value"}
 
 
+@pytest.mark.skip(
+    reason="Vertex provider is dormant — TR's GCP project doesn't yet have "
+    "Anthropic-on-Vertex / Gemini-on-Vertex quota approved, so no models "
+    "currently route through the Vertex adapter. Re-enable this test when "
+    "vertex models are added back to the catalog."
+)
 @pytest.mark.asyncio
 async def test_vertex_platform_uses_gcp_identity_not_provider_api_key(tmp_path, monkeypatch) -> None:
     key_file = tmp_path / "keys.private"
@@ -480,7 +486,7 @@ async def test_openai_compatible_live_adapter_maps_provider_errors(tmp_path, mon
 
     with pytest.raises(ProviderError) as exc_info:
         await client.chat(
-            MODELS["cerebras/llama3.1-8b"],
+            MODELS["meta-llama/llama-3.1-8b-instruct"],
             {"messages": [{"role": "user", "content": "hello"}]},
         )
 
@@ -521,7 +527,7 @@ async def test_anthropic_live_adapter_splits_system_prompt_and_uses_native_usage
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["anthropic/claude-3-5-sonnet"],
+        MODELS["anthropic/claude-sonnet-4.6"],
         {
             "max_tokens": 6,
             "messages": [
@@ -617,7 +623,7 @@ async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(
         ],
         "max_tokens": 5,
     }
-    model = MODELS["anthropic/claude-3-5-sonnet"]
+    model = MODELS["anthropic/claude-sonnet-4.6"]
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
@@ -640,7 +646,7 @@ async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(
             "url": "https://api.anthropic.com/v1/messages",
             "headers": {"x-api-key": "anthropic-value", "anthropic-version": "2023-06-01"},
             "json": {
-                "model": "claude-3-5-sonnet",
+                "model": "claude-sonnet-4.6",
                 "messages": [{"role": "user", "content": "hello"}],
                 "max_tokens": 5,
                 "stream": True,
@@ -697,7 +703,7 @@ async def test_anthropic_messages_stream_passes_native_sse_and_records_usage(tmp
 
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
-    model = MODELS["anthropic/claude-3-5-sonnet"]
+    model = MODELS["anthropic/claude-sonnet-4.6"]
     state = client.new_stream_state(model, {"messages": [{"role": "user", "content": "hello"}]})
 
     chunks = [
@@ -759,7 +765,7 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["google/gemini-1.5-flash"],
+        MODELS["google/gemini-2.5-flash"],
         {
             "messages": [
                 {"role": "system", "content": "system"},
@@ -847,7 +853,7 @@ async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(tmp_path,
 
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
-    model = MODELS["google/gemini-1.5-flash"]
+    model = MODELS["google/gemini-2.5-flash"]
     request = {
         "messages": [{"role": "user", "content": "hello"}],
         "max_tokens": 7,
@@ -874,7 +880,7 @@ async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(tmp_path,
             "method": "POST",
             "url": (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
-                "gemini-1.5-flash:streamGenerateContent"
+                "gemini-2.5-flash:streamGenerateContent"
             ),
             "params": {"key": "gemini-value", "alt": "sse"},
             "json": {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
@@ -14,6 +14,7 @@ from trusted_router.dashboard import (
     STATIC_DIR,
     dashboard_html,
     public_model_detail_html,
+    public_model_not_found_html,
     public_models_html,
     public_page_html,
 )
@@ -103,17 +104,23 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # Per-model detail page. Path captures `{author}/{slug}` (e.g.
     # `z-ai/glm-4.6`, `moonshotai/kimi-k2.6`) so the URL exactly mirrors
     # the OpenRouter model id. The `:path` converter lets the slash
-    # through.
+    # through. Unknown ids render a styled 404 page (HTML, same chrome
+    # as the rest of the marketing site) instead of FastAPI's default
+    # JSON error body.
     @app.api_route(
         "/models/{model_id:path}",
         methods=["GET", "HEAD"],
         response_class=HTMLResponse,
     )
-    async def model_detail(model_id: str) -> str:
-        body = public_model_detail_html(settings, model_id.strip())
+    async def model_detail(model_id: str) -> HTMLResponse:
+        cleaned = model_id.strip()
+        body = public_model_detail_html(settings, cleaned)
         if body is None:
-            raise HTTPException(status_code=404, detail="Model not found")
-        return body
+            return HTMLResponse(
+                public_model_not_found_html(settings, cleaned),
+                status_code=404,
+            )
+        return HTMLResponse(body)
 
     @app.get("/og.png")
     async def og_image() -> FileResponse:

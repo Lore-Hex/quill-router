@@ -388,7 +388,7 @@ def test_prompt_output_never_enter_metadata_store(client: TestClient, inference_
     resp = client.post(
         "/v1/chat/completions",
         headers=inference_headers,
-        json={"model": "anthropic/claude-3-5-sonnet", "messages": [{"role": "user", "content": prompt}]},
+        json={"model": "anthropic/claude-sonnet-4.6", "messages": [{"role": "user", "content": prompt}]},
     )
     assert resp.status_code == 200
     assert prompt not in str(STORE.generation_store.generations)

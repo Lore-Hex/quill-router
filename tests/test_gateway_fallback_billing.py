@@ -35,7 +35,7 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
         json={
             "api_key_hash": key["hash"],
             "model": "anthropic/claude-opus-4.7",
-            "models": ["mistral/mistral-small-2603"],
+            "models": ["mistralai/mistral-small-2603"],
             "estimated_input_tokens": 20_000,
             "max_output_tokens": 10_000,
         },
@@ -46,11 +46,11 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert auth_data["limit_usage_type"] == "Credits"
     assert [item["model"] for item in auth_data["route_candidates"]][:2] == [
         "anthropic/claude-opus-4.7",
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
     ]
     mistral_byok = next(
         item for item in auth_data["route_candidates"]
-        if item["model"] == "mistral/mistral-small-2603" and item["usage_type"] == "BYOK"
+        if item["model"] == "mistralai/mistral-small-2603" and item["usage_type"] == "BYOK"
     )
     assert mistral_byok["byok_secret_ref"] == "env://MISTRAL_API_KEY"  # noqa: S105
 
@@ -68,8 +68,8 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
 
     assert settle.status_code == 200, settle.text
     data = settle.json()["data"]
-    expected_cost = cost_microdollars(MODELS["mistral/mistral-small-2603"], 12_345, 6_789)
-    assert data["model"] == "mistral/mistral-small-2603"
+    expected_cost = cost_microdollars(MODELS["mistralai/mistral-small-2603"], 12_345, 6_789)
+    assert data["model"] == "mistralai/mistral-small-2603"
     assert data["provider"] == "mistral"
     assert data["usage_type"] == "BYOK"
     assert data["limit_usage_type"] == "Credits"
@@ -77,7 +77,7 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
 
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
-    assert generation.model == "mistral/mistral-small-2603"
+    assert generation.model == "mistralai/mistral-small-2603"
     assert generation.usage_type == "BYOK"
     assert generation.total_cost_microdollars == expected_cost
 
@@ -109,7 +109,7 @@ def test_gateway_settle_rejects_unlisted_fallback_without_charge_or_generation()
         "/v1/internal/gateway/settle",
         json={
             "authorization_id": authorize.json()["data"]["authorization_id"],
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "actual_input_tokens": 500,
             "actual_output_tokens": 200,
         },
@@ -182,7 +182,7 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "mistral/mistral-small-2603",
+            "model": "mistralai/mistral-small-2603",
             "models": ["anthropic/claude-opus-4.7"],
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
@@ -190,12 +190,12 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
     )
     assert authorize.status_code == 200, authorize.text
     auth_data = authorize.json()["data"]
-    assert auth_data["model"] == "mistral/mistral-small-2603"
+    assert auth_data["model"] == "mistralai/mistral-small-2603"
     assert auth_data["usage_type"] == "Credits"
     assert auth_data["limit_usage_type"] == "Credits"
     assert auth_data["credit_reservation_id"]
     assert [item["model"] for item in auth_data["route_candidates"]] == [
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
         "anthropic/claude-opus-4.7",
     ]
 
@@ -234,7 +234,7 @@ def test_gateway_byok_preference_without_workspace_config_is_rejected() -> None:
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "mistral/mistral-small-2603",
+            "model": "mistralai/mistral-small-2603",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
@@ -260,7 +260,7 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "kimi/kimi-k2.6",
+            "model": "moonshotai/kimi-k2.6",
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
         },
@@ -290,7 +290,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "kimi/kimi-k2.6",
+            "model": "moonshotai/kimi-k2.6",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 1_000,
             "max_output_tokens": 1_000,
@@ -307,7 +307,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
     assert data["route_candidates"] == [
         {
             "endpoint_id": data["endpoint_id"],
-            "model": "kimi/kimi-k2.6",
+            "model": "moonshotai/kimi-k2.6",
             "provider": "kimi",
             "provider_name": "Kimi",
             "usage_type": "BYOK",

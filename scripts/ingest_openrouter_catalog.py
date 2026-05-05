@@ -11,10 +11,12 @@ Usage:
     python scripts/ingest_openrouter_catalog.py --check    # CI guard: exits 1 if the file would change
 
 The filter keeps models whose endpoints[].provider_name resolves to one
-of TR's 9 keyed providers (anthropic, openai, gemini, vertex, cerebras,
-deepseek, mistral, kimi, zai). Within each kept model we keep only those
-endpoints — secondary inference providers (DeepInfra, Together, etc.) are
-dropped because TR has no key for them.
+of TR's 8 keyed providers (anthropic, openai, gemini, cerebras, deepseek,
+mistral, kimi, zai). Within each kept model we keep only those endpoints
+— secondary inference providers (DeepInfra, Together, etc.) are dropped
+because TR has no key for them. Vertex is intentionally excluded until
+TR's GCP project gets the Anthropic-on-Vertex / Gemini-on-Vertex quota
+approvals.
 """
 
 from __future__ import annotations
@@ -42,9 +44,6 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "OpenAI": "openai",
     "Google": "gemini",
     "Google AI Studio": "gemini",
-    "Google Vertex": "vertex",
-    "Google Vertex AI": "vertex",
-    "Vertex": "vertex",
     "Cerebras": "cerebras",
     "DeepSeek": "deepseek",
     "Mistral": "mistral",
@@ -113,6 +112,14 @@ def filter_endpoints(endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
         provider_name = str(raw.get("provider_name") or "").strip()
         slug = PROVIDER_NAME_TO_SLUG.get(provider_name)
         if slug is None:
+            continue
+        # OpenRouter labels Vertex-served endpoints with `provider_name="Google"`
+        # *and* `tag="google-vertex/..."`. Without the tag check the snapshot
+        # would lump those into our `gemini` provider and surface them as
+        # routable models, which is wrong — TR doesn't have GCP quota for
+        # Anthropic-on-Vertex / Gemini-on-Vertex yet.
+        tag = str(raw.get("tag") or "").lower()
+        if tag.startswith("google-vertex"):
             continue
         kept = {key: raw.get(key) for key in ENDPOINT_FIELDS if key in raw}
         kept["tr_provider_slug"] = slug

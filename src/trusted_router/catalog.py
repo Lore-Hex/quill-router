@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -95,20 +95,6 @@ def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]
     return customer, customer, cost
 
 
-def _hand_priced(prompt_dollars: str, completion_dollars: str) -> ModelPricingKwargs:
-    """Splat into a Model() ctor for hand-curated entries. Replaces the old
-    `_one_cent_less_per_million` + `dollars_to_microdollars` doubled-up
-    spelling."""
-    prompt_price, prompt_published, _ = _priced(prompt_dollars)
-    completion_price, completion_published, _ = _priced(completion_dollars)
-    return {
-        "prompt_price_microdollars_per_million_tokens": prompt_price,
-        "completion_price_microdollars_per_million_tokens": completion_price,
-        "published_prompt_price_microdollars_per_million_tokens": prompt_published,
-        "published_completion_price_microdollars_per_million_tokens": completion_published,
-    }
-
-
 def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, int, int]:
     """Variant for OpenRouter-shaped inputs (dollars/token strings).
     Returns the same triple as `_priced`."""
@@ -116,7 +102,9 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
         return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
     try:
         per_token = Decimal(str(price_per_token))
-    except Exception:  # noqa: BLE001 — malformed snapshot rows are dropped to floor.
+    except (InvalidOperation, ValueError):
+        # Malformed snapshot rows are pinned to the price floor — better
+        # to advertise $0.10/M than to crash module import or expose $0.
         return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
     cost = int(
         (per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value()
@@ -134,14 +122,6 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=True,
     ),
-    "vertex": Provider(
-        slug="vertex",
-        name="Google Vertex",
-        supports_messages=True,
-        supports_embeddings=True,
-        supports_prepaid=True,
-        supports_byok=False,
-    ),
     "anthropic": Provider(slug="anthropic", name="Anthropic", supports_messages=True, supports_prepaid=True),
     "openai": Provider(slug="openai", name="OpenAI", supports_embeddings=True, supports_prepaid=True),
     "gemini": Provider(slug="gemini", name="Gemini", supports_embeddings=True, supports_prepaid=True),
@@ -151,21 +131,32 @@ PROVIDERS: dict[str, Provider] = {
     "kimi": Provider(slug="kimi", name="Kimi", supports_prepaid=True),
     "zai": Provider(slug="zai", name="Z.AI", supports_prepaid=True),
 }
+# Vertex is intentionally excluded until TR's GCP project gets the
+# Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
 
 
 AUTO_MODEL_ID = "trustedrouter/auto"
+# IDs follow OpenRouter naming exactly so they line up with what the
+# ingest snapshot produces. The picks span the 8 keyed providers so
+# `trustedrouter/auto` rolls over across providers if any one is down.
 DEFAULT_AUTO_MODEL_ORDER = [
     "anthropic/claude-opus-4.7",
-    "anthropic/claude-3-5-sonnet",
+    "anthropic/claude-sonnet-4.6",
     "openai/gpt-4o-mini",
-    "google/gemini-1.5-flash",
+    "google/gemini-2.5-flash",
     "deepseek/deepseek-v4-flash",
-    "kimi/kimi-k2.6",
-    "mistral/mistral-small-2603",
-    "cerebras/llama3.1-8b",
+    "moonshotai/kimi-k2.6",
+    "mistralai/mistral-small-2603",
+    "z-ai/glm-4.6",
 ]
 
 
+# Catalog seed — only TR's Auto meta-model is hand-coded. Every other
+# entry comes from `_INGESTED_MODELS` below, which is built from
+# `data/openrouter_snapshot.json`. That guarantees pricing is uniformly
+# `cost × 1.10, $0.10/M floor` (per the formula), and that the catalog
+# lists every model from every provider TR has a key for — no
+# hand-curated subset to drift out of sync with reality.
 MODELS: dict[str, Model] = {
     AUTO_MODEL_ID: Model(
         id=AUTO_MODEL_ID,
@@ -175,133 +166,10 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
-        # Auto's intrinsic price is 0 — billing happens at the chosen
-        # candidate's price. The /v1/models shape derives a min/max range
-        # from the candidate set so the dashboard doesn't show $0.
         prompt_price_microdollars_per_million_tokens=0,
         completion_price_microdollars_per_million_tokens=0,
         published_prompt_price_microdollars_per_million_tokens=0,
         published_completion_price_microdollars_per_million_tokens=0,
-    ),
-    "anthropic/claude-opus-4.7": Model(
-        id="anthropic/claude-opus-4.7",
-        name="Claude Opus 4.7",
-        # Default to direct Anthropic (api.anthropic.com). Users who want
-        # Vertex routing can pin per-request with provider.only=["vertex"].
-        # Was "vertex" historically; switched after 2026-05-04 because the
-        # GCP project doesn't yet have Anthropic-on-Vertex quota approved.
-        provider="anthropic",
-        context_length=200_000,
-        supports_messages=True,
-        prepaid_available=True,
-        byok_available=False,
-        **_hand_priced("5", "25"),
-    ),
-    "anthropic/claude-3-5-sonnet": Model(
-        id="anthropic/claude-3-5-sonnet",
-        name="Claude 3.5 Sonnet",
-        provider="anthropic",
-        context_length=200_000,
-        supports_messages=True,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("3", "15"),
-    ),
-    "openai/gpt-4o-mini": Model(
-        id="openai/gpt-4o-mini",
-        name="GPT-4o mini",
-        provider="openai",
-        context_length=128_000,
-        supports_embeddings=True,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("1", "4"),
-    ),
-    "vertex/gemini-2.5-flash": Model(
-        id="vertex/gemini-2.5-flash",
-        name="Gemini 2.5 Flash on Vertex",
-        provider="vertex",
-        upstream_id="google/gemini-2.5-flash",
-        context_length=1_000_000,
-        supports_embeddings=True,
-        prepaid_available=True,
-        byok_available=False,
-        **_hand_priced("0.30", "2.50"),
-    ),
-    "google/gemini-1.5-flash": Model(
-        id="google/gemini-1.5-flash",
-        name="Gemini 1.5 Flash",
-        provider="gemini",
-        context_length=1_000_000,
-        supports_embeddings=True,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("1", "3"),
-    ),
-    "deepseek/deepseek-v4-flash": Model(
-        id="deepseek/deepseek-v4-flash",
-        name="DeepSeek V4 Flash",
-        provider="deepseek",
-        context_length=1_000_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("0.14", "0.28"),
-    ),
-    "deepseek/deepseek-v4-pro": Model(
-        id="deepseek/deepseek-v4-pro",
-        name="DeepSeek V4 Pro",
-        provider="deepseek",
-        context_length=1_000_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("0.435", "0.87"),
-    ),
-    "mistral/mistral-small-2603": Model(
-        id="mistral/mistral-small-2603",
-        name="Mistral Small 4",
-        provider="mistral",
-        context_length=256_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("0.15", "0.60"),
-    ),
-    "mistral/mistral-medium-3-5": Model(
-        id="mistral/mistral-medium-3-5",
-        name="Mistral Medium 3.5",
-        provider="mistral",
-        context_length=256_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("1.50", "7.50"),
-    ),
-    "kimi/kimi-k2.6": Model(
-        id="kimi/kimi-k2.6",
-        name="Kimi K2.6",
-        provider="kimi",
-        upstream_id="kimi-k2.6",
-        context_length=256_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("0.95", "4.00"),
-    ),
-    "kimi/kimi-k2.5": Model(
-        id="kimi/kimi-k2.5",
-        name="Kimi K2.5",
-        provider="kimi",
-        upstream_id="kimi-k2.5",
-        context_length=256_000,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("0.60", "3.00"),
-    ),
-    "cerebras/llama3.1-8b": Model(
-        id="cerebras/llama3.1-8b",
-        name="Llama 3.1 8B on Cerebras",
-        provider="cerebras",
-        context_length=8_192,
-        prepaid_available=True,
-        byok_available=True,
-        **_hand_priced("1", "1"),
     ),
 }
 
@@ -355,7 +223,6 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
     "google": "gemini",
-    "vertex": "vertex",
     "cerebras": "cerebras",
     "deepseek": "deepseek",
     "mistral": "mistral",
@@ -365,6 +232,10 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "z-ai": "zai",
     "zhipu": "zai",
     "zhipuai": "zai",
+    # `meta-llama/*`, `qwen/*`, `minimax/*` etc. fall back to whichever
+    # endpoint provider serves them — Cerebras hosts several llama
+    # variants, and that's what determines which TR-keyed provider
+    # answers the call.
 }
 
 
@@ -435,12 +306,18 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         ]
         context_length = max(ctx_candidates) or 0
 
+        # Anthropic-native `/v1/messages` is only available for models
+        # Anthropic actually serves; for everything else, /v1/messages is
+        # not supported even if Claude-on-OpenRouter etc. exist. Drive
+        # the supports_messages flag off the publisher.
+        supports_messages = publisher == "anthropic"
         models[model_id] = Model(
             id=model_id,
             name=str(raw_model.get("name") or model_id),
             provider=publisher,
             context_length=context_length,
             supports_chat=True,
+            supports_messages=supports_messages,
             prepaid_available=True,
             byok_available=PROVIDERS[publisher].supports_byok,
             prompt_price_microdollars_per_million_tokens=cheapest_prompt,
@@ -481,33 +358,14 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
 
 
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
-# Snapshot of what's hand-coded BEFORE merging ingested models — used
-# below to skip ingested endpoints for any model that was already
-# hand-coded (those carry curated BYOK/messages flags whose endpoint
-# shape we don't want to disrupt). Ingested-only models still get
-# their full per-provider endpoint fan-out.
-_HAND_CODED_MODEL_IDS = frozenset(MODELS.keys())
-
-# Hand-coded entries win on ID collision so their operational flags
-# (BYOK gating, embeddings, messages) survive intact — those reflect
-# real upstream constraints (e.g. anthropic-on-Vertex quota, OpenRouter
-# slug naming differences from TR's own slugs). Ingested entries fill in
-# everything new (the 13 z-ai models, the 3 moonshotai models, etc).
-# Pricing for the surviving hand-coded entries can be tightened in a
-# follow-up PR — that's a smaller, more reviewable change.
-for _ingested_id, _ingested_model in _INGESTED_MODELS.items():
-    MODELS.setdefault(_ingested_id, _ingested_model)
-
+# The ingest snapshot IS the catalog — there's no hand-coded subset to
+# protect. AUTO_MODEL_ID is the only seed; everything else comes from
+# `data/openrouter_snapshot.json`. Pricing across the whole catalog goes
+# through the same `cost × 1.10, $0.10/M floor` formula.
+MODELS.update(_INGESTED_MODELS)
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
-# Ingested per-provider endpoints fill in only models added via the
-# ingest path. For collisions (model present in both hand-coded and
-# ingested), keep the hand-coded endpoint shape so operational gating
-# (BYOK availability, single-provider routing) doesn't silently flip.
-for _endpoint_id, _ingested_endpoint in _INGESTED_ENDPOINTS.items():
-    if _ingested_endpoint.model_id in _HAND_CODED_MODEL_IDS:
-        continue
-    MODEL_ENDPOINTS[_endpoint_id] = _ingested_endpoint
+MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:

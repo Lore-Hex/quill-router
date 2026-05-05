@@ -453,7 +453,7 @@ def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
     )
     mistral = ProviderBenchmarkSample(
         id="bench_mistral",
-        model="mistral/mistral-small-2603",
+        model="mistralai/mistral-small-2603",
         provider="mistral",
         provider_name="Mistral",
         status="error",
@@ -490,7 +490,7 @@ def test_gcp_provider_benchmark_date_only_uses_daily_recent_index() -> None:
     )
     newer_mistral = ProviderBenchmarkSample(
         id="bench_mistral",
-        model="mistral/mistral-small-2603",
+        model="mistralai/mistral-small-2603",
         provider="mistral",
         provider_name="Mistral",
         status="success",

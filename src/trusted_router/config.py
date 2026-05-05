@@ -95,11 +95,14 @@ class Settings(BaseSettings):
     regions: str = "us-central1,europe-west4"
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
+    # IDs follow OpenRouter naming exactly to line up with the ingest
+    # snapshot — `moonshotai/...` not `kimi/...`, `mistralai/...` not
+    # `mistral/...`, `meta-llama/...` for Cerebras-served Llama, etc.
     auto_model_order: str = (
-        "anthropic/claude-opus-4.7,anthropic/claude-3-5-sonnet,"
-        "openai/gpt-4o-mini,google/gemini-1.5-flash,"
-        "deepseek/deepseek-v4-flash,kimi/kimi-k2.6,"
-        "mistral/mistral-small-2603,cerebras/llama3.1-8b"
+        "anthropic/claude-opus-4.7,anthropic/claude-sonnet-4.6,"
+        "openai/gpt-4o-mini,google/gemini-2.5-flash,"
+        "deepseek/deepseek-v4-flash,moonshotai/kimi-k2.6,"
+        "mistralai/mistral-small-2603,z-ai/glm-4.6"
     )
 
     max_request_body_bytes: int = 4 * 1024 * 1024

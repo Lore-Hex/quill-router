@@ -43,7 +43,7 @@ def test_chat_activity_generation_and_no_content_storage(
         "/v1/chat/completions",
         headers={**inference_headers, "x-title": "Quill Cloud"},
         json={
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "messages": [{"role": "user", "content": prompt}],
         },
     )
@@ -57,14 +57,14 @@ def test_chat_activity_generation_and_no_content_storage(
     activity = client.get("/v1/activity", headers=user_headers)
     assert activity.status_code == 200
     row = activity.json()["data"][0]
-    assert row["model"] == "cerebras/llama3.1-8b"
+    assert row["model"] == "meta-llama/llama-3.1-8b-instruct"
     assert row["provider_name"] == "Cerebras"
     assert row["completion_tokens"] > 0
 
     events = client.get("/v1/activity?group_by=none", headers=user_headers)
     assert events.status_code == 200
     event = events.json()["data"][0]
-    assert event["model"] == "cerebras/llama3.1-8b"
+    assert event["model"] == "meta-llama/llama-3.1-8b-instruct"
     assert event["app"] == "Quill Cloud"
     assert event["input_tokens"] > 0
     assert event["output_tokens"] > 0
@@ -85,7 +85,7 @@ def test_chat_activity_generation_and_no_content_storage(
     sample = samples[0]
     safe_sample = asdict(sample)
     assert sample.status == "success"
-    assert sample.model == "cerebras/llama3.1-8b"
+    assert sample.model == "meta-llama/llama-3.1-8b-instruct"
     assert sample.provider == "cerebras"
     assert sample.provider_name == "Cerebras"
     assert sample.elapsed_milliseconds is not None
@@ -244,7 +244,7 @@ def test_provider_errors_map_to_openrouter_style_errors(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -291,7 +291,7 @@ def test_anthropic_messages_endpoint(client: TestClient, inference_headers: dict
         "/v1/messages",
         headers=inference_headers,
         json={
-            "model": "anthropic/claude-3-5-sonnet",
+            "model": "anthropic/claude-sonnet-4.6",
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -342,7 +342,7 @@ def test_anthropic_messages_stream_uses_provider_stream_without_materializing(
         "/v1/messages",
         headers=inference_headers,
         json={
-            "model": "anthropic/claude-3-5-sonnet",
+            "model": "anthropic/claude-sonnet-4.6",
             "stream": True,
             "max_tokens": 16,
             "messages": [{"role": "user", "content": "hello"}],
@@ -373,17 +373,19 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
 
     models = client.get("/v1/embeddings/models")
     assert models.status_code == 200
-    # `vertex/gemini-2.5-flash` is the canonical embeddings-eligible model
-    # in the hand-coded catalog. (gpt-4o-mini's supports_embeddings flag was
-    # removed when the ingested OpenRouter snapshot took over its pricing —
-    # gpt-4o-mini isn't actually an embeddings model upstream.)
-    assert any(item["id"] == "vertex/gemini-2.5-flash" for item in models.json()["data"])
+    # The catalog is sourced entirely from the OpenRouter ingest snapshot,
+    # which doesn't carry a `supports_embeddings` flag (OpenRouter focuses on
+    # chat/completion). Until embeddings models are added back as a
+    # hand-curated subset, `/v1/embeddings/models` returns an empty list —
+    # the embeddings *route* still answers (501 above) so callers get a
+    # clean error path; no model just means no eligible candidates.
+    assert models.json()["data"] == []
 
-    endpoint = client.get("/v1/models/cerebras/llama3.1-8b/endpoints")
+    endpoint = client.get("/v1/models/meta-llama/llama-3.1-8b-instruct/endpoints")
     assert endpoint.status_code == 200
     assert endpoint.json()["data"][0]["provider_name"] == "Cerebras"
 
-    kimi = client.get("/v1/models/kimi/kimi-k2.6/endpoints")
+    kimi = client.get("/v1/models/moonshotai/kimi-k2.6/endpoints")
     assert kimi.status_code == 200
     assert [item["trustedrouter"]["usage_type"] for item in kimi.json()["data"]] == [
         "Credits",
@@ -466,7 +468,7 @@ def test_api_key_limit_blocks_credit_and_byok_usage(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
@@ -490,7 +492,7 @@ def test_api_key_limit_can_exclude_byok_usage(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "provider": {"usage": "byok"},
             "max_tokens": 100,
             "messages": [{"role": "user", "content": "hello"}],
@@ -554,22 +556,29 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models = client.get("/v1/models").json()["data"]
     model_ids = {model["id"] for model in models}
     assert models
+    # Probe one model from each TR-keyed provider that actually appears
+    # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
+    # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.
     assert {
-        "vertex/gemini-2.5-flash",
+        "anthropic/claude-opus-4.7",
+        "openai/gpt-4o-mini",
+        "google/gemini-2.5-flash",
         "deepseek/deepseek-v4-flash",
-        "kimi/kimi-k2.6",
-        "mistral/mistral-small-2603",
+        "moonshotai/kimi-k2.6",
+        "mistralai/mistral-small-2603",
+        "z-ai/glm-4.6",
     }.issubset(model_ids)
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
-    assert {"vertex", "deepseek", "kimi", "mistral"}.issubset(provider_flags)
-    assert provider_flags["vertex"]["supports_prepaid"] is True
-    assert provider_flags["vertex"]["supports_byok"] is False
+    assert {"anthropic", "openai", "gemini", "deepseek", "kimi", "mistral", "zai"}.issubset(
+        provider_flags
+    )
     assert provider_flags["openai"]["supports_prepaid"] is True
     assert provider_flags["deepseek"]["supports_byok"] is True
     assert provider_flags["kimi"]["supports_byok"] is True
     assert provider_flags["mistral"]["supports_byok"] is True
+    assert provider_flags["zai"]["supports_byok"] is True
     assert client.get("/v1/endpoints/zdr").json()["data"]
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200

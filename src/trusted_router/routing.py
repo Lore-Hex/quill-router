@@ -30,9 +30,6 @@ class RoutePreferences:
 
 
 _PROVIDER_ALIASES = {
-    "google-vertex": "vertex",
-    "vertex-ai": "vertex",
-    "vertex": "vertex",
     "google": "gemini",
     "google-ai-studio": "gemini",
     "mistralai": "mistral",
@@ -60,14 +57,13 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 
 _THROUGHPUT_RANK = {
     "cerebras": 0,
-    "vertex": 1,
-    "gemini": 2,
-    "deepseek": 3,
-    "kimi": 4,
-    "zai": 5,
-    "mistral": 6,
-    "openai": 7,
-    "anthropic": 8,
+    "gemini": 1,
+    "deepseek": 2,
+    "kimi": 3,
+    "zai": 4,
+    "mistral": 5,
+    "openai": 6,
+    "anthropic": 7,
     "trustedrouter": 99,
 }
 

@@ -138,7 +138,7 @@ def public_models_html(settings: Settings) -> str:
 def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     """Render the per-model detail page for `/models/{author}/{slug}`.
     Returns None when the model id isn't in the catalog (route handler
-    converts that to a 404)."""
+    converts that to a styled 404)."""
     model = MODELS.get(model_id)
     if model is None or model.id == AUTO_MODEL_ID:
         return None
@@ -149,6 +149,22 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         heading=model.name,
         description=f"All providers serving {model.name} via TrustedRouter.",
         model=_model_detail_view(model),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+    )
+
+
+def public_model_not_found_html(settings: Settings, model_id: str) -> str:
+    """Styled HTML 404 for `/models/{nonexistent}` — keeps the visitor
+    inside the marketing chrome instead of dumping FastAPI's default
+    JSON error body."""
+    return _env().get_template("public/model_not_found.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/models",
+        title="Model not found - TrustedRouter",
+        heading="Model not found",
+        description=f"No model with id {model_id} is in the TrustedRouter catalog.",
+        requested_model_id=model_id,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
     )

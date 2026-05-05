@@ -41,7 +41,7 @@ def test_chat_route_candidates_models_array_dedupes_and_preserves_order() -> Non
             "model": "openai/gpt-4o-mini",
             "models": [
                 "openai/gpt-4o-mini",  # dup with primary, must be dropped
-                "mistral/mistral-small-2603",
+                "mistralai/mistral-small-2603",
                 "openai/gpt-4o-mini",  # second dup
             ],
         },
@@ -49,7 +49,7 @@ def test_chat_route_candidates_models_array_dedupes_and_preserves_order() -> Non
     )
     assert [c.id for c in candidates] == [
         "openai/gpt-4o-mini",
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
     ]
 
 
@@ -65,8 +65,8 @@ def test_chat_route_candidates_provider_only_filter_keeps_matching_only() -> Non
         {
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
-                "anthropic/claude-3-5-sonnet",
+                "mistralai/mistral-small-2603",
+                "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"only": ["mistral", "anthropic"]},
         },
@@ -81,8 +81,8 @@ def test_chat_route_candidates_provider_ignore_filter_drops_matching() -> None:
         {
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
-                "anthropic/claude-3-5-sonnet",
+                "mistralai/mistral-small-2603",
+                "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"ignore": ["openai"]},
         },
@@ -98,14 +98,14 @@ def test_chat_route_candidates_only_and_ignore_combine() -> None:
         {
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
-                "anthropic/claude-3-5-sonnet",
+                "mistralai/mistral-small-2603",
+                "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"only": ["openai", "mistral"], "ignore": ["openai"]},
         },
         _settings(),
     )
-    assert [c.id for c in candidates] == ["mistral/mistral-small-2603"]
+    assert [c.id for c in candidates] == ["mistralai/mistral-small-2603"]
 
 
 def test_chat_route_candidates_filter_eliminates_all_raises() -> None:
@@ -126,8 +126,8 @@ def test_chat_route_candidates_provider_order_reorders() -> None:
         {
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
-                "anthropic/claude-3-5-sonnet",
+                "mistralai/mistral-small-2603",
+                "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"order": ["mistral", "anthropic", "openai"]},
         },
@@ -141,8 +141,8 @@ def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None
         {
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
-                "anthropic/claude-3-5-sonnet",
+                "mistralai/mistral-small-2603",
+                "anthropic/claude-sonnet-4.6",
             ],
             "provider": {"allow_fallbacks": False, "order": ["mistral"]},
         },
@@ -159,9 +159,9 @@ def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
     candidates = chat_route_candidates(
         {
             "models": [
-                "anthropic/claude-3-5-sonnet",
+                "anthropic/claude-sonnet-4.6",
                 "openai/gpt-4o-mini",
-                "cerebras/llama3.1-8b",
+                "meta-llama/llama-3.1-8b-instruct",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {"sort": "throughput"},
@@ -178,7 +178,7 @@ def test_chat_route_candidates_sort_by_price_orders_cheapest_first() -> None:
     candidates = chat_route_candidates(
         {
             "models": [
-                "anthropic/claude-3-5-sonnet",
+                "anthropic/claude-sonnet-4.6",
                 "openai/gpt-4o-mini",
                 "deepseek/deepseek-v4-flash",
             ],

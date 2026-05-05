@@ -50,7 +50,7 @@ def test_embeddings_are_explicitly_not_implemented_without_writing_generation(
     resp = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "mistral/mistral-small-2603", "input": "hello"},
+        json={"model": "mistralai/mistral-small-2603", "input": "hello"},
     )
 
     assert resp.status_code == 501
@@ -105,7 +105,7 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
         headers=inference_headers,
         json={
             "model": "openai/gpt-4o-mini",
-            "models": ["mistral/mistral-small-2603", "openai/gpt-4o-mini"],
+            "models": ["mistralai/mistral-small-2603", "openai/gpt-4o-mini"],
             "messages": [{"role": "user", "content": prompt}],
             "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
             "tool_choice": "auto",
@@ -127,7 +127,7 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
     assert payload["object"] == "chat.completion"
     assert payload["trustedrouter"]["requested_model"] == "openai/gpt-4o-mini"
     assert payload["trustedrouter"]["selected_model"] in {
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
         "openai/gpt-4o-mini",
     }
     assert prompt not in response.text

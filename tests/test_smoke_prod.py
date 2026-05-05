@@ -133,12 +133,12 @@ def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -
     assert response.status_code == 200
     models = {item["id"]: item for item in response.json()["data"]}
 
-    assert "kimi/kimi-k2.6" in models
+    assert "moonshotai/kimi-k2.6" in models
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
     assert "anthropic/claude-opus-4.7" in candidates
-    assert "kimi/kimi-k2.6" in candidates
-    assert "cerebras/llama3.1-8b" in candidates
+    assert "moonshotai/kimi-k2.6" in candidates
+    assert "meta-llama/llama-3.1-8b-instruct" in candidates
 
 
 def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:

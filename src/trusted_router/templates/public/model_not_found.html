@@ -1,0 +1,21 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>404 &mdash; model not found</h2><span class="pill warn">unknown id</span></div>
+  <div class="panel-body">
+    <p>
+      <code>{{ requested_model_id }}</code> is not in the TrustedRouter
+      catalog. We list every model from every provider we have a key
+      for; if you expected this one, the upstream may not be reachable
+      yet.
+    </p>
+    <p>
+      <a class="btn primary" href="/models">Browse the catalog</a>
+      <a class="btn" href="/docs/migrate-from-openrouter">Migration guide</a>
+    </p>
+    <p class="signup-foot">
+      OpenRouter-compatible JSON: <span class="mono">{{ api_base_url }}/models</span> with an API key.
+    </p>
+  </div>
+</section>
+{% endblock %}

@@ -17,12 +17,12 @@ async def test_mock_provider_path_does_not_require_live_provider_keys(tmp_path) 
     client = ProviderClient(LocalKeyFile(key_file), live=False)
 
     result = await client.chat(
-        MODELS["anthropic/claude-3-5-sonnet"],
+        MODELS["anthropic/claude-sonnet-4.6"],
         {"messages": [{"role": "user", "content": "hello"}]},
     )
 
     assert result.provider_name == "Anthropic"
-    assert result.text == "TrustedRouter response from anthropic/claude-3-5-sonnet."
+    assert result.text == "TrustedRouter response from anthropic/claude-sonnet-4.6."
     assert result.usage_estimated is True
 
 

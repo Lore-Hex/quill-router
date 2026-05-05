@@ -163,7 +163,7 @@ async def test_anthropic_late_error_event_finishes_openai_stream_with_error_reas
 
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
-    model = MODELS["anthropic/claude-3-5-sonnet"]
+    model = MODELS["anthropic/claude-sonnet-4.6"]
     state = client.new_stream_state(model, {"messages": [{"role": "user", "content": "hello"}]})
 
     body = b"".join(
@@ -255,7 +255,7 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "models": ["openai/gpt-4o-mini", "cerebras/llama3.1-8b"],
+            "models": ["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"],
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -263,11 +263,11 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
         assert response.status_code == 200
         body = b"".join(response.iter_bytes())
 
-    assert b'"selected_model":"cerebras/llama3.1-8b"' in body
+    assert b'"selected_model":"meta-llama/llama-3.1-8b-instruct"' in body
     assert b"second-provider-stream" in body
     generations = list(STORE.generation_store.generations.values())
     assert len(generations) == 1
-    assert generations[0].model == "cerebras/llama3.1-8b"
+    assert generations[0].model == "meta-llama/llama-3.1-8b-instruct"
     assert generations[0].request_id == "second-provider-stream"
     assert account.reserved_microdollars == 0
     assert key.reserved_microdollars == 0

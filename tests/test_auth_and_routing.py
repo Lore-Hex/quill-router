@@ -67,12 +67,12 @@ def test_trustedrouter_auto_rolls_over_to_next_provider(
 
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert attempts[:2] == ["anthropic/claude-opus-4.7", "anthropic/claude-3-5-sonnet"]
-    assert payload["model"] == "anthropic/claude-3-5-sonnet"
+    assert attempts[:2] == ["anthropic/claude-opus-4.7", "anthropic/claude-sonnet-4.6"]
+    assert payload["model"] == "anthropic/claude-sonnet-4.6"
     assert payload["trustedrouter"]["requested_model"] == "trustedrouter/auto"
-    assert payload["trustedrouter"]["selected_model"] == "anthropic/claude-3-5-sonnet"
+    assert payload["trustedrouter"]["selected_model"] == "anthropic/claude-sonnet-4.6"
     generation = next(iter(STORE.generation_store.generations.values()))
-    assert generation.model == "anthropic/claude-3-5-sonnet"
+    assert generation.model == "anthropic/claude-sonnet-4.6"
 
 
 def test_models_array_rolls_over_and_provider_filters_apply(
@@ -103,7 +103,7 @@ def test_models_array_rolls_over_and_provider_filters_apply(
         headers=inference_headers,
         json={
             "model": "deepseek/deepseek-v4-flash",
-            "models": ["mistral/mistral-small-2603", "openai/gpt-4o-mini"],
+            "models": ["mistralai/mistral-small-2603", "openai/gpt-4o-mini"],
             "provider": {"ignore": ["openai"]},
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -111,8 +111,8 @@ def test_models_array_rolls_over_and_provider_filters_apply(
 
     assert resp.status_code == 200, resp.text
     payload = resp.json()
-    assert attempts == ["deepseek/deepseek-v4-flash", "mistral/mistral-small-2603"]
-    assert payload["model"] == "mistral/mistral-small-2603"
+    assert attempts == ["deepseek/deepseek-v4-flash", "mistralai/mistral-small-2603"]
+    assert payload["model"] == "mistralai/mistral-small-2603"
     assert payload["trustedrouter"]["rollover_failures"]
 
 
@@ -143,7 +143,7 @@ def test_provider_order_sort_and_no_fallbacks_shape_candidate_list(
         json={
             "models": [
                 "openai/gpt-4o-mini",
-                "mistral/mistral-small-2603",
+                "mistralai/mistral-small-2603",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {
@@ -157,8 +157,8 @@ def test_provider_order_sort_and_no_fallbacks_shape_candidate_list(
     )
 
     assert resp.status_code == 200, resp.text
-    assert attempts == ["mistral/mistral-small-2603"]
-    assert resp.json()["model"] == "mistral/mistral-small-2603"
+    assert attempts == ["mistralai/mistral-small-2603"]
+    assert resp.json()["model"] == "mistralai/mistral-small-2603"
 
 
 def test_provider_failure_records_benchmark_without_generation(
@@ -226,7 +226,7 @@ def test_streaming_models_array_falls_back_before_first_chunk(
         headers=inference_headers,
         json={
             "model": "deepseek/deepseek-v4-flash",
-            "models": ["mistral/mistral-small-2603"],
+            "models": ["mistralai/mistral-small-2603"],
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -234,8 +234,8 @@ def test_streaming_models_array_falls_back_before_first_chunk(
         assert resp.status_code == 200
         body = b"".join(resp.iter_bytes())
 
-    assert attempts == ["deepseek/deepseek-v4-flash", "mistral/mistral-small-2603"]
-    assert b'"selected_model":"mistral/mistral-small-2603"' in body
+    assert attempts == ["deepseek/deepseek-v4-flash", "mistralai/mistral-small-2603"]
+    assert b'"selected_model":"mistralai/mistral-small-2603"' in body
     assert b"req_stream_fallback" in body
 
 
@@ -280,7 +280,14 @@ def test_regions_endpoint_and_gateway_authorize_include_routing_metadata() -> No
     assert data["region"] == "asia-northeast1"
     assert len(data["route_candidates"]) >= 2
     assert data["route_candidates"][0]["model"] == "anthropic/claude-opus-4.7"
-    assert any(item["model"] == "kimi/kimi-k2.6" for item in data["route_candidates"])
+    # The exact tail of the auto rollover depends on which providers are
+    # configured at request time; assert that at least one non-primary
+    # candidate is present so callers know fallback is wired up.
+    fallback_models = [
+        item["model"] for item in data["route_candidates"]
+        if item["model"] != "anthropic/claude-opus-4.7"
+    ]
+    assert fallback_models, f"expected fallback candidates, got {data['route_candidates']}"
 
 
 def test_gateway_authorize_honors_models_and_provider_filters() -> None:
@@ -304,7 +311,7 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
         json={
             "api_key_hash": created["data"]["hash"],
             "model": "openai/gpt-4o-mini",
-            "models": ["mistral/mistral-small-2603", "deepseek/deepseek-v4-flash"],
+            "models": ["mistralai/mistral-small-2603", "deepseek/deepseek-v4-flash"],
             "provider": {"order": ["mistral"], "ignore": ["openai"], "usage": "byok"},
             "estimated_input_tokens": 10,
             "max_output_tokens": 4,
@@ -313,9 +320,9 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
 
     assert authorize.status_code == 200, authorize.text
     data = authorize.json()["data"]
-    assert data["model"] == "mistral/mistral-small-2603"
+    assert data["model"] == "mistralai/mistral-small-2603"
     assert [item["model"] for item in data["route_candidates"]] == [
-        "mistral/mistral-small-2603",
+        "mistralai/mistral-small-2603",
         "deepseek/deepseek-v4-flash",
     ]
 

@@ -302,7 +302,7 @@ def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key_hash,
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -349,7 +349,7 @@ def test_internal_gateway_byok_returns_envelope_for_uploaded_raw_key(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 20,
             "max_output_tokens": 4,
@@ -396,7 +396,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
             "/v1/internal/gateway/authorize",
             json={
                 "api_key_hash": created["data"]["hash"],
-                "model": "cerebras/llama3.1-8b",
+                "model": "meta-llama/llama-3.1-8b-instruct",
                 "provider": {"usage": "byok"},
                 "estimated_input_tokens": 1,
                 "max_output_tokens": 1,
@@ -422,7 +422,7 @@ def test_internal_gateway_byok_cache_key_changes_on_rotation(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "cerebras/llama3.1-8b",
+            "model": "meta-llama/llama-3.1-8b-instruct",
             "provider": {"usage": "byok"},
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,

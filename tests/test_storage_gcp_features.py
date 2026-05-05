@@ -298,12 +298,12 @@ def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
         estimated_microdollars=1_000,
         credit_reservation_id=None,
         requested_model_id="trustedrouter/auto",
-        candidate_model_ids=["openai/gpt-4o-mini", "mistral/mistral-small-2603"],
+        candidate_model_ids=["openai/gpt-4o-mini", "mistralai/mistral-small-2603"],
         region="us-central1",
     )
     assert auth.id.startswith("gwa-")
     assert auth.region == "us-central1"
-    assert auth.candidate_model_ids == ["openai/gpt-4o-mini", "mistral/mistral-small-2603"]
+    assert auth.candidate_model_ids == ["openai/gpt-4o-mini", "mistralai/mistral-small-2603"]
 
     fetched = store.get_gateway_authorization(auth.id)
     assert fetched is not None
@@ -333,7 +333,7 @@ def test_gcp_finalize_gateway_authorization_settles_credits_and_writes_generatio
     auth = store.create_gateway_authorization(
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model_id="anthropic/claude-3-5-sonnet",
+        model_id="anthropic/claude-sonnet-4.6",
         provider="anthropic",
         usage_type="Credits",
         estimated_microdollars=5_000_000,
@@ -346,7 +346,7 @@ def test_gcp_finalize_gateway_authorization_settles_credits_and_writes_generatio
         request_id="req-finalize-success",
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model="anthropic/claude-3-5-sonnet",
+        model="anthropic/claude-sonnet-4.6",
         provider_name="Anthropic",
         app="finalize-test",
         tokens_prompt=100,
@@ -465,7 +465,7 @@ def test_gcp_add_generation_rolls_cost_into_per_key_counters() -> None:
         request_id="req-byok-1",
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model="mistral/mistral-small-2603",
+        model="mistralai/mistral-small-2603",
         provider_name="Mistral",
         app="counter-test",
         tokens_prompt=20,
