@@ -1,0 +1,85 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head"><h2>Add destination</h2><span class="pill">metadata default</span></div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/broadcast">
+      <div class="row">
+        <label>Name
+          <input name="name" value="PostHog" maxlength="120" required>
+        </label>
+        <label>Type
+          <select name="destination_type">
+            <option value="posthog">PostHog</option>
+            <option value="webhook">Webhook (OTLP JSON)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Endpoint
+          <input name="endpoint" placeholder="{{ default_posthog_endpoint }}">
+        </label>
+        <label>Webhook method
+          <select name="method">
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+          </select>
+        </label>
+      </div>
+      <label>PostHog project token
+        <input name="api_key" type="password" autocomplete="off" placeholder="phc_...">
+      </label>
+      <label>Webhook headers JSON
+        <textarea name="headers_json" rows="4" placeholder='{"Authorization":"Bearer ..."}'></textarea>
+      </label>
+      <label class="checkbox-row">
+        <input name="enabled" type="checkbox" checked>
+        <span>Enabled</span>
+      </label>
+      <label class="checkbox-row">
+        <input name="include_content" type="checkbox">
+        <span>Include prompt and output content.</span>
+      </label>
+      <p class="warning-note">
+        Content export sends prompt and output text to the destination. Leave it off for metadata-only observability.
+      </p>
+      <button class="btn primary" type="submit">Add destination</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Destinations</h2></div>
+  <div class="panel-body">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Endpoint</th><th>Content</th><th>Secrets</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for destination in destinations %}
+        <tr>
+          <td>{{ destination.name }}</td>
+          <td>{{ destination.type }}</td>
+          <td><code>{{ destination.endpoint }}</code></td>
+          <td>{{ 'enabled' if destination.include_content else 'metadata only' }}</td>
+          <td>
+            {% if destination.api_key_configured %}<span class="pill">api key</span>{% endif %}
+            {% if destination.headers_configured %}<span class="pill">headers</span>{% endif %}
+            {% if not destination.api_key_configured and not destination.headers_configured %}—{% endif %}
+          </td>
+          <td><span class="pill {{ 'good' if destination.enabled else '' }}">{{ 'active' if destination.enabled else 'disabled' }}</span></td>
+          <td>
+            <form class="inline-form" method="post" action="/console/broadcast/{{ destination.id }}/delete">
+              <button class="btn" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not destinations %}
+        <tr><td class="empty" colspan="7">No Broadcast destinations configured yet.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

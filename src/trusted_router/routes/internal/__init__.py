@@ -7,11 +7,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from trusted_router.routes.internal import gateway, sentry, webhook
+from trusted_router.routes.internal import broadcast_queue, gateway, sentry, webhook
 
 
 def register_internal_routes(router: APIRouter) -> None:
     webhook.register(router)
+    broadcast_queue.register(router)
     gateway.register(router)
     sentry.register(router)
 

@@ -23,6 +23,7 @@ from trusted_router.errors import api_error, error_response, not_supported
 from trusted_router.routes.activity import register_activity_routes
 from trusted_router.routes.auth import register_auth_routes
 from trusted_router.routes.billing import register_billing_routes
+from trusted_router.routes.broadcast import register_broadcast_routes
 from trusted_router.routes.byok import register_byok_routes
 from trusted_router.routes.catalog import register_catalog_routes
 from trusted_router.routes.compat import register_compat_stub_routes
@@ -359,6 +360,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_auth_routes(router)
     register_byok_routes(router)
     register_billing_routes(router)
+    register_broadcast_routes(router)
     register_key_routes(router)
     register_oauth_key_routes(router)
     register_activity_routes(router)

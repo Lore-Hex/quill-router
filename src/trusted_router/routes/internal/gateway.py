@@ -31,6 +31,11 @@ from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import chat_route_endpoint_candidates
 from trusted_router.schemas import GatewayAuthorizeRequest, GatewaySettleRequest
+from trusted_router.services.broadcast import (
+    drain_broadcast_queue,
+    enqueue_metadata_broadcast,
+    gateway_destination_payload,
+)
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
 from trusted_router.types import ErrorType, UsageType
 
@@ -111,6 +116,11 @@ def register(router: APIRouter) -> None:
             if model_usage_type.is_byok()
             else None
         )
+        broadcast_destinations = [
+            payload
+            for destination in STORE.list_broadcast_destinations(workspace.id)
+            if (payload := gateway_destination_payload(destination)) is not None
+        ]
         return {
             "data": {
                 "authorization_id": authorization.id,
@@ -129,6 +139,7 @@ def register(router: APIRouter) -> None:
                 "content_storage_enabled": False,
                 "region": region,
                 "regions": region_payload(settings),
+                "broadcast_destinations": broadcast_destinations,
                 "route_candidates": [
                     _gateway_candidate_payload(candidate_model, candidate_endpoint, workspace.id, region)
                     for candidate_model, candidate_endpoint in endpoint_candidates
@@ -228,6 +239,16 @@ def _settle_gateway_authorization(
 
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
+    if success and generation is not None:
+        settle_body = body.model_dump(exclude_none=True)
+        enqueue_metadata_broadcast(generation, settle_body=settle_body)
+        if background_tasks is not None:
+            background_tasks.add_task(
+                drain_broadcast_queue,
+                settings=settings,
+            )
+        else:
+            drain_broadcast_queue(settings=settings)
     if not success:
         STORE.record_provider_benchmark(
             ProviderBenchmarkSample.from_provider_error(

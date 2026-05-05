@@ -97,6 +97,20 @@ explicit patent grant.
   so a single noisy integration cannot consume the whole error budget again.
 - No Sentry configuration belongs in the attested enclave.
 
+## Broadcast Observability
+
+Workspace owners can configure Broadcast destinations at
+`/v1/broadcast/destinations` or in the console under Broadcast. Supported
+destinations are PostHog and OTLP JSON webhooks. Broadcast is metadata-only by
+default: model, provider, token counts, latency, cost, route type, region, and
+custom trace metadata. Prompt/output content is exported only when a destination
+explicitly enables `include_content`; those content-enabled encrypted
+destinations are returned only to the attested gateway, not normal management
+responses. Metadata-only deliveries are written to a persistent Broadcast
+outbox first and drained asynchronously by `/internal/broadcast/drain`, so a
+PostHog/webhook outage does not block inference or lose already-settled
+metadata on process restart.
+
 ## Public Positioning
 
 - Pricing target: prepaid routes are priced at `$0.01` less per 1 million

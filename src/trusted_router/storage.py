@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
+from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_generations import InMemoryGenerations
@@ -14,6 +15,8 @@ from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
     ApiKey,
     AuthSession,
+    BroadcastDeliveryJob,
+    BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
     EmailSendBlock,
@@ -69,6 +72,7 @@ class InMemoryStore:
             add_usage_to_key=self.api_keys.add_usage,
         )
         self.byok_store = InMemoryByok(lock=self._lock)
+        self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
@@ -88,6 +92,7 @@ class InMemoryStore:
             self.api_keys.reset()
             self.generation_store.reset()
             self.byok_store.reset()
+            self.broadcast_store.reset()
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
             self.rate_limit_store.reset()
@@ -431,6 +436,79 @@ class InMemoryStore:
 
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool:
         return self.byok_store.delete(workspace_id, provider)
+
+    def create_broadcast_destination(
+        self,
+        *,
+        workspace_id: str,
+        type: str,
+        name: str,
+        endpoint: str,
+        enabled: bool = True,
+        include_content: bool = False,
+        method: str = "POST",
+        encrypted_api_key: EncryptedSecretEnvelope | None = None,
+        encrypted_headers: EncryptedSecretEnvelope | None = None,
+        header_names: list[str] | None = None,
+    ) -> BroadcastDestination:
+        return self.broadcast_store.create(
+            workspace_id=workspace_id,
+            type=type,
+            name=name,
+            endpoint=endpoint,
+            enabled=enabled,
+            include_content=include_content,
+            method=method,
+            encrypted_api_key=encrypted_api_key,
+            encrypted_headers=encrypted_headers,
+            header_names=header_names,
+        )
+
+    def list_broadcast_destinations(self, workspace_id: str) -> list[BroadcastDestination]:
+        return self.broadcast_store.list_for_workspace(workspace_id)
+
+    def get_broadcast_destination(
+        self, workspace_id: str, destination_id: str
+    ) -> BroadcastDestination | None:
+        return self.broadcast_store.get(workspace_id, destination_id)
+
+    def update_broadcast_destination(
+        self,
+        workspace_id: str,
+        destination_id: str,
+        **patch: Any,
+    ) -> BroadcastDestination | None:
+        return self.broadcast_store.update(workspace_id, destination_id, **patch)
+
+    def delete_broadcast_destination(self, workspace_id: str, destination_id: str) -> bool:
+        return self.broadcast_store.delete(workspace_id, destination_id)
+
+    def enqueue_broadcast_delivery(
+        self,
+        *,
+        workspace_id: str,
+        destination_id: str,
+        generation_id: str,
+        settle_body: dict[str, Any],
+    ) -> BroadcastDeliveryJob:
+        return self.broadcast_store.enqueue_delivery(
+            workspace_id=workspace_id,
+            destination_id=destination_id,
+            generation_id=generation_id,
+            settle_body=settle_body,
+        )
+
+    def due_broadcast_deliveries(self, *, limit: int = 100) -> list[BroadcastDeliveryJob]:
+        return self.broadcast_store.due_deliveries(limit=limit)
+
+    def mark_broadcast_delivery(
+        self,
+        job_id: str,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> BroadcastDeliveryJob | None:
+        return self.broadcast_store.mark_delivery(job_id, success=success, error=error)
 
     def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
         with self._lock:

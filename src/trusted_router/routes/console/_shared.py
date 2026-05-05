@@ -103,6 +103,7 @@ def _console_path_for_active(active: str) -> str:
         "byok": "/console/byok",
         "routing": "/console/routing",
         "activity": "/console/activity",
+        "broadcast": "/console/broadcast",
         "settings": "/console/settings",
         "credits": "/console/credits",
         "preferences": "/console/account/preferences",

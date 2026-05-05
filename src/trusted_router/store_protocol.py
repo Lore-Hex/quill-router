@@ -15,6 +15,8 @@ from typing import Any, Protocol, runtime_checkable
 from trusted_router.storage_models import (
     ApiKey,
     AuthSession,
+    BroadcastDeliveryJob,
+    BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
     EmailSendBlock,
@@ -214,6 +216,51 @@ class Store(Protocol):
         self, workspace_id: str, provider: str
     ) -> ByokProviderConfig | None: ...
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool: ...
+
+    # Broadcast destinations -------------------------------------------------
+    def create_broadcast_destination(
+        self,
+        *,
+        workspace_id: str,
+        type: str,
+        name: str,
+        endpoint: str,
+        enabled: bool = ...,
+        include_content: bool = ...,
+        method: str = ...,
+        encrypted_api_key: EncryptedSecretEnvelope | None = ...,
+        encrypted_headers: EncryptedSecretEnvelope | None = ...,
+        header_names: list[str] | None = ...,
+    ) -> BroadcastDestination: ...
+    def list_broadcast_destinations(
+        self, workspace_id: str
+    ) -> list[BroadcastDestination]: ...
+    def get_broadcast_destination(
+        self, workspace_id: str, destination_id: str
+    ) -> BroadcastDestination | None: ...
+    def update_broadcast_destination(
+        self,
+        workspace_id: str,
+        destination_id: str,
+        **patch: Any,
+    ) -> BroadcastDestination | None: ...
+    def delete_broadcast_destination(self, workspace_id: str, destination_id: str) -> bool: ...
+    def enqueue_broadcast_delivery(
+        self,
+        *,
+        workspace_id: str,
+        destination_id: str,
+        generation_id: str,
+        settle_body: dict[str, Any],
+    ) -> BroadcastDeliveryJob: ...
+    def due_broadcast_deliveries(self, *, limit: int = ...) -> list[BroadcastDeliveryJob]: ...
+    def mark_broadcast_delivery(
+        self,
+        job_id: str,
+        *,
+        success: bool,
+        error: str | None = ...,
+    ) -> BroadcastDeliveryJob | None: ...
 
     # Credit ledger -----------------------------------------------------------
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None: ...

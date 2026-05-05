@@ -190,6 +190,17 @@ body.console {
   word-break: break-all;
 }
 
+.warning-note {
+  border: 1px solid #f2d28f;
+  background: #fff8e6;
+  color: #6f4c00;
+  border-radius: 7px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
 @media (max-width: 800px) {
   .console-shell {
     grid-template-columns: 1fr;

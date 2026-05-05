@@ -103,6 +103,27 @@ class UpsertByokRequest(_Strict):
     key_hint: str | None = Field(default=None, max_length=80)
 
 
+class BroadcastDestinationCreateRequest(_Strict):
+    type: Literal["posthog", "webhook"]
+    name: str = Field(default="Broadcast destination", min_length=1, max_length=120)
+    endpoint: str | None = None
+    enabled: bool = True
+    include_content: bool = False
+    method: Literal["POST", "PUT"] = "POST"
+    headers: dict[str, str] | None = None
+    api_key: str | None = None
+
+
+class BroadcastDestinationPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    endpoint: str | None = None
+    enabled: bool | None = None
+    include_content: bool | None = None
+    method: Literal["POST", "PUT"] | None = None
+    headers: dict[str, str] | None = None
+    api_key: str | None = None
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
@@ -113,6 +134,11 @@ class GatewayAuthorizeRequest(_Lenient):
     max_output_tokens: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
     region: str | None = None
+    user: str | None = Field(default=None, max_length=256)
+    session_id: str | None = Field(default=None, max_length=256)
+    trace: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    route_type: str | None = None
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
@@ -149,6 +175,11 @@ class GatewaySettleRequest(_Lenient):
     selected_model: str | None = None
     endpoint: str | None = None
     selected_endpoint: str | None = None
+    user: str | None = Field(default=None, max_length=256)
+    session_id: str | None = Field(default=None, max_length=256)
+    trace: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    route_type: str | None = None
 
     @property
     def input_count(self) -> int:

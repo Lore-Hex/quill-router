@@ -64,6 +64,36 @@ def decrypt_byok_secret(
     return plaintext.decode("utf-8")
 
 
+def encrypt_control_secret(
+    raw_secret: str,
+    settings: Settings,
+    *,
+    workspace_id: str,
+    purpose: str,
+) -> EncryptedSecretEnvelope:
+    return encrypt_byok_secret(
+        raw_secret,
+        settings,
+        workspace_id=workspace_id,
+        provider=purpose,
+    )
+
+
+def decrypt_control_secret(
+    envelope: EncryptedSecretEnvelope,
+    settings: Settings,
+    *,
+    workspace_id: str,
+    purpose: str,
+) -> str:
+    return decrypt_byok_secret(
+        envelope,
+        settings,
+        workspace_id=workspace_id,
+        provider=purpose,
+    )
+
+
 def encrypted_secret_payload(envelope: EncryptedSecretEnvelope | None) -> dict[str, str] | None:
     if envelope is None:
         return None

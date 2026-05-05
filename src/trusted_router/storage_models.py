@@ -115,6 +115,44 @@ class ByokProviderConfig:
 
 
 @dataclass
+class BroadcastDestination:
+    id: str
+    workspace_id: str
+    type: str
+    name: str
+    endpoint: str
+    enabled: bool = True
+    include_content: bool = False
+    method: str = "POST"
+    encrypted_api_key: EncryptedSecretEnvelope | None = None
+    encrypted_headers: EncryptedSecretEnvelope | None = None
+    header_names: list[str] = field(default_factory=list)
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.encrypted_api_key, dict):
+            self.encrypted_api_key = EncryptedSecretEnvelope(**self.encrypted_api_key)
+        if isinstance(self.encrypted_headers, dict):
+            self.encrypted_headers = EncryptedSecretEnvelope(**self.encrypted_headers)
+
+
+@dataclass
+class BroadcastDeliveryJob:
+    id: str
+    workspace_id: str
+    destination_id: str
+    generation_id: str
+    settle_body: dict[str, Any]
+    status: str = "pending"
+    attempts: int = 0
+    next_attempt_at: str = field(default_factory=iso_now)
+    last_error: str | None = None
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+
+@dataclass
 class CreditAccount:
     workspace_id: str
     total_credits_microdollars: int = 0
