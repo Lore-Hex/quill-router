@@ -12,7 +12,11 @@ TEST_BYOK_KMS_KEY_NAME = (
 )
 
 
-def test_catalog_prices_keep_integer_discount_and_exact_openrouter_decimal(client: TestClient) -> None:
+def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: TestClient) -> None:
+    """Under uniform pricing (cost+10%, $0.10/M floor), prompt_price and
+    published_prompt are the same number — no 1¢/M discount theater. The
+    `discount_microdollars_per_million_tokens` field is preserved for
+    OpenRouter consumer compat but pinned to 0."""
     models = client.get("/v1/models")
     assert models.status_code == 200
     for model in models.json()["data"]:
@@ -23,16 +27,14 @@ def test_catalog_prices_keep_integer_discount_and_exact_openrouter_decimal(clien
         assert isinstance(trusted["completion_price_microdollars_per_million_tokens"], int)
         assert isinstance(trusted["published_prompt_price_microdollars_per_million_tokens"], int)
         assert isinstance(trusted["published_completion_price_microdollars_per_million_tokens"], int)
-        assert trusted["discount_microdollars_per_million_tokens"] == 10_000
+        assert trusted["discount_microdollars_per_million_tokens"] == 0
         assert (
             trusted["published_prompt_price_microdollars_per_million_tokens"]
-            - trusted["prompt_price_microdollars_per_million_tokens"]
-            == 10_000
+            == trusted["prompt_price_microdollars_per_million_tokens"]
         )
         assert (
             trusted["published_completion_price_microdollars_per_million_tokens"]
-            - trusted["completion_price_microdollars_per_million_tokens"]
-            == 10_000
+            == trusted["completion_price_microdollars_per_million_tokens"]
         )
         assert pricing["prompt"] == _per_token_decimal(
             trusted["prompt_price_microdollars_per_million_tokens"]

@@ -49,21 +49,26 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         )
 
 
-def test_prepaid_prices_are_one_cent_less_per_million_when_possible() -> None:
+def test_prompt_price_equals_published_under_uniform_markup() -> None:
+    """Under the uniform pricing formula (cost+10%, $0.10/M floor), TR no
+    longer carries a separate 1¢/M discount. `prompt_price_*` and
+    `published_*` are the same number — the customer pays the headline
+    price. Any model where they differ is either pre-formula leftover
+    code or a bug."""
     for model in MODELS.values():
-        if not model.prepaid_available and model.id != AUTO_MODEL_ID:
+        if model.id == AUTO_MODEL_ID:
+            # Auto's pricing is 0 — billing happens at the chosen
+            # candidate's price. /v1/models surfaces a min/max range
+            # derived from the candidate set.
             continue
-        expected_prompt = max(
-            0,
-            model.published_prompt_price_microdollars_per_million_tokens - MICRODOLLARS_PER_CENT,
-        )
-        expected_completion = max(
-            0,
-            model.published_completion_price_microdollars_per_million_tokens
-            - MICRODOLLARS_PER_CENT,
-        )
-        assert model.prompt_price_microdollars_per_million_tokens == expected_prompt
-        assert model.completion_price_microdollars_per_million_tokens == expected_completion
+        assert (
+            model.prompt_price_microdollars_per_million_tokens
+            == model.published_prompt_price_microdollars_per_million_tokens
+        ), f"{model.id}: prompt_price != published_prompt"
+        assert (
+            model.completion_price_microdollars_per_million_tokens
+            == model.published_completion_price_microdollars_per_million_tokens
+        ), f"{model.id}: completion_price != published_completion"
 
 
 def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:

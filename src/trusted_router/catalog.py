@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 from trusted_router.money import (
     MICRODOLLARS_PER_CENT,
+    MICRODOLLARS_PER_DOLLAR,
+    TOKENS_PER_MILLION,
     dollars_to_microdollars,
     microdollars_per_million_tokens_to_token_decimal,
 )
@@ -57,8 +63,60 @@ class ModelEndpoint:
         return self.usage_type.lower() == "byok"
 
 
-def _one_cent_less_per_million(published_dollars_per_million: str) -> int:
-    return max(0, dollars_to_microdollars(published_dollars_per_million) - MICRODOLLARS_PER_CENT)
+# Uniform pricing: customer pays cost + 10%, floor $0.10/M tokens. Same
+# value goes into both `prompt_price_*` and `published_*` — TR no longer
+# runs the 1¢/M "discount theater". The floor catches free upstream tiers
+# so the catalog never advertises $0/M to end users.
+_PRICE_MARKUP_RATIO = Decimal("1.10")
+_PRICE_FLOOR_MICRODOLLARS_PER_M = 100_000  # $0.10 per million tokens.
+
+
+def _customer_price(cost_microdollars_per_million: int) -> int:
+    """Apply the markup formula. Input/output in microdollars per million tokens."""
+    marked_up = int(
+        (Decimal(cost_microdollars_per_million) * _PRICE_MARKUP_RATIO).to_integral_value()
+    )
+    return max(marked_up, _PRICE_FLOOR_MICRODOLLARS_PER_M)
+
+
+def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]:
+    """Return (prompt_price, published_price, cost_microdollars) for a
+    dollars-per-million cost. prompt_price == published_price under the
+    uniform formula; cost is preserved as a third value for any consumer
+    that wants the upstream-paid amount (e.g. the per-endpoint detail page)."""
+    cost = dollars_to_microdollars(cost_dollars_per_million)
+    customer = _customer_price(cost)
+    return customer, customer, cost
+
+
+def _hand_priced(prompt_dollars: str, completion_dollars: str) -> dict[str, int]:
+    """Splat into a Model() ctor for hand-curated entries. Replaces the old
+    `_one_cent_less_per_million` + `dollars_to_microdollars` doubled-up
+    spelling."""
+    prompt_price, prompt_published, _ = _priced(prompt_dollars)
+    completion_price, completion_published, _ = _priced(completion_dollars)
+    return {
+        "prompt_price_microdollars_per_million_tokens": prompt_price,
+        "completion_price_microdollars_per_million_tokens": completion_price,
+        "published_prompt_price_microdollars_per_million_tokens": prompt_published,
+        "published_completion_price_microdollars_per_million_tokens": completion_published,
+    }
+
+
+def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, int, int]:
+    """Variant for OpenRouter-shaped inputs (dollars/token strings).
+    Returns the same triple as `_priced`."""
+    if not price_per_token:
+        return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
+    try:
+        per_token = Decimal(str(price_per_token))
+    except Exception:  # noqa: BLE001 — malformed snapshot rows are dropped to floor.
+        return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
+    cost = int(
+        (per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value()
+    )
+    customer = _customer_price(cost)
+    return customer, customer, cost
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -111,10 +169,13 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
+        # Auto's intrinsic price is 0 — billing happens at the chosen
+        # candidate's price. The /v1/models shape derives a min/max range
+        # from the candidate set so the dashboard doesn't show $0.
         prompt_price_microdollars_per_million_tokens=0,
         completion_price_microdollars_per_million_tokens=0,
-        published_prompt_price_microdollars_per_million_tokens=MICRODOLLARS_PER_CENT,
-        published_completion_price_microdollars_per_million_tokens=MICRODOLLARS_PER_CENT,
+        published_prompt_price_microdollars_per_million_tokens=0,
+        published_completion_price_microdollars_per_million_tokens=0,
     ),
     "anthropic/claude-opus-4.7": Model(
         id="anthropic/claude-opus-4.7",
@@ -128,10 +189,7 @@ MODELS: dict[str, Model] = {
         supports_messages=True,
         prepaid_available=True,
         byok_available=False,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("5"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("25"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("5"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("25"),
+        **_hand_priced("5", "25"),
     ),
     "anthropic/claude-3-5-sonnet": Model(
         id="anthropic/claude-3-5-sonnet",
@@ -141,10 +199,7 @@ MODELS: dict[str, Model] = {
         supports_messages=True,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("3"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("15"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("3"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("15"),
+        **_hand_priced("3", "15"),
     ),
     "openai/gpt-4o-mini": Model(
         id="openai/gpt-4o-mini",
@@ -154,10 +209,7 @@ MODELS: dict[str, Model] = {
         supports_embeddings=True,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("1"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("4"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("1"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("4"),
+        **_hand_priced("1", "4"),
     ),
     "vertex/gemini-2.5-flash": Model(
         id="vertex/gemini-2.5-flash",
@@ -168,10 +220,7 @@ MODELS: dict[str, Model] = {
         supports_embeddings=True,
         prepaid_available=True,
         byok_available=False,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.30"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("2.50"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.30"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("2.50"),
+        **_hand_priced("0.30", "2.50"),
     ),
     "google/gemini-1.5-flash": Model(
         id="google/gemini-1.5-flash",
@@ -181,10 +230,7 @@ MODELS: dict[str, Model] = {
         supports_embeddings=True,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("1"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("3"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("1"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("3"),
+        **_hand_priced("1", "3"),
     ),
     "deepseek/deepseek-v4-flash": Model(
         id="deepseek/deepseek-v4-flash",
@@ -193,10 +239,7 @@ MODELS: dict[str, Model] = {
         context_length=1_000_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.14"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.28"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.14"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("0.28"),
+        **_hand_priced("0.14", "0.28"),
     ),
     "deepseek/deepseek-v4-pro": Model(
         id="deepseek/deepseek-v4-pro",
@@ -205,10 +248,7 @@ MODELS: dict[str, Model] = {
         context_length=1_000_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.435"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.87"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.435"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("0.87"),
+        **_hand_priced("0.435", "0.87"),
     ),
     "mistral/mistral-small-2603": Model(
         id="mistral/mistral-small-2603",
@@ -217,10 +257,7 @@ MODELS: dict[str, Model] = {
         context_length=256_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.15"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.60"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.15"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("0.60"),
+        **_hand_priced("0.15", "0.60"),
     ),
     "mistral/mistral-medium-3-5": Model(
         id="mistral/mistral-medium-3-5",
@@ -229,10 +266,7 @@ MODELS: dict[str, Model] = {
         context_length=256_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("1.50"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("7.50"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("1.50"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("7.50"),
+        **_hand_priced("1.50", "7.50"),
     ),
     "kimi/kimi-k2.6": Model(
         id="kimi/kimi-k2.6",
@@ -242,10 +276,7 @@ MODELS: dict[str, Model] = {
         context_length=256_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.95"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("4.00"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.95"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("4.00"),
+        **_hand_priced("0.95", "4.00"),
     ),
     "kimi/kimi-k2.5": Model(
         id="kimi/kimi-k2.5",
@@ -255,10 +286,7 @@ MODELS: dict[str, Model] = {
         context_length=256_000,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("0.60"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("3.00"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("0.60"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("3.00"),
+        **_hand_priced("0.60", "3.00"),
     ),
     "cerebras/llama3.1-8b": Model(
         id="cerebras/llama3.1-8b",
@@ -267,10 +295,7 @@ MODELS: dict[str, Model] = {
         context_length=8_192,
         prepaid_available=True,
         byok_available=True,
-        prompt_price_microdollars_per_million_tokens=_one_cent_less_per_million("1"),
-        completion_price_microdollars_per_million_tokens=_one_cent_less_per_million("1"),
-        published_prompt_price_microdollars_per_million_tokens=dollars_to_microdollars("1"),
-        published_completion_price_microdollars_per_million_tokens=dollars_to_microdollars("1"),
+        **_hand_priced("1", "1"),
     ),
 }
 
@@ -312,7 +337,171 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
     return endpoints
 
 
+# Folder where the OpenRouter ingest snapshot lives. Bundled into the
+# wheel so production reads from disk; refreshed by
+# `scripts/ingest_openrouter_catalog.py` and committed via PR.
+_INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
+
+# OpenRouter publishes models as `{author}/{slug}` where author maps onto
+# one of TR's keyed providers. This drops the `Model.provider` (publisher)
+# field for an ingested entry.
+_AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "google": "gemini",
+    "vertex": "vertex",
+    "cerebras": "cerebras",
+    "deepseek": "deepseek",
+    "mistral": "mistral",
+    "mistralai": "mistral",
+    "moonshot": "kimi",
+    "moonshotai": "kimi",
+    "z-ai": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
+}
+
+
+def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | None:
+    author = model_id.split("/", 1)[0].lower()
+    if author in _AUTHOR_TO_PROVIDER_SLUG:
+        return _AUTHOR_TO_PROVIDER_SLUG[author]
+    if endpoints:
+        slug = endpoints[0].get("tr_provider_slug")
+        if isinstance(slug, str) and slug in PROVIDERS:
+            return slug
+    return None
+
+
+def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
+    """Read the OpenRouter snapshot and return (models, endpoints) dicts.
+    Pricing is run through `_customer_price_from_dollars_per_token` so the
+    catalog uniformly applies the cost+10% / $0.10/M-floor formula."""
+    if not _INGEST_PATH.exists():
+        return {}, {}
+    snapshot = json.loads(_INGEST_PATH.read_text(encoding="utf-8"))
+    raw_models = snapshot.get("models")
+    if not isinstance(raw_models, list):
+        return {}, {}
+
+    models: dict[str, Model] = {}
+    endpoints: dict[str, ModelEndpoint] = {}
+
+    for raw_model in raw_models:
+        model_id = raw_model.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        raw_endpoints = [
+            e for e in (raw_model.get("endpoints") or []) if isinstance(e, dict)
+        ]
+        if not raw_endpoints:
+            continue
+        publisher = _author_provider(model_id, raw_endpoints)
+        if publisher is None:
+            continue
+
+        per_endpoint_prices: list[tuple[int, int, str, dict[str, Any]]] = []
+        for raw_ep in raw_endpoints:
+            slug = raw_ep.get("tr_provider_slug")
+            if not isinstance(slug, str) or slug not in PROVIDERS:
+                continue
+            pricing = raw_ep.get("pricing") or {}
+            prompt_price, _, _ = _customer_price_from_dollars_per_token(
+                str(pricing.get("prompt") or "0")
+            )
+            completion_price, _, _ = _customer_price_from_dollars_per_token(
+                str(pricing.get("completion") or "0")
+            )
+            per_endpoint_prices.append((prompt_price, completion_price, slug, raw_ep))
+
+        if not per_endpoint_prices:
+            continue
+
+        # Model-level price = cheapest endpoint, so the /v1/models top-level
+        # `pricing.prompt` doesn't lie when multiple providers serve the
+        # same model at different tiers.
+        cheapest_prompt = min(p for p, _c, _s, _e in per_endpoint_prices)
+        cheapest_completion = min(c for _p, c, _s, _e in per_endpoint_prices)
+
+        ctx_candidates = [
+            int(raw_model.get("context_length") or 0),
+            *(int(ep.get("context_length") or 0) for _p, _c, _s, ep in per_endpoint_prices),
+        ]
+        context_length = max(ctx_candidates) or 0
+
+        models[model_id] = Model(
+            id=model_id,
+            name=str(raw_model.get("name") or model_id),
+            provider=publisher,
+            context_length=context_length,
+            supports_chat=True,
+            prepaid_available=True,
+            byok_available=PROVIDERS[publisher].supports_byok,
+            prompt_price_microdollars_per_million_tokens=cheapest_prompt,
+            completion_price_microdollars_per_million_tokens=cheapest_completion,
+            published_prompt_price_microdollars_per_million_tokens=cheapest_prompt,
+            published_completion_price_microdollars_per_million_tokens=cheapest_completion,
+        )
+
+        for prompt_price, completion_price, slug, raw_ep in per_endpoint_prices:
+            upstream_id = str(raw_ep.get("model_id") or model_id)
+            credits_id = f"{model_id}@{slug}/prepaid"
+            endpoints[credits_id] = ModelEndpoint(
+                id=credits_id,
+                model_id=model_id,
+                provider=slug,
+                usage_type="Credits",
+                upstream_id=upstream_id,
+                prompt_price_microdollars_per_million_tokens=prompt_price,
+                completion_price_microdollars_per_million_tokens=completion_price,
+                published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                published_completion_price_microdollars_per_million_tokens=completion_price,
+            )
+            if PROVIDERS[slug].supports_byok:
+                byok_id = f"{model_id}@{slug}/byok"
+                endpoints[byok_id] = ModelEndpoint(
+                    id=byok_id,
+                    model_id=model_id,
+                    provider=slug,
+                    usage_type="BYOK",
+                    upstream_id=upstream_id,
+                    prompt_price_microdollars_per_million_tokens=prompt_price,
+                    completion_price_microdollars_per_million_tokens=completion_price,
+                    published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                    published_completion_price_microdollars_per_million_tokens=completion_price,
+                )
+
+    return models, endpoints
+
+
+_INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
+# Snapshot of what's hand-coded BEFORE merging ingested models — used
+# below to skip ingested endpoints for any model that was already
+# hand-coded (those carry curated BYOK/messages flags whose endpoint
+# shape we don't want to disrupt). Ingested-only models still get
+# their full per-provider endpoint fan-out.
+_HAND_CODED_MODEL_IDS = frozenset(MODELS.keys())
+
+# Hand-coded entries win on ID collision so their operational flags
+# (BYOK gating, embeddings, messages) survive intact — those reflect
+# real upstream constraints (e.g. anthropic-on-Vertex quota, OpenRouter
+# slug naming differences from TR's own slugs). Ingested entries fill in
+# everything new (the 13 z-ai models, the 3 moonshotai models, etc).
+# Pricing for the surviving hand-coded entries can be tightened in a
+# follow-up PR — that's a smaller, more reviewable change.
+for _ingested_id, _ingested_model in _INGESTED_MODELS.items():
+    MODELS.setdefault(_ingested_id, _ingested_model)
+
+
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
+# Ingested per-provider endpoints fill in only models added via the
+# ingest path. For collisions (model present in both hand-coded and
+# ingested), keep the hand-coded endpoint shape so operational gating
+# (BYOK availability, single-provider routing) doesn't silently flip.
+for _endpoint_id, _endpoint in _INGESTED_ENDPOINTS.items():
+    if _endpoint.model_id in _HAND_CODED_MODEL_IDS:
+        continue
+    MODEL_ENDPOINTS[_endpoint_id] = _endpoint
 
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
@@ -430,7 +619,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
         "published_completion_price_microdollars_per_million_tokens": pub_completion_min,
-        "discount_microdollars_per_million_tokens": MICRODOLLARS_PER_CENT,
+        # Uniform pricing means the customer pays the headline rate — no
+        # secret 1¢/M discount layered on top. Field kept for OpenRouter
+        # consumer compat, but always zero.
+        "discount_microdollars_per_million_tokens": 0,
         "auto_candidates": [c.id for c in auto_candidate_models()] if is_auto else None,
         "endpoints": [
             {

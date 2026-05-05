@@ -373,7 +373,11 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
 
     models = client.get("/v1/embeddings/models")
     assert models.status_code == 200
-    assert any(item["id"] == "openai/gpt-4o-mini" for item in models.json()["data"])
+    # `vertex/gemini-2.5-flash` is the canonical embeddings-eligible model
+    # in the hand-coded catalog. (gpt-4o-mini's supports_embeddings flag was
+    # removed when the ingested OpenRouter snapshot took over its pricing —
+    # gpt-4o-mini isn't actually an embeddings model upstream.)
+    assert any(item["id"] == "vertex/gemini-2.5-flash" for item in models.json()["data"])
 
     endpoint = client.get("/v1/models/cerebras/llama3.1-8b/endpoints")
     assert endpoint.status_code == 200
