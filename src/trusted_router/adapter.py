@@ -86,15 +86,87 @@ def chat_to_anthropic(messages: list[dict[str, Any]], *, max_tokens: int) -> dic
 
 
 def chat_to_gemini(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Translate Chat Completions messages to Gemini `contents`."""
+    """Translate Chat Completions messages to Gemini `contents`.
+
+    Handles both string content (`{role, content: "hello"}`) and the
+    multimodal array shape OpenAI's chat API uses for vision/audio:
+
+        {role: "user", content: [
+            {type: "text", text: "..."},
+            {type: "image_url", image_url: {url: "data:image/jpeg;base64,..."}},
+        ]}
+
+    Image data URLs become Gemini `inline_data` parts (with mime_type +
+    base64 data). Text parts become `text` parts. Without this
+    conversion, the multimodal content list got `str()`-ed into a
+    Python repr, which lost the image and made TR useless for OCR via
+    Gemini (forty.news's primary use case).
+    """
     contents: list[dict[str, Any]] = []
     for msg in messages:
         if msg.get("role") == "assistant":
             role = "model"
         else:
             role = "user"  # Gemini doesn't have a separate system role.
-        contents.append({"role": role, "parts": [{"text": str(msg.get("content", ""))}]})
+        contents.append({"role": role, "parts": _gemini_parts(msg.get("content"))})
     return contents
+
+
+def _gemini_parts(content: Any) -> list[dict[str, Any]]:
+    if content is None:
+        return [{"text": ""}]
+    if isinstance(content, str):
+        return [{"text": content}]
+    if not isinstance(content, list):
+        return [{"text": str(content)}]
+
+    parts: list[dict[str, Any]] = []
+    for item in content:
+        if not isinstance(item, dict):
+            parts.append({"text": str(item)})
+            continue
+        item_type = item.get("type")
+        if item_type == "text":
+            parts.append({"text": str(item.get("text") or "")})
+        elif item_type == "image_url":
+            image_url = item.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else None
+            inline = _gemini_inline_data(url)
+            if inline is not None:
+                parts.append({"inline_data": inline})
+            elif isinstance(url, str) and url:
+                # Gemini's public API doesn't fetch arbitrary http(s)
+                # image URLs the way OpenAI's vision API does. Surface
+                # the URL as text so the model at least knows there was
+                # one — better than silently dropping it.
+                parts.append({"text": f"[image_url] {url}"})
+        elif item_type == "input_audio":
+            audio = item.get("input_audio") if isinstance(item.get("input_audio"), dict) else {}
+            data = audio.get("data") if isinstance(audio, dict) else None
+            fmt = audio.get("format") if isinstance(audio, dict) else None
+            if isinstance(data, str) and isinstance(fmt, str):
+                parts.append({"inline_data": {"mime_type": f"audio/{fmt}", "data": data}})
+        else:
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append({"text": text})
+    if not parts:
+        parts.append({"text": ""})
+    return parts
+
+
+def _gemini_inline_data(url: Any) -> dict[str, str] | None:
+    """Convert an OpenAI-style `data:<mime>;base64,<body>` URL to
+    Gemini's `inline_data` part. Returns None for non-data-URL inputs."""
+    if not isinstance(url, str) or not url.startswith("data:"):
+        return None
+    head, _, body = url[5:].partition(",")
+    if not body:
+        return None
+    mime, _, encoding = head.partition(";")
+    if encoding.lower() != "base64":
+        return None
+    return {"mime_type": mime or "application/octet-stream", "data": body}
 
 
 def _responses_input_item_to_chat_message(item: Any) -> dict[str, Any]:
