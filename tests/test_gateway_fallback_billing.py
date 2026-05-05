@@ -333,6 +333,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
         {
             "endpoint_id": data["endpoint_id"],
             "model": "moonshotai/kimi-k2.6",
+            "upstream_model": "moonshotai/kimi-k2.6",
             "provider": "kimi",
             "provider_name": "Kimi",
             "usage_type": "BYOK",

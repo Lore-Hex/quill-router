@@ -169,6 +169,7 @@ def register(router: APIRouter) -> None:
                 "workspace_id": workspace.id,
                 "api_key_hash": api_key.hash,
                 "model": model.id,
+                "upstream_model": endpoint.upstream_id or model.id,
                 "endpoint_id": endpoint.id,
                 "provider": endpoint.provider,
                 "provider_name": PROVIDERS[endpoint.provider].name,
@@ -393,6 +394,7 @@ def _gateway_candidate_payload(
     return {
         "endpoint_id": endpoint.id,
         "model": model.id,
+        "upstream_model": endpoint.upstream_id or model.id,
         "provider": endpoint.provider,
         "provider_name": PROVIDERS[endpoint.provider].name,
         "usage_type": usage_type.value,

@@ -33,6 +33,7 @@ add_secret_env_if_exists "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
 add_secret_env_if_exists "CEREBRAS_API_KEY" "trustedrouter-cerebras-api-key"
 add_secret_env_if_exists "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
 add_secret_env_if_exists "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
+add_secret_env_if_exists "KIMI_API_KEY" "trustedrouter-kimi-api-key"
 add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 

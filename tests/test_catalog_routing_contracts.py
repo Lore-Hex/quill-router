@@ -4,6 +4,7 @@ import pytest
 
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
+    GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     MODELS,
     PROVIDERS,
@@ -46,6 +47,25 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
             model.completion_price_microdollars_per_million_tokens
             <= model.published_completion_price_microdollars_per_million_tokens
         )
+
+
+def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None:
+    credits_providers = {
+        endpoint.provider
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.usage_type == "Credits"
+    }
+    assert credits_providers <= GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert {
+        "anthropic",
+        "openai",
+        "gemini",
+        "cerebras",
+        "deepseek",
+        "mistral",
+        "kimi",
+        "zai",
+    } <= credits_providers
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:

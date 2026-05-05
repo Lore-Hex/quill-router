@@ -134,6 +134,15 @@ PROVIDERS: dict[str, Provider] = {
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
 
+# Providers with a direct prepaid implementation in the attested
+# quill-cloud-proxy llm_multi gateway. BYOK endpoints may exist for any
+# keyed provider, but Credits endpoints must stay in sync with this set so
+# the control plane cannot authorize a prepaid route the enclave cannot
+# dispatch.
+GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
+    {"anthropic", "openai", "gemini", "cerebras", "deepseek", "mistral", "kimi", "zai"}
+)
+
 
 AUTO_MODEL_ID = "trustedrouter/auto"
 FREE_MODEL_ID = "trustedrouter/free"
@@ -233,7 +242,7 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
         if model.id in META_MODEL_IDS:
             continue
         provider = PROVIDERS[model.provider]
-        if model.prepaid_available:
+        if model.prepaid_available and provider.slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
             endpoint = _endpoint(model, usage_type="Credits")
             endpoints[endpoint.id] = endpoint
         if model.byok_available and provider.supports_byok:
@@ -342,6 +351,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # not supported even if Claude-on-OpenRouter etc. exist. Drive
         # the supports_messages flag off the publisher.
         supports_messages = publisher == "anthropic"
+        prepaid_available = any(
+            slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, slug, _ep in per_endpoint_prices
+        )
         models[model_id] = Model(
             id=model_id,
             name=str(raw_model.get("name") or model_id),
@@ -349,7 +361,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             context_length=context_length,
             supports_chat=True,
             supports_messages=supports_messages,
-            prepaid_available=True,
+            prepaid_available=prepaid_available,
             byok_available=PROVIDERS[publisher].supports_byok,
             prompt_price_microdollars_per_million_tokens=cheapest_prompt,
             completion_price_microdollars_per_million_tokens=cheapest_completion,
@@ -359,18 +371,19 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
 
         for prompt_price, completion_price, slug, raw_ep in per_endpoint_prices:
             upstream_id = str(raw_ep.get("model_id") or model_id)
-            credits_id = f"{model_id}@{slug}/prepaid"
-            endpoints[credits_id] = ModelEndpoint(
-                id=credits_id,
-                model_id=model_id,
-                provider=slug,
-                usage_type="Credits",
-                upstream_id=upstream_id,
-                prompt_price_microdollars_per_million_tokens=prompt_price,
-                completion_price_microdollars_per_million_tokens=completion_price,
-                published_prompt_price_microdollars_per_million_tokens=prompt_price,
-                published_completion_price_microdollars_per_million_tokens=completion_price,
-            )
+            if slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
+                credits_id = f"{model_id}@{slug}/prepaid"
+                endpoints[credits_id] = ModelEndpoint(
+                    id=credits_id,
+                    model_id=model_id,
+                    provider=slug,
+                    usage_type="Credits",
+                    upstream_id=upstream_id,
+                    prompt_price_microdollars_per_million_tokens=prompt_price,
+                    completion_price_microdollars_per_million_tokens=completion_price,
+                    published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                    published_completion_price_microdollars_per_million_tokens=completion_price,
+                )
             if PROVIDERS[slug].supports_byok:
                 byok_id = f"{model_id}@{slug}/byok"
                 endpoints[byok_id] = ModelEndpoint(
