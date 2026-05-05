@@ -11,6 +11,7 @@ gc services enable \
   artifactregistry.googleapis.com \
   run.googleapis.com \
   secretmanager.googleapis.com \
+  cloudscheduler.googleapis.com \
   cloudkms.googleapis.com \
   spanner.googleapis.com \
   bigtableadmin.googleapis.com \

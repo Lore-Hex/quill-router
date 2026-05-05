@@ -29,6 +29,7 @@ from trusted_router.storage_models import (
     RateLimitHit,
     Reservation,
     SignupResult,
+    SyntheticProbeSample,
     User,
     VerificationToken,
     WalletChallenge,
@@ -37,6 +38,7 @@ from trusted_router.storage_models import (
 )
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
+from trusted_router.storage_synthetic import InMemorySyntheticChecks
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
 from trusted_router.types import UsageType
@@ -71,6 +73,7 @@ class InMemoryStore:
             lock=self._lock,
             add_usage_to_key=self.api_keys.add_usage,
         )
+        self.synthetic_store = InMemorySyntheticChecks(lock=self._lock)
         self.byok_store = InMemoryByok(lock=self._lock)
         self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
@@ -91,6 +94,7 @@ class InMemoryStore:
             self.stripe_events.clear()
             self.api_keys.reset()
             self.generation_store.reset()
+            self.synthetic_store.reset()
             self.byok_store.reset()
             self.broadcast_store.reset()
             self.auth_session_store.reset()
@@ -683,6 +687,26 @@ class InMemoryStore:
     ) -> list[ProviderBenchmarkSample]:
         return self.generation_store.benchmark_samples(
             date=date, provider=provider, model=model, limit=limit
+        )
+
+    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
+        self.synthetic_store.record(sample)
+
+    def synthetic_probe_samples(
+        self,
+        *,
+        date: str | None = None,
+        target: str | None = None,
+        probe_type: str | None = None,
+        monitor_region: str | None = None,
+        limit: int = 1000,
+    ) -> list[SyntheticProbeSample]:
+        return self.synthetic_store.query(
+            date=date,
+            target=target,
+            probe_type=probe_type,
+            monitor_region=monitor_region,
+            limit=limit,
         )
 
     def get_generation(self, generation_id: str) -> Generation | None:

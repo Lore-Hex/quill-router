@@ -17,7 +17,7 @@ from trusted_router.auth import (
     SettingsDep,
     get_authorization_bearer,
 )
-from trusted_router.catalog import AUTO_MODEL_ID, MODELS, Model
+from trusted_router.catalog import AUTO_MODEL_ID, MODELS, MONITOR_MODEL_ID, Model
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import api_error, error_response, not_supported
 from trusted_router.routes.activity import register_activity_routes
@@ -44,6 +44,7 @@ from trusted_router.routing import (
     chat_route_endpoint_candidates,
     provider_route_preferences,
 )
+from trusted_router.security import lookup_hash_api_key
 from trusted_router.sentry_config import init_sentry
 from trusted_router.services.inference import (
     run_chat,
@@ -212,6 +213,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     ) -> Any:
         body = await json_body(request)
         _validate_chat_messages(body)
+        _require_monitor_model_key(body, principal, settings)
         provider_prefs = provider_route_preferences(body)
         usage_type = UsageType.coerce(provider_prefs.usage_type) if provider_prefs.usage_type else None
         if usage_type is None:
@@ -374,6 +376,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     ) -> JSONResponse:
         body = await json_body(request)
         chat_body = responses_to_chat_body(body)
+        _require_monitor_model_key(chat_body, principal, settings)
         model = _require_chat_model(chat_body)
         result, generation = await run_chat(
             chat_body,
@@ -444,6 +447,33 @@ def _require_chat_model(body: dict[str, Any]) -> Model:
         if "content" not in message:
             raise api_error(400, f"messages[{index}].content is required", ErrorType.BAD_REQUEST)
     return model
+
+
+def _require_monitor_model_key(
+    body: dict[str, Any],
+    principal: Principal,
+    settings: Settings,
+) -> None:
+    if not _requests_monitor_model(body):
+        return
+    api_key = principal.api_key
+    expected = settings.synthetic_monitor_api_key
+    if api_key is not None and expected and api_key.lookup_hash == lookup_hash_api_key(expected):
+        return
+    raise api_error(
+        403,
+        "trustedrouter/monitor is restricted to the synthetic monitor key",
+        ErrorType.FORBIDDEN,
+    )
+
+
+def _requests_monitor_model(body: dict[str, Any]) -> bool:
+    if str(body.get("model") or "").strip() == MONITOR_MODEL_ID:
+        return True
+    models = body.get("models")
+    if isinstance(models, list):
+        return any(str(model).strip() == MONITOR_MODEL_ID for model in models)
+    return False
 
 
 def _validate_chat_messages(body: dict[str, Any]) -> None:

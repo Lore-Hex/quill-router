@@ -24,6 +24,7 @@ from trusted_router.storage import (
     RateLimitHit,
     Reservation,
     SignupResult,
+    SyntheticProbeSample,
     User,
     VerificationToken,
     WalletChallenge,
@@ -51,6 +52,12 @@ from trusted_router.storage_gcp_io import SpannerIO
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
+from trusted_router.storage_gcp_synthetic_index import (
+    synthetic_probe_samples as _bt_synthetic_probe_samples,
+)
+from trusted_router.storage_gcp_synthetic_index import (
+    write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
+)
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import _is_byok
@@ -839,6 +846,28 @@ class SpannerBigtableStore:
     ) -> list[ProviderBenchmarkSample]:
         return self.generation_store.benchmark_samples(
             date=date, provider=provider, model=model, limit=limit
+        )
+
+    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
+        _bt_write_synthetic_probe_sample(self._bt_table, self.generation_family, sample)
+
+    def synthetic_probe_samples(
+        self,
+        *,
+        date: str | None = None,
+        target: str | None = None,
+        probe_type: str | None = None,
+        monitor_region: str | None = None,
+        limit: int = 1000,
+    ) -> list[SyntheticProbeSample]:
+        return _bt_synthetic_probe_samples(
+            self._bt_table,
+            self.generation_family,
+            date=date,
+            target=target,
+            probe_type=probe_type,
+            monitor_region=monitor_region,
+            limit=limit,
         )
 
     def activity(

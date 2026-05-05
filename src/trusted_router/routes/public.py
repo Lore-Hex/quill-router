@@ -19,7 +19,10 @@ from trusted_router.dashboard import (
     public_page_html,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.storage import STORE
+from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.trust import gcp_release, trust_html
+from trusted_router.views import render_template
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -97,6 +100,41 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def security() -> str:
         return public_page_html(settings, "security")
 
+    @public_html_route("/status")
+    async def status_page() -> str:
+        snapshot = _status_snapshot(settings)
+        return render_template(
+            "public/status.html",
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/status",
+            title="Status - TrustedRouter",
+            heading="Status",
+            description="Regional uptime, attestation, SDK, billing, and fallback checks.",
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            snapshot=snapshot,
+        )
+
+    @app.get("/status.json")
+    async def status_json() -> JSONResponse:
+        return JSONResponse(
+            {"data": _status_snapshot(settings)},
+            headers={"cache-control": "max-age=15, public"},
+        )
+
+    @app.get("/status/history")
+    async def status_history(window: str = "24h") -> JSONResponse:
+        if window not in {"5m", "24h", "daily"}:
+            return JSONResponse(
+                {"error": {"message": "window must be 5m, 24h, or daily", "type": "bad_request"}},
+                status_code=400,
+            )
+        samples = STORE.synthetic_probe_samples(limit=settings.synthetic_status_sample_limit)
+        return JSONResponse(
+            {"data": history_payload(samples, window)},
+            headers={"cache-control": "max-age=15, public"},
+        )
+
     @public_html_route("/models")
     async def models() -> str:
         return public_models_html(settings)
@@ -147,3 +185,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             f"{settings.trust_gcp_image_reference or 'not-configured'}\n",
             headers={"cache-control": "max-age=60, public"},
         )
+
+
+def _status_snapshot(settings: Settings) -> dict[str, Any]:
+    samples = STORE.synthetic_probe_samples(limit=settings.synthetic_status_sample_limit)
+    return status_snapshot(samples)

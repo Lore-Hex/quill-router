@@ -15,13 +15,13 @@ from typing import cast
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from trusted_router.catalog import (
-    AUTO_MODEL_ID,
+    META_MODEL_IDS,
     MODELS,
     PROVIDERS,
     Model,
     ModelEndpoint,
-    auto_candidate_models,
     endpoints_for_model,
+    meta_candidate_models,
 )
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -140,7 +140,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     Returns None when the model id isn't in the catalog (route handler
     converts that to a styled 404)."""
     model = MODELS.get(model_id)
-    if model is None or model.id == AUTO_MODEL_ID:
+    if model is None or model.id in META_MODEL_IDS:
         return None
     return _env().get_template("public/model_detail.html").render(
         api_base_url=settings.api_base_url,
@@ -172,9 +172,9 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
 
 def _model_view(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
-    endpoints = endpoints_for_model(model.id) if model.id != AUTO_MODEL_ID else []
-    if model.id == AUTO_MODEL_ID:
-        candidates = auto_candidate_models()
+    endpoints = endpoints_for_model(model.id) if model.id not in META_MODEL_IDS else []
+    if model.id in META_MODEL_IDS:
+        candidates = meta_candidate_models(model.id)
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
         completion = _price_range(candidates, "completion_price_microdollars_per_million_tokens")
     elif endpoints:
@@ -197,7 +197,7 @@ def _model_view(model: Model) -> dict[str, object]:
         "attested": provider.attested_gateway,
         "stores_content": provider.stores_content,
         "provider_count": len(distinct_providers),
-        "detail_href": f"/models/{model.id}" if model.id != AUTO_MODEL_ID else None,
+        "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
     }
 
 

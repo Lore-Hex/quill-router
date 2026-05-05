@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     regions: str = "us-central1,europe-west4"
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
+    synthetic_monitor_region: str | None = None
+    synthetic_monitor_api_key: str | None = None
+    synthetic_monitor_model: str = "trustedrouter/monitor"
+    synthetic_monitor_timeout_seconds: float = 10.0
+    synthetic_status_sample_limit: int = 5000
+    synthetic_status_us_url: str = "https://status-us.trustedrouter.com/status.json"
+    synthetic_status_eu_url: str = "https://status-eu.trustedrouter.com/status.json"
     # IDs follow OpenRouter naming exactly to line up with the ingest
     # snapshot — `moonshotai/...` not `kimi/...`, `mistralai/...` not
     # `mistral/...`, `meta-llama/...` for Cerebras-served Llama, etc.
@@ -203,6 +210,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "byok_kms_key_name",
     "byok_envelope_key_b64",
     "byok_envelope_key_ref",
+    "synthetic_monitor_api_key",
 )
 
 

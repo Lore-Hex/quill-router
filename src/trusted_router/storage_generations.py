@@ -47,7 +47,8 @@ class InMemoryGenerations:
     def add(self, generation: Generation) -> None:
         with self._lock:
             self.generations[generation.id] = generation
-            self.provider_benchmarks.append(ProviderBenchmarkSample.from_generation(generation))
+            if generation.app != "TrustedRouter Synthetic":
+                self.provider_benchmarks.append(ProviderBenchmarkSample.from_generation(generation))
         self._add_usage_to_key(
             generation.key_hash,
             generation.total_cost_microdollars,

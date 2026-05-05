@@ -453,6 +453,62 @@ def _provider_from_model_id(model_id: str) -> str:
 
 
 @dataclass
+class SyntheticProbeSample:
+    """Privacy-safe synthetic monitor sample.
+
+    These rows are public-status material. They intentionally do not carry
+    prompts, outputs, raw request bodies, API keys, or workspace identifiers.
+    """
+
+    id: str
+    probe_type: str
+    target: str
+    target_url: str
+    monitor_region: str
+    status: str
+    target_region: str | None = None
+    latency_milliseconds: int | None = None
+    ttfb_milliseconds: int | None = None
+    http_status: int | None = None
+    error_type: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    selected_provider: str | None = None
+    selected_model: str | None = None
+    generation_id: str | None = None
+    attestation_digest: str | None = None
+    source_commit: str | None = None
+    cost_microdollars: int = 0
+    output_match: bool | None = None
+    created_at: str = field(default_factory=iso_now)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "probe_type": self.probe_type,
+            "target": self.target,
+            "target_url": self.target_url,
+            "monitor_region": self.monitor_region,
+            "target_region": self.target_region,
+            "status": self.status,
+            "latency_milliseconds": self.latency_milliseconds,
+            "ttfb_milliseconds": self.ttfb_milliseconds,
+            "http_status": self.http_status,
+            "error_type": self.error_type,
+            "provider": self.provider,
+            "model": self.model,
+            "selected_provider": self.selected_provider,
+            "selected_model": self.selected_model,
+            "generation_id": self.generation_id,
+            "attestation_digest": self.attestation_digest,
+            "source_commit": self.source_commit,
+            "cost_microdollars": self.cost_microdollars,
+            "output_match": self.output_match,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass
 class SignupResult:
     """Outcome of a successful `STORE.signup()` call."""
 

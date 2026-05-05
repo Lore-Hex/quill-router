@@ -49,7 +49,8 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
         "mistralai/mistral-small-2603",
     ]
     mistral_byok = next(
-        item for item in auth_data["route_candidates"]
+        item
+        for item in auth_data["route_candidates"]
         if item["model"] == "mistralai/mistral-small-2603" and item["usage_type"] == "BYOK"
     )
     assert mistral_byok["byok_secret_ref"] == "env://MISTRAL_API_KEY"  # noqa: S105
@@ -90,6 +91,30 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert refreshed_key.reserved_microdollars == 0
     assert refreshed_key.usage_microdollars == 0
     assert refreshed_key.byok_usage_microdollars == expected_cost
+
+
+def test_gateway_validate_checks_key_without_reserving_or_recording_usage() -> None:
+    client, key = _client_and_key()
+
+    validate = client.post(
+        "/v1/internal/gateway/validate",
+        json={"api_key_hash": key["hash"], "route_type": "responses.input_tokens"},
+    )
+
+    assert validate.status_code == 200, validate.text
+    assert validate.json()["data"] == {
+        "workspace_id": key["workspace_id"],
+        "api_key_hash": key["hash"],
+        "route_type": "responses.input_tokens",
+    }
+    refreshed_key = STORE.get_key_by_hash(key["hash"])
+    credit = STORE.get_credit_account(key["workspace_id"])
+    assert refreshed_key is not None
+    assert credit is not None
+    assert refreshed_key.reserved_microdollars == 0
+    assert refreshed_key.usage_microdollars == 0
+    assert credit.reserved_microdollars == 0
+    assert not STORE.generation_store.generations
 
 
 def test_gateway_settle_rejects_unlisted_fallback_without_charge_or_generation() -> None:

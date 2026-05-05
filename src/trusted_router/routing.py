@@ -12,6 +12,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     auto_candidate_models,
     endpoints_for_model,
+    meta_candidate_models,
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -225,6 +226,9 @@ def _requested_model_ids(
 def _expand_model_id(model_id: str, settings: Settings) -> list[str]:
     if model_id == AUTO_MODEL_ID:
         return [candidate.id for candidate in auto_candidate_models(settings.auto_model_order)]
+    meta_candidates = meta_candidate_models(model_id)
+    if meta_candidates:
+        return [candidate.id for candidate in meta_candidates]
     return [model_id]
 
 

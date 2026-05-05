@@ -93,7 +93,8 @@ class SpannerGenerations:
                 "bigtable_generation_index_failed",
                 extra={"workspace_id": generation.workspace_id, "generation_id": generation.id},
             )
-        self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+        if generation.app != "TrustedRouter Synthetic":
+            self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
 
     def get(self, generation_id: str) -> Generation | None:
         return self._io.read_entity("generation", generation_id, Generation)

@@ -18,6 +18,7 @@ from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
     MODELS,
+    MONITOR_MODEL_ID,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -30,7 +31,12 @@ from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import chat_route_endpoint_candidates
-from trusted_router.schemas import GatewayAuthorizeRequest, GatewaySettleRequest
+from trusted_router.schemas import (
+    GatewayAuthorizeRequest,
+    GatewaySettleRequest,
+    GatewayValidateRequest,
+)
+from trusted_router.security import lookup_hash_api_key
 from trusted_router.services.broadcast import (
     drain_broadcast_queue,
     enqueue_metadata_broadcast,
@@ -41,6 +47,30 @@ from trusted_router.types import ErrorType, UsageType
 
 
 def register(router: APIRouter) -> None:
+    @router.post("/internal/gateway/validate")
+    async def gateway_validate(
+        request: Request,
+        body: GatewayValidateRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        require_internal_gateway(request, settings)
+        api_key = _api_key_for_gateway_lookup(
+            api_key_hash=body.api_key_hash,
+            api_key_lookup_hash=body.api_key_lookup_hash,
+        )
+        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        workspace = STORE.get_workspace(api_key.workspace_id)
+        if workspace is None:
+            raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        return {
+            "data": {
+                "workspace_id": workspace.id,
+                "api_key_hash": api_key.hash,
+                "route_type": body.route_type,
+            }
+        }
+
     @router.post("/internal/gateway/authorize")
     async def gateway_authorize(
         request: Request,
@@ -55,11 +85,16 @@ def register(router: APIRouter) -> None:
         if workspace is None:
             raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
         body_dict = body.model_dump(exclude_none=True)
+        _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
         requested_model_id = body.model
         endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
         if not endpoint_candidates:
-            raise api_error(400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED)
-        endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
+            raise api_error(
+                400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
+            )
+        endpoint_candidates = _eligible_gateway_endpoint_candidates(
+            endpoint_candidates, workspace.id
+        )
         if not endpoint_candidates:
             raise api_error(
                 400,
@@ -85,7 +120,9 @@ def register(router: APIRouter) -> None:
         try:
             STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
         except ValueError as exc:
-            raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED) from exc
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+            ) from exc
 
         if has_credit_candidate:
             try:
@@ -93,7 +130,9 @@ def register(router: APIRouter) -> None:
                 credit_reservation_id = credit_reservation.id
             except ValueError as exc:
                 STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-                raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS) from exc
+                raise api_error(
+                    402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
+                ) from exc
 
         authorization = STORE.create_gateway_authorization(
             workspace_id=workspace.id,
@@ -104,11 +143,14 @@ def register(router: APIRouter) -> None:
             estimated_microdollars=estimate,
             credit_reservation_id=credit_reservation_id,
             requested_model_id=requested_model_id,
-            candidate_model_ids=[candidate_model.id for candidate_model, _endpoint in endpoint_candidates],
+            candidate_model_ids=[
+                candidate_model.id for candidate_model, _endpoint in endpoint_candidates
+            ],
             region=region,
             endpoint_id=endpoint.id,
             candidate_endpoint_ids=[
-                candidate_endpoint.id for _candidate_model, candidate_endpoint in endpoint_candidates
+                candidate_endpoint.id
+                for _candidate_model, candidate_endpoint in endpoint_candidates
             ],
         )
         byok_config = (
@@ -141,7 +183,9 @@ def register(router: APIRouter) -> None:
                 "regions": region_payload(settings),
                 "broadcast_destinations": broadcast_destinations,
                 "route_candidates": [
-                    _gateway_candidate_payload(candidate_model, candidate_endpoint, workspace.id, region)
+                    _gateway_candidate_payload(
+                        candidate_model, candidate_endpoint, workspace.id, region
+                    )
                     for candidate_model, candidate_endpoint in endpoint_candidates
                 ],
             }
@@ -156,7 +200,10 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         return _settle_gateway_authorization(
-            body, success=True, settings=settings, background_tasks=background_tasks,
+            body,
+            success=True,
+            settings=settings,
+            background_tasks=background_tasks,
         )
 
     @router.post("/internal/gateway/refund")
@@ -168,18 +215,58 @@ def register(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         return _settle_gateway_authorization(
-            body, success=False, settings=settings, background_tasks=background_tasks,
+            body,
+            success=False,
+            settings=settings,
+            background_tasks=background_tasks,
         )
 
 
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
-    if body.api_key_hash:
-        api_key = STORE.get_key_by_hash(body.api_key_hash)
+    return _api_key_for_gateway_lookup(
+        api_key_hash=body.api_key_hash,
+        api_key_lookup_hash=body.api_key_lookup_hash,
+    )
+
+
+def _api_key_for_gateway_lookup(
+    *,
+    api_key_hash: str | None,
+    api_key_lookup_hash: str | None,
+) -> Any | None:
+    if api_key_hash:
+        api_key = STORE.get_key_by_hash(api_key_hash)
         if api_key is not None:
             return api_key
-    if body.api_key_lookup_hash:
-        return STORE.get_key_by_lookup_hash(body.api_key_lookup_hash)
+    if api_key_lookup_hash:
+        return STORE.get_key_by_lookup_hash(api_key_lookup_hash)
     return None
+
+
+def _require_monitor_model_key(
+    body: dict[str, Any],
+    api_key_lookup_hash: str,
+    settings: Settings,
+) -> None:
+    if not _requests_monitor_model(body):
+        return
+    expected = settings.synthetic_monitor_api_key
+    if expected and api_key_lookup_hash == lookup_hash_api_key(expected):
+        return
+    raise api_error(
+        403,
+        "trustedrouter/monitor is restricted to the synthetic monitor key",
+        ErrorType.FORBIDDEN,
+    )
+
+
+def _requests_monitor_model(body: dict[str, Any]) -> bool:
+    if str(body.get("model") or "").strip() == MONITOR_MODEL_ID:
+        return True
+    models = body.get("models")
+    if isinstance(models, list):
+        return any(str(model).strip() == MONITOR_MODEL_ID for model in models)
+    return False
 
 
 def _settle_gateway_authorization(
@@ -193,7 +280,13 @@ def _settle_gateway_authorization(
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if authorization.settled:
-        return {"data": {"authorization_id": authorization.id, "settled": False, "already_settled": True}}
+        return {
+            "data": {
+                "authorization_id": authorization.id,
+                "settled": False,
+                "already_settled": True,
+            }
+        }
 
     selected_endpoint = _select_authorized_endpoint(authorization, body)
     if selected_endpoint is None:
@@ -235,7 +328,13 @@ def _settle_gateway_authorization(
         generation=generation,
     )
     if not finalized:
-        return {"data": {"authorization_id": authorization.id, "settled": False, "already_settled": True}}
+        return {
+            "data": {
+                "authorization_id": authorization.id,
+                "settled": False,
+                "already_settled": True,
+            }
+        }
 
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
@@ -288,7 +387,9 @@ def _gateway_candidate_payload(
     region: str,
 ) -> dict[str, Any]:
     usage_type = UsageType.for_endpoint(endpoint)
-    byok_config = STORE.get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
+    byok_config = (
+        STORE.get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
+    )
     return {
         "endpoint_id": endpoint.id,
         "model": model.id,
@@ -300,7 +401,9 @@ def _gateway_candidate_payload(
     }
 
 
-def _gateway_byok_payload(byok_config: Any | None, workspace_id: str, provider: str) -> dict[str, Any]:
+def _gateway_byok_payload(
+    byok_config: Any | None, workspace_id: str, provider: str
+) -> dict[str, Any]:
     if byok_config is None:
         return {
             "byok_secret_ref": None,
@@ -327,13 +430,18 @@ def _eligible_gateway_endpoint_candidates(
     out: list[tuple[Model, ModelEndpoint]] = []
     for model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if usage_type.is_byok() and STORE.get_byok_provider(workspace_id, endpoint.provider) is None:
+        if (
+            usage_type.is_byok()
+            and STORE.get_byok_provider(workspace_id, endpoint.provider) is None
+        ):
             continue
         out.append((model, endpoint))
     return out
 
 
-def _select_authorized_endpoint(authorization: Any, body: GatewaySettleRequest) -> ModelEndpoint | None:
+def _select_authorized_endpoint(
+    authorization: Any, body: GatewaySettleRequest
+) -> ModelEndpoint | None:
     authorized_endpoint_ids = authorization.candidate_endpoint_ids or []
     if not authorized_endpoint_ids and authorization.endpoint_id:
         authorized_endpoint_ids = [authorization.endpoint_id]
@@ -364,12 +472,11 @@ def _endpoint_cost_microdollars(
     input_tokens: int,
     output_tokens: int,
 ) -> int:
-    return (
-        token_cost_microdollars(input_tokens, endpoint.prompt_price_microdollars_per_million_tokens)
-        + token_cost_microdollars(
-            output_tokens,
-            endpoint.completion_price_microdollars_per_million_tokens,
-        )
+    return token_cost_microdollars(
+        input_tokens, endpoint.prompt_price_microdollars_per_million_tokens
+    ) + token_cost_microdollars(
+        output_tokens,
+        endpoint.completion_price_microdollars_per_million_tokens,
     )
 
 

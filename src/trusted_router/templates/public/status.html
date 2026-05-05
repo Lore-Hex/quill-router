@@ -1,0 +1,47 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="band public-band">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Current Status</h2>
+      <span class="pill {{ 'good' if snapshot.overall_status == 'up' else 'warn' }}">{{ snapshot.overall_status }}</span>
+    </div>
+    <div class="panel-body">
+      <p>Checks run from US and EU monitors against the canonical API and regional APIs. Prompt and output content are not stored.</p>
+      <div class="status-grid">
+        {% for check in snapshot.current.checks %}
+        <div class="status-card">
+          <strong>{{ check.target }} / {{ check.probe_type }}</strong>
+          <span class="pill {{ 'good' if check.effective_status == 'up' else 'warn' }}">{{ check.effective_status }}</span>
+          <span>{{ check.monitor_region }}{% if check.target_region %} -> {{ check.target_region }}{% endif %}</span>
+          <span>{{ check.latency_milliseconds or 'n/a' }} ms</span>
+          <span>age {{ check.age_seconds }}s</span>
+        </div>
+        {% endfor %}
+        {% if not snapshot.current.checks %}
+        <p class="empty">No synthetic samples have been recorded yet.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Uptime Windows</h2><span class="pill">rollups</span></div>
+    <div class="panel-body">
+      <table class="activity-table">
+        <thead><tr><th>Window</th><th>Status</th><th>Samples</th><th>Groups</th></tr></thead>
+        <tbody>
+          {% for name, window in snapshot.windows.items() %}
+          <tr>
+            <td>{{ name }}</td>
+            <td>{{ window.overall_status }}</td>
+            <td>{{ window.sample_count }}</td>
+            <td>{{ window.groups|length }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p><a class="btn" href="/status.json">View status.json</a></p>
+    </div>
+  </div>
+</section>
+{% endblock %}

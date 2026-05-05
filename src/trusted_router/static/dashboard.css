@@ -192,6 +192,9 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .bar-74 { height:74%; }
 .signup-foot-flush { margin:0; }
 .empty { color:var(--muted); padding:18px; text-align:center; }
+.status-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-top:14px; }
+.status-card { display:grid; gap:5px; border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; font-size:13px; color:var(--muted); }
+.status-card strong { color:var(--ink); font-size:14px; }
 .console-title { display:flex; align-items:end; justify-content:space-between; gap:16px; margin-top:4px; }
 .console-title h2 { margin:0; font-size:24px; }
 .console-title p { margin:4px 0 0; color:var(--muted); font-size:14px; }

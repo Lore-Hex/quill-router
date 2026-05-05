@@ -136,6 +136,10 @@ PROVIDERS: dict[str, Provider] = {
 
 
 AUTO_MODEL_ID = "trustedrouter/auto"
+FREE_MODEL_ID = "trustedrouter/free"
+CHEAP_MODEL_ID = "trustedrouter/cheap"
+MONITOR_MODEL_ID = "trustedrouter/monitor"
+META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITOR_MODEL_ID})
 # IDs follow OpenRouter naming exactly so they line up with what the
 # ingest snapshot produces. The picks span the 8 keyed providers so
 # `trustedrouter/auto` rolls over across providers if any one is down.
@@ -171,6 +175,33 @@ MODELS: dict[str, Model] = {
         published_prompt_price_microdollars_per_million_tokens=0,
         published_completion_price_microdollars_per_million_tokens=0,
     ),
+    FREE_MODEL_ID: Model(
+        id=FREE_MODEL_ID,
+        name="TrustedRouter Free",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    CHEAP_MODEL_ID: Model(
+        id=CHEAP_MODEL_ID,
+        name="TrustedRouter Cheap",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    MONITOR_MODEL_ID: Model(
+        id=MONITOR_MODEL_ID,
+        name="TrustedRouter Monitor",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=False,
+    ),
 }
 
 
@@ -199,7 +230,7 @@ def _endpoint(
 def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
     endpoints: dict[str, ModelEndpoint] = {}
     for model in models.values():
-        if model.id == AUTO_MODEL_ID:
+        if model.id in META_MODEL_IDS:
             continue
         provider = PROVIDERS[model.provider]
         if model.prepaid_available:
@@ -406,14 +437,99 @@ def auto_candidate_models(order: str | None = None) -> list[Model]:
     return candidates
 
 
-def _auto_price_range(
+def free_candidate_models(limit: int = 16) -> list[Model]:
+    candidates = [
+        model
+        for model in MODELS.values()
+        if _is_regular_chat_model(model) and model.id.endswith(":free")
+    ]
+    candidates.sort(key=_price_sort_key)
+    return candidates[:limit]
+
+
+def cheap_candidate_models(limit: int = 8) -> list[Model]:
+    by_provider: dict[str, Model] = {}
+    for model in MODELS.values():
+        if not _is_regular_chat_model(model) or model.id.endswith(":free"):
+            continue
+        current = by_provider.get(model.provider)
+        if current is None or _price_sort_key(model) < _price_sort_key(current):
+            by_provider[model.provider] = model
+    return sorted(by_provider.values(), key=_price_sort_key)[:limit]
+
+
+def monitor_candidate_models(limit: int = 8) -> list[Model]:
+    preferred_ids = [
+        "anthropic/claude-haiku-4.5",
+        "z-ai/glm-4.5-air",
+        "z-ai/glm-4.6",
+        "moonshotai/kimi-k2.6",
+        "google/gemini-2.5-flash",
+        "mistralai/mistral-small-2603",
+        "deepseek/deepseek-v4-flash",
+    ]
+    candidates: list[Model] = []
+    seen: set[str] = set()
+    for model_id in preferred_ids:
+        model = MODELS.get(model_id)
+        if model is not None and _is_regular_chat_model(model) and not model.id.endswith(":free"):
+            candidates.append(model)
+            seen.add(model.id)
+    for model in cheap_candidate_models(limit=limit * 2):
+        if model.id not in seen:
+            candidates.append(model)
+            seen.add(model.id)
+        if len(candidates) >= limit:
+            break
+    return candidates[:limit]
+
+
+def meta_candidate_models(model_id: str) -> list[Model]:
+    if model_id == AUTO_MODEL_ID:
+        return auto_candidate_models()
+    if model_id == FREE_MODEL_ID:
+        return free_candidate_models()
+    if model_id == CHEAP_MODEL_ID:
+        return cheap_candidate_models()
+    if model_id == MONITOR_MODEL_ID:
+        return monitor_candidate_models()
+    return []
+
+
+def _meta_route_kind(model_id: str) -> str:
+    if model_id == FREE_MODEL_ID:
+        return "free_pool"
+    if model_id == CHEAP_MODEL_ID:
+        return "cheap_pool"
+    if model_id == MONITOR_MODEL_ID:
+        return "synthetic_monitor_pool"
+    if model_id == AUTO_MODEL_ID:
+        return "auto_pool"
+    return "model"
+
+
+def _is_regular_chat_model(model: Model) -> bool:
+    return model.id not in META_MODEL_IDS and model.supports_chat
+
+
+def _price_sort_key(model: Model) -> tuple[int, str, str]:
+    return (
+        model.prompt_price_microdollars_per_million_tokens
+        + model.completion_price_microdollars_per_million_tokens,
+        model.provider,
+        model.id,
+    )
+
+
+def _meta_price_range(
+    model_id: str,
     attr: str,
 ) -> tuple[int, int]:
     """Return (min, max) of the requested price attribute across the
     Auto model's candidate set. Auto itself has no intrinsic price —
     the request lands on whatever model the router picks — so we
     surface the range so /v1/models doesn't show a misleading $0."""
-    candidates = auto_candidate_models()
+    candidates = meta_candidate_models(model_id)
     values = [
         getattr(c, attr)
         for c in candidates
@@ -426,14 +542,14 @@ def _auto_price_range(
 
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
-    is_auto = model.id == AUTO_MODEL_ID
+    is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
     prepaid_available = any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
     byok_available = any(endpoint.usage_type == "BYOK" for endpoint in endpoints) or (
         model.byok_available and PROVIDERS[model.provider].supports_byok
     )
 
-    # For Auto, derive prompt/completion price from the candidate range
+    # For meta routers, derive prompt/completion price from the candidate range
     # rather than the catalog's hard-coded 0. Most OpenRouter-compat
     # consumers (browsers, marketplace listings, billing previews) read
     # `pricing.prompt` / `pricing.completion`; if those are 0, Auto
@@ -449,17 +565,21 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     pub_prompt_max = pub_prompt_min
     pub_completion_min = model.published_completion_price_microdollars_per_million_tokens
     pub_completion_max = pub_completion_min
-    if is_auto:
-        prompt_min, prompt_max = _auto_price_range(
+    if is_meta:
+        prompt_min, prompt_max = _meta_price_range(
+            model.id,
             "prompt_price_microdollars_per_million_tokens"
         )
-        completion_min, completion_max = _auto_price_range(
+        completion_min, completion_max = _meta_price_range(
+            model.id,
             "completion_price_microdollars_per_million_tokens"
         )
-        pub_prompt_min, pub_prompt_max = _auto_price_range(
+        pub_prompt_min, pub_prompt_max = _meta_price_range(
+            model.id,
             "published_prompt_price_microdollars_per_million_tokens"
         )
-        pub_completion_min, pub_completion_max = _auto_price_range(
+        pub_completion_min, pub_completion_max = _meta_price_range(
+            model.id,
             "published_completion_price_microdollars_per_million_tokens"
         )
 
@@ -467,7 +587,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
-    if is_auto and (prompt_max != prompt_min or completion_max != completion_min):
+    if is_meta and (prompt_max != prompt_min or completion_max != completion_min):
         pricing["prompt_max"] = microdollars_per_million_tokens_to_token_decimal(prompt_max)
         pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(
             completion_max
@@ -487,7 +607,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # secret 1¢/M discount layered on top. Field kept for OpenRouter
         # consumer compat, but always zero.
         "discount_microdollars_per_million_tokens": 0,
-        "auto_candidates": [c.id for c in auto_candidate_models()] if is_auto else None,
+        "auto_candidates": [c.id for c in meta_candidate_models(model.id)] if is_meta else None,
+        "route_kind": _meta_route_kind(model.id) if is_meta else "model",
+        "synthetic_monitor": model.id == MONITOR_MODEL_ID,
+        "internal_only": model.id == MONITOR_MODEL_ID,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -501,7 +624,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             for endpoint in endpoints
         ],
     }
-    if is_auto:
+    if is_meta:
         tr_block["prompt_price_max_microdollars_per_million_tokens"] = prompt_max
         tr_block["completion_price_max_microdollars_per_million_tokens"] = completion_max
         tr_block["published_prompt_price_max_microdollars_per_million_tokens"] = pub_prompt_max

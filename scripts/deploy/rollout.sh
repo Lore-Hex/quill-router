@@ -52,6 +52,7 @@ add_secret_env_if_exists "CEREBRAS_API_KEY" "trustedrouter-cerebras-api-key"
 add_secret_env_if_exists "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
 add_secret_env_if_exists "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
 add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
+add_secret_env_if_exists "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
@@ -208,6 +209,28 @@ if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/nul
   log "wiring Serverless NEGs to ${LB_BACKEND_SERVICE}"
   for fanout_region in "${TARGETS[@]}"; do
     attach_region_to_lb "$fanout_region" || log "WARN: NEG attach failed for ${fanout_region}"
+  done
+  existing_backend_regions="$(gc compute backend-services describe "$LB_BACKEND_SERVICE" \
+    --global --format='value(backends[].group)' 2>/dev/null \
+    | tr ';' '\n' \
+    | sed -n 's#.*regions/\([^/]*\)/networkEndpointGroups/.*#\1#p' \
+    | sort -u)"
+  for attached_region in $existing_backend_regions; do
+    keep_region=0
+    for target_region in "${TARGETS[@]}"; do
+      if [ "$attached_region" = "$target_region" ]; then
+        keep_region=1
+        break
+      fi
+    done
+    if [ "$keep_region" = "0" ]; then
+      log "detaching stale NEG ${LB_NEG_NAME} (${attached_region}) from ${LB_BACKEND_SERVICE}"
+      gc compute backend-services remove-backend "$LB_BACKEND_SERVICE" \
+        --global \
+        --network-endpoint-group="$LB_NEG_NAME" \
+        --network-endpoint-group-region="$attached_region" \
+        --quiet >/dev/null || log "WARN: stale NEG detach failed for ${attached_region}"
+    fi
   done
 else
   log "WARN: ${LB_BACKEND_SERVICE} not found; skipping NEG wiring"

@@ -29,6 +29,7 @@ from trusted_router.storage_models import (
     RateLimitHit,
     Reservation,
     SignupResult,
+    SyntheticProbeSample,
     User,
     VerificationToken,
     WalletChallenge,
@@ -333,6 +334,16 @@ class Store(Protocol):
         model: str | None = ...,
         limit: int = ...,
     ) -> list[ProviderBenchmarkSample]: ...
+    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None: ...
+    def synthetic_probe_samples(
+        self,
+        *,
+        date: str | None = ...,
+        target: str | None = ...,
+        probe_type: str | None = ...,
+        monitor_region: str | None = ...,
+        limit: int = ...,
+    ) -> list[SyntheticProbeSample]: ...
     def get_generation(self, generation_id: str) -> Generation | None: ...
     def activity(
         self,

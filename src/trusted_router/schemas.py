@@ -160,6 +160,18 @@ class GatewayAuthorizeRequest(_Lenient):
         return 512
 
 
+class GatewayValidateRequest(_Lenient):
+    api_key_hash: str | None = Field(default=None, min_length=1)
+    api_key_lookup_hash: str | None = Field(default=None, min_length=1)
+    route_type: str | None = None
+
+    @model_validator(mode="after")
+    def key_identifier_required(self) -> GatewayValidateRequest:
+        if not self.api_key_hash and not self.api_key_lookup_hash:
+            raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        return self
+
+
 class GatewaySettleRequest(_Lenient):
     authorization_id: str = Field(min_length=1)
     actual_input_tokens: int | None = Field(default=None, ge=0)

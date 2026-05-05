@@ -111,6 +111,27 @@ outbox first and drained asynchronously by `/internal/broadcast/drain`, so a
 PostHog/webhook outage does not block inference or lose already-settled
 metadata on process restart.
 
+## Synthetic Monitoring
+
+TrustedRouter has a separate synthetic monitoring plane for public uptime.
+Synthetic workers run outside the enclave, send tiny real requests into the
+public attested API, and store only metadata. The monitor model aliases are:
+
+- `trustedrouter/free`: OpenRouter-style free pool. Useful for users, not an
+  SLA signal.
+- `trustedrouter/cheap`: cheapest paid pool with provider diversity.
+- `trustedrouter/monitor`: internal uptime pool for PONG and fallback checks.
+  It is visible in the catalog for transparency, but authorization requires
+  the configured `TR_SYNTHETIC_MONITOR_API_KEY`; normal API keys receive 403.
+
+Workers should run from `us-central1` and `europe-west4`, using a dedicated
+`trustedrouter-synthetic-monitoring` workspace/key with hard spend caps and
+auto-refill. Raw samples are append-only Bigtable rows; public status pages
+read compact rollups exposed at `/status`, `/status.json`, and
+`/status/history?window=5m|24h|daily`. Synthetic generations use the
+`TrustedRouter Synthetic` app label and are excluded from public provider
+benchmark/ranking samples so uptime probes do not pollute customer analytics.
+
 ## Public Positioning
 
 - Pricing target: prepaid routes are priced at `$0.01` less per 1 million

@@ -11,6 +11,7 @@
 #   2. image.sh    — Artifact Registry repo + buildx push (linux/amd64)
 #   3. secrets.sh  — Secret Manager + runtime IAM bindings
 #   4. rollout.sh  — parallel multi-region Cloud Run deploy + LB wiring
+#   5. synthetic.sh — US/EU synthetic monitor jobs + schedules
 
 set -euo pipefail
 
@@ -20,3 +21,4 @@ bash "${SCRIPT_DIR}/deploy/infra.sh"
 bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
 bash "${SCRIPT_DIR}/deploy/rollout.sh"
+bash "${SCRIPT_DIR}/deploy/synthetic.sh"
