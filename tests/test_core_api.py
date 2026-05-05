@@ -80,6 +80,16 @@ def test_chat_activity_generation_and_no_content_storage(
     assert isinstance(generation_data["total_cost_microdollars"], int)
     assert prompt not in str(generation.json())
 
+    # OpenRouter-shaped clients (forty.news, etc.) reuse the SAME bearer
+    # token the chat completion was authed with — i.e. an inference key.
+    # /v1/generation must accept that, scoped to the workspace owning
+    # the generation. Cross-workspace inference keys still 404.
+    inference_generation = client.get(
+        f"/v1/generation?id={generation_id}", headers=inference_headers
+    )
+    assert inference_generation.status_code == 200
+    assert inference_generation.json()["data"]["id"] == generation_id
+
     samples = STORE.provider_benchmark_samples()
     assert len(samples) == 1
     sample = samples[0]

@@ -27,9 +27,74 @@ def gemini_payload(request: dict[str, Any]) -> dict[str, Any]:
         generation_config["temperature"] = request["temperature"]
     if request.get("top_p") is not None:
         generation_config["topP"] = request["top_p"]
+
+    # Translate OpenAI's `response_format` to Gemini's
+    # `responseMimeType` / `responseSchema`. forty.news's StoryDraftNode
+    # and friends post `response_format: {type:"json_schema", json_schema:
+    # {schema: ...}}`; without translation Gemini returns prose that
+    # forty.news's `JSON.parse()` chokes on. The spelling differences
+    # (camelCase, `nullable` instead of nullable types, no
+    # `additionalProperties`) are smoothed over by `_gemini_response_schema`.
+    response_format = request.get("response_format")
+    if isinstance(response_format, dict):
+        format_type = response_format.get("type")
+        if format_type == "json_object":
+            generation_config["responseMimeType"] = "application/json"
+        elif format_type == "json_schema":
+            schema_block = response_format.get("json_schema") or {}
+            schema = schema_block.get("schema") if isinstance(schema_block, dict) else None
+            if isinstance(schema, dict):
+                generation_config["responseMimeType"] = "application/json"
+                generation_config["responseSchema"] = _gemini_response_schema(schema)
+
     if generation_config:
         payload["generationConfig"] = generation_config
     return payload
+
+
+def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Strip OpenAI/JSON-Schema fields Gemini doesn't accept.
+
+    Gemini's `responseSchema` is a strict subset of JSON Schema:
+    - rejects `additionalProperties`, `$schema`, `$defs`, `definitions`
+    - rejects `format` when not in its allow-list (we drop it conservatively)
+    - rejects `strict`, `examples`, `default`
+    - keeps `type`, `properties`, `items`, `required`, `enum`, `description`,
+      `nullable`, `minimum`, `maximum`, `minLength`, `maxLength`,
+      `minItems`, `maxItems`, `propertyOrdering`."""
+    if not isinstance(schema, dict):
+        return {}
+    allowed_keys = {
+        "type",
+        "properties",
+        "items",
+        "required",
+        "enum",
+        "description",
+        "nullable",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "propertyOrdering",
+    }
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in allowed_keys:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {
+                prop_name: _gemini_response_schema(prop_schema)
+                for prop_name, prop_schema in value.items()
+                if isinstance(prop_schema, dict)
+            }
+        elif key == "items" and isinstance(value, dict):
+            out[key] = _gemini_response_schema(value)
+        else:
+            out[key] = value
+    return out
 
 
 def messages(request: dict[str, Any]) -> list[dict[str, Any]]:

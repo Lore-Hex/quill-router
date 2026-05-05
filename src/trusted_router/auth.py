@@ -196,8 +196,26 @@ def require_inference_key(
     return principal
 
 
+def require_authenticated(
+    request: Request,
+    settings: SettingsDep,
+) -> Principal:
+    """Allow either an inference key or a management session. Used by
+    workspace-scoped read-only endpoints (e.g. /v1/generation) where
+    OpenRouter accepts the same key the caller used for the chat
+    completion. forty.news and other OpenRouter-shaped clients post
+    /chat/completions and then GET /generation?id=<id> with the SAME
+    bearer token; rejecting the lookup forces a per-call key swap that
+    OpenRouter doesn't require."""
+    principal = principal_from_request(request, settings)
+    if principal.api_key is None and not principal.is_management:
+        raise api_error(403, "Authentication required", ErrorType.FORBIDDEN)
+    return principal
+
+
 ManagementPrincipal = Annotated[Principal, Depends(require_management)]
 InferencePrincipal = Annotated[Principal, Depends(require_inference_key)]
+AuthenticatedPrincipal = Annotated[Principal, Depends(require_authenticated)]
 
 
 def is_api_key_expired(expires_at: str | None) -> bool:

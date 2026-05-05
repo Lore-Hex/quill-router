@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from trusted_router.auth import ManagementPrincipal
+from trusted_router.auth import AuthenticatedPrincipal, ManagementPrincipal
 from trusted_router.errors import api_error, error_response
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
@@ -33,7 +33,13 @@ def register_activity_routes(router: APIRouter) -> None:
         return {"data": STORE.activity(principal.workspace.id, api_key_hash=api_key_hash, date=date)}
 
     @router.get("/generation")
-    async def generation(id: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
+    async def generation(id: str, principal: AuthenticatedPrincipal) -> dict[str, Any]:  # noqa: A002
+        # Either an inference key or a management session works here.
+        # OpenRouter accepts the same bearer token the caller used for
+        # the chat completion that produced this generation_id, so
+        # forty.news (and any OpenRouter-shaped client) can issue the
+        # follow-up GET without juggling key types. Workspace scoping
+        # below stops cross-workspace lookups.
         gen = STORE.get_generation(id)
         if gen is None or gen.workspace_id != principal.workspace.id:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)

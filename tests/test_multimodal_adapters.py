@@ -226,6 +226,97 @@ async def test_forty_news_ocr_request_reaches_gemini_with_inline_image_data(
     assert "newspaper image" in text_part["text"]
 
 
+def test_gemini_payload_translates_openai_json_schema_response_format() -> None:
+    """forty.news's StoryDraftNode posts:
+
+        response_format: {type:"json_schema", json_schema:{schema:{...}}}
+
+    Gemini doesn't speak that — it wants `responseMimeType=application/json`
+    + `responseSchema={...}` on `generationConfig`. Without translation,
+    Gemini ignores the hint and returns prose; forty.news's
+    `JSON.parse()` then crashes. Pin the translation here."""
+    from trusted_router.provider_payloads import gemini_payload
+
+    out = gemini_payload({
+        "messages": [{"role": "user", "content": "make a story"}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "story_draft",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "headline": {"type": "string", "description": "Short factual headline"},
+                        "article": {"type": "string", "description": "1-200 word synopsis"},
+                    },
+                    "required": ["headline", "article"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "max_tokens": 500,
+    })
+    config = out["generationConfig"]
+    assert config["responseMimeType"] == "application/json"
+    schema = config["responseSchema"]
+    assert schema["type"] == "object"
+    # Required keys preserved.
+    assert sorted(schema["required"]) == ["article", "headline"]
+    # `additionalProperties` and `strict` must be stripped — Gemini
+    # rejects them as unknown fields.
+    assert "additionalProperties" not in schema
+    assert "strict" not in schema
+    # Property descriptions preserved verbatim.
+    assert schema["properties"]["headline"]["description"] == "Short factual headline"
+
+
+def test_gemini_payload_handles_json_object_response_format() -> None:
+    """`response_format: {type:"json_object"}` (the lighter sibling of
+    json_schema) just sets the mime type — no schema attached."""
+    from trusted_router.provider_payloads import gemini_payload
+
+    out = gemini_payload({
+        "messages": [{"role": "user", "content": "x"}],
+        "response_format": {"type": "json_object"},
+    })
+    assert out["generationConfig"]["responseMimeType"] == "application/json"
+    assert "responseSchema" not in out["generationConfig"]
+
+
+def test_gemini_payload_strips_nested_unsupported_fields() -> None:
+    """Unsupported fields buried inside `properties.<x>` and `items`
+    must also be removed — Gemini validates the schema recursively."""
+    from trusted_router.provider_payloads import gemini_payload
+
+    out = gemini_payload({
+        "messages": [{"role": "user", "content": "x"}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "deep",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "tags": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "format": "uuid",   # not in Gemini's allow-list
+                                "examples": ["foo"],
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            },
+        },
+    })
+    items = out["generationConfig"]["responseSchema"]["properties"]["tags"]["items"]
+    assert items == {"type": "string"}
+    assert "additionalProperties" not in out["generationConfig"]["responseSchema"]["properties"]["tags"]
+
+
 @pytest.mark.asyncio
 async def test_forty_news_image_payload_is_not_stringified_or_dropped(
     tmp_path, monkeypatch,
