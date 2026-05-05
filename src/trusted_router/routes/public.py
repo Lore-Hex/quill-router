@@ -72,8 +72,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/", include_slash=False)
     async def dashboard(request: Request) -> str:
         host = request.headers.get("host", "")
-        if host.split(":", 1)[0].lower() == "trust.trustedrouter.com":
+        hostname = host.split(":", 1)[0].lower()
+        if hostname == "trust.trustedrouter.com":
             return trust_html(settings)
+        if hostname == "status.trustedrouter.com":
+            return _status_page_html(settings, host=hostname)
         return dashboard_html(settings)
 
     @public_html_route("/trust")
@@ -101,19 +104,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_page_html(settings, "security")
 
     @public_html_route("/status")
-    async def status_page() -> str:
-        snapshot = _status_snapshot(settings)
-        return render_template(
-            "public/status.html",
-            api_base_url=settings.api_base_url,
-            site_url=f"https://{settings.trusted_domain}/status",
-            title="Status - TrustedRouter",
-            heading="Status",
-            description="Regional uptime, attestation, SDK, billing, and fallback checks.",
-            google_enabled=settings.google_oauth_enabled,
-            github_enabled=settings.github_oauth_enabled,
-            snapshot=snapshot,
-        )
+    async def status_page(request: Request) -> str:
+        return _status_page_html(settings, host=request.headers.get("host", ""))
 
     @app.get("/status.json")
     async def status_json() -> JSONResponse:
@@ -190,3 +182,25 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
     samples = STORE.synthetic_probe_samples(limit=settings.synthetic_status_sample_limit)
     return status_snapshot(samples)
+
+
+def _status_page_html(settings: Settings, *, host: str) -> str:
+    hostname = host.split(":", 1)[0].lower()
+    site_url = (
+        "https://status.trustedrouter.com/"
+        if hostname == "status.trustedrouter.com"
+        else f"https://{settings.trusted_domain}/status"
+    )
+    snapshot = _status_snapshot(settings)
+    return render_template(
+        "public/status.html",
+        api_base_url=settings.api_base_url,
+        site_url=site_url,
+        title="Status - TrustedRouter",
+        heading="TrustedRouter Status",
+        description="Regional uptime, attestation, SDK, billing, and fallback checks.",
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
+        snapshot=snapshot,
+    )

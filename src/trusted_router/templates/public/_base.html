@@ -6,7 +6,7 @@
   <title>{{ title }}</title>
   <meta name="description" content="{{ description }}">
   <link rel="canonical" href="{{ site_url }}">
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
 </head>
 <body>
   <header class="top">
@@ -24,6 +24,7 @@
     </nav>
   </header>
   <main class="wrap public-wrap">
+    {% block hero %}
     <section class="public-hero marketing-hero">
       <div>
         <span class="eyebrow">OpenRouter-compatible. Attested. 99.9% router availability.</span>
@@ -40,6 +41,7 @@
         <div><strong>0</strong><span>prompt/output logs</span></div>
       </div>
     </section>
+    {% endblock %}
     {% block body %}{% endblock %}
   </main>
   <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
@@ -65,6 +67,6 @@
     </div>
   </dialog>
   <script>window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
-  <script src="/static/dashboard.js"></script>
+  <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
 </body>
 </html>

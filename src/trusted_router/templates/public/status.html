@@ -1,47 +1,119 @@
 {% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="status-hero">
+  <div>
+    <span class="eyebrow">Live synthetic monitoring</span>
+    <h1>{{ heading }}</h1>
+    <p class="lead">{{ description }}</p>
+  </div>
+  <div class="status-updated">
+    <span>Last updated</span>
+    <strong>{{ snapshot.generated_at }}</strong>
+  </div>
+</section>
+{% endblock %}
+
 {% block body %}
-<section class="band public-band">
-  <div class="panel">
-    <div class="panel-head">
-      <h2>Current Status</h2>
-      <span class="pill {{ 'good' if snapshot.overall_status == 'up' else 'warn' }}">{{ snapshot.overall_status }}</span>
+<section class="status-page">
+  <div class="status-banner status-{{ snapshot.overall_status_class }}">
+    <div>
+      <h2>{{ snapshot.summary.headline }}</h2>
+      <p>{{ snapshot.summary.detail }}</p>
     </div>
-    <div class="panel-body">
-      <p>Checks run from US and EU monitors against the canonical API and regional APIs. Prompt and output content are not stored.</p>
-      <div class="status-grid">
-        {% for check in snapshot.current.checks %}
-        <div class="status-card">
-          <strong>{{ check.target }} / {{ check.probe_type }}</strong>
-          <span class="pill {{ 'good' if check.effective_status == 'up' else 'warn' }}">{{ check.effective_status }}</span>
-          <span>{{ check.monitor_region }}{% if check.target_region %} -> {{ check.target_region }}{% endif %}</span>
-          <span>{{ check.latency_milliseconds or 'n/a' }} ms</span>
-          <span>age {{ check.age_seconds }}s</span>
-        </div>
-        {% endfor %}
-        {% if not snapshot.current.checks %}
-        <p class="empty">No synthetic samples have been recorded yet.</p>
-        {% endif %}
+    <span>{{ snapshot.overall_status_label }}</span>
+  </div>
+
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Components</h2>
+        <p>Each row is backed by live US/EU synthetic checks. Prompt and output content are not stored.</p>
+      </div>
+      <div class="status-legend" aria-label="History legend">
+        <span><i class="history-day status-up"></i>Operational</span>
+        <span><i class="history-day status-degraded"></i>Degraded</span>
+        <span><i class="history-day status-down"></i>Outage</span>
+        <span><i class="history-day status-unknown"></i>No data</span>
       </div>
     </div>
-  </div>
-  <div class="panel">
-    <div class="panel-head"><h2>Uptime Windows</h2><span class="pill">rollups</span></div>
-    <div class="panel-body">
-      <table class="activity-table">
+
+    <div class="component-list">
+      {% for component in snapshot.components %}
+      <article class="component-row">
+        <div class="component-main">
+          <div>
+            <h3>{{ component.name }}</h3>
+            <p>{{ component.description }}</p>
+          </div>
+          <span class="component-status status-{{ component.status_class }}">{{ component.status_label }}</span>
+        </div>
+        <div class="component-meta">
+          <span>24h uptime <strong>{% if component.uptime_24h_percent is not none %}{{ "%.4f"|format(component.uptime_24h_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>P95 latency <strong>{% if component.p95_latency_milliseconds %}{{ component.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
+        </div>
+        <div class="history-strip" aria-label="{{ component.name }} 90 day uptime history">
+          {% for day in component.history %}
+          <span class="history-day status-{{ day.status_class }}" title="{{ day.title }}"></span>
+          {% endfor %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="status-columns">
+    <div class="status-section">
+      <div class="status-section-head">
+        <div>
+          <h2>Uptime</h2>
+          <p>Precomputed public rollups from metadata-only samples.</p>
+        </div>
+      </div>
+      <table class="activity-table status-table">
         <thead><tr><th>Window</th><th>Status</th><th>Samples</th><th>Groups</th></tr></thead>
         <tbody>
           {% for name, window in snapshot.windows.items() %}
           <tr>
             <td>{{ name }}</td>
-            <td>{{ window.overall_status }}</td>
+            <td><span class="component-status status-{{ window.overall_status|replace('_', '-') }}">{{ window.overall_status|replace('_', ' ') }}</span></td>
             <td>{{ window.sample_count }}</td>
             <td>{{ window.groups|length }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-      <p><a class="btn" href="/status.json">View status.json</a></p>
     </div>
+
+    <div class="status-section">
+      <div class="status-section-head">
+        <div>
+          <h2>Recent Events</h2>
+          <p>Non-operational samples from the last 24 hours.</p>
+        </div>
+      </div>
+      {% if snapshot.recent_events %}
+      <div class="event-list">
+        {% for event in snapshot.recent_events %}
+        <div class="event-row">
+          <span class="component-status status-{{ event.status_class }}">{{ event.status_label }}</span>
+          <div>
+            <strong>{{ event.component }}</strong>
+            <p>{{ event.created_at }} · {{ event.probe_type }} · {{ event.monitor_region }}{% if event.error_type %} · {{ event.error_type }}{% endif %}</p>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="empty status-empty">No incidents reported in the last 24 hours.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="status-actions">
+    <a class="btn" href="/status.json">View status.json</a>
+    <a class="btn" href="/status/history?window=24h">View 24h rollup</a>
   </div>
 </section>
 {% endblock %}

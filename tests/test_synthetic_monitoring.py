@@ -102,13 +102,33 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert status.status_code == 200
     assert page.status_code == 200
     assert history.status_code == 200
-    assert "Current Status" in page.text
+    assert "All Systems Operational" in page.text
+    assert "Components" in page.text
     text = status.text
     assert "reply exactly PONG" not in text
     assert "sk-tr-" not in text
     payload = status.json()["data"]
     assert payload["samples"][0]["probe_type"] == "openai_sdk_pong"
     assert payload["samples"][0]["output_match"] is True
+    assert payload["components"][0]["name"] == "Canonical API"
+    assert len(payload["components"][0]["history"]) == 90
+
+
+def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
+    sample = _sample(
+        id="syn_status_host",
+        probe_type="openai_sdk_pong",
+        status="up",
+        model=MONITOR_MODEL_ID,
+        output_match=True,
+    )
+    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+
+    page = client.get("/", headers={"host": "status.trustedrouter.com"})
+
+    assert page.status_code == 200
+    assert "TrustedRouter Status" in page.text
+    assert "All Systems Operational" in page.text
 
 
 def test_chat_monitor_model_requires_configured_monitor_key() -> None:
@@ -167,8 +187,15 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
             id="syn_down",
             probe_type="responses_pong",
             status="down",
-            created_at=(now - dt.timedelta(minutes=3)).isoformat().replace("+00:00", "Z"),
+            created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
             latency_milliseconds=500,
+        ),
+        _sample(
+            id="syn_down_2",
+            probe_type="openai_sdk_pong",
+            status="down",
+            created_at=(now - dt.timedelta(minutes=2, seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=510,
         ),
         _sample(
             id="syn_old",
@@ -182,9 +209,97 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     snapshot = status_snapshot(samples)
 
     assert snapshot["current"]["checks"]
-    assert snapshot["windows"]["5m"]["sample_count"] == 2
-    assert snapshot["windows"]["24h"]["sample_count"] == 3
-    assert snapshot["daily"][0]["sample_count"] == 3
+    assert snapshot["overall_status"] == "down"
+    assert snapshot["windows"]["5m"]["sample_count"] == 3
+    assert snapshot["windows"]["24h"]["sample_count"] == 4
+    assert snapshot["daily"][0]["sample_count"] == 4
+    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    assert canonical["status"] == "down"
+    assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
+    assert len(canonical["history"]) == 90
+    assert snapshot["recent_events"][0]["component"] == "Canonical API"
+
+
+def test_status_components_group_regions_and_control_plane() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_canonical",
+            probe_type="responses_pong",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_eu",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="openai_sdk_pong",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_settle",
+            target="control-plane",
+            target_region=None,
+            probe_type="gateway_authorize_settle",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=12)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_fallback",
+            target="control-plane",
+            target_region=None,
+            probe_type="provider_fallback",
+            status="routing_degraded",
+            created_at=(now - dt.timedelta(seconds=13)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples)
+    components = {component["id"]: component for component in snapshot["components"]}
+
+    assert components["canonical_api"]["status"] == "up"
+    assert components["eu_regional_api"]["status"] == "up"
+    assert components["billing_settlement"]["status"] == "up"
+    assert components["provider_fallback"]["status"] == "routing_degraded"
+    assert snapshot["overall_status"] == "routing_degraded"
+
+
+def test_status_component_current_uses_latest_sample_per_probe() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_old_down_1",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="openai_sdk_pong",
+            status="down",
+            created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_old_down_2",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="openai_sdk_pong",
+            status="down",
+            created_at=(now - dt.timedelta(minutes=2, seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_latest_up",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="openai_sdk_pong",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples)
+    eu = next(component for component in snapshot["components"] if component["id"] == "eu_regional_api")
+
+    assert eu["status"] == "up"
+    assert eu["uptime_24h_percent"] == pytest.approx(33.3333)
+    assert snapshot["recent_events"][0]["id"] == "syn_old_down_1"
 
 
 def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
@@ -393,6 +508,9 @@ def _sample(
     id: str,
     probe_type: str,
     status: str,
+    target: str = "canonical",
+    target_region: str | None = "us-central1",
+    monitor_region: str = "us-central1",
     model: str | None = None,
     output_match: bool | None = None,
     created_at: str | None = None,
@@ -401,10 +519,10 @@ def _sample(
     return SyntheticProbeSample(
         id=id,
         probe_type=probe_type,
-        target="canonical",
+        target=target,
         target_url="https://api.quillrouter.com/v1",
-        monitor_region="us-central1",
-        target_region="us-central1",
+        monitor_region=monitor_region,
+        target_region=target_region,
         status=status,
         model=model,
         output_match=output_match,

@@ -106,6 +106,7 @@ def dashboard_html(settings: Settings) -> str:
         github_enabled=settings.github_oauth_enabled,
         map_regions=map_regions,
         primary_region=settings.primary_region,
+        static_version=settings.release,
     )
 
 
@@ -119,6 +120,7 @@ def public_page_html(settings: Settings, page_key: str) -> str:
         description=page.description,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
     )
 
 
@@ -132,6 +134,7 @@ def public_models_html(settings: Settings) -> str:
         models=[_model_view(model) for model in MODELS.values()],
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
     )
 
 
@@ -151,6 +154,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         model=_model_detail_view(model),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
     )
 
 
@@ -167,6 +171,7 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
         requested_model_id=model_id,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
     )
 
 

@@ -21,10 +21,10 @@
   <meta name="twitter:description" content="{{ og_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
   <meta name="twitter:image:alt" content="TrustedRouter — verifiable, hosted, OpenRouter-compatible">
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <script>window.__TR__ = {{ tr_config | safe }};</script>
-  <script src="/static/dashboard.js"></script>
-  <script type="module" src="/static/hero-router-scene.js"></script>
+  <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
+  <script type="module" src="/static/hero-router-scene.js?v={{ static_version|default('local') }}"></script>
 </head>
 <body>
   <header class="top">

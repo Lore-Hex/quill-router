@@ -194,9 +194,10 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert 'id="signinModal"' in dashboard.text
     assert "Continue with MetaMask" in dashboard.text
     assert 'data-action="open-signin"' in dashboard.text
-    # Asset references unchanged for cache-busting compatibility.
-    assert '<script src="/static/dashboard.js">' in dashboard.text
-    assert 'href="/static/dashboard.css"' in dashboard.text
+    # Static assets are release-cache-busted so a redeployed page does not
+    # render with a day-old browser-cached CSS file.
+    assert '<script src="/static/dashboard.js?v=' in dashboard.text
+    assert 'href="/static/dashboard.css?v=' in dashboard.text
 
     js = client.get("/static/dashboard.js")
     assert js.status_code == 200
