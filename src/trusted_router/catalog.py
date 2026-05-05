@@ -85,6 +85,7 @@ PROVIDERS: dict[str, Provider] = {
     "deepseek": Provider(slug="deepseek", name="DeepSeek", supports_prepaid=True),
     "mistral": Provider(slug="mistral", name="Mistral", supports_prepaid=True),
     "kimi": Provider(slug="kimi", name="Kimi", supports_prepaid=True),
+    "zai": Provider(slug="zai", name="Z.AI", supports_prepaid=True),
 }
 
 

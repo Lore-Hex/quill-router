@@ -39,6 +39,9 @@ _PROVIDER_ALIASES = {
     "moonshot": "kimi",
     "moonshot-ai": "kimi",
     "kimi": "kimi",
+    "z-ai": "zai",
+    "zhipu": "zai",
+    "zhipuai": "zai",
 }
 
 _THROUGHPUT_RANK = {
@@ -47,9 +50,10 @@ _THROUGHPUT_RANK = {
     "gemini": 2,
     "deepseek": 3,
     "kimi": 4,
-    "mistral": 5,
-    "openai": 6,
-    "anthropic": 7,
+    "zai": 5,
+    "mistral": 6,
+    "openai": 7,
+    "anthropic": 8,
     "trustedrouter": 99,
 }
 
