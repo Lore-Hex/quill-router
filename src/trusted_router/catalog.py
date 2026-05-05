@@ -4,10 +4,9 @@ import json
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from trusted_router.money import (
-    MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
     TOKENS_PER_MILLION,
     dollars_to_microdollars,
@@ -63,6 +62,13 @@ class ModelEndpoint:
         return self.usage_type.lower() == "byok"
 
 
+class ModelPricingKwargs(TypedDict):
+    prompt_price_microdollars_per_million_tokens: int
+    completion_price_microdollars_per_million_tokens: int
+    published_prompt_price_microdollars_per_million_tokens: int
+    published_completion_price_microdollars_per_million_tokens: int
+
+
 # Uniform pricing: customer pays cost + 10%, floor $0.10/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
 # runs the 1¢/M "discount theater". The floor catches free upstream tiers
@@ -89,7 +95,7 @@ def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]
     return customer, customer, cost
 
 
-def _hand_priced(prompt_dollars: str, completion_dollars: str) -> dict[str, int]:
+def _hand_priced(prompt_dollars: str, completion_dollars: str) -> ModelPricingKwargs:
     """Splat into a Model() ctor for hand-curated entries. Replaces the old
     `_one_cent_less_per_million` + `dollars_to_microdollars` doubled-up
     spelling."""
@@ -498,10 +504,10 @@ MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 # ingest path. For collisions (model present in both hand-coded and
 # ingested), keep the hand-coded endpoint shape so operational gating
 # (BYOK availability, single-provider routing) doesn't silently flip.
-for _endpoint_id, _endpoint in _INGESTED_ENDPOINTS.items():
-    if _endpoint.model_id in _HAND_CODED_MODEL_IDS:
+for _endpoint_id, _ingested_endpoint in _INGESTED_ENDPOINTS.items():
+    if _ingested_endpoint.model_id in _HAND_CODED_MODEL_IDS:
         continue
-    MODEL_ENDPOINTS[_endpoint_id] = _endpoint
+    MODEL_ENDPOINTS[_endpoint_id] = _ingested_endpoint
 
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:

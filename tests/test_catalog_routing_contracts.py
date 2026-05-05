@@ -11,7 +11,6 @@ from trusted_router.catalog import (
     endpoints_for_model,
 )
 from trusted_router.config import Settings
-from trusted_router.money import MICRODOLLARS_PER_CENT
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
 
 

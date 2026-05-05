@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,19 @@ _PROVIDER_ALIASES = {
     "zhipuai": "zai",
 }
 
+# OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
+# re-sort the upstream provider list by throughput-first (equivalent to
+# setting `provider.sort = "throughput"` in the request body — see
+# https://openrouter.ai/docs/guides/routing/model-variants/nitro). The
+# table is intentionally extensible: adding `:floor` (price-first),
+# `:thinking`, etc is a one-line edit. Each value pair is the
+# RoutePreferences field name + the value to force.
+_VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
+    ":nitro": ("sort", "throughput"),
+    ":floor": ("sort", "price"),
+}
+
+
 _THROUGHPUT_RANK = {
     "cerebras": 0,
     "vertex": 1,
@@ -59,7 +73,7 @@ _THROUGHPUT_RANK = {
 
 
 def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Model]:
-    raw_ids = _requested_model_ids(body, settings)
+    raw_ids, prefs = _routing_for_body(body, settings)
     candidates: list[Model] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -74,7 +88,6 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
             candidates.append(model)
             seen.add(model.id)
 
-    prefs = provider_route_preferences(body)
     candidates = _apply_provider_filters(candidates, prefs)
     if not candidates:
         raise api_error(
@@ -89,7 +102,7 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
 
 
 def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> list[tuple[Model, ModelEndpoint]]:
-    raw_ids = _requested_model_ids(body, settings)
+    raw_ids, prefs = _routing_for_body(body, settings)
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
     for model_id in raw_ids:
@@ -106,7 +119,6 @@ def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> 
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    prefs = provider_route_preferences(body)
     candidates = _apply_endpoint_provider_filters(candidates, prefs)
     if not candidates:
         raise api_error(
@@ -160,11 +172,45 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     )
 
 
-def _requested_model_ids(body: dict[str, Any], settings: Settings) -> list[str]:
+def _strip_variant_suffix(model_id: str) -> tuple[str, dict[str, str]]:
+    """Detect an OpenRouter-style variant suffix on the model id. Returns
+    `(stripped_id, overrides)`. `overrides` is empty if no suffix matches.
+    Multiple suffixes don't compose today — first match wins."""
+    for suffix, (key, value) in _VARIANT_SUFFIXES.items():
+        if model_id.endswith(suffix):
+            return model_id[: -len(suffix)], {key: value}
+    return model_id, {}
+
+
+def _routing_for_body(
+    body: dict[str, Any], settings: Settings
+) -> tuple[list[str], RoutePreferences]:
+    """Strip variant suffixes from `body.model` / `body.models[]`, expand
+    AUTO, build the RoutePreferences. Suffix-derived overrides win over
+    body-set fields (per OpenRouter: the suffix is the explicit shorthand
+    and is meant to be authoritative)."""
+    ids, overrides = _requested_model_ids(body, settings)
+    prefs = provider_route_preferences(body)
+    if "sort" in overrides:
+        prefs = dataclasses.replace(prefs, sort=overrides["sort"])
+    return ids, prefs
+
+
+def _requested_model_ids(
+    body: dict[str, Any], settings: Settings
+) -> tuple[list[str], dict[str, str]]:
     ids: list[str] = []
+    overrides: dict[str, str] = {}
+
+    def take(raw: str) -> None:
+        stripped, ovr = _strip_variant_suffix(raw)
+        if ovr:
+            overrides.update(ovr)
+        ids.extend(_expand_model_id(stripped, settings))
+
     model_id = str(body.get("model") or "").strip()
     if model_id:
-        ids.extend(_expand_model_id(model_id, settings))
+        take(model_id)
 
     fallback_models = body.get("models")
     if fallback_models is not None:
@@ -173,11 +219,11 @@ def _requested_model_ids(body: dict[str, Any], settings: Settings) -> list[str]:
         for item in fallback_models:
             if not isinstance(item, str) or not item.strip():
                 raise api_error(400, "models must contain only model IDs", ErrorType.BAD_REQUEST)
-            ids.extend(_expand_model_id(item.strip(), settings))
+            take(item.strip())
 
     if not ids:
         raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
-    return ids
+    return ids, overrides
 
 
 def _expand_model_id(model_id: str, settings: Settings) -> list[str]:

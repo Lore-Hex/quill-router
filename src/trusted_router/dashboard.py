@@ -5,10 +5,12 @@ settings-driven values and renders the Jinja2 template."""
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -17,6 +19,7 @@ from trusted_router.catalog import (
     MODELS,
     PROVIDERS,
     Model,
+    ModelEndpoint,
     auto_candidate_models,
     endpoints_for_model,
 )
@@ -205,7 +208,8 @@ def _model_detail_view(model: Model) -> dict[str, object]:
     # to throughput / latency / context views.
     endpoint_views.sort(
         key=lambda view: (
-            int(view["prompt_microdollars_per_million_tokens"]) + int(view["completion_microdollars_per_million_tokens"]),
+            cast(int, view["prompt_microdollars_per_million_tokens"])
+            + cast(int, view["completion_microdollars_per_million_tokens"]),
             str(view["provider"]),
         )
     )
@@ -226,7 +230,7 @@ def _model_detail_view(model: Model) -> dict[str, object]:
     }
 
 
-def _endpoint_price_range(endpoints: list, attr: str) -> str:
+def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
     values = [getattr(ep, attr) for ep in endpoints if getattr(ep, attr) > 0]
     if not values:
         return _price(0)
