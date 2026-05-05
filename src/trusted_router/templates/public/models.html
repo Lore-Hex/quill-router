@@ -7,8 +7,9 @@
       <thead>
         <tr>
           <th>Model</th>
-          <th>Provider</th>
+          <th>Publisher</th>
           <th>Context</th>
+          <th>Providers</th>
           <th>Prompt</th>
           <th>Completion</th>
           <th>Routes</th>
@@ -17,9 +18,13 @@
       <tbody>
         {% for model in models %}
         <tr>
-          <td><code>{{ model.id }}</code><br>{{ model.name }}</td>
+          <td>
+            {% if model.detail_href %}<a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a>{% else %}<code>{{ model.id }}</code>{% endif %}
+            <br>{{ model.name }}
+          </td>
           <td>{{ model.provider }}</td>
           <td>{{ model.context_length }}</td>
+          <td>{{ model.provider_count }}</td>
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.completion_price }}</td>
           <td>

@@ -12,7 +12,14 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from trusted_router.catalog import AUTO_MODEL_ID, MODELS, PROVIDERS, Model, auto_candidate_models
+from trusted_router.catalog import (
+    AUTO_MODEL_ID,
+    MODELS,
+    PROVIDERS,
+    Model,
+    auto_candidate_models,
+    endpoints_for_model,
+)
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
@@ -125,19 +132,44 @@ def public_models_html(settings: Settings) -> str:
     )
 
 
+def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
+    """Render the per-model detail page for `/models/{author}/{slug}`.
+    Returns None when the model id isn't in the catalog (route handler
+    converts that to a 404)."""
+    model = MODELS.get(model_id)
+    if model is None or model.id == AUTO_MODEL_ID:
+        return None
+    return _env().get_template("public/model_detail.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/models/{model_id}",
+        title=f"{model.name} - TrustedRouter",
+        heading=model.name,
+        description=f"All providers serving {model.name} via TrustedRouter.",
+        model=_model_detail_view(model),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+    )
+
+
 def _model_view(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
+    endpoints = endpoints_for_model(model.id) if model.id != AUTO_MODEL_ID else []
     if model.id == AUTO_MODEL_ID:
         candidates = auto_candidate_models()
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
         completion = _price_range(candidates, "completion_price_microdollars_per_million_tokens")
+    elif endpoints:
+        prompt = _endpoint_price_range(endpoints, "prompt_price_microdollars_per_million_tokens")
+        completion = _endpoint_price_range(endpoints, "completion_price_microdollars_per_million_tokens")
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
+    distinct_providers = {endpoint.provider for endpoint in endpoints} or {model.provider}
     return {
         "id": model.id,
         "name": model.name,
         "provider": provider.name,
+        "publisher_slug": model.provider,
         "context_length": f"{model.context_length:,}",
         "prompt_price": prompt,
         "completion_price": completion,
@@ -145,7 +177,64 @@ def _model_view(model: Model) -> dict[str, object]:
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
         "stores_content": provider.stores_content,
+        "provider_count": len(distinct_providers),
+        "detail_href": f"/models/{model.id}" if model.id != AUTO_MODEL_ID else None,
     }
+
+
+def _model_detail_view(model: Model) -> dict[str, object]:
+    provider = PROVIDERS[model.provider]
+    endpoints = endpoints_for_model(model.id)
+    endpoint_views: list[dict[str, object]] = []
+    for endpoint in endpoints:
+        ep_provider = PROVIDERS.get(endpoint.provider)
+        endpoint_views.append({
+            "provider": ep_provider.name if ep_provider else endpoint.provider,
+            "provider_slug": endpoint.provider,
+            "usage_type": endpoint.usage_type,
+            "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
+            "completion_price": _price(endpoint.completion_price_microdollars_per_million_tokens),
+            "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
+            "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
+            "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
+            "stores_content": ep_provider.stores_content if ep_provider else False,
+            "endpoint_id": endpoint.id,
+        })
+    # Sort cheapest-first by total prompt+completion price; ties broken by
+    # provider name. Click-to-sort JS in the template lets visitors flip
+    # to throughput / latency / context views.
+    endpoint_views.sort(
+        key=lambda view: (
+            int(view["prompt_microdollars_per_million_tokens"]) + int(view["completion_microdollars_per_million_tokens"]),
+            str(view["provider"]),
+        )
+    )
+    return {
+        "id": model.id,
+        "name": model.name,
+        "provider": provider.name,
+        "publisher_slug": model.provider,
+        "context_length": f"{model.context_length:,}",
+        "context_length_int": model.context_length,
+        "endpoints": endpoint_views,
+        "endpoint_count": len(endpoint_views),
+        "supports_chat": model.supports_chat,
+        "supports_messages": model.supports_messages,
+        "supports_embeddings": model.supports_embeddings,
+        "prepaid": model.prepaid_available,
+        "byok": model.byok_available,
+    }
+
+
+def _endpoint_price_range(endpoints: list, attr: str) -> str:
+    values = [getattr(ep, attr) for ep in endpoints if getattr(ep, attr) > 0]
+    if not values:
+        return _price(0)
+    low = min(values)
+    high = max(values)
+    if low == high:
+        return _price(low)
+    return f"{_price(low)}–{_price(high)}"
 
 
 def _price_range(models: list[Model], attr: str) -> str:

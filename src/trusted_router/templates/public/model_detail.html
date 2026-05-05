@@ -1,0 +1,67 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2><code>{{ model.id }}</code></h2>
+    <span class="pill good">{{ model.provider }}</span>
+  </div>
+  <div class="panel-body">
+    <p><a href="/models">&larr; All models</a></p>
+    <table>
+      <tbody>
+        <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
+        <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
+        <tr><th>Providers</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
+        <tr><th>Modes</th><td>
+          {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
+          {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
+          {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+        </td></tr>
+        <tr><th>Routes</th><td>
+          {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
+          {% if model.byok %}<span class="pill">BYOK</span>{% endif %}
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Providers serving this model</h2></div>
+  <div class="panel-body">
+    <p style="color:var(--muted);font-size:14px">
+      Sorted cheapest-first by total prompt+completion price. Use
+      <code>"provider": {"sort": "throughput"}</code> in the request body
+      (or append <code>:nitro</code> to the model id) to route to the
+      fastest provider instead.
+    </p>
+    <table data-sortable="true">
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Usage</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+          <th>Attested</th>
+          <th>Stores content</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for endpoint in model.endpoints %}
+        <tr>
+          <td>{{ endpoint.provider }} <code>({{ endpoint.provider_slug }})</code></td>
+          <td>{{ endpoint.usage_type }}</td>
+          <td>{{ endpoint.prompt_price }}</td>
+          <td>{{ endpoint.completion_price }}</td>
+          <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
+          <td>{% if endpoint.stores_content %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="signup-foot">
+      OpenRouter-compatible JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
+    </p>
+  </div>
+</section>
+{% endblock %}

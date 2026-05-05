@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
@@ -13,6 +13,7 @@ from trusted_router.config import Settings
 from trusted_router.dashboard import (
     STATIC_DIR,
     dashboard_html,
+    public_model_detail_html,
     public_models_html,
     public_page_html,
 )
@@ -98,6 +99,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/models")
     async def models() -> str:
         return public_models_html(settings)
+
+    # Per-model detail page. Path captures `{author}/{slug}` (e.g.
+    # `z-ai/glm-4.6`, `moonshotai/kimi-k2.6`) so the URL exactly mirrors
+    # the OpenRouter model id. The `:path` converter lets the slash
+    # through.
+    @app.api_route(
+        "/models/{model_id:path}",
+        methods=["GET", "HEAD"],
+        response_class=HTMLResponse,
+    )
+    async def model_detail(model_id: str) -> str:
+        body = public_model_detail_html(settings, model_id.strip())
+        if body is None:
+            raise HTTPException(status_code=404, detail="Model not found")
+        return body
 
     @app.get("/og.png")
     async def og_image() -> FileResponse:
