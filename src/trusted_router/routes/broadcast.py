@@ -14,10 +14,14 @@ from trusted_router.schemas import (
     BroadcastDestinationPatchRequest,
 )
 from trusted_router.services.broadcast import (
-    POSTHOG_DEFAULT_ENDPOINT,
     broadcast_secret_context,
     public_destination_shape,
     test_destination,
+)
+from trusted_router.services.broadcast_adapters import (
+    BroadcastAdapter,
+    adapter_for,
+    supported_destination_types,
 )
 from trusted_router.storage import STORE, BroadcastDestination
 from trusted_router.types import ErrorType
@@ -41,6 +45,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         endpoint = _endpoint_for(body.type, body.endpoint)
         _validate_destination(body.type, endpoint)
+        adapter = _require_adapter(body.type)
         destination = STORE.create_broadcast_destination(
             workspace_id=principal.workspace.id,
             type=body.type,
@@ -55,7 +60,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
             settings=settings,
             api_key=body.api_key,
             headers=body.headers,
-            require_posthog_key=body.type == "posthog",
+            require_api_key=adapter.requires_api_key,
         )
         return JSONResponse({"data": public_destination_shape(destination)}, status_code=201)
 
@@ -92,7 +97,7 @@ def register_broadcast_routes(router: APIRouter) -> None:
                 settings=settings,
                 api_key=body.api_key,
                 headers=body.headers,
-                require_posthog_key=False,
+                require_api_key=False,
             )
         return {"data": public_destination_shape(destination)}
 
@@ -132,7 +137,7 @@ def _apply_secret_patch(
     settings: Any,
     api_key: str | None,
     headers: dict[str, str] | None,
-    require_posthog_key: bool,
+    require_api_key: bool,
 ) -> BroadcastDestination:
     patch: dict[str, Any] = {}
     if api_key is not None:
@@ -145,8 +150,8 @@ def _apply_secret_patch(
             purpose=broadcast_secret_context(destination.id, "api_key"),
         )
         patch["replace_api_key"] = True
-    elif require_posthog_key:
-        raise api_error(400, "api_key is required for PostHog", ErrorType.BAD_REQUEST)
+    elif require_api_key:
+        raise api_error(400, "api_key is required for this destination", ErrorType.BAD_REQUEST)
     if headers is not None:
         clean_headers = {str(key): str(value) for key, value in headers.items() if str(key).strip()}
         patch["encrypted_headers"] = (
@@ -170,15 +175,26 @@ def _apply_secret_patch(
 
 
 def _endpoint_for(destination_type: str, endpoint: str | None) -> str:
-    if destination_type == "posthog":
-        return (endpoint or POSTHOG_DEFAULT_ENDPOINT).rstrip("/")
-    return (endpoint or "").strip()
+    adapter = adapter_for(destination_type)
+    if adapter is None:
+        return (endpoint or "").strip()
+    return adapter.normalize_endpoint(endpoint)
 
 
 def _validate_destination(destination_type: str, endpoint: str) -> None:
-    if destination_type not in {"posthog", "webhook"}:
-        raise api_error(400, "unsupported broadcast destination type", ErrorType.BAD_REQUEST)
-    if not endpoint.startswith(("https://", "http://")):
-        raise api_error(400, "endpoint must be an HTTP URL", ErrorType.BAD_REQUEST)
-    if destination_type == "webhook" and not endpoint:
-        raise api_error(400, "endpoint is required", ErrorType.BAD_REQUEST)
+    adapter = _require_adapter(destination_type)
+    message = adapter.validate_endpoint(endpoint)
+    if message is not None:
+        raise api_error(400, message, ErrorType.BAD_REQUEST)
+
+
+def _require_adapter(destination_type: str) -> BroadcastAdapter:
+    adapter = adapter_for(destination_type)
+    if adapter is None:
+        supported = ", ".join(sorted(supported_destination_types()))
+        raise api_error(
+            400,
+            f"unsupported broadcast destination type; supported types: {supported}",
+            ErrorType.BAD_REQUEST,
+        )
+    return adapter

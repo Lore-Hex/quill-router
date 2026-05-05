@@ -104,7 +104,7 @@ class UpsertByokRequest(_Strict):
 
 
 class BroadcastDestinationCreateRequest(_Strict):
-    type: Literal["posthog", "webhook"]
+    type: str = Field(min_length=1, max_length=32)
     name: str = Field(default="Broadcast destination", min_length=1, max_length=120)
     endpoint: str | None = None
     enabled: bool = True
@@ -112,6 +112,11 @@ class BroadcastDestinationCreateRequest(_Strict):
     method: Literal["POST", "PUT"] = "POST"
     headers: dict[str, str] | None = None
     api_key: str | None = None
+
+    @field_validator("type")
+    @classmethod
+    def normalize_type(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 class BroadcastDestinationPatchRequest(_Strict):

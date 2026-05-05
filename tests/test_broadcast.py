@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from trusted_router.auth import SESSION_COOKIE_NAME
+from trusted_router.services.broadcast_adapters import adapter_for, supported_destination_types
 from trusted_router.storage import STORE
 
 
@@ -33,6 +34,29 @@ def _console_client(client: TestClient) -> tuple[str, str]:
     )
     client.cookies.set(SESSION_COOKIE_NAME, raw_token)
     return workspace.id, raw_token
+
+
+def test_broadcast_adapter_registry_names_supported_types() -> None:
+    assert supported_destination_types() == {"posthog", "webhook"}
+    for destination_type in supported_destination_types():
+        adapter = adapter_for(destination_type)
+        assert adapter is not None
+        assert adapter.type == destination_type
+
+
+def test_unsupported_broadcast_destination_type_returns_stable_error(client: TestClient) -> None:
+    response = client.post(
+        "/v1/broadcast/destinations",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "type": "datadog",
+            "name": "Datadog",
+            "endpoint": "https://observability.example",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "bad_request"
+    assert "unsupported broadcast destination type" in response.json()["error"]["message"]
 
 
 def test_broadcast_destination_crud_redacts_secrets(

@@ -17,10 +17,10 @@ from trusted_router.auth import SettingsDep
 from trusted_router.byok_crypto import encrypt_control_secret
 from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.services.broadcast import (
-    POSTHOG_DEFAULT_ENDPOINT,
     broadcast_secret_context,
     public_destination_shape,
 )
+from trusted_router.services.broadcast_adapters import POSTHOG_DEFAULT_ENDPOINT, adapter_for
 from trusted_router.storage import STORE, BroadcastDestination
 
 
@@ -57,10 +57,11 @@ def register(app: FastAPI) -> None:
         include_content: str | None = Form(None),
     ) -> Response:
         destination_type = destination_type.strip().lower()
-        if destination_type not in {"posthog", "webhook"}:
+        adapter = adapter_for(destination_type)
+        if adapter is None:
             return RedirectResponse(url="/console/broadcast?error=type", status_code=303)
-        clean_endpoint = _endpoint_for(destination_type, endpoint)
-        if not clean_endpoint.startswith(("https://", "http://")):
+        clean_endpoint = adapter.normalize_endpoint(endpoint)
+        if adapter.validate_endpoint(clean_endpoint) is not None:
             return RedirectResponse(url="/console/broadcast?error=endpoint", status_code=303)
         clean_method = method.strip().upper() or "POST"
         if clean_method not in {"POST", "PUT"}:
@@ -68,8 +69,8 @@ def register(app: FastAPI) -> None:
         headers = _parse_headers(headers_json)
         if headers is None:
             return RedirectResponse(url="/console/broadcast?error=headers", status_code=303)
-        if destination_type == "posthog" and not api_key.strip():
-            return RedirectResponse(url="/console/broadcast?error=posthog_key", status_code=303)
+        if adapter.requires_api_key and not api_key.strip():
+            return RedirectResponse(url="/console/broadcast?error=api_key", status_code=303)
         destination = STORE.create_broadcast_destination(
             workspace_id=ctx.workspace.id,
             type=destination_type,
@@ -90,13 +91,6 @@ def register(app: FastAPI) -> None:
     async def console_delete_broadcast(ctx: ConsoleDep, destination_id: str) -> Response:
         STORE.delete_broadcast_destination(ctx.workspace.id, destination_id)
         return RedirectResponse(url="/console/broadcast", status_code=303)
-
-
-def _endpoint_for(destination_type: str, endpoint: str) -> str:
-    endpoint = endpoint.strip()
-    if destination_type == "posthog":
-        return (endpoint or POSTHOG_DEFAULT_ENDPOINT).rstrip("/")
-    return endpoint
 
 
 def _parse_headers(raw: str) -> dict[str, str] | None:
