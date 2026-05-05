@@ -22,7 +22,7 @@ def main() -> int:
             return 2
 
     base_url = os.environ.get("TR_SMOKE_BASE_URL", "https://api.quillrouter.com/v1")
-    model = os.environ.get("TR_SMOKE_MODEL", "claude-opus-4-7")
+    model = os.environ.get("TR_SMOKE_MODEL", "anthropic/claude-opus-4.7")
     client = OpenAI(api_key=api_key, base_url=base_url)
     stream = client.chat.completions.create(
         model=model,
