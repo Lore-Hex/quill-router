@@ -111,7 +111,11 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert payload["samples"][0]["probe_type"] == "openai_sdk_pong"
     assert payload["samples"][0]["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
-    assert len(payload["components"][0]["history"]) == 90
+    # 24 hourly bars (last 24 hours). Switched from 90 daily bars in
+    # commit that fixed gray-strip / status-anthropic-style tooltip:
+    # synthetic-sample retention is hours, not 90 days, so daily bars
+    # were mostly "no data" by definition.
+    assert len(payload["components"][0]["history"]) == 24
 
 
 def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
@@ -216,7 +220,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
     assert canonical["status"] == "down"
     assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
-    assert len(canonical["history"]) == 90
+    assert len(canonical["history"]) == 24
     assert snapshot["recent_events"][0]["component"] == "Canonical API"
 
 

@@ -233,8 +233,32 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .component-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; color:var(--muted); font-size:12px; }
 .component-meta span { min-width:0; overflow-wrap:anywhere; }
 .component-meta strong { color:var(--ink); font-weight:750; }
-.history-strip { display:grid; grid-template-columns:repeat(90,1fr); gap:2px; min-width:0; min-height:28px; align-items:stretch; }
-.history-day { display:block; min-width:0; height:26px; border-radius:2px; background:#dfe6ec; }
+/* 24 hourly bars instead of 90 daily ones — fewer, fatter, easier to
+ * read. Bars are interactive: hover or focus surfaces the rich tooltip
+ * with uptime / sample count / p50 / top error. Style mirrors
+ * status.anthropic.com's look: muted for "no data", green for healthy,
+ * amber for degraded, red for outage. */
+.history-strip { display:grid; grid-template-columns:repeat(24,1fr); gap:3px; min-width:0; min-height:28px; align-items:stretch; }
+.history-bar { position:relative; display:block; min-width:0; height:26px; border-radius:3px; background:#dfe6ec; cursor:default; outline:none; }
+.history-bar.status-up { background:#19a06d; }
+.history-bar.status-degraded, .history-bar.status-routing-degraded { background:#d49b23; }
+.history-bar.status-trust-degraded { background:#b87b13; }
+.history-bar.status-down { background:#d2452a; }
+.history-bar.status-unknown { background:#dfe6ec; }
+.history-bar:hover, .history-bar:focus-visible { box-shadow:0 0 0 2px #1c2733, 0 0 0 4px rgba(28,39,51,0.18); }
+.history-bar .history-tooltip { position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); display:none; flex-direction:column; gap:4px; min-width:220px; max-width:280px; padding:10px 12px; background:#1c2733; color:#fff; border-radius:6px; font-size:12px; line-height:1.45; z-index:20; box-shadow:0 6px 18px rgba(15,23,42,0.18); pointer-events:none; }
+.history-bar .history-tooltip::after { content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-top-color:#1c2733; }
+.history-bar:hover .history-tooltip, .history-bar:focus-visible .history-tooltip { display:flex; }
+.history-bar .history-tooltip strong { font-weight:700; color:#fff; }
+.history-bar .history-tooltip em { font-style:normal; font-weight:600; padding:1px 8px; border-radius:999px; align-self:flex-start; font-size:11px; background:rgba(255,255,255,0.1); }
+.history-bar .history-tooltip em.status-up { background:rgba(25,160,109,0.22); color:#86dbb1; }
+.history-bar .history-tooltip em.status-degraded, .history-bar .history-tooltip em.status-routing-degraded, .history-bar .history-tooltip em.status-trust-degraded { background:rgba(212,155,35,0.24); color:#f6cf72; }
+.history-bar .history-tooltip em.status-down { background:rgba(210,69,42,0.28); color:#ffb1a4; }
+.history-bar .history-tooltip em.status-unknown { background:rgba(255,255,255,0.08); color:#cfd6dd; }
+.history-bar .history-tooltip span { color:#cfd6dd; display:flex; justify-content:space-between; gap:8px; }
+.history-bar .history-tooltip span.muted { color:#8d96a3; font-style:italic; }
+.history-bar .history-tooltip span.err strong { color:#ffb1a4; }
+.history-day { display:block; min-width:0; height:26px; border-radius:3px; background:#dfe6ec; }
 .history-day.status-up { background:#19a06d; }
 .history-day.status-degraded, .history-day.status-routing-degraded { background:#d49b23; }
 .history-day.status-trust-degraded { background:#b87b13; }

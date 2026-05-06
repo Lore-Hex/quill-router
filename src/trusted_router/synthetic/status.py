@@ -8,7 +8,16 @@ from typing import Any
 from trusted_router.storage_models import SyntheticProbeSample, iso_now, utcnow
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
-STATUS_HISTORY_DAYS = 90
+# Last 24 hourly bars. We just started running synthetic monitoring;
+# nothing further back has data, and dragging out 90 days of "no data"
+# bars makes the page look broken. As the service ages we can extend
+# this — for now keep the strip honest.
+STATUS_HISTORY_HOURS = 24
+# Uptime thresholds for per-bucket coloring. Single-sample blips
+# shouldn't paint a whole hour red; tune the cutoffs to roughly match
+# what status.anthropic.com / GitHub status surface.
+STATUS_HISTORY_UP_MIN_UPTIME = 99.5
+STATUS_HISTORY_DEGRADED_MIN_UPTIME = 95.0
 STATUS_ORDER = {
     "up": 0,
     "degraded": 1,
@@ -248,28 +257,83 @@ def _sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
 
 
 def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> list[dict[str, Any]]:
-    by_day: dict[str, list[SyntheticProbeSample]] = defaultdict(list)
-    for sample in samples:
-        by_day[sample.created_at[:10]].append(sample)
+    """Build hourly bars for the past `STATUS_HISTORY_HOURS` hours.
 
-    days = [
-        (now.date() - dt.timedelta(days=offset)).isoformat()
-        for offset in reversed(range(STATUS_HISTORY_DAYS))
+    Per-bucket status uses an uptime-percent threshold rather than a
+    raw "≥2 down samples" rule — single-sample blips at the edge of the
+    timeout window shouldn't paint an hour red when actual uptime is
+    99.95%. Each row carries enough context (uptime %, sample count,
+    p50, top error type, distinct probes) for the template's hover
+    tooltip to mirror status.anthropic.com / status.github.com style
+    bar tooltips."""
+    by_hour: dict[str, list[SyntheticProbeSample]] = defaultdict(list)
+    for sample in samples:
+        bucket_key = sample.created_at[:13]  # YYYY-MM-DDTHH
+        by_hour[bucket_key].append(sample)
+
+    base = now.replace(minute=0, second=0, microsecond=0)
+    hour_keys = [
+        (base - dt.timedelta(hours=offset)).strftime("%Y-%m-%dT%H")
+        for offset in reversed(range(STATUS_HISTORY_HOURS))
     ]
+
     history = []
-    for day in days:
-        rows = by_day.get(day, [])
-        status = _aggregate_status([sample.status for sample in rows]) if rows else "unknown"
-        uptime = _uptime_percent([sample.status for sample in rows]) if rows else None
+    for hour_key in hour_keys:
+        rows = by_hour.get(hour_key, [])
+        bucket_start = dt.datetime.strptime(hour_key, "%Y-%m-%dT%H").replace(tzinfo=dt.UTC)
+        if not rows:
+            history.append(
+                {
+                    "bucket_start": bucket_start.isoformat(),
+                    "status": "unknown",
+                    "status_label": "No data",
+                    "status_class": "unknown",
+                    "uptime_percent": None,
+                    "sample_count": 0,
+                    "p50_latency_milliseconds": None,
+                    "top_error": None,
+                    "title": _history_title_hourly(bucket_start, "unknown", None, 0, None),
+                }
+            )
+            continue
+
+        statuses = [sample.status for sample in rows]
+        uptime = _uptime_percent(statuses)
+        # Threshold-based, not "≥2 down" — see module-level constants.
+        if uptime >= STATUS_HISTORY_UP_MIN_UPTIME:
+            status = "up"
+        elif uptime >= STATUS_HISTORY_DEGRADED_MIN_UPTIME:
+            status = "degraded"
+        else:
+            # Distinguish trust failures from generic outages — the
+            # attestation probe maps to `trust_degraded`, which we'd
+            # rather not flatten to "down" in the bar coloring.
+            status = "trust_degraded" if any(s == "trust_degraded" for s in statuses) else "down"
+
+        latencies = [
+            sample.latency_milliseconds
+            for sample in rows
+            if sample.latency_milliseconds is not None
+        ]
+        error_types = [sample.error_type for sample in rows if sample.error_type]
+        top_error: str | None = None
+        if error_types:
+            counts: dict[str, int] = {}
+            for et in error_types:
+                counts[et] = counts.get(et, 0) + 1
+            top_error = max(counts, key=lambda key: counts[key])
+
         history.append(
             {
-                "date": day,
+                "bucket_start": bucket_start.isoformat(),
                 "status": status,
                 "status_label": _status_label(status),
                 "status_class": _status_class(status),
                 "uptime_percent": uptime,
                 "sample_count": len(rows),
-                "title": _history_title(day, status, uptime),
+                "p50_latency_milliseconds": _percentile(latencies, 50),
+                "top_error": top_error,
+                "title": _history_title_hourly(bucket_start, status, uptime, len(rows), top_error),
             }
         )
     return history
@@ -388,10 +452,23 @@ def _summary(status: str) -> dict[str, str]:
     }
 
 
-def _history_title(day: str, status: str, uptime: float | None) -> str:
+def _history_title_hourly(
+    bucket_start: dt.datetime,
+    status: str,
+    uptime: float | None,
+    sample_count: int,
+    top_error: str | None,
+) -> str:
+    """Bare `title` attribute fallback. Renders even when JS is off /
+    on touch devices that ignore custom hover popups. The richer
+    formatted tooltip is built in the template from the same data."""
+    label = bucket_start.strftime("%Y-%m-%d %H:00 UTC")
     if uptime is None:
-        return f"{day}: no data"
-    return f"{day}: {_status_label(status)} ({uptime:.2f}% uptime)"
+        return f"{label} — no data"
+    parts = [f"{label}", f"{_status_label(status)}", f"{uptime:.2f}% uptime", f"{sample_count} samples"]
+    if top_error:
+        parts.append(f"top error: {top_error}")
+    return " · ".join(parts)
 
 
 def _percentile(values: list[int], percentile: int) -> int | None:

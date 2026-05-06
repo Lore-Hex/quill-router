@@ -53,9 +53,22 @@
           <span>P50 latency <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
-        <div class="history-strip" aria-label="{{ component.name }} 90 day uptime history">
-          {% for day in component.history %}
-          <span class="history-day status-{{ day.status_class }}" title="{{ day.title }}"></span>
+        <div class="history-strip" aria-label="{{ component.name }} last-24-hour uptime history">
+          {% for bucket in component.history %}
+          <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
+            <span class="history-tooltip" role="tooltip" aria-hidden="true">
+              <strong>{{ bucket.bucket_start | replace("T", " ") | replace("+00:00", " UTC") }}</strong>
+              <em class="status-{{ bucket.status_class }}">{{ bucket.status_label }}</em>
+              {% if bucket.uptime_percent is not none %}
+                <span>Uptime <strong>{{ "%.2f"|format(bucket.uptime_percent) }}%</strong></span>
+                <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
+                {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
+                {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
+              {% else %}
+                <span class="muted">No probe samples in this hour yet.</span>
+              {% endif %}
+            </span>
+          </span>
           {% endfor %}
         </div>
       </article>
