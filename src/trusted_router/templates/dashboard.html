@@ -151,8 +151,8 @@ resp = client.chat.completions.create(
           <image href="/static/world-map.svg" x="0" y="0" width="1000" height="500"/>
           {% for region in map_regions %}
           <g class="region-marker {{ 'is-primary' if region.primary else '' }}">
-            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '14' if region.primary else '8' }}" class="region-pulse"/>
-            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '6' if region.primary else '4' }}" class="region-dot"/>
+            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '20' if region.primary else '18' }}" class="region-pulse"/>
+            <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '10' if region.primary else '9' }}" class="region-dot"/>
             <title>{{ region.id }} — {{ region.city }}{% if region.primary %} (primary){% endif %}</title>
           </g>
           {% endfor %}

@@ -80,21 +80,70 @@ function initRouterScene(container, THREE) {
   const grid = new THREE.LineSegments(gridGeometry, gridMaterial);
   root.add(grid);
 
+  // Iridescent multi-layered core: high-metal hero shell + inner emissive
+  // glow + outer additive halo. The hero shell hue-cycles each frame so
+  // the surface reads as living/alive instead of a static plastic ball.
   const coreMaterial = new THREE.MeshStandardMaterial({
-    color: 0x12353f,
+    color: 0x16424c,
     emissive: 0x0c6c54,
-    emissiveIntensity: 0.7,
-    metalness: 0.45,
-    roughness: 0.26,
+    emissiveIntensity: 0.85,
+    metalness: 0.92,
+    roughness: 0.18,
   });
-  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.86, 2), coreMaterial);
-  root.add(core);
+  const coreGroup = new THREE.Group();
+  root.add(coreGroup);
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.86, 3), coreMaterial);
+  coreGroup.add(core);
 
   const coreEdges = new THREE.LineSegments(
     new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(0.91, 2)),
     new THREE.LineBasicMaterial({ color: 0x7be0b1, transparent: true, opacity: 0.74 })
   );
-  root.add(coreEdges);
+  coreGroup.add(coreEdges);
+
+  // Inner emissive shell — soft glowing core visible through the metallic facets.
+  const coreInnerGlow = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.78, 2),
+    new THREE.MeshBasicMaterial({
+      color: 0x7be0b1,
+      transparent: true,
+      opacity: 0.18,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  coreGroup.add(coreInnerGlow);
+
+  // Outer additive halo — gives the impression of light bleeding from the sphere.
+  const coreHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(1.05, 32, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0x19a06d,
+      transparent: true,
+      opacity: 0.14,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide,
+    })
+  );
+  coreGroup.add(coreHalo);
+
+  // Click-burst shockwave torus: hidden by default, expanded + faded on
+  // pointerdown so each click feels percussive and physical.
+  const burstRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.4, 0.022, 12, 96),
+    new THREE.MeshBasicMaterial({
+      color: 0x7be0b1,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  );
+  burstRing.visible = false;
+  root.add(burstRing);
+  let burstStart = -Infinity;
+  let burstFlashUntil = -Infinity;
 
   const shieldRing = new THREE.Mesh(
     new THREE.TorusGeometry(1.22, 0.018, 12, 96),
@@ -216,6 +265,18 @@ function initRouterScene(container, THREE) {
   let targetRotY = 0.24;
   let lastPointerEvent = -Infinity;
   const clock = new THREE.Clock();
+
+  // Raycaster + z=0 plane to project the mouse into world space, so
+  // tokens can physically push away from the cursor as it moves.
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  const cursorPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const mouseWorld = new THREE.Vector3(999, 999, 0); // far away by default
+  let mouseInside = false;
+  const REPULSE_RADIUS = 1.05;
+  const REPULSE_STRENGTH = 0.55;
+  const tmpVec = new THREE.Vector3();
+  const tmpPush = new THREE.Vector3();
   // Auto-cycle the active route every ~2.4s so the scene keeps lighting
   // up new paths even when nobody's interacting. setActiveRoute also
   // lerps colors so the cycle reads as a wave.
@@ -234,10 +295,25 @@ function initRouterScene(container, THREE) {
     });
   }
 
+  function projectMouseToWorld() {
+    raycaster.setFromCamera(ndc, camera);
+    const localOrigin = raycaster.ray.origin.clone().applyMatrix4(root.matrixWorld.clone().invert());
+    const localDir = raycaster.ray.direction.clone().transformDirection(root.matrixWorld.clone().invert());
+    const localRay = new THREE.Ray(localOrigin, localDir);
+    const hit = new THREE.Vector3();
+    if (localRay.intersectPlane(cursorPlane, hit)) {
+      mouseWorld.copy(hit);
+    }
+  }
+
   function onPointerMove(event) {
     const bounds = container.getBoundingClientRect();
     pointerX = ((event.clientX - bounds.left) / Math.max(bounds.width, 1) - 0.5) * 2;
     pointerY = ((event.clientY - bounds.top) / Math.max(bounds.height, 1) - 0.5) * 2;
+    ndc.x = pointerX;
+    ndc.y = -pointerY;
+    mouseInside = true;
+    projectMouseToWorld();
     targetRotY = pointerX * 0.36;
     targetRotX = -0.08 + pointerY * 0.16;
     const segment = Math.floor(((pointerX + 1) / 2) * routes.length);
@@ -245,8 +321,23 @@ function initRouterScene(container, THREE) {
     lastPointerEvent = clock.getElapsedTime();
   }
 
+  function onPointerLeave() {
+    mouseInside = false;
+    mouseWorld.set(999, 999, 0);
+  }
+
+  function onPointerDown(event) {
+    onPointerMove(event);
+    setActiveRoute(activeRoute + 1);
+    burstStart = clock.getElapsedTime();
+    burstRing.visible = true;
+    burstRing.position.copy(mouseInside ? mouseWorld : new THREE.Vector3(0, 0, 0));
+    burstFlashUntil = burstStart + 0.4;
+  }
+
   container.addEventListener("pointermove", onPointerMove, { passive: true });
-  container.addEventListener("pointerdown", () => setActiveRoute(activeRoute + 1));
+  container.addEventListener("pointerleave", onPointerLeave, { passive: true });
+  container.addEventListener("pointerdown", onPointerDown);
   setActiveRoute(0);
 
   function resize() {
@@ -280,14 +371,25 @@ function initRouterScene(container, THREE) {
     root.rotation.x += (targetRotX - root.rotation.x) * 0.045;
     root.rotation.z = Math.sin(elapsed * 0.34) * 0.07;
 
-    // Pulsing core: faster spin + scale pulse + emissive throb.
+    // Pulsing core: faster spin + scale pulse + emissive throb +
+    // hue-cycling emissive so the surface reads as iridescent. Click
+    // bursts add a brief scale boost on top of the baseline pulse.
     core.rotation.x = elapsed * 0.62 * speedScale;
     core.rotation.y = elapsed * 0.78 * speedScale;
-    const corePulse = 1 + Math.sin(elapsed * 1.8 * speedScale) * 0.07;
-    core.scale.setScalar(corePulse);
+    const burstAge = elapsed - burstStart;
+    const flashBoost = burstAge >= 0 && burstAge < 0.4
+      ? (1 - burstAge / 0.4) * 0.22
+      : 0;
+    const corePulse = 1 + Math.sin(elapsed * 1.8 * speedScale) * 0.07 + flashBoost;
+    coreGroup.scale.setScalar(corePulse);
     coreEdges.rotation.copy(core.rotation);
-    coreEdges.scale.setScalar(corePulse * 1.04);
-    coreMaterial.emissiveIntensity = 0.65 + Math.sin(elapsed * 2.4 * speedScale) * 0.35;
+    // Hue cycle through teal → green → cyan via HSL.
+    const hue = 0.42 + Math.sin(elapsed * 0.55) * 0.08;
+    coreMaterial.emissive.setHSL(hue, 0.65, 0.32);
+    coreMaterial.emissiveIntensity = 0.7 + Math.sin(elapsed * 2.4 * speedScale) * 0.4 + flashBoost * 1.4;
+    coreInnerGlow.material.opacity = 0.16 + Math.sin(elapsed * 1.6) * 0.05 + flashBoost * 0.5;
+    coreHalo.scale.setScalar(1 + Math.sin(elapsed * 0.9) * 0.05 + flashBoost * 0.6);
+    coreHalo.material.opacity = 0.12 + Math.sin(elapsed * 1.1) * 0.03 + flashBoost * 0.5;
 
     // Three counter-rotating rings on different axes — depth of motion.
     shieldRing.rotation.z = elapsed * 0.42 * speedScale;
@@ -323,8 +425,24 @@ function initRouterScene(container, THREE) {
       route.ring.scale.setScalar((isActive ? 1.34 : 1) * ringPulse);
     });
 
+    // Click-burst shockwave: torus expands ~0 → 2.4 units over 0.7s,
+    // fading as it grows. Hidden once the cycle is done.
+    if (burstAge >= 0 && burstAge < 0.7) {
+      const k = burstAge / 0.7;
+      burstRing.visible = true;
+      burstRing.scale.setScalar(0.3 + k * 6.0);
+      burstRing.material.opacity = (1 - k) * 0.85;
+      burstRing.rotation.x = Math.PI / 2;
+      burstRing.rotation.z = elapsed * 0.5;
+    } else if (burstRing.visible) {
+      burstRing.visible = false;
+    }
+
     // Tokens with banded coloring per route + active-route brightness
-    // boost. Active-route tokens are 75% larger and travel ~30% faster.
+    // boost + cursor repulsion (tokens push away from the projected
+    // mouse position when it's within REPULSE_RADIUS units).
+    const repulseActive = mouseInside && elapsed - lastPointerEvent < 1.4;
+    const burstShockActive = burstAge >= 0 && burstAge < 0.5;
     for (let i = 0; i < tokenCount; i += 1) {
       const state = tokenState[i];
       const route = routes[state.route];
@@ -334,9 +452,34 @@ function initRouterScene(container, THREE) {
       const point = route.curve.getPoint(t);
       // Subtle radial scatter so the stream reads like a swarm, not a thread.
       const scatter = Math.sin(elapsed * 1.7 + i * 0.6) * 0.04;
-      dummy.position.set(point.x, point.y + scatter, point.z);
+      tmpVec.set(point.x, point.y + scatter, point.z);
+
+      if (repulseActive) {
+        tmpPush.copy(tmpVec).sub(mouseWorld);
+        const dist = tmpPush.length();
+        if (dist < REPULSE_RADIUS && dist > 0.0001) {
+          const falloff = (1 - dist / REPULSE_RADIUS);
+          tmpPush.normalize().multiplyScalar(falloff * falloff * REPULSE_STRENGTH);
+          tmpVec.add(tmpPush);
+        }
+      }
+      if (burstShockActive) {
+        // Outward kick from burst origin during the first half of the
+        // shockwave — tokens get visibly knocked along the wave.
+        tmpPush.copy(tmpVec).sub(burstRing.position);
+        const dist = tmpPush.length();
+        const k = burstAge / 0.5;
+        const waveFront = 0.3 + k * 4.0;
+        if (Math.abs(dist - waveFront) < 0.6 && dist > 0.0001) {
+          const intensity = (1 - Math.abs(dist - waveFront) / 0.6) * (1 - k) * 0.35;
+          tmpPush.normalize().multiplyScalar(intensity);
+          tmpVec.add(tmpPush);
+        }
+      }
+
+      dummy.position.copy(tmpVec);
       dummy.rotation.set(elapsed * 1.1 + i, elapsed * 1.4 + i * 0.2, elapsed * 0.7 + i);
-      dummy.scale.setScalar(active ? 1.85 : 0.9);
+      dummy.scale.setScalar((active ? 1.85 : 0.9) * (elapsed < burstFlashUntil ? 1.25 : 1));
       dummy.updateMatrix();
       tokens.setMatrixAt(i, dummy.matrix);
     }
