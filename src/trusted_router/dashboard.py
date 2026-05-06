@@ -72,13 +72,32 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
 }
 
 
+def _format_uptime(value: float | None, decimals: int = 4) -> str:
+    """Render an uptime percentage. Caps display at "99.99%" — claiming
+    a literal 100.0000% with a few hundred probe samples behind it is
+    overconfident; "99.99%+" reads honest, matches what
+    status.anthropic.com / status.github.com surface, and stops the eye
+    from interpreting "100%" as a guarantee.
+
+    Threshold is `>= 99.995` so the value rounds to 100 at 4 decimals
+    of precision; anything that actually rounds below that shows its
+    real number."""
+    if value is None:
+        return "n/a"
+    if value >= 99.995:
+        return ">99.99%"
+    return f"{value:.{decimals}f}%"
+
+
 @lru_cache(maxsize=1)
 def _env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(TEMPLATES_DIR),
         autoescape=select_autoescape(["html"]),
         keep_trailing_newline=True,
     )
+    env.filters["uptime_pct"] = _format_uptime
+    return env
 
 
 def dashboard_html(settings: Settings) -> str:

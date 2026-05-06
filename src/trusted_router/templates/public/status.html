@@ -49,7 +49,7 @@
           <span class="component-status status-{{ component.status_class }}">{{ component.status_label }}</span>
         </div>
         <div class="component-meta">
-          <span>24h uptime <strong>{% if component.uptime_24h_percent is not none %}{{ "%.4f"|format(component.uptime_24h_percent) }}%{% else %}n/a{% endif %}</strong></span>
+          <span>24h uptime <strong>{{ component.uptime_24h_percent | uptime_pct(4) }}</strong></span>
           <span>P50 latency <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
@@ -60,7 +60,7 @@
               <strong>{{ bucket.bucket_start | replace("T", " ") | replace("+00:00", " UTC") }}</strong>
               <em class="status-{{ bucket.status_class }}">{{ bucket.status_label }}</em>
               {% if bucket.uptime_percent is not none %}
-                <span>Uptime <strong>{{ "%.2f"|format(bucket.uptime_percent) }}%</strong></span>
+                <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
                 {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
