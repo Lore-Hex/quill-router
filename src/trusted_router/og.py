@@ -8,7 +8,7 @@ OG_TITLE = "TrustedRouter — One API. Every LLM. Provable privacy."
 OG_DESCRIPTION = (
     "Hosted, OpenRouter-compatible router for Anthropic, OpenAI, Google, and "
     "more — prepaid or BYOK. Every prompt path terminates inside a measured "
-    "Confidential Space workload. $0.01 less per million tokens."
+    "Confidential Space workload. 100% open source."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630
@@ -52,10 +52,10 @@ def og_image_svg(_settings: Settings) -> str:
     <text x="74" y="36" font-size="22" font-weight="700" fill="#cfe1f1" letter-spacing="0.2">TrustedRouter</text>
   </g>
 
-  <!-- Pricing badge, top-right -->
+  <!-- Open-source badge, top-right -->
   <g transform="translate({OG_IMAGE_WIDTH - 80} 92)" font-family="{_SANS}" text-anchor="end">
-    <rect x="-296" y="-26" width="296" height="44" rx="22" fill="#0e2a1d" stroke="#1f6447"/>
-    <text x="-148" y="3" font-size="17" font-weight="700" fill="#7be0b1" text-anchor="middle">$0.01 less per 1M tokens</text>
+    <rect x="-220" y="-26" width="220" height="44" rx="22" fill="#0e2a1d" stroke="#1f6447"/>
+    <text x="-110" y="3" font-size="17" font-weight="700" fill="#7be0b1" text-anchor="middle">100% open source</text>
   </g>
 
   <!-- Headline -->
