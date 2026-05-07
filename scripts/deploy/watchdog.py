@@ -1,50 +1,102 @@
 #!/usr/bin/env python3
-"""Post-deploy watchdog: polls https://trustedrouter.com/status.json
-and decides whether to rollback.
+"""Per-region post-deploy watchdog.
+
+Polls https://trustedrouter.com/status.json every minute and decides,
+per `target_region`, whether to roll that region back. Writes the list
+of regions-to-rollback to `$GITHUB_OUTPUT` (key `rollback_regions`,
+comma-separated) so the workflow's rollback step can target only the
+failing regions.
+
+Per-region status: take the WORST `effective_status` among
+`data.current.checks[]` whose `target_region` matches. Same logic the
+status page uses for overall_status, applied per region.
 
 Logic:
   - Poll once per minute for `--duration-min` minutes (default 10).
-  - Track `overall_status`. If it's "down" for `--rollback-after`
-    consecutive checks (default 3), exit non-zero so the GHA workflow
-    triggers its rollback step.
-  - "degraded" alone doesn't trigger rollback — synthetics flap during
-    rolling updates and we don't want to rollback over normal churn.
-  - Exit 0 if the watchdog window completes without 3 consecutive
-    "down" reads; the deploy is declared healthy.
+  - For each region, track a consecutive-down counter.
+  - When ANY region reads "down" for `--rollback-after` consecutive
+    minutes (default 3), that region is added to the rollback set,
+    its counter resets, and the watchdog continues monitoring the
+    other regions.
+  - Exit 1 if at least one region is in the rollback set, else 0.
 
-Synthetics are external probes (Cloud Scheduler hits the prod LB every
-minute, results aggregated into status.json). Polling that already-
-public endpoint means the watchdog has zero new infrastructure and is
-re-using the same signal customers see at /status.
+Why "down" only (not "degraded"): synthetics naturally flap during a
+rolling update — only sustained-down means the deploy actually broke
+something for that region. degraded alone is normal churn.
 
-Usage:
-  python3 scripts/deploy/watchdog.py \
-    [--duration-min 10] [--rollback-after 3] [--status-url https://trustedrouter.com/status.json]
+Why per-region: a deploy can break us-central1 but leave
+europe-west4 healthy (e.g., bad regional secret rotation). Rolling
+back globally over a single-region failure is overkill.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.request
+from collections import defaultdict
+from typing import Iterable
+
+# Worst-of: the per-region effective_status is the worst over its checks.
+# `unknown` is treated as severity 0 for ranking but reported separately
+# so the operator can tell "no signal" apart from "all healthy."
+SEVERITY = {"up": 0, "degraded": 1, "down": 2}
+INVERSE_SEVERITY = {0: "up", 1: "degraded", 2: "down"}
 
 
-def fetch_status(url: str, timeout: int = 10) -> str:
+def fetch_per_region(url: str, regions: Iterable[str], timeout: int = 10) -> dict[str, str]:
+    """Return {region: 'up'|'degraded'|'down'|'unknown'} for each requested region.
+
+    A region maps to `unknown` when status.json had no checks targeting
+    it. That distinguishes "monitor blackout" (status fetch ok, region
+    has no recent probes) from a real "up" reading.
+    """
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:
             payload = json.load(response)
-        status = payload.get("data", {}).get("overall_status")
-        if isinstance(status, str):
-            return status.lower()
+        checks = payload.get("data", {}).get("current", {}).get("checks", []) or []
     except Exception as exc:
         print(f"  watchdog: status fetch error: {exc}", flush=True)
-        # A fetch error counts as "degraded" — not a deploy regression
-        # signal on its own (could be an LB/DNS blip). Returning
-        # "unknown" prevents the consecutive-down counter from rising.
-        return "unknown"
-    return "unknown"
+        # Fetch error -> unknown for every region (doesn't increment
+        # the down counter; deploys aren't the suspect for an LB blip).
+        return {region: "unknown" for region in regions}
+
+    worst: dict[str, int] = {}
+    for check in checks:
+        target = (check or {}).get("target_region")
+        status = (check or {}).get("effective_status") or (check or {}).get("status")
+        if not target or not status:
+            continue
+        if target not in regions:
+            continue
+        sev = SEVERITY.get(str(status).lower())
+        if sev is None:
+            continue
+        if sev > worst.get(target, -1):
+            worst[target] = sev
+    out: dict[str, str] = {}
+    for region in regions:
+        if region in worst:
+            out[region] = INVERSE_SEVERITY[worst[region]]
+        else:
+            out[region] = "unknown"
+    return out
+
+
+def write_output(key: str, value: str) -> None:
+    """Append a key=value line to $GITHUB_OUTPUT if defined.
+
+    Falls back to stdout marker line for local runs.
+    """
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{key}={value}\n")
+    else:
+        print(f"::output::{key}={value}", flush=True)
 
 
 def main() -> int:
@@ -52,35 +104,57 @@ def main() -> int:
     parser.add_argument("--duration-min", type=int, default=10)
     parser.add_argument("--rollback-after", type=int, default=3)
     parser.add_argument(
+        "--regions",
+        default="us-central1,europe-west4",
+        help="Comma-separated list of target regions to monitor.",
+    )
+    parser.add_argument(
         "--status-url",
         default="https://trustedrouter.com/status.json",
     )
     args = parser.parse_args()
 
-    consecutive_down = 0
+    regions = [r.strip() for r in args.regions.split(",") if r.strip()]
+    consecutive_down = {region: 0 for region in regions}
+    rollback_set: set[str] = set()
+
     print(
         f"watchdog: polling {args.status_url} every 60s for {args.duration_min} min; "
-        f"rollback if 'down' for {args.rollback_after} consecutive minutes",
+        f"per-region rollback if 'down' for {args.rollback_after} consecutive minutes; "
+        f"regions={regions}",
         flush=True,
     )
     for minute in range(1, args.duration_min + 1):
         time.sleep(60)
-        status = fetch_status(args.status_url)
-        if status == "down":
-            consecutive_down += 1
-        else:
-            consecutive_down = 0
-        print(
-            f"  minute {minute}: status={status}  consecutive_down={consecutive_down}",
-            flush=True,
-        )
-        if consecutive_down >= args.rollback_after:
-            print(
-                f"watchdog: ROLLBACK — 'down' for {consecutive_down} consecutive minutes",
-                flush=True,
-            )
-            return 1
-    print("watchdog: deploy healthy", flush=True)
+        per_region = fetch_per_region(args.status_url, regions)
+        line = "  minute %d:" % minute
+        for region in regions:
+            status = per_region.get(region, "unknown")
+            if region in rollback_set:
+                line += f"  {region}=ROLLED_BACK"
+                continue
+            if status == "down":
+                consecutive_down[region] += 1
+            else:
+                consecutive_down[region] = 0
+            line += f"  {region}={status}({consecutive_down[region]})"
+            if consecutive_down[region] >= args.rollback_after:
+                rollback_set.add(region)
+                print(
+                    f"  watchdog: ROLLBACK {region} — 'down' for {consecutive_down[region]} consecutive minutes",
+                    flush=True,
+                )
+        print(line, flush=True)
+        # If every region is rolled back, no point continuing the watch.
+        if rollback_set == set(regions):
+            break
+
+    rollback_list = ",".join(sorted(rollback_set))
+    write_output("rollback_regions", rollback_list)
+    if rollback_set:
+        print(f"watchdog: rolling back regions: {rollback_list}", flush=True)
+        return 1
+    print("watchdog: deploy healthy across all regions", flush=True)
     return 0
 
 

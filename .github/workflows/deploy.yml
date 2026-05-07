@@ -121,27 +121,33 @@ jobs:
           IMAGE_TAG: ${{ env.SHA }}
         run: bash scripts/deploy/rollout.sh
 
-      - name: Post-deploy watchdog (synthetic monitor)
-        # Polls https://trustedrouter.com/status.json — same signal
-        # customers see at /status. If overall_status reports "down"
-        # for 3 consecutive minutes, the watchdog exits non-zero and
-        # the next step rolls traffic back to the pre-deploy revision.
+      - name: Post-deploy watchdog (per-region synthetic monitor)
+        # Polls https://trustedrouter.com/status.json per `target_region`.
+        # If a region reads "down" for 3 consecutive minutes, that
+        # region is added to the rollback set; other healthy regions
+        # are left alone. The script writes `rollback_regions=...`
+        # (comma-separated) to $GITHUB_OUTPUT for the next step.
         id: watchdog
         continue-on-error: true
         run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3
 
-      - name: Rollback (if watchdog tripped)
-        if: ${{ steps.watchdog.outcome == 'failure' }}
+      - name: Rollback (per-region, only failing ones)
+        if: ${{ steps.watchdog.outcome == 'failure' && steps.watchdog.outputs.rollback_regions != '' }}
         env:
+          ROLLBACK_REGIONS: ${{ steps.watchdog.outputs.rollback_regions }}
           PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
         run: |
           set -euo pipefail
-          for pair in "us-central1:${PREV_US}" "europe-west4:${PREV_EU}"; do
-            region="${pair%%:*}"
-            prev="${pair##*:}"
+          IFS=',' read -ra REGIONS <<< "${ROLLBACK_REGIONS}"
+          for region in "${REGIONS[@]}"; do
+            case "$region" in
+              us-central1) prev="${PREV_US}" ;;
+              europe-west4) prev="${PREV_EU}" ;;
+              *) echo "  ${region}: no rollback handle; skipping"; continue ;;
+            esac
             if [ -z "$prev" ]; then
-              echo "  ${region}: no prior revision recorded; skipping rollback"
+              echo "  ${region}: no prior revision recorded; skipping"
               continue
             fi
             echo "  ${region}: rolling traffic back to ${prev}"
@@ -149,7 +155,7 @@ jobs:
               --region="$region" --project="${PROJECT_ID}" \
               --to-revisions="${prev}=100" --quiet
           done
-          echo "rollback complete; failing job so the bad revision shows up red in GHA"
+          echo "rollback complete for: ${ROLLBACK_REGIONS}; failing job so the bad release shows red in GHA"
           exit 1
 
       - name: Smoke test prod
