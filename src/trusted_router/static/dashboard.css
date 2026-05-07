@@ -315,6 +315,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 @media (max-width:680px) {
   .nav { align-items:flex-start; flex-direction:column; }
   .links { gap:10px; }
+  .hero, .router-scene-shell { overflow:hidden; }
   .hero-inner { padding-top:30px; }
   .hero-inner-visual { padding-top:24px; }
   .router-scene-shell { min-height:390px; margin-top:-12px; }
