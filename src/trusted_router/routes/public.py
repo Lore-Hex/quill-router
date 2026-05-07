@@ -29,6 +29,8 @@ from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
 STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
+STATUS_RECENT_SAMPLE_LIMIT = 5_000
+STATUS_ROLLUP_LIMIT = 20_000
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
@@ -133,7 +135,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 status_code=400,
             )
-        samples = _status_samples()
+        samples = _status_samples(hours=1)
         rollups = _status_rollups(window)
         return JSONResponse(
             {"data": history_payload(samples, window, rollups=rollups)},
@@ -199,25 +201,35 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
-    payload = status_snapshot(_status_samples(), rollups=_status_rollups("monthly"))
+    payload = status_snapshot(_status_samples(hours=1), rollups=_status_rollups("snapshot"))
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload
 
 
-def _status_samples() -> list[Any]:
+def _status_samples(*, hours: int = 48) -> list[Any]:
+    if hours <= 1:
+        return STORE.synthetic_probe_samples(limit=STATUS_RECENT_SAMPLE_LIMIT)
     samples = []
-    for date in _dates_covering_recent_hours(hours=48):
+    for date in _dates_covering_recent_hours(hours=hours):
         samples.extend(STORE.synthetic_probe_samples(date=date, limit=STATUS_RAW_SAMPLE_LIMIT_PER_DAY))
     deduped = {sample.id: sample for sample in samples}
     return sorted(deduped.values(), key=lambda sample: sample.created_at, reverse=True)
 
 
 def _status_rollups(window: str) -> list[Any]:
+    if window == "snapshot":
+        return [
+            *STORE.synthetic_rollups(period="hour", limit=STATUS_ROLLUP_LIMIT),
+            *STORE.synthetic_rollups(period="day", limit=STATUS_ROLLUP_LIMIT),
+            *STORE.synthetic_rollups(period="month", limit=STATUS_ROLLUP_LIMIT),
+        ]
+    if window in {"24h", "48h"}:
+        return STORE.synthetic_rollups(period="hour", limit=STATUS_ROLLUP_LIMIT)
     if window == "daily":
-        return STORE.synthetic_rollups(period="day", limit=20_000)
+        return STORE.synthetic_rollups(period="day", limit=STATUS_ROLLUP_LIMIT)
     if window == "monthly":
-        return STORE.synthetic_rollups(period="month", limit=20_000)
+        return STORE.synthetic_rollups(period="month", limit=STATUS_ROLLUP_LIMIT)
     return []
 
 

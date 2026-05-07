@@ -36,14 +36,19 @@ def status_snapshot(
     rollups: list[SyntheticRollup] | None = None,
 ) -> dict[str, Any]:
     now = utcnow()
+    precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     current = _current_status(ordered, now=now)
     five_minute = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["5m"])
-    twenty_four_hour = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["24h"])
-    forty_eight_hour = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["48h"])
-    daily = _rollup_history(rollups or [], period="day") or _daily_rollups(ordered)
-    monthly = _rollup_history(rollups or [], period="month")
-    components = _components(ordered, now=now)
+    twenty_four_hour = _rollup_window_from_rollups(
+        precomputed_rollups, now=now, seconds=WINDOW_SECONDS["24h"]
+    ) or _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["24h"])
+    forty_eight_hour = _rollup_window_from_rollups(
+        precomputed_rollups, now=now, seconds=WINDOW_SECONDS["48h"]
+    ) or _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["48h"])
+    daily = _rollup_history(precomputed_rollups, period="day") or _daily_rollups(ordered)
+    monthly = _rollup_history(precomputed_rollups, period="month")
+    components = _components(ordered, now=now, rollups=precomputed_rollups)
     overall_status = _aggregate_component_statuses([component["status"] for component in components])
     return {
         "generated_at": iso_now(),
@@ -67,20 +72,46 @@ def status_snapshot(
 
 
 def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> dict[str, Any]:
-    cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
-    gateway_latencies = [
-        sample.latency_milliseconds
-        for sample in samples
-        if sample.probe_type == "tls_health"
-        and sample.status == "up"
-        and sample.latency_milliseconds is not None
-        and _parse_time(sample.created_at) >= cutoff
-    ]
+    in_region_latencies = _gateway_latency_values(samples, now=now, in_region=True)
+    global_latencies = _gateway_latency_values(samples, now=now)
+    canonical_latencies = _gateway_latency_values(samples, now=now, target="canonical")
+    primary_latencies = in_region_latencies or global_latencies
     return {
-        "gateway_overhead_p50_milliseconds": _percentile(gateway_latencies, 50),
-        "gateway_overhead_sample_count": len(gateway_latencies),
+        "gateway_overhead_p50_milliseconds": _percentile(primary_latencies, 50),
+        "gateway_overhead_sample_count": len(primary_latencies),
+        "gateway_overhead_scope": "in_region" if in_region_latencies else "global",
+        "in_region_gateway_overhead_p50_milliseconds": _percentile(in_region_latencies, 50),
+        "in_region_gateway_overhead_sample_count": len(in_region_latencies),
+        "global_gateway_overhead_p50_milliseconds": _percentile(global_latencies, 50),
+        "global_gateway_overhead_sample_count": len(global_latencies),
+        "canonical_gateway_overhead_p50_milliseconds": _percentile(canonical_latencies, 50),
+        "canonical_gateway_overhead_sample_count": len(canonical_latencies),
         "window": "5m",
     }
+
+
+def _gateway_latency_values(
+    samples: list[SyntheticProbeSample],
+    *,
+    now: dt.datetime,
+    in_region: bool = False,
+    target: str | None = None,
+) -> list[int]:
+    cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
+    rows = []
+    for sample in samples:
+        if sample.probe_type != "tls_health" or sample.status != "up":
+            continue
+        if sample.latency_milliseconds is None or _parse_time(sample.created_at) < cutoff:
+            continue
+        if target is not None and sample.target != target:
+            continue
+        if in_region and (
+            not sample.target_region or sample.monitor_region != sample.target_region
+        ):
+            continue
+        rows.append(sample.latency_milliseconds)
+    return rows
 
 
 def history_payload(
@@ -177,6 +208,69 @@ def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict
     return rows
 
 
+def _rollup_window_from_rollups(
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+    seconds: int,
+) -> dict[str, Any] | None:
+    rows = _hour_rollups_in_window(rollups, now=now, seconds=seconds)
+    if not rows:
+        return None
+    return _rollup_from_rollups(rows)
+
+
+def _hour_rollups_in_window(
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+    seconds: int,
+) -> list[SyntheticRollup]:
+    cutoff = now - dt.timedelta(seconds=seconds)
+    return [
+        rollup
+        for rollup in rollups
+        if rollup.period == "hour"
+        and cutoff <= _parse_time(rollup.period_start) <= now
+    ]
+
+
+def _rollup_from_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
+    by_target_probe: dict[tuple[str, str], list[SyntheticRollup]] = defaultdict(list)
+    for rollup in rollups:
+        by_target_probe[(rollup.target, rollup.probe_type)].append(rollup)
+
+    groups = []
+    overall = "unknown"
+    total_samples = 0
+    for (target, probe_type), rows in sorted(by_target_probe.items()):
+        merged = merge_rollups(rows)
+        status_counts = _int_dict(merged["status_counts"])
+        group_status = _aggregate_status_counts(status_counts)
+        overall = _worse_status(overall, group_status)
+        total_samples += int(merged["sample_count"])
+        groups.append(
+            {
+                "target": target,
+                "probe_type": probe_type,
+                "status": group_status,
+                "uptime_percent": _uptime_percent_counts(status_counts),
+                "sample_count": int(merged["sample_count"]),
+                "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+                "p95_latency_milliseconds": merged["p95_latency_milliseconds"],
+                "p50_ttfb_milliseconds": merged["p50_ttfb_milliseconds"],
+                "p95_ttfb_milliseconds": merged["p95_ttfb_milliseconds"],
+                "last_checked_at": merged["last_checked_at"],
+            }
+        )
+
+    return {
+        "overall_status": overall if groups else "unknown",
+        "sample_count": total_samples,
+        "groups": groups,
+    }
+
+
 def _int_dict(value: Any) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
@@ -230,13 +324,26 @@ def _components(
     samples: list[SyntheticProbeSample],
     *,
     now: dt.datetime,
+    rollups: list[SyntheticRollup] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
+    precomputed_rollups = rollups or []
     for definition in COMPONENT_DEFINITIONS:
         component_id = str(definition["id"])
         component_samples = [
             sample for sample in samples if component_id in sample_component_ids(sample)
         ]
+        component_rollups = [
+            rollup for rollup in precomputed_rollups if rollup.component == component_id
+        ]
+        component_hour_rollups = [
+            rollup for rollup in component_rollups if rollup.period == "hour"
+        ]
+        day_rollups = _hour_rollups_in_window(
+            component_rollups, now=now, seconds=WINDOW_SECONDS["24h"]
+        )
+        day_rollup = merge_rollups(day_rollups) if day_rollups else None
+        day_status_counts = _int_dict(day_rollup["status_counts"]) if day_rollup else {}
         day_cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["24h"])
         five_minute_cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
         current_samples = _latest_recent_component_samples(component_samples, now=now)
@@ -261,25 +368,55 @@ def _components(
             and sample.status == "up"
             and sample.latency_milliseconds is not None
         ]
-        last_checked_at = max((sample.created_at for sample in component_samples), default=None)
+        in_region_gateway_latencies = [
+            sample.latency_milliseconds
+            for sample in five_minute_samples
+            if sample.probe_type == "tls_health"
+            and sample.status == "up"
+            and sample.latency_milliseconds is not None
+            and sample.target_region
+            and sample.monitor_region == sample.target_region
+        ]
+        primary_gateway_latencies = in_region_gateway_latencies or gateway_latencies
+        last_checked_values = [sample.created_at for sample in component_samples]
+        last_checked_values.extend(
+            rollup.last_checked_at
+            for rollup in component_rollups
+            if rollup.last_checked_at is not None
+        )
+        last_checked_at = max(last_checked_values, default=None)
         rows.append(
             {
                 **definition,
                 "status": status,
                 "status_label": _status_label(status),
                 "status_class": _status_class(status),
-                "uptime_24h_percent": _uptime_percent([sample.status for sample in day_samples])
-                if day_samples
-                else None,
-                "sample_count_24h": len(day_samples),
-                "p50_latency_milliseconds": _percentile(gateway_latencies, 50),
-                "p95_latency_milliseconds": _percentile(gateway_latencies, 95),
-                "end_to_end_p50_latency_milliseconds": _percentile(latencies, 50),
-                "end_to_end_p95_latency_milliseconds": _percentile(latencies, 95),
+                "uptime_24h_percent": _uptime_percent_counts(day_status_counts)
+                if day_rollup
+                else (_uptime_percent([sample.status for sample in day_samples]) if day_samples else None),
+                "sample_count_24h": int(day_rollup["sample_count"]) if day_rollup else len(day_samples),
+                "p50_latency_milliseconds": _percentile(primary_gateway_latencies, 50),
+                "p95_latency_milliseconds": _percentile(primary_gateway_latencies, 95),
+                "in_region_p50_latency_milliseconds": _percentile(in_region_gateway_latencies, 50),
+                "in_region_p95_latency_milliseconds": _percentile(in_region_gateway_latencies, 95),
+                "global_p50_latency_milliseconds": _percentile(gateway_latencies, 50),
+                "global_p95_latency_milliseconds": _percentile(gateway_latencies, 95),
+                "end_to_end_p50_latency_milliseconds": day_rollup["p50_latency_milliseconds"]
+                if day_rollup
+                else _percentile(latencies, 50),
+                "end_to_end_p95_latency_milliseconds": day_rollup["p95_latency_milliseconds"]
+                if day_rollup
+                else _percentile(latencies, 95),
                 "latency_breakdown_5m": _latency_breakdown(five_minute_samples),
                 "last_checked_at": last_checked_at,
-                "monitor_regions": sorted({sample.monitor_region for sample in day_samples}),
-                "history": _component_history(component_samples, now=now),
+                "monitor_regions": sorted(
+                    {rollup.monitor_region for rollup in day_rollups}
+                    if day_rollups
+                    else {sample.monitor_region for sample in day_samples}
+                ),
+                "history": _component_history_from_rollups(component_hour_rollups, now=now)
+                if component_hour_rollups
+                else _component_history(component_samples, now=now),
             }
         )
     return rows
@@ -378,16 +515,7 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
 
         statuses = [sample.status for sample in rows]
         uptime = _uptime_percent(statuses)
-        # Threshold-based, not "≥2 down" — see module-level constants.
-        if uptime >= STATUS_HISTORY_UP_MIN_UPTIME:
-            status = "up"
-        elif uptime >= STATUS_HISTORY_DEGRADED_MIN_UPTIME:
-            status = "degraded"
-        else:
-            # Distinguish trust failures from generic outages — the
-            # attestation probe maps to `trust_degraded`, which we'd
-            # rather not flatten to "down" in the bar coloring.
-            status = "trust_degraded" if any(s == "trust_degraded" for s in statuses) else "down"
+        status = _history_status(uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses))
 
         latencies = [
             sample.latency_milliseconds
@@ -416,6 +544,81 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
             }
         )
     return history
+
+
+def _component_history_from_rollups(
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+) -> list[dict[str, Any]]:
+    by_hour: dict[str, list[SyntheticRollup]] = defaultdict(list)
+    for rollup in rollups:
+        if rollup.period != "hour":
+            continue
+        by_hour[rollup.period_start[:13]].append(rollup)
+
+    base = now.replace(minute=0, second=0, microsecond=0)
+    hour_keys = [
+        (base - dt.timedelta(hours=offset)).strftime("%Y-%m-%dT%H")
+        for offset in reversed(range(STATUS_HISTORY_HOURS))
+    ]
+
+    history: list[dict[str, Any]] = []
+    for hour_key in hour_keys:
+        rows = by_hour.get(hour_key, [])
+        bucket_start = dt.datetime.strptime(hour_key, "%Y-%m-%dT%H").replace(tzinfo=dt.UTC)
+        if not rows:
+            history.append(
+                {
+                    "bucket_start": bucket_start.isoformat(),
+                    "status": "unknown",
+                    "status_label": "No data",
+                    "status_class": "unknown",
+                    "uptime_percent": None,
+                    "sample_count": 0,
+                    "p50_latency_milliseconds": None,
+                    "top_error": None,
+                    "title": _history_title_hourly(bucket_start, "unknown", None, 0, None),
+                }
+            )
+            continue
+
+        merged = merge_rollups(rows)
+        status_counts = _int_dict(merged["status_counts"])
+        uptime = _uptime_percent_counts(status_counts)
+        status = _history_status(
+            uptime,
+            has_trust_degraded=status_counts.get("trust_degraded", 0) > 0,
+        )
+        sample_count = int(merged["sample_count"])
+        top_error = merged["top_error"]
+        history.append(
+            {
+                "bucket_start": bucket_start.isoformat(),
+                "status": status,
+                "status_label": _status_label(status),
+                "status_class": _status_class(status),
+                "uptime_percent": uptime,
+                "sample_count": sample_count,
+                "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+                "top_error": top_error,
+                "title": _history_title_hourly(
+                    bucket_start, status, uptime, sample_count, top_error
+                ),
+            }
+        )
+    return history
+
+
+def _history_status(uptime: float, *, has_trust_degraded: bool) -> str:
+    # Threshold-based, not "≥2 down" — see module-level constants.
+    if uptime >= STATUS_HISTORY_UP_MIN_UPTIME:
+        return "up"
+    if uptime >= STATUS_HISTORY_DEGRADED_MIN_UPTIME:
+        return "degraded"
+    # Distinguish trust failures from generic outages — the attestation
+    # probe maps to `trust_degraded`, which we avoid flattening to "down".
+    return "trust_degraded" if has_trust_degraded else "down"
 
 
 def _recent_events(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> list[dict[str, Any]]:

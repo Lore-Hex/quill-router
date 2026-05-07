@@ -23,8 +23,11 @@
     </div>
     <div class="status-banner-metrics">
       <span>{{ snapshot.overall_status_label }}</span>
-      <strong>{% if snapshot.headline_metrics.gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>Gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+      <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
+      <small>In-region gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+      {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
+      <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
+      {% endif %}
     </div>
   </div>
 
@@ -54,7 +57,7 @@
         </div>
         <div class="component-meta">
           <span>24h uptime <strong>{{ component.uptime_24h_percent | uptime_pct(4) }}</strong></span>
-          <span>Gateway overhead p50 <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>In-region overhead p50 <strong>{% if component.in_region_p50_latency_milliseconds %}{{ component.in_region_p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
         <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">

@@ -41,6 +41,11 @@ from trusted_router.synthetic.probes import (
     responses_pong_probe,
     tls_health_probe,
 )
+from trusted_router.synthetic.rollups import (
+    apply_sample_to_rollup,
+    new_rollup_for_sample,
+    sample_rollup_ids,
+)
 from trusted_router.synthetic.status import status_snapshot
 
 
@@ -107,7 +112,7 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert history.status_code == 200
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
-    assert "Gateway overhead p50" in page.text
+    assert "In-region gateway overhead p50" in page.text
     assert "last-48-hour uptime history" in page.text
     text = status.text
     assert "reply exactly PONG" not in text
@@ -240,6 +245,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["windows"]["48h"]["sample_count"] == 4
     assert snapshot["daily"][0]["sample_count"] == 4
     assert snapshot["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 25
+    assert snapshot["headline_metrics"]["gateway_overhead_scope"] == "in_region"
     canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
     assert canonical["status"] == "down"
     assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
@@ -247,6 +253,76 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert canonical["end_to_end_p50_latency_milliseconds"] == 120
     assert len(canonical["history"]) == 48
     assert snapshot["recent_events"][0]["component"] == "Canonical API"
+
+
+def test_status_headline_prefers_in_region_gateway_overhead() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_us_in_region",
+            target="us-central1",
+            target_region="us-central1",
+            monitor_region="us-central1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=30,
+        ),
+        _sample(
+            id="syn_eu_from_us",
+            target="europe-west4",
+            target_region="europe-west4",
+            monitor_region="us-central1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=400,
+        ),
+        _sample(
+            id="syn_us_from_eu",
+            target="us-central1",
+            target_region="us-central1",
+            monitor_region="europe-west4",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=12)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=500,
+        ),
+    ]
+
+    metrics = status_snapshot(samples)["headline_metrics"]
+
+    assert metrics["gateway_overhead_scope"] == "in_region"
+    assert metrics["in_region_gateway_overhead_p50_milliseconds"] == 30
+    assert metrics["global_gateway_overhead_p50_milliseconds"] == 400
+    assert metrics["gateway_overhead_p50_milliseconds"] == 30
+
+
+def test_status_uses_hourly_rollups_for_48h_history_when_raw_samples_are_recent_only() -> None:
+    now = utcnow()
+    recent = _sample(
+        id="syn_recent",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=25,
+    )
+    old = _sample(
+        id="syn_26h",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(hours=26)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=55,
+    )
+    rollups = _rollups_for_samples([recent, old])
+
+    snapshot = status_snapshot([recent], rollups=rollups)
+
+    assert snapshot["windows"]["24h"]["sample_count"] == 1
+    assert snapshot["windows"]["48h"]["sample_count"] == 2
+    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    assert canonical["sample_count_24h"] == 1
+    assert sum(bucket["sample_count"] for bucket in canonical["history"]) == 2
 
 
 def test_status_components_group_regions_and_control_plane() -> None:
@@ -571,6 +647,24 @@ def test_gateway_monitor_model_requires_configured_monitor_key() -> None:
 
     assert denied.status_code == 403
     assert allowed.status_code == 200, allowed.text
+
+
+def _rollups_for_samples(samples: list[SyntheticProbeSample]) -> list[Any]:
+    rollups = {}
+    seen = set()
+    for sample in samples:
+        for period, component in sample_rollup_ids(sample):
+            candidate = new_rollup_for_sample(sample, period=period, component=component)
+            seen_key = (candidate.id, sample.id)
+            if seen_key in seen:
+                continue
+            seen.add(seen_key)
+            existing = rollups.get(candidate.id)
+            if existing is None:
+                rollups[candidate.id] = candidate
+            else:
+                apply_sample_to_rollup(existing, sample)
+    return list(rollups.values())
 
 
 def _sample(
