@@ -100,10 +100,13 @@ jobs:
         run: bash scripts/deploy/secrets.sh
         continue-on-error: true   # secrets are managed locally; runner has none
 
+      # Staged regional deploy. Deploy us-central1 first, gate on a
+      # 3-min single-region synthetic watch; only proceed to
+      # europe-west4 if us-central1 stays up. A bad change reaches at
+      # most one region. Final 10-min watch catches issues that
+      # surface after both regions are converged.
+
       - name: Capture pre-deploy revisions (for rollback)
-        # Cloud Run keeps every revision; we just record which one was
-        # serving 100% of traffic before this deploy so the watchdog
-        # has something to roll back TO if synthetics fail.
         id: prev
         run: |
           for region in us-central1 europe-west4; do
@@ -116,17 +119,69 @@ jobs:
             echo "  pre-deploy ${region}: ${rev:-<none>}"
           done
 
-      - name: Roll out to Cloud Run
+      - name: Deploy us-central1
         env:
           IMAGE_TAG: ${{ env.SHA }}
+          TR_DEPLOY_TARGET_REGIONS: us-central1
         run: bash scripts/deploy/rollout.sh
 
-      - name: Post-deploy watchdog (per-region synthetic monitor)
-        # Polls https://trustedrouter.com/status.json per `target_region`.
-        # If a region reads "down" for 3 consecutive minutes, that
-        # region is added to the rollback set; other healthy regions
-        # are left alone. The script writes `rollback_regions=...`
-        # (comma-separated) to $GITHUB_OUTPUT for the next step.
+      - name: Canary gate — watch us-central1 only (3 min)
+        # Single-region 3-min canary. Down × 2 in a row trips it
+        # (faster reaction than the final watch). europe-west4 hasn't
+        # received the new image yet, so the bad change is contained.
+        id: canary_us
+        continue-on-error: true
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2
+
+      - name: Rollback us-central1 + abort (canary tripped)
+        if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREV_US}" ]; then
+            echo "no prior us-central1 revision recorded; cannot rollback"
+            exit 1
+          fi
+          echo "us-central1 canary failed; rolling traffic back to ${PREV_US}"
+          gcloud run services update-traffic "${SERVICE}" \
+            --region=us-central1 --project="${PROJECT_ID}" \
+            --to-revisions="${PREV_US}=100" --quiet
+          echo "europe-west4 NEVER received the bad image; safe."
+          exit 1
+
+      - name: Deploy europe-west4
+        env:
+          IMAGE_TAG: ${{ env.SHA }}
+          TR_DEPLOY_TARGET_REGIONS: europe-west4
+        run: bash scripts/deploy/rollout.sh
+
+      - name: Canary gate — watch europe-west4 only (3 min)
+        id: canary_eu
+        continue-on-error: true
+        run: python3 scripts/deploy/watchdog.py --regions europe-west4 --duration-min 3 --rollback-after 2
+
+      - name: Rollback europe-west4 + abort (canary tripped)
+        if: ${{ steps.canary_eu.outcome == 'failure' && steps.canary_eu.outputs.rollback_regions != '' }}
+        env:
+          PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREV_EU}" ]; then
+            echo "no prior europe-west4 revision recorded; cannot rollback"
+            exit 1
+          fi
+          echo "europe-west4 canary failed; rolling traffic back to ${PREV_EU}"
+          gcloud run services update-traffic "${SERVICE}" \
+            --region=europe-west4 --project="${PROJECT_ID}" \
+            --to-revisions="${PREV_EU}=100" --quiet
+          echo "us-central1 keeps the new release."
+          exit 1
+
+      - name: Final watchdog — both regions (10 min)
+        # Catches issues that surface after both regions are
+        # converged but before the deploy is "done." Per-region:
+        # only the failing region(s) get rolled back.
         id: watchdog
         continue-on-error: true
         run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3
