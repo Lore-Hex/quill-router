@@ -92,18 +92,18 @@ resp = client.chat.completions.create(
         <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
       </div>
     </section>
-    <aside class="quill-ad" aria-label="Sponsored: Quill Feather Nano">
+    <aside class="quill-ad" aria-label="Sponsored: Quill Feather">
       <div class="quill-ad-inner">
-        <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill Feather Nano">
-          <img src="/static/quill-feather.png" alt="Quill Feather Nano — palm-sized HDMI-stick device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
+        <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill Feather">
+          <img src="/static/quill-feather.png" alt="Quill Feather — palm-sized device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
         </a>
         <div>
-          <span class="quill-ad-eyebrow">Sponsored · Quill Feather Nano</span>
-          <h2 class="quill-ad-title">Quill Feather Nano — a private agent the size of an HDMI dongle.</h2>
-          <p class="quill-ad-lead">Pocket-sized always-on appliance. Plug it in, SSH in over Tailscale, and your agent runs locally — talking to TrustedRouter for verifiable non-logging inference. First customer units shipping now.</p>
+          <span class="quill-ad-eyebrow">Sponsored · Quill Feather</span>
+          <h2 class="quill-ad-title">Quill Feather — a private agent that fits in your hand.</h2>
+          <p class="quill-ad-lead">First customer evaluation kits shipping now.</p>
         </div>
         <div class="quill-ad-cta">
-          <a class="btn" href="https://quill.lorehex.co">Get a Feather Nano →</a>
+          <a class="btn" href="https://quill.lorehex.co">Get a Feather →</a>
           <a class="pill" href="https://github.com/Lore-Hex/quill">github.com/Lore-Hex/quill</a>
         </div>
       </div>
@@ -135,11 +135,11 @@ resp = client.chat.completions.create(
         <h2>Inference, attested, in {{ map_regions|length }} regions</h2>
         <p>Decentralized low-latency routing. 99.9% router availability, higher than individual LLM endpoints.</p>
       </div>
-      <div class="regions-map-stage">
+      <div class="regions-map-stage" data-regions-stage>
         <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
           <image href="/static/world-map.svg" x="0" y="0" width="1000" height="500"/>
           {% for region in map_regions %}
-          <g class="region-marker {{ 'is-primary' if region.primary else '' }}">
+          <g class="region-marker {{ 'is-primary' if region.primary else '' }}" data-region-id="{{ region.id }}">
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '20' if region.primary else '18' }}" class="region-pulse"/>
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '10' if region.primary else '9' }}" class="region-dot"/>
             <title>{{ region.id }} — {{ region.city }}{% if region.primary %} (primary){% endif %}</title>
@@ -148,7 +148,7 @@ resp = client.chat.completions.create(
         </svg>
         <ul class="region-list">
           {% for region in map_regions %}
-          <li class="{{ 'is-primary' if region.primary else '' }}">
+          <li class="{{ 'is-primary' if region.primary else '' }}" data-region-id="{{ region.id }}" tabindex="0" role="button" aria-label="Highlight region {{ region.id }}, {{ region.city }}">
             <span class="region-list-id">{{ region.id }}</span>
             <span class="region-list-city">{{ region.city }}</span>
             {% if region.primary %}<span class="pill good">primary</span>{% endif %}

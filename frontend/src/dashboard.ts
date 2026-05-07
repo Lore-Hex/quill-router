@@ -130,10 +130,46 @@ function init(): void {
       event.preventDefault();
       void startMetaMaskSignin();
     }
+    const regionLi = target.closest(".region-list li[data-region-id]") as HTMLElement | null;
+    if (regionLi && regionLi.dataset.regionId) {
+      selectRegion(regionLi.dataset.regionId);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target as HTMLElement | null;
+    const regionLi = target && target.closest
+      ? (target.closest(".region-list li[data-region-id]") as HTMLElement | null)
+      : null;
+    if (regionLi && regionLi.dataset.regionId) {
+      event.preventDefault();
+      selectRegion(regionLi.dataset.regionId);
+    }
   });
 
   if (location.search.includes("reason=signin")) {
     openSigninModal();
+  }
+}
+
+// Highlight a region: clears any previous selection on both list +
+// SVG markers, then sets `is-selected` on the matching pair. Clicking
+// the same region a second time toggles it off so the list returns to
+// neutral.
+function selectRegion(id: string): void {
+  const stage = document.querySelector("[data-regions-stage]");
+  if (!stage) return;
+  const li = stage.querySelector(`.region-list li[data-region-id="${id}"]`);
+  const marker = stage.querySelector(`.region-marker[data-region-id="${id}"]`);
+  if (!li || !marker) return;
+  const wasSelected = li.classList.contains("is-selected");
+  stage.querySelectorAll(".region-list li.is-selected, .region-marker.is-selected").forEach(
+    (el) => el.classList.remove("is-selected"),
+  );
+  if (!wasSelected) {
+    li.classList.add("is-selected");
+    marker.classList.add("is-selected");
   }
 }
 

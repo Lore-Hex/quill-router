@@ -363,18 +363,26 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .regions-map-head p { margin:0; color:#b8c6d2; font-size:14px; line-height:1.55; }
 .regions-map-stage { position:relative; display:grid; grid-template-columns:minmax(0,1.65fr) minmax(220px,.95fr); gap:26px; align-items:center; }
 .regions-map-svg { width:100%; height:auto; display:block; }
-.region-marker .region-dot { fill:#19a06d; stroke:#0a1726; stroke-width:2; }
+.region-marker .region-dot { fill:#19a06d; stroke:#0a1726; stroke-width:2; transition:transform 220ms ease; transform-origin:center; transform-box:fill-box; }
 .region-marker.is-primary .region-dot { fill:#7be0b1; }
-.region-marker .region-pulse { fill:#19a06d; opacity:.18; transform-origin:center; animation:tr-region-pulse 2.6s ease-out infinite; }
+.region-marker .region-pulse { fill:#19a06d; opacity:.18; transform-origin:center; transform-box:fill-box; animation:tr-region-pulse 2.6s ease-out infinite; }
 .region-marker.is-primary .region-pulse { fill:#7be0b1; animation-duration:2s; }
+/* Selected state — driven by clicking the region's list entry. The
+ * marker grows substantially, the pulse becomes brighter + faster, and
+ * a halo ring fades in. Resets when a different region is clicked. */
+.region-marker.is-selected .region-dot { fill:#7be0b1; transform:scale(1.6); filter:drop-shadow(0 0 6px rgba(123,224,177,.9)); }
+.region-marker.is-selected .region-pulse { fill:#7be0b1; opacity:.32; animation-duration:1.4s; }
 
 @keyframes tr-region-pulse {
   0% { transform:scale(.6); opacity:.5; }
   100% { transform:scale(1.45); opacity:0; }
 }
 .region-list { list-style:none; margin:0; padding:0; display:grid; gap:6px; max-height:340px; overflow:auto; }
-.region-list li { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:baseline; padding:8px 10px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:6px; font-size:13px; }
+.region-list li { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:baseline; padding:8px 10px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.06); border-radius:6px; font-size:13px; cursor:pointer; transition:background 160ms ease, border-color 160ms ease; }
+.region-list li:hover { background:rgba(255,255,255,.08); }
+.region-list li:focus-visible { outline:2px solid #7be0b1; outline-offset:2px; }
 .region-list li.is-primary { border-color:rgba(123,224,177,.32); background:rgba(25,160,109,.09); }
+.region-list li.is-selected { border-color:#7be0b1; background:rgba(123,224,177,.18); box-shadow:0 0 0 1px rgba(123,224,177,.45) inset, 0 8px 22px rgba(123,224,177,.18); }
 .region-list-id { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:#7be0b1; font-size:12px; }
 .region-list-city { color:#cad8e5; }
 .region-list .pill { background:rgba(123,224,177,.12); color:#7be0b1; border-color:rgba(123,224,177,.32); }
