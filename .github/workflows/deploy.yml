@@ -119,11 +119,28 @@ jobs:
             echo "  pre-deploy ${region}: ${rev:-<none>}"
           done
 
-      - name: Deploy us-central1
+      - name: Deploy us-central1 (no-traffic)
         env:
           IMAGE_TAG: ${{ env.SHA }}
           TR_DEPLOY_TARGET_REGIONS: us-central1
+          TR_DEPLOY_NO_TRAFFIC: "1"
         run: bash scripts/deploy/rollout.sh
+
+      - name: Resolve us-central1 new revision
+        id: new_us
+        run: |
+          rev=$(gcloud run services describe "${SERVICE}" \
+            --region=us-central1 --project="${PROJECT_ID}" \
+            --format='value(status.latestCreatedRevisionName)')
+          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
+          echo "  new us-central1 revision: ${rev}"
+
+      - name: Stage traffic 10/50/100 (us-central1)
+        # Ramps the new revision from 10% → 50% → 100% with a 1-min
+        # synthetic watch between stages. On any watch trip, traffic
+        # is reverted to 100% on the old revision and the workflow
+        # fails before ever shipping anything to europe-west4.
+        run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.new_us.outputs.revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
 
       - name: Canary gate — watch us-central1 only (3 min)
         # Single-region 3-min canary. Down × 2 in a row trips it
@@ -150,11 +167,24 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Deploy europe-west4
+      - name: Deploy europe-west4 (no-traffic)
         env:
           IMAGE_TAG: ${{ env.SHA }}
           TR_DEPLOY_TARGET_REGIONS: europe-west4
+          TR_DEPLOY_NO_TRAFFIC: "1"
         run: bash scripts/deploy/rollout.sh
+
+      - name: Resolve europe-west4 new revision
+        id: new_eu
+        run: |
+          rev=$(gcloud run services describe "${SERVICE}" \
+            --region=europe-west4 --project="${PROJECT_ID}" \
+            --format='value(status.latestCreatedRevisionName)')
+          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
+          echo "  new europe-west4 revision: ${rev}"
+
+      - name: Stage traffic 10/50/100 (europe-west4)
+        run: bash scripts/deploy/staged_traffic.sh europe-west4 "${{ steps.new_eu.outputs.revision }}" "${{ steps.prev.outputs.europe_west4_revision }}"
 
       - name: Canary gate — watch europe-west4 only (3 min)
         id: canary_eu

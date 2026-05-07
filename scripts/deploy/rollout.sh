@@ -95,7 +95,19 @@ SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
-  log "deploying Cloud Run service ${SERVICE} to ${target}"
+  # When TR_DEPLOY_NO_TRAFFIC=1 is set (the staged-traffic flow in the
+  # GHA workflow), the new revision is created with 0% traffic. The
+  # workflow then ramps it up via `gcloud run services update-traffic`
+  # in 10% / 50% / 100% stages with synthetic checks between, so a bug
+  # that breaks the new revision under real load is caught while most
+  # traffic is still on the old revision.
+  local traffic_arg=""
+  if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" = "1" ]; then
+    traffic_arg="--no-traffic"
+    log "deploying Cloud Run service ${SERVICE} to ${target} with --no-traffic (staged shift to follow)"
+  else
+    log "deploying Cloud Run service ${SERVICE} to ${target}"
+  fi
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
@@ -103,6 +115,7 @@ deploy_one_region() {
       --port 8080 \
       --set-env-vars "$SET_ENV_VARS" \
       --update-secrets "$UPDATE_SECRETS" \
+      ${traffic_arg} \
       --quiet >>"$logfile" 2>&1; then
     log "deploy succeeded: ${target}"
     return 0
