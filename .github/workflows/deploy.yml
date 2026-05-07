@@ -67,12 +67,31 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Build image via Cloud Build
+        # --async + poll instead of streaming logs. Streaming requires
+        # project Viewer/Owner perms that we don't want to grant the
+        # deploy SA (broader than needed). Async returns the build ID
+        # which we then watch via `gcloud builds describe`.
         run: |
-          gcloud builds submit \
+          set -euo pipefail
+          BUILD_ID=$(gcloud builds submit \
             --tag "${IMAGE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            .
+            --async \
+            --format='value(id)' \
+            .)
+          echo "build id: ${BUILD_ID}"
+          while true; do
+            STATUS=$(gcloud builds describe "${BUILD_ID}" \
+              --project="${PROJECT_ID}" --region="${REGION}" \
+              --format='value(status)')
+            echo "  status: ${STATUS}"
+            case "${STATUS}" in
+              SUCCESS) break ;;
+              FAILURE|TIMEOUT|CANCELLED|EXPIRED) echo "build ${STATUS}"; exit 1 ;;
+            esac
+            sleep 5
+          done
 
       - name: Push secrets to Secret Manager
         # secrets.sh is idempotent — only uploads when the local key file
