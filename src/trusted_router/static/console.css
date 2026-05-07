@@ -180,6 +180,13 @@ body.console {
   gap: 18px;
 }
 
+.secret-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
 .signup-reveal code {
   display: block;
   padding: 10px 12px;
@@ -188,6 +195,22 @@ body.console {
   border-radius: 7px;
   font-size: 13px;
   word-break: break-all;
+}
+
+.secret-copy-btn {
+  min-width: 76px;
+  justify-content: center;
+}
+
+.copy-status {
+  min-height: 18px;
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.copy-status.error {
+  color: #a04400;
 }
 
 .warning-note {
@@ -224,5 +247,8 @@ body.console {
   }
   .workspace-selector label {
     flex: 1 1 auto;
+  }
+  .secret-row {
+    grid-template-columns: 1fr;
   }
 }

@@ -603,7 +603,11 @@ def test_console_create_api_key_form_shows_raw_key_once(
 
     assert resp.status_code == 200
     assert "console-created" in resp.text
-    assert "sk-tr-v1-" in resp.text
+    match = re.search(r"sk-tr-v1-[A-Za-z0-9_-]+", resp.text)
+    assert match is not None
+    assert resp.text.count(match.group(0)) == 1
+    assert 'data-copy-secret="created-api-key"' in resp.text
+    assert "Copied to clipboard." not in resp.text
     workspace_id = next(iter(STORE.workspaces))
     keys = STORE.list_keys(workspace_id)
     assert len(keys) == 1
