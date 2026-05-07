@@ -9,9 +9,10 @@
     "kimi",
     "mistral",
     "openai",
+    "together",
     "zai"
   ],
-  "model_count": 132,
+  "model_count": 150,
   "models": [
     {
       "id": "anthropic/claude-haiku-4.5",
@@ -79,7 +80,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94313064173619,
+          "uptime_last_1d": 99.90079602227905,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -149,7 +150,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.93714644877436,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -290,9 +291,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.94536514296121,
-          "uptime_last_5m": 99.88095238095238,
-          "uptime_last_1d": 97.15034001102738,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.972933695883,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -327,9 +328,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.80396056482087,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.3421052631579,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -399,9 +400,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91423670668954,
+          "uptime_last_30m": 99.92717739586368,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.92060091245935,
+          "uptime_last_1d": 99.90893115965265,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -438,8 +439,8 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.35679152478244,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.32215483410631,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -579,9 +580,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.96210685865859,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9504652726179,
+          "uptime_last_1d": 99.83873001799957,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -615,9 +616,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.52978056426332,
-          "uptime_last_5m": 98.64864864864865,
-          "uptime_last_1d": 99.93956385246865,
+          "uptime_last_30m": 99.87397605545053,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.81210028864112,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -687,7 +688,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99863643181477,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -758,9 +759,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.86168741355463,
-          "uptime_last_5m": 99.03846153846155,
-          "uptime_last_1d": 99.8330550918197,
+          "uptime_last_30m": 99.76771196283391,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.7959250310194,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -798,7 +799,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91308126901347,
+          "uptime_last_1d": 99.95511445813176,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         }
@@ -868,9 +869,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95095635115253,
-          "uptime_last_5m": 99.91902834008097,
-          "uptime_last_1d": 99.96147695560444,
+          "uptime_last_30m": 99.98438719750196,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.96187571483036,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
         },
@@ -906,11 +907,473 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.82431096958383,
+          "uptime_last_30m": 99.90627928772258,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90216356257613,
+          "uptime_last_1d": 99.4152107580428,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic"
+        }
+      ]
+    },
+    {
+      "id": "arcee-ai/coder-large",
+      "name": "Arcee AI: Coder Large",
+      "created": 1746478663,
+      "description": "Coder‑Large is a 32 B‑parameter offspring of Qwen 2.5‑Instruct that has been further trained on permissively‑licensed GitHub, CodeSearchNet and synthetic bug‑fix corpora. It supports a 32k context window, enabling multi‑file...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000005",
+        "completion": "0.0000008"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | arcee-ai/coder-large",
+          "model_id": "arcee-ai/coder-large",
+          "model_name": "Arcee AI: Coder Large",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000008",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "arcee-ai/maestro-reasoning",
+      "name": "Arcee AI: Maestro Reasoning",
+      "created": 1746481269,
+      "description": "Maestro Reasoning is Arcee's flagship analysis model: a 32 B‑parameter derivative of Qwen 2.5‑32 B tuned with DPO and chain‑of‑thought RL for step‑by‑step logic. Compared to the earlier 7 B...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000009",
+        "completion": "0.0000033"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | arcee-ai/maestro-reasoning",
+          "model_id": "arcee-ai/maestro-reasoning",
+          "model_name": "Arcee AI: Maestro Reasoning",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000009",
+            "completion": "0.0000033",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 32000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "arcee-ai/spotlight",
+      "name": "Arcee AI: Spotlight",
+      "created": 1746481552,
+      "description": "Spotlight is a 7‑billion‑parameter vision‑language model derived from Qwen 2.5‑VL and fine‑tuned by Arcee AI for tight image‑text grounding tasks. It offers a 32 k‑token context window, enabling rich multimodal...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000018",
+        "completion": "0.00000018"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 65537,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | arcee-ai/spotlight",
+          "model_id": "arcee-ai/spotlight",
+          "model_name": "Arcee AI: Spotlight",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000018",
+            "completion": "0.00000018",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65537,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "arcee-ai/virtuoso-large",
+      "name": "Arcee AI: Virtuoso Large",
+      "created": 1746478885,
+      "description": "Virtuoso‑Large is Arcee's top‑tier general‑purpose LLM at 72 B parameters, tuned to tackle cross‑domain reasoning, creative writing and enterprise QA. Unlike many 70 B peers, it retains the 128 k...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000075",
+        "completion": "0.0000012"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 64000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | arcee-ai/virtuoso-large",
+          "model_id": "arcee-ai/virtuoso-large",
+          "model_name": "Arcee AI: Virtuoso Large",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000075",
+            "completion": "0.0000012",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 64000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "deepcogito/cogito-v2.1-671b",
+      "name": "Deep Cogito: Cogito v2.1 671B",
+      "created": 1763071233,
+      "description": "Cogito v2.1 671B MoE represents one of the strongest open models globally, matching performance of frontier closed and open models. This model is trained using self play with reinforcement learning...",
+      "context_length": 128000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.00000125"
+      },
+      "top_provider": {
+        "context_length": 128000,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | deepcogito/cogito-v2.1-671b-20251118",
+          "model_id": "deepcogito/cogito-v2.1-671b",
+          "model_name": "Deep Cogito: Cogito v2.1 671B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 128000,
+          "pricing": {
+            "prompt": "0.00000125",
+            "completion": "0.00000125",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-chat-v3.1",
+      "name": "DeepSeek: DeepSeek V3.1",
+      "created": 1755779628,
+      "description": "DeepSeek-V3.1 is a large hybrid reasoning model (671B parameters, 37B active) that supports both thinking and non-thinking modes via prompt templates. It extends the DeepSeek-V3 base with a two-phase long-context...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": "deepseek-v3.1"
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.00000075"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": 7168,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | deepseek/deepseek-chat-v3.1",
+          "model_id": "deepseek/deepseek-chat-v3.1",
+          "model_name": "DeepSeek: DeepSeek V3.1",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000017",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.94520547945206,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.9379114495934,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-r1-0528",
+      "name": "DeepSeek: R1 0528",
+      "created": 1748455170,
+      "description": "May 28th update to the [original DeepSeek R1](/deepseek/deepseek-r1) Performance on par with [OpenAI o1](/openai/o1), but open-sourced and with fully open reasoning tokens. It's 671B parameters in size, with 37B active...",
+      "context_length": 163840,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": "deepseek-r1"
+      },
+      "pricing": {
+        "prompt": "0.0000005",
+        "completion": "0.00000215",
+        "input_cache_read": "0.00000035"
+      },
+      "top_provider": {
+        "context_length": 163840,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | deepseek/deepseek-r1-0528",
+          "model_id": "deepseek/deepseek-r1-0528",
+          "model_name": "DeepSeek: R1 0528",
+          "provider_name": "Together",
+          "tag": "together/fp8",
+          "context_length": 163840,
+          "pricing": {
+            "prompt": "0.000003",
+            "completion": "0.000007",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.5047052996533,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -975,9 +1438,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99606616706988,
+          "uptime_last_30m": 99.99361708917989,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99551247782021,
+          "uptime_last_1d": 99.70360810877833,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek"
         }
@@ -1044,11 +1507,120 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98350107243029,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9892085832355,
+          "uptime_last_30m": 99.98614446702383,
+          "uptime_last_5m": 99.9828414550446,
+          "uptime_last_1d": 99.97276559386692,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek"
+        },
+        {
+          "name": "Together | deepseek/deepseek-v4-pro-20260423",
+          "model_id": "deepseek/deepseek-v4-pro",
+          "model_name": "DeepSeek: DeepSeek V4 Pro",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 512000,
+          "pricing": {
+            "prompt": "0.0000021",
+            "completion": "0.0000044",
+            "input_cache_read": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.6947063089195,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 95.90972268184525,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "essentialai/rnj-1-instruct",
+      "name": "EssentialAI: Rnj 1 Instruct",
+      "created": 1765094847,
+      "description": "Rnj-1 is an 8B-parameter, dense, open-weight model family developed by Essential AI and trained from scratch with a focus on programming, math, and scientific reasoning. The model demonstrates strong performance...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.00000015"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | essentialai/rnj-1-instruct",
+          "model_id": "essentialai/rnj-1-instruct",
+          "model_name": "EssentialAI: Rnj 1 Instruct",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.00000015",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "structured_outputs",
+            "response_format",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -1124,9 +1696,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.28862474955538,
-          "uptime_last_5m": 99.73293273243198,
-          "uptime_last_1d": 99.718913341168,
+          "uptime_last_30m": 99.90228316168259,
+          "uptime_last_5m": 99.94909646220412,
+          "uptime_last_1d": 99.69980033420842,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1199,9 +1771,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.6824034334764,
-          "uptime_last_5m": 98.17351598173516,
-          "uptime_last_1d": 96.04961685332786,
+          "uptime_last_30m": 99.79879275653923,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.84393695052802,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1281,9 +1853,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91611864179305,
-          "uptime_last_5m": 99.84499328304226,
-          "uptime_last_1d": 99.8876104599456,
+          "uptime_last_30m": 99.64021663066298,
+          "uptime_last_5m": 99.72961509914113,
+          "uptime_last_1d": 99.77847697637998,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1360,7 +1932,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97150726564726,
+          "uptime_last_1d": 99.96693668374938,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1440,9 +2012,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.41211052322163,
-          "uptime_last_5m": 99.15254237288136,
-          "uptime_last_1d": 99.77206806694079,
+          "uptime_last_30m": 99.93370204302389,
+          "uptime_last_5m": 99.87457240592931,
+          "uptime_last_1d": 99.79300442707296,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1522,9 +2094,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.58823529411765,
-          "uptime_last_5m": 95.45454545454545,
-          "uptime_last_1d": 97.88212993279338,
+          "uptime_last_30m": 94.54094292803971,
+          "uptime_last_5m": 95.74468085106383,
+          "uptime_last_1d": 94.25261996690568,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1603,9 +2175,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.58823529411765,
-          "uptime_last_5m": 95.45454545454545,
-          "uptime_last_1d": 97.88212993279338,
+          "uptime_last_30m": 94.54094292803971,
+          "uptime_last_5m": 95.74468085106383,
+          "uptime_last_1d": 94.25261996690568,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1685,9 +2257,9 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.58823529411765,
-          "uptime_last_5m": 95.45454545454545,
-          "uptime_last_1d": 97.88212993279338,
+          "uptime_last_30m": 94.54094292803971,
+          "uptime_last_5m": 95.74468085106383,
+          "uptime_last_1d": 94.25261996690568,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1767,9 +2339,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89629108806469,
-          "uptime_last_5m": 99.85891035380942,
-          "uptime_last_1d": 99.77686310458435,
+          "uptime_last_30m": 99.7797043774872,
+          "uptime_last_5m": 99.88139084836757,
+          "uptime_last_1d": 99.76152580921178,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini"
         }
@@ -1816,7 +2388,7 @@
           "model_id": "google/gemini-3-pro-image-preview",
           "model_name": "Google: Nano Banana Pro (Gemini 3 Pro Image Preview)",
           "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
+          "tag": "google-ai-studio/global",
           "context_length": 65536,
           "pricing": {
             "prompt": "0.000002",
@@ -1846,9 +2418,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.92044550517105,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.58670922334069,
+          "uptime_last_1d": 99.69540481400438,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -1914,10 +2486,92 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.759941089838,
-          "uptime_last_5m": 96.51741293532339,
-          "uptime_last_1d": 98.99759896086175,
+          "uptime_last_30m": 98.8458927359131,
+          "uptime_last_5m": 97.8902953586498,
+          "uptime_last_1d": 99.60550332672568,
           "supports_implicit_caching": false,
+          "tr_provider_slug": "gemini"
+        }
+      ]
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite",
+      "name": "Google: Gemini 3.1 Flash Lite",
+      "created": 1778168828,
+      "description": "Gemini 3.1 Flash Lite is Google’s GA high-efficiency multimodal model optimized for low-latency, high-volume workloads. It supports text, image, video, audio, and PDF inputs, and is designed for lightweight agentic...",
+      "context_length": 1048576,
+      "architecture": {
+        "modality": "text+image+file+audio+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video",
+          "file",
+          "audio"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemini",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000025",
+        "completion": "0.0000015",
+        "image": "0.00000025",
+        "audio": "0.0000005",
+        "web_search": "0.014",
+        "internal_reasoning": "0.0000015",
+        "input_cache_read": "0.000000025",
+        "input_cache_write": "0.00000008333333333333334"
+      },
+      "top_provider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Google AI Studio | google/gemini-3.1-flash-lite-20260507",
+          "model_id": "google/gemini-3.1-flash-lite",
+          "model_name": "Google: Gemini 3.1 Flash Lite",
+          "provider_name": "Google AI Studio",
+          "tag": "google-ai-studio",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000025",
+            "completion": "0.0000015",
+            "image": "0.00000025",
+            "audio": "0.0000005",
+            "input_audio_cache": "0.00000005",
+            "web_search": "0.014",
+            "internal_reasoning": "0.0000015",
+            "input_cache_read": "0.000000025",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "stop",
+            "structured_outputs",
+            "tool_choice",
+            "tools"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.64936886395512,
+          "uptime_last_5m": 99.43019943019942,
+          "uptime_last_1d": 99.6778350515464,
+          "supports_implicit_caching": true,
           "tr_provider_slug": "gemini"
         }
       ]
@@ -1996,9 +2650,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.43722350546138,
-          "uptime_last_5m": 99.40722445199135,
-          "uptime_last_1d": 99.34105766671314,
+          "uptime_last_30m": 99.22544186368172,
+          "uptime_last_5m": 99.22612801678909,
+          "uptime_last_1d": 99.30886464063487,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini"
         }
@@ -2078,9 +2732,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.8299801643525,
-          "uptime_last_5m": 99.41520467836257,
-          "uptime_last_1d": 97.88978869961835,
+          "uptime_last_30m": 97.36695716669757,
+          "uptime_last_5m": 98.49812265331664,
+          "uptime_last_1d": 97.84435712726479,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2162,259 +2816,18 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.98871045129971,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
       ]
     },
     {
-      "id": "google/gemma-3-12b-it:free",
-      "name": "Google: Gemma 3 12B (free)",
-      "created": 1741902625,
-      "description": "Gemma 3 introduces multimodality, supporting vision-language input and text outputs. It handles context windows up to 128k tokens, understands over 140 languages, and offers improved math, reasoning, and chat capabilities,...",
-      "context_length": 32768,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Gemini",
-        "instruct_type": "gemma"
-      },
-      "pricing": {
-        "prompt": "0",
-        "completion": "0"
-      },
-      "top_provider": {
-        "context_length": 32768,
-        "max_completion_tokens": 8192,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google AI Studio | google/gemma-3-12b-it:free",
-          "model_id": "google/gemma-3-12b-it:free",
-          "model_name": "Google: Gemma 3 12B",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
-          "context_length": 32768,
-          "pricing": {
-            "prompt": "0",
-            "completion": "0",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.80376313055524,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemma-3-27b-it:free",
-      "name": "Google: Gemma 3 27B (free)",
-      "created": 1741756359,
-      "description": "Gemma 3 introduces multimodality, supporting vision-language input and text outputs. It handles context windows up to 128k tokens, understands over 140 languages, and offers improved math, reasoning, and chat capabilities,...",
-      "context_length": 131072,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Gemini",
-        "instruct_type": "gemma"
-      },
-      "pricing": {
-        "prompt": "0",
-        "completion": "0"
-      },
-      "top_provider": {
-        "context_length": 131072,
-        "max_completion_tokens": 8192,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google AI Studio | google/gemma-3-27b-it:free",
-          "model_id": "google/gemma-3-27b-it:free",
-          "model_name": "Google: Gemma 3 27B",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
-          "context_length": 131072,
-          "pricing": {
-            "prompt": "0",
-            "completion": "0",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97446047758906,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemma-3-4b-it:free",
-      "name": "Google: Gemma 3 4B (free)",
-      "created": 1741905510,
-      "description": "Gemma 3 introduces multimodality, supporting vision-language input and text outputs. It handles context windows up to 128k tokens, understands over 140 languages, and offers improved math, reasoning, and chat capabilities,...",
-      "context_length": 32768,
-      "architecture": {
-        "modality": "text+image->text",
-        "input_modalities": [
-          "text",
-          "image"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Gemini",
-        "instruct_type": "gemma"
-      },
-      "pricing": {
-        "prompt": "0",
-        "completion": "0"
-      },
-      "top_provider": {
-        "context_length": 32768,
-        "max_completion_tokens": 8192,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google AI Studio | google/gemma-3-4b-it:free",
-          "model_id": "google/gemma-3-4b-it:free",
-          "model_name": "Google: Gemma 3 4B",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
-          "context_length": 32768,
-          "pricing": {
-            "prompt": "0",
-            "completion": "0",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 8192,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94347088750708,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemma-3n-e2b-it:free",
-      "name": "Google: Gemma 3n 2B (free)",
-      "created": 1752074904,
-      "description": "Gemma 3n E2B IT is a multimodal, instruction-tuned model developed by Google DeepMind, designed to operate efficiently at an effective parameter size of 2B while leveraging a 6B architecture. Based...",
-      "context_length": 8192,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0",
-        "completion": "0"
-      },
-      "top_provider": {
-        "context_length": 8192,
-        "max_completion_tokens": 2048,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Google AI Studio | google/gemma-3n-e2b-it:free",
-          "model_id": "google/gemma-3n-e2b-it:free",
-          "model_name": "Google: Gemma 3n 2B",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
-          "context_length": 8192,
-          "pricing": {
-            "prompt": "0",
-            "completion": "0",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 2048,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.21259842519686,
-          "uptime_last_5m": 97.91666666666666,
-          "uptime_last_1d": 99.95761813943632,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
-        }
-      ]
-    },
-    {
-      "id": "google/gemma-3n-e4b-it:free",
-      "name": "Google: Gemma 3n 4B (free)",
+      "id": "google/gemma-3n-e4b-it",
+      "name": "Google: Gemma 3n 4B",
       "created": 1747776824,
       "description": "Gemma 3n E4B-it is optimized for efficient execution on mobile and low-resource devices, such as phones, laptops, and tablets. It supports multimodal inputs—including text, visual data, and audio—enabling diverse tasks...",
-      "context_length": 8192,
+      "context_length": 32768,
       "architecture": {
         "modality": "text->text",
         "input_modalities": [
@@ -2427,44 +2840,49 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0",
-        "completion": "0"
+        "prompt": "0.00000006",
+        "completion": "0.00000012"
       },
       "top_provider": {
-        "context_length": 8192,
-        "max_completion_tokens": 2048,
+        "context_length": 32768,
+        "max_completion_tokens": null,
         "is_moderated": false
       },
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google AI Studio | google/gemma-3n-e4b-it:free",
-          "model_id": "google/gemma-3n-e4b-it:free",
+          "name": "Together | google/gemma-3n-e4b-it",
+          "model_id": "google/gemma-3n-e4b-it",
           "model_name": "Google: Gemma 3n 4B",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio",
-          "context_length": 8192,
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 32768,
           "pricing": {
-            "prompt": "0",
-            "completion": "0",
+            "prompt": "0.00000006",
+            "completion": "0.00000012",
             "discount": 0
           },
           "quantization": "unknown",
-          "max_completion_tokens": 2048,
+          "max_completion_tokens": null,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "max_tokens",
             "temperature",
             "top_p",
-            "seed",
-            "response_format"
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 99.9938446386803,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.88914890996428,
+          "uptime_last_1d": 99.98945459147087,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -2527,9 +2945,81 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91299303944315,
+          "uptime_last_1d": 99.88925036339724,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
+        }
+      ]
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "name": "Google: Gemma 4 31B",
+      "created": 1775148486,
+      "description": "Gemma 4 31B Instruct is Google DeepMind's 30.7B dense multimodal model supporting text and image input with text output. Features a 256K token context window, configurable thinking/reasoning mode, native function...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "image",
+          "text",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemma",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000013",
+        "completion": "0.00000038"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | google/gemma-4-31b-it-20260402",
+          "model_id": "google/gemma-4-31b-it",
+          "model_name": "Google: Gemma 4 31B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000005",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "structured_outputs",
+            "response_format",
+            "tool_choice",
+            "tools"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.99357003075202,
+          "uptime_last_5m": 99.4475138121547,
+          "uptime_last_1d": 97.28245656873665,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -2592,7 +3082,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93432574430823,
+          "uptime_last_1d": 99.93137524018665,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
         }
@@ -2714,9 +3204,137 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 96.3855421686747,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini"
+        }
+      ]
+    },
+    {
+      "id": "liquid/lfm-2-24b-a2b",
+      "name": "LiquidAI: LFM2-24B-A2B",
+      "created": 1772048711,
+      "description": "LFM2-24B-A2B is the largest model in the LFM2 family of hybrid architectures designed for efficient on-device deployment. Built as a 24B parameter Mixture-of-Experts model with only 2B active parameters per...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000003",
+        "completion": "0.00000012"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | liquid/lfm-2-24b-a2b-20260224",
+          "model_id": "liquid/lfm-2-24b-a2b",
+          "model_name": "LiquidAI: LFM2-24B-A2B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.00000003",
+            "completion": "0.00000012",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3-8b-instruct",
+      "name": "Meta: Llama 3 8B Instruct",
+      "created": 1713398400,
+      "description": "Meta's latest class of model (Llama 3) launched with a variety of sizes & flavors. This 8B instruct-tuned version was optimized for high quality dialogue usecases. It has demonstrated strong...",
+      "context_length": 8192,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "llama3"
+      },
+      "pricing": {
+        "prompt": "0.00000004",
+        "completion": "0.00000004"
+      },
+      "top_provider": {
+        "context_length": 8192,
+        "max_completion_tokens": 8192,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | meta-llama/llama-3-8b-instruct",
+          "model_id": "meta-llama/llama-3-8b-instruct",
+          "model_name": "Meta: Llama 3 8B Instruct",
+          "provider_name": "Together",
+          "tag": "together/int4",
+          "context_length": 8192,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000001",
+            "discount": 0
+          },
+          "quantization": "int4",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.0084985835694,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.3512702650629,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -2781,11 +3399,216 @@
             "logit_bias"
           ],
           "status": -5,
-          "uptime_last_30m": 6.946264744429882,
-          "uptime_last_5m": 7.563025210084033,
-          "uptime_last_1d": 14.003379243254313,
+          "uptime_last_30m": 22.164048865619545,
+          "uptime_last_5m": 22.07792207792208,
+          "uptime_last_1d": 15.657981530343006,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
+        }
+      ]
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "name": "Meta: Llama 3.3 70B Instruct",
+      "created": 1733506137,
+      "description": "The Meta Llama 3.3 multilingual large language model (LLM) is a pretrained and instruction tuned generative model in 70B (text in/text out). The Llama 3.3 instruction tuned text only model...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "llama3"
+      },
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.00000032"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | meta-llama/llama-3.3-70b-instruct",
+          "model_id": "meta-llama/llama-3.3-70b-instruct",
+          "model_name": "Meta: Llama 3.3 70B Instruct",
+          "provider_name": "Together",
+          "tag": "together/fp8",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000088",
+            "completion": "0.00000088",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 2048,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.87640449438202,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.76811131678049,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "meta-llama/llama-guard-4-12b",
+      "name": "Meta: Llama Guard 4 12B",
+      "created": 1745975193,
+      "description": "Llama Guard 4 is a Llama 4 Scout-derived multimodal pretrained model, fine-tuned for content safety classification. Similar to previous versions, it can be used to classify content in both LLM...",
+      "context_length": 163840,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000018",
+        "completion": "0.00000018"
+      },
+      "top_provider": {
+        "context_length": 163840,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | meta-llama/llama-guard-4-12b",
+          "model_id": "meta-llama/llama-guard-4-12b",
+          "model_name": "Meta: Llama Guard 4 12B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.97921862011637,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.98478968279575,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "minimax/minimax-m2.7",
+      "name": "MiniMax: MiniMax M2.7",
+      "created": 1773836697,
+      "description": "MiniMax-M2.7 is a next-generation large language model designed for autonomous, real-world productivity and continuous improvement. Built to actively participate in its own evolution, M2.7 integrates advanced agentic capabilities through multi-agent...",
+      "context_length": 196608,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+        "input_cache_read": "0.000000059"
+      },
+      "top_provider": {
+        "context_length": 196608,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | minimax/minimax-m2.7-20260318",
+          "model_id": "minimax/minimax-m2.7",
+          "model_name": "MiniMax: MiniMax M2.7",
+          "provider_name": "Together",
+          "tag": "together/fp4",
+          "context_length": 196608,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.00000006",
+            "discount": 0
+          },
+          "quantization": "fp4",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.89853262566344,
+          "uptime_last_5m": 99.94511525795828,
+          "uptime_last_1d": 99.25276759473061,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -2848,9 +3671,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.97242140099283,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.83446631941379,
+          "uptime_last_1d": 99.94840812908436,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -2915,9 +3738,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.87063389391979,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90198397945043,
+          "uptime_last_1d": 99.98046111762407,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -2984,7 +3807,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.55334987593052,
+          "uptime_last_1d": 99.16222391469917,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3049,9 +3872,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99080848560608,
+          "uptime_last_30m": 99.69775474956822,
+          "uptime_last_5m": 99.08466819221968,
+          "uptime_last_1d": 99.17741264559068,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3117,9 +3940,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.02702702702703,
-          "uptime_last_5m": 98.24281150159744,
-          "uptime_last_1d": 99.50036039578009,
+          "uptime_last_30m": 99.89640526261266,
+          "uptime_last_5m": 99.62476547842401,
+          "uptime_last_1d": 96.06865366738205,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3185,9 +4008,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95491687799381,
-          "uptime_last_5m": 99.96527777777777,
-          "uptime_last_1d": 99.80270940001209,
+          "uptime_last_30m": 99.98100845123919,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.87407243066238,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3253,9 +4076,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.8720682302772,
-          "uptime_last_5m": 99.86807387862797,
-          "uptime_last_1d": 99.80097571792882,
+          "uptime_last_30m": 99.39777833250125,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.40171433570532,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3322,7 +4145,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96252074744338,
+          "uptime_last_1d": 99.99011760055342,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3456,7 +4279,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98731028881782,
+          "uptime_last_1d": 99.98180258403306,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3522,9 +4345,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87856709168184,
+          "uptime_last_30m": 99.98072474942174,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97069421090559,
+          "uptime_last_1d": 99.93680295707603,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3590,7 +4413,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -3660,7 +4483,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9770194185913,
+          "uptime_last_1d": 99.99943930788166,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3726,9 +4549,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.64349376114082,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9599251936949,
+          "uptime_last_1d": 99.97542469204068,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3792,9 +4615,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98521803399852,
-          "uptime_last_5m": 99.9686176055233,
-          "uptime_last_1d": 99.93072334642102,
+          "uptime_last_30m": 99.92495622446427,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.95091869882988,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3861,7 +4684,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.9958361092605,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3929,9 +4752,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90470139771284,
-          "uptime_last_5m": 99.86301369863013,
-          "uptime_last_1d": 99.84583195683295,
+          "uptime_last_30m": 99.97448003062395,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.92081644138618,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -3996,9 +4819,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96914056472767,
-          "uptime_last_5m": 99.82352941176471,
-          "uptime_last_1d": 99.57057590025039,
+          "uptime_last_30m": 99.79092255422947,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 96.8565941206333,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -4133,7 +4956,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.97349823321555,
+          "uptime_last_1d": 99.67341606792945,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -4201,9 +5024,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.67852643468439,
+          "uptime_last_30m": 99.80411361410381,
+          "uptime_last_5m": 98.75,
+          "uptime_last_1d": 99.80086292731497,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral"
         }
@@ -4268,11 +5091,51 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89637305699482,
-          "uptime_last_5m": 99.80430528375733,
-          "uptime_last_1d": 99.94218020949589,
+          "uptime_last_30m": 99.96202050892518,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.77812046562168,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi"
+        },
+        {
+          "name": "Together | moonshotai/kimi-k2.5-0127",
+          "model_id": "moonshotai/kimi-k2.5",
+          "model_name": "MoonshotAI: Kimi K2.5",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000028",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.44598337950139,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 90.6043261726009,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -4281,7 +5144,7 @@
       "name": "MoonshotAI: Kimi K2.6",
       "created": 1776699402,
       "description": "Kimi K2.6 is Moonshot AI's next-generation multimodal model, designed for long-horizon coding, coding-driven UI/UX generation, and multi-agent orchestration. It handles complex end-to-end coding tasks across Python, Rust, and Go, and...",
-      "context_length": 262142,
+      "context_length": 262144,
       "architecture": {
         "modality": "text+image->text",
         "input_modalities": [
@@ -4295,13 +5158,13 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000074",
-        "completion": "0.00000349",
-        "input_cache_read": "0.00000014"
+        "prompt": "0.00000075",
+        "completion": "0.0000035",
+        "input_cache_read": "0.00000015"
       },
       "top_provider": {
-        "context_length": 262142,
-        "max_completion_tokens": 262142,
+        "context_length": 262144,
+        "max_completion_tokens": 16384,
         "is_moderated": false
       },
       "per_request_limits": null,
@@ -4335,11 +5198,52 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.81532779316713,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.86604066330338,
+          "uptime_last_30m": 99.7370727432077,
+          "uptime_last_5m": 98.75776397515527,
+          "uptime_last_1d": 99.9639198899251,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi"
+        },
+        {
+          "name": "Together | moonshotai/kimi-k2.6-20260420",
+          "model_id": "moonshotai/kimi-k2.6",
+          "model_name": "MoonshotAI: Kimi K2.6",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000012",
+            "completion": "0.0000045",
+            "input_cache_read": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 96.31208526040619,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -4473,7 +5377,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.52153110047847,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -4607,7 +5511,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.7584541062802,
+          "uptime_last_1d": 99.88350419384902,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -4810,8 +5714,8 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
@@ -4945,9 +5849,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 98.85239783541707,
-          "uptime_last_5m": 97.68602540834846,
-          "uptime_last_1d": 99.90898112724454,
+          "uptime_last_30m": 99.77395396041888,
+          "uptime_last_5m": 99.70264644662504,
+          "uptime_last_1d": 99.94570643579148,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5013,9 +5917,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 97.08611639282987,
-          "uptime_last_5m": 96.8636102052561,
-          "uptime_last_1d": 97.89555803287688,
+          "uptime_last_30m": 98.38699501587769,
+          "uptime_last_5m": 98.47227926078028,
+          "uptime_last_1d": 97.7984060566873,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5080,10 +5984,10 @@
             "temperature",
             "top_p"
           ],
-          "status": -5,
-          "uptime_last_30m": 77.1008849557522,
-          "uptime_last_5m": 78.15564364698518,
-          "uptime_last_1d": 96.1370727655469,
+          "status": 0,
+          "uptime_last_30m": 98.93667792986274,
+          "uptime_last_5m": 99.06710803490822,
+          "uptime_last_1d": 98.41857504322546,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5153,9 +6057,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.71849643980791,
-          "uptime_last_5m": 99.57841483979763,
-          "uptime_last_1d": 99.90588053274197,
+          "uptime_last_30m": 99.90340652971858,
+          "uptime_last_5m": 99.89806320081549,
+          "uptime_last_1d": 99.90045909394686,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5299,7 +6203,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.92934360206317,
+          "uptime_last_1d": 99.96027354501858,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5516,9 +6420,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97397796801292,
-          "uptime_last_5m": 99.97802761196762,
-          "uptime_last_1d": 99.95277838006703,
+          "uptime_last_30m": 99.83388204873795,
+          "uptime_last_5m": 99.86422608870562,
+          "uptime_last_1d": 99.88702432975761,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5591,7 +6495,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99991837480981,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -5649,8 +6553,8 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
+          "uptime_last_30m": null,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
@@ -5776,9 +6680,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95773202101323,
-          "uptime_last_5m": 99.86437613019892,
-          "uptime_last_1d": 99.94620654656178,
+          "uptime_last_30m": 99.63574550752793,
+          "uptime_last_5m": 99.90766389658357,
+          "uptime_last_1d": 99.8493749058593,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6125,9 +7029,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.49174342378227,
-          "uptime_last_5m": 99.49903660886321,
-          "uptime_last_1d": 99.6117559632547,
+          "uptime_last_30m": 99.82860869697107,
+          "uptime_last_5m": 99.82512087233823,
+          "uptime_last_1d": 99.70089418880139,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6192,9 +7096,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.80755176613886,
-          "uptime_last_5m": 97.90502793296089,
-          "uptime_last_1d": 99.5426215043124,
+          "uptime_last_30m": 98.62776191986468,
+          "uptime_last_5m": 96.89137268599372,
+          "uptime_last_1d": 98.2033421166076,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6325,9 +7229,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97816667226496,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.77442581115567,
+          "uptime_last_30m": 99.65619628066885,
+          "uptime_last_5m": 99.59919839679358,
+          "uptime_last_1d": 90.60013452301544,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6391,9 +7295,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.915611814346,
-          "uptime_last_5m": 99.91228070175438,
-          "uptime_last_1d": 99.95437595740397,
+          "uptime_last_30m": 99.96459997977142,
+          "uptime_last_5m": 99.96595165134491,
+          "uptime_last_1d": 99.96328588672507,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6456,9 +7360,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.78048780487805,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.74959172563963,
+          "uptime_last_30m": 99.78991596638656,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.87915556870868,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6525,7 +7429,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.89373007438896,
+          "uptime_last_1d": 98.36065573770492,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6587,10 +7491,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 92.51336898395722,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.69566438805131,
+          "status": 0,
+          "uptime_last_30m": 99.73890339425587,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.74519619892682,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -6654,10 +7558,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.40095846645367,
-          "uptime_last_5m": 99.31880108991825,
-          "uptime_last_1d": 96.96465996018023,
+          "status": -2,
+          "uptime_last_30m": 94.878227239469,
+          "uptime_last_5m": 93.76359680928209,
+          "uptime_last_1d": 92.5810478889379,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6720,9 +7624,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.83093829247676,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.77217881431729,
+          "uptime_last_30m": 99.46332737030411,
+          "uptime_last_5m": 97.6878612716763,
+          "uptime_last_1d": 99.80157825115175,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6786,9 +7690,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.67532467532467,
+          "uptime_last_30m": 99.880810488677,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.66687587505432,
+          "uptime_last_1d": 99.51909565000156,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6854,7 +7758,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.98252664686353,
+          "uptime_last_1d": 99.9089667728721,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -6918,9 +7822,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91967871485944,
-          "uptime_last_5m": 99.82332155477032,
-          "uptime_last_1d": 99.95056125650467,
+          "uptime_last_30m": 98.86899151743637,
+          "uptime_last_5m": 99.11504424778761,
+          "uptime_last_1d": 99.8378093915264,
           "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
@@ -6986,9 +7890,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.42517723701857,
-          "uptime_last_5m": 99.32157394843962,
-          "uptime_last_1d": 99.21930186314101,
+          "uptime_last_30m": 99.40236067533243,
+          "uptime_last_5m": 99.11894273127754,
+          "uptime_last_1d": 99.22558627931397,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7054,9 +7958,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.54180513794377,
-          "uptime_last_5m": 98.37291939405274,
-          "uptime_last_1d": 95.95308735852409,
+          "uptime_last_30m": 98.08513049061449,
+          "uptime_last_5m": 98.43662758235622,
+          "uptime_last_1d": 98.37313004812161,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7128,9 +8032,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.40652818991099,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93819530284301,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7196,9 +8100,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.32595101615425,
-          "uptime_last_5m": 98.44146429865893,
-          "uptime_last_1d": 98.75126967207976,
+          "uptime_last_30m": 99.42759543922818,
+          "uptime_last_5m": 99.15485955754411,
+          "uptime_last_1d": 99.15723301863285,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7264,9 +8168,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.31082576931591,
-          "uptime_last_5m": 99.47775976949397,
-          "uptime_last_1d": 97.12742664949829,
+          "uptime_last_30m": 97.87295199770048,
+          "uptime_last_5m": 98.38515304892745,
+          "uptime_last_1d": 98.29885151726823,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7332,7 +8236,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 46.57101668154047,
+          "uptime_last_1d": 38.77630553390491,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7397,10 +8301,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 88.67887763055339,
-          "uptime_last_5m": 78.857421875,
-          "uptime_last_1d": 93.56154574238307,
+          "status": 0,
+          "uptime_last_30m": 98.49267872523686,
+          "uptime_last_5m": 97.78794813119755,
+          "uptime_last_1d": 98.21721859893859,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -7464,7 +8368,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -7611,9 +8515,81 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
+          "tr_provider_slug": "openai"
+        }
+      ]
+    },
+    {
+      "id": "openai/gpt-chat-latest",
+      "name": "OpenAI: GPT Chat Latest",
+      "created": 1778000212,
+      "description": "GPT Chat Latest points to OpenAI's stable API alias `chat-latest` that always resolves to the latest Instant chat model used in ChatGPT. As OpenAI rolls out new Instant model updates...",
+      "context_length": 400000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.000005",
+        "completion": "0.00003",
+        "web_search": "0.01",
+        "input_cache_read": "0.0000005"
+      },
+      "top_provider": {
+        "context_length": 400000,
+        "max_completion_tokens": 128000,
+        "is_moderated": true
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "OpenAI | openai/gpt-chat-latest-20260505",
+          "model_id": "openai/gpt-chat-latest",
+          "model_name": "OpenAI: GPT Chat Latest",
+          "provider_name": "OpenAI",
+          "tag": "openai",
+          "context_length": 400000,
+          "pricing": {
+            "prompt": "0.000005",
+            "completion": "0.00003",
+            "web_search": "0.01",
+            "input_cache_read": "0.0000005",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 128000,
+          "max_prompt_tokens": 272000,
+          "supported_parameters": [
+            "seed",
+            "max_tokens",
+            "response_format",
+            "structured_outputs",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "logit_bias",
+            "logprobs",
+            "top_logprobs",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": true,
           "tr_provider_slug": "openai"
         }
       ]
@@ -7681,11 +8657,116 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97498592958539,
+          "uptime_last_30m": 99.97667910447761,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97900436488204,
+          "uptime_last_1d": 99.98730071700554,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
+        },
+        {
+          "name": "Together | openai/gpt-oss-120b",
+          "model_id": "openai/gpt-oss-120b",
+          "model_name": "OpenAI: gpt-oss-120b",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000006",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.56971746635665,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.98413776291963,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "openai/gpt-oss-20b",
+      "name": "OpenAI: gpt-oss-20b",
+      "created": 1754414229,
+      "description": "gpt-oss-20b is an open-weight 21B parameter model released by OpenAI under the Apache 2.0 license. It uses a Mixture-of-Experts (MoE) architecture with 3.6B active parameters per forward pass, optimized for...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "GPT",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000003",
+        "completion": "0.00000014"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | openai/gpt-oss-20b",
+          "model_id": "openai/gpt-oss-20b",
+          "model_name": "OpenAI: gpt-oss-20b",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000005",
+            "completion": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.62638875233507,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.78333931638029,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -8219,7 +9300,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.99900081932816,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
         }
@@ -8361,11 +9442,75 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai"
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-2.5-7b-instruct",
+      "name": "Qwen: Qwen2.5 7B Instruct",
+      "created": 1729036800,
+      "description": "Qwen2.5 7B is the latest series of Qwen large language models. Qwen2.5 brings the following improvements upon Qwen2: - Significantly more knowledge and has greatly improved capabilities in coding and...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen",
+        "instruct_type": "chatml"
+      },
+      "pricing": {
+        "prompt": "0.00000004",
+        "completion": "0.0000001"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | qwen/qwen-2.5-7b-instruct",
+          "model_id": "qwen/qwen-2.5-7b-instruct",
+          "model_name": "Qwen: Qwen2.5 7B Instruct",
+          "provider_name": "Together",
+          "tag": "together/fp8",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000003",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 2048,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.86541539356904,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -8432,9 +9577,325 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94538503549973,
+          "uptime_last_1d": 99.95749832569162,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
+        },
+        {
+          "name": "Together | qwen/qwen3-235b-a22b-07-25",
+          "model_id": "qwen/qwen3-235b-a22b-2507",
+          "model_name": "Qwen: Qwen3 235B A22B Instruct 2507",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000006",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.38775510204081,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 67.18607305936072,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder",
+      "name": "Qwen: Qwen3 Coder 480B A35B",
+      "created": 1753230546,
+      "description": "Qwen3-Coder-480B-A35B-Instruct is a Mixture-of-Experts (MoE) code generation model developed by the Qwen team. It is optimized for agentic coding tasks such as function calling, tool use, and long-context reasoning over...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000022",
+        "completion": "0.0000018"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | qwen/qwen3-coder-480b-a35b-07-25",
+          "model_id": "qwen/qwen3-coder",
+          "model_name": "Qwen: Qwen3 Coder 480B A35B",
+          "provider_name": "Together",
+          "tag": "together/fp8",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000002",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 97.29157850190437,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "name": "Qwen: Qwen3 Coder Next",
+      "created": 1770164101,
+      "description": "Qwen3-Coder-Next is an open-weight causal language model optimized for coding agents and local development workflows. It uses a sparse MoE design with 80B total parameters and only 3B activated per...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000011",
+        "completion": "0.0000008",
+        "input_cache_read": "0.00000007"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 262144,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | qwen/qwen3-coder-next-2025-02-03",
+          "model_id": "qwen/qwen3-coder-next",
+          "model_name": "Qwen: Qwen3 Coder Next",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.0000012",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tool_choice",
+            "tools",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.53838262950931,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "name": "Qwen: Qwen3.5 397B A17B",
+      "created": 1771223018,
+      "description": "The Qwen3.5 series 397B-A17B native vision-language model is built on a hybrid architecture that integrates a linear attention mechanism with a sparse mixture-of-experts model, achieving higher inference efficiency. It delivers...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000039",
+        "completion": "0.00000234",
+        "input_cache_read": "0.000000195"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | qwen/qwen3.5-397b-a17b-20260216",
+          "model_id": "qwen/qwen3.5-397b-a17b",
+          "model_name": "Qwen: Qwen3.5 397B A17B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000036",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 97.83080260303689,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 94.56561546286876,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-9b",
+      "name": "Qwen: Qwen3.5-9B",
+      "created": 1773152396,
+      "description": "Qwen3.5-9B is a multimodal foundation model from the Qwen3.5 family, designed to deliver strong reasoning, coding, and visual understanding in an efficient 9B-parameter architecture. It uses a unified vision-language design...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000004",
+        "completion": "0.00000015"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 81920,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Together | qwen/qwen3.5-9b-20260310",
+          "model_id": "qwen/qwen3.5-9b",
+          "model_name": "Qwen: Qwen3.5-9B",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.00000015",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.02466211508987,
+          "uptime_last_5m": 96.8574635241302,
+          "uptime_last_1d": 98.73892615880881,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
         }
       ]
     },
@@ -8553,9 +10014,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.6046511627907,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.1708353320085,
+          "uptime_last_1d": 98.84831939941989,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -8616,9 +10077,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99196249162759,
-          "uptime_last_5m": 99.99107541276217,
-          "uptime_last_1d": 99.98960642449568,
+          "uptime_last_30m": 99.98927889872847,
+          "uptime_last_5m": 99.9855814288804,
+          "uptime_last_1d": 99.98643667733825,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -8677,9 +10138,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.02453732584738,
-          "uptime_last_5m": 97.08097928436912,
-          "uptime_last_1d": 98.17060854677837,
+          "uptime_last_30m": 97.85424700880056,
+          "uptime_last_5m": 98.27705031013095,
+          "uptime_last_1d": 98.11987119559572,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -8743,7 +10204,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.41751612232162,
+          "uptime_last_1d": 98.14914645103325,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai"
         }
@@ -8803,9 +10264,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 96.26436781609196,
-          "uptime_last_5m": 94.44444444444444,
-          "uptime_last_1d": 97.45464906448855,
+          "uptime_last_30m": 98.55233853006682,
+          "uptime_last_5m": 99.8019801980198,
+          "uptime_last_1d": 94.86951100026721,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -8869,8 +10330,8 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.73546848059709,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.99015586546349,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai"
         }
@@ -8939,9 +10400,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97267572921648,
+          "uptime_last_30m": 99.82584465343086,
+          "uptime_last_5m": 99.73684210526315,
+          "uptime_last_1d": 99.9403999430686,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras"
         },
@@ -8972,9 +10433,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 97.02474162229878,
-          "uptime_last_5m": 92.71844660194175,
-          "uptime_last_1d": 95.02826720489347,
+          "uptime_last_30m": 96.01293103448276,
+          "uptime_last_5m": 99.66832504145937,
+          "uptime_last_1d": 94.39756929264668,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -9035,10 +10496,10 @@
             "tool_choice",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 88.04347826086956,
-          "uptime_last_5m": 79.16666666666666,
-          "uptime_last_1d": 75.19589604825526,
+          "status": -5,
+          "uptime_last_30m": 78.07692307692308,
+          "uptime_last_5m": 77.98165137614679,
+          "uptime_last_1d": 72.65842134519177,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -9063,16 +10524,56 @@
       },
       "pricing": {
         "prompt": "0.0000006",
-        "completion": "0.00000208",
+        "completion": "0.00000192",
         "input_cache_read": "0.00000012"
       },
       "top_provider": {
         "context_length": 202752,
-        "max_completion_tokens": 16384,
+        "max_completion_tokens": null,
         "is_moderated": false
       },
       "per_request_limits": null,
       "endpoints": [
+        {
+          "name": "Together | z-ai/glm-5-20260211",
+          "model_id": "z-ai/glm-5",
+          "model_name": "Z.ai: GLM 5",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 202752,
+          "pricing": {
+            "prompt": "0.000001",
+            "completion": "0.0000032",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": -2,
+          "uptime_last_30m": 94.76190476190476,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 95.69993653850362,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        },
         {
           "name": "Z.AI | z-ai/glm-5-20260211",
           "model_id": "z-ai/glm-5",
@@ -9102,7 +10603,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87619293267991,
+          "uptime_last_1d": 98.78977467129381,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -9164,9 +10665,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.14383561643835,
-          "uptime_last_5m": 98.40637450199203,
-          "uptime_last_1d": 99.08164295085275,
+          "uptime_last_30m": 98.97585954645209,
+          "uptime_last_5m": 99.4535519125683,
+          "uptime_last_1d": 98.61311596048795,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -9202,6 +10703,44 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Together | z-ai/glm-5.1-20260406",
+          "model_id": "z-ai/glm-5.1",
+          "model_name": "Z.ai: GLM 5.1",
+          "provider_name": "Together",
+          "tag": "together",
+          "context_length": 202752,
+          "pricing": {
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "repetition_penalty",
+            "logit_bias",
+            "min_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": -2,
+          "uptime_last_30m": 91.17241379310344,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 76.87454752301169,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "together"
+        },
+        {
           "name": "Z.AI | z-ai/glm-5.1-20260406",
           "model_id": "z-ai/glm-5.1",
           "model_name": "Z.ai: GLM 5.1",
@@ -9228,9 +10767,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.36734528347799,
-          "uptime_last_5m": 99.4155154091392,
-          "uptime_last_1d": 99.39990569555015,
+          "uptime_last_30m": 99.27146696845381,
+          "uptime_last_5m": 99.49005609382968,
+          "uptime_last_1d": 99.24344542150808,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
@@ -9296,7 +10835,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99791048518534,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai"
         }
