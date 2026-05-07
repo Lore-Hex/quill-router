@@ -100,6 +100,20 @@ def _env() -> Environment:
     return env
 
 
+def _static_version(settings: Settings) -> str:
+    # In production this is the release tag (cache-friendly across requests).
+    # In dev, fall back to the latest mtime of the static dir so every edit
+    # invalidates the browser cache without a hard-reload.
+    if settings.release and settings.release != "local":
+        return settings.release
+    static_dir = Path(__file__).parent / "static"
+    try:
+        mtime = max(p.stat().st_mtime for p in static_dir.iterdir() if p.is_file())
+        return f"local-{int(mtime)}"
+    except (OSError, ValueError):
+        return "local"
+
+
 def dashboard_html(settings: Settings) -> str:
     domain = settings.trusted_domain
     environment = settings.environment.lower()
@@ -125,7 +139,7 @@ def dashboard_html(settings: Settings) -> str:
         github_enabled=settings.github_oauth_enabled,
         map_regions=map_regions,
         primary_region=settings.primary_region,
-        static_version=settings.release,
+        static_version=_static_version(settings),
     )
 
 
@@ -139,7 +153,7 @@ def public_page_html(settings: Settings, page_key: str) -> str:
         description=page.description,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
-        static_version=settings.release,
+        static_version=_static_version(settings),
     )
 
 
@@ -153,7 +167,7 @@ def public_models_html(settings: Settings) -> str:
         models=[_model_view(model) for model in MODELS.values()],
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
-        static_version=settings.release,
+        static_version=_static_version(settings),
     )
 
 
@@ -173,7 +187,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         model=_model_detail_view(model),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
-        static_version=settings.release,
+        static_version=_static_version(settings),
     )
 
 
@@ -190,7 +204,7 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
         requested_model_id=model_id,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
-        static_version=settings.release,
+        static_version=_static_version(settings),
     )
 
 

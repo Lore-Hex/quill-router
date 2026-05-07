@@ -22,9 +22,9 @@ button, input, select { font:inherit; }
 .btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
 .btn.green { background:var(--green); color:#fff; border-color:var(--green); }
 .btn:focus, input:focus, select:focus { outline:2px solid #9ac2ff; outline-offset:1px; }
-.hero { background:linear-gradient(180deg,#ffffff 0%,#f8fbfd 100%); border-bottom:1px solid var(--line); }
-.hero-inner { max-width:1180px; margin:0 auto; padding:44px 22px 28px; display:grid; grid-template-columns:minmax(0,1.08fr) minmax(340px,.92fr); gap:28px; align-items:start; }
-.hero-inner-visual { grid-template-columns:minmax(0,1fr) minmax(360px,.92fr); align-items:center; min-height:620px; padding-top:34px; padding-bottom:34px; }
+.hero { background:linear-gradient(180deg,#ffffff 0%,#f8fbfd 100%); border-bottom:1px solid var(--line); overflow:visible; position:relative; }
+.hero-inner { max-width:1180px; margin:0 auto; padding:44px 22px 28px; display:grid; grid-template-columns:minmax(0,1.08fr) minmax(340px,.92fr); gap:28px; align-items:start; overflow:visible; }
+.hero-inner-visual { grid-template-columns:minmax(0,1fr) minmax(360px,.92fr); align-items:center; min-height:720px; padding-top:34px; padding-bottom:34px; overflow:visible; }
 .hero-copy { position:relative; z-index:1; }
 /* "100% open source" lead chip — sits above the eyebrow on the
  * homepage hero. The control plane + attested gateway are on GitHub;
@@ -48,11 +48,22 @@ h1 { margin:16px 0 12px; font-size:48px; line-height:1.04; letter-spacing:0; max
 .code-head { display:flex; align-items:center; justify-content:space-between; padding:11px 13px; border-bottom:1px solid #293745; color:#b8c6d2; font-size:12px; }
 pre { margin:0; padding:16px; overflow:auto; font-size:13px; line-height:1.5; }
 code, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.router-scene-shell { min-height:560px; align-self:stretch; display:flex; align-items:center; justify-content:center; position:relative; }
+.router-scene-shell { min-height:720px; align-self:stretch; display:flex; align-items:center; justify-content:center; position:relative; overflow:visible; z-index:5; }
+/* The pentagon backdrop stays at the original 560px footprint so the
+ * "grid" reads as a contained construct. The canvas is sized larger via
+ * negative inset (see .router-scene-canvas) so the 3D scene appears to
+ * explode outward beyond the pentagon, layering over hero copy + side
+ * gutters. pointer-events:none on the canvas keeps the underlying text
+ * + buttons interactive even where the canvas overlaps them. */
 .router-scene { width:min(100%,560px); min-height:560px; position:relative; display:grid; place-items:center; isolation:isolate; overflow:visible; }
-.router-scene::before { content:""; position:absolute; inset:7% 3%; background:linear-gradient(135deg,rgba(35,85,166,.10),rgba(25,160,109,.09)); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.9; }
-.router-scene::after { content:""; position:absolute; inset:15% 11%; border:1px solid rgba(35,85,166,.18); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.75; }
-.router-scene-canvas { position:absolute; inset:0; width:100%; height:100%; display:block; z-index:1; touch-action:none; }
+.router-scene::before { content:""; position:absolute; inset:18% 14%; background:linear-gradient(135deg,rgba(35,85,166,.07),rgba(25,160,109,.06)); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.7; }
+.router-scene::after { content:""; position:absolute; inset:24% 20%; border:1px solid rgba(35,85,166,.12); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.55; }
+.router-scene-canvas { position:absolute; inset:-30%; width:160%; height:160%; display:block; z-index:6; touch-action:none; pointer-events:none; -webkit-mask-image:radial-gradient(ellipse at center, black 52%, transparent 92%); mask-image:radial-gradient(ellipse at center, black 52%, transparent 92%); }
+/* Hit-test layer: a transparent overlay sized to the original pentagon
+ * area that catches pointer events for the scene (move/click/leave).
+ * The canvas itself is pointer-events:none so overflow doesn't trap
+ * clicks on adjacent text + buttons. */
+.router-scene-hit { position:absolute; inset:0; z-index:7; touch-action:none; cursor:crosshair; }
 .scene-copy { position:absolute; left:20px; bottom:12px; display:grid; gap:4px; z-index:2; color:#263540; pointer-events:none; max-width:340px; padding:10px 12px; background:rgba(255,255,255,.82); border:1px solid rgba(216,225,232,.9); border-radius:8px; box-shadow:0 12px 34px rgba(16,24,32,.10); backdrop-filter:blur(8px); }
 .scene-copy strong { font-size:16px; max-width:320px; }
 .scene-copy span { color:#64717c; font-size:12px; }
