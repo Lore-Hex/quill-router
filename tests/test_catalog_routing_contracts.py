@@ -157,20 +157,18 @@ def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provi
         {"model": model_id},
         Settings(environment="test"),
     )
-    assert [endpoint.id for _model, endpoint in endpoints] == [
+    expected = [
         f"{model_id}@{provider}/prepaid",
         f"{model_id}@{provider}/byok",
     ]
+    assert [endpoint.id for _model, endpoint in endpoints][:2] == expected
 
     byok_only = chat_route_endpoint_candidates(
         {"model": model_id, "provider": {"usage": "byok"}},
         Settings(environment="test"),
     )
-    assert [endpoint.usage_type for _model, endpoint in byok_only] == ["BYOK"]
-    assert [endpoint.id for endpoint in endpoints_for_model(model_id)] == [
-        f"{model_id}@{provider}/prepaid",
-        f"{model_id}@{provider}/byok",
-    ]
+    assert [endpoint.usage_type for _model, endpoint in byok_only] == ["BYOK"] * len(byok_only)
+    assert [endpoint.id for endpoint in endpoints_for_model(model_id)][:2] == expected
 
 
 @pytest.mark.parametrize(

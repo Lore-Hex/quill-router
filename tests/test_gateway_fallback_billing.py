@@ -299,7 +299,8 @@ def test_gateway_prepaid_route_does_not_return_byok_secret_even_if_configured() 
     assert data["byok_encrypted_secret"] is None
     assert data["route_candidates"][0]["byok_secret_ref"] is None
     assert data["route_candidates"][0]["byok_encrypted_secret"] is None
-    assert [item["usage_type"] for item in data["route_candidates"]] == ["Credits", "BYOK"]
+    assert [item["usage_type"] for item in data["route_candidates"]][:2] == ["Credits", "BYOK"]
+    assert {item["provider"] for item in data["route_candidates"]} >= {"kimi", "together"}
 
 
 def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:

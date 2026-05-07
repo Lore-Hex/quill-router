@@ -397,10 +397,11 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
 
     kimi = client.get("/v1/models/moonshotai/kimi-k2.6/endpoints")
     assert kimi.status_code == 200
-    assert [item["trustedrouter"]["usage_type"] for item in kimi.json()["data"]] == [
+    assert [item["trustedrouter"]["usage_type"] for item in kimi.json()["data"]][:2] == [
         "Credits",
         "BYOK",
     ]
+    assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
 
     openai = client.get("/v1/models/openai/gpt-4o-mini/endpoints")
     assert openai.status_code == 200

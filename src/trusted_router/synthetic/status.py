@@ -277,7 +277,7 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
         for offset in reversed(range(STATUS_HISTORY_HOURS))
     ]
 
-    history = []
+    history: list[dict[str, Any]] = []
     for hour_key in hour_keys:
         rows = by_hour.get(hour_key, [])
         bucket_start = dt.datetime.strptime(hour_key, "%Y-%m-%dT%H").replace(tzinfo=dt.UTC)

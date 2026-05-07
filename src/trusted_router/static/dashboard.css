@@ -58,6 +58,7 @@ code, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospa
 .router-scene { width:min(100%,560px); min-height:560px; position:relative; display:grid; place-items:center; isolation:isolate; overflow:visible; }
 .router-scene::before { content:""; position:absolute; inset:18% 14%; background:linear-gradient(135deg,rgba(35,85,166,.07),rgba(25,160,109,.06)); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.7; }
 .router-scene::after { content:""; position:absolute; inset:24% 20%; border:1px solid rgba(35,85,166,.12); clip-path:polygon(50% 0,100% 24%,92% 78%,50% 100%,8% 78%,0 24%); opacity:.55; }
+/* stylelint-disable-next-line property-no-vendor-prefix */
 .router-scene-canvas { position:absolute; inset:-30%; width:160%; height:160%; display:block; z-index:6; touch-action:none; pointer-events:none; -webkit-mask-image:radial-gradient(ellipse at center, black 52%, transparent 92%); mask-image:radial-gradient(ellipse at center, black 52%, transparent 92%); }
 /* Hit-test layer: a transparent overlay sized to the original pentagon
  * area that catches pointer events for the scene (move/click/leave).
