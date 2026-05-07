@@ -100,10 +100,57 @@ jobs:
         run: bash scripts/deploy/secrets.sh
         continue-on-error: true   # secrets are managed locally; runner has none
 
+      - name: Capture pre-deploy revisions (for rollback)
+        # Cloud Run keeps every revision; we just record which one was
+        # serving 100% of traffic before this deploy so the watchdog
+        # has something to roll back TO if synthetics fail.
+        id: prev
+        run: |
+          for region in us-central1 europe-west4; do
+            rev=$(gcloud run services describe "${SERVICE}" \
+              --region="$region" --project="${PROJECT_ID}" \
+              --format='value(status.traffic[0].revisionName)' \
+              2>/dev/null || true)
+            key="${region//-/_}_revision"
+            echo "${key}=${rev}" >> "$GITHUB_OUTPUT"
+            echo "  pre-deploy ${region}: ${rev:-<none>}"
+          done
+
       - name: Roll out to Cloud Run
         env:
           IMAGE_TAG: ${{ env.SHA }}
         run: bash scripts/deploy/rollout.sh
+
+      - name: Post-deploy watchdog (synthetic monitor)
+        # Polls https://trustedrouter.com/status.json — same signal
+        # customers see at /status. If overall_status reports "down"
+        # for 3 consecutive minutes, the watchdog exits non-zero and
+        # the next step rolls traffic back to the pre-deploy revision.
+        id: watchdog
+        continue-on-error: true
+        run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3
+
+      - name: Rollback (if watchdog tripped)
+        if: ${{ steps.watchdog.outcome == 'failure' }}
+        env:
+          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
+          PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
+        run: |
+          set -euo pipefail
+          for pair in "us-central1:${PREV_US}" "europe-west4:${PREV_EU}"; do
+            region="${pair%%:*}"
+            prev="${pair##*:}"
+            if [ -z "$prev" ]; then
+              echo "  ${region}: no prior revision recorded; skipping rollback"
+              continue
+            fi
+            echo "  ${region}: rolling traffic back to ${prev}"
+            gcloud run services update-traffic "${SERVICE}" \
+              --region="$region" --project="${PROJECT_ID}" \
+              --to-revisions="${prev}=100" --quiet
+          done
+          echo "rollback complete; failing job so the bad revision shows up red in GHA"
+          exit 1
 
       - name: Smoke test prod
         run: |
