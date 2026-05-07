@@ -21,7 +21,11 @@
       <h2>{{ snapshot.summary.headline }}</h2>
       <p>{{ snapshot.summary.detail }}</p>
     </div>
-    <span>{{ snapshot.overall_status_label }}</span>
+    <div class="status-banner-metrics">
+      <span>{{ snapshot.overall_status_label }}</span>
+      <strong>{% if snapshot.headline_metrics.gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
+      <small>Gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+    </div>
   </div>
 
   <section class="status-section">
@@ -50,10 +54,10 @@
         </div>
         <div class="component-meta">
           <span>24h uptime <strong>{{ component.uptime_24h_percent | uptime_pct(4) }}</strong></span>
-          <span>P50 latency <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>Gateway overhead p50 <strong>{% if component.p50_latency_milliseconds %}{{ component.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
-        <div class="history-strip" aria-label="{{ component.name }} last-24-hour uptime history">
+        <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">
           {% for bucket in component.history %}
           <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
             <span class="history-tooltip" role="tooltip" aria-hidden="true">
@@ -63,6 +67,9 @@
                 <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
                 {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
+                {% for breakdown in component.latency_breakdown_5m %}
+                  <span>{{ breakdown.probe_type }} <strong>{% if breakdown.p50_latency_milliseconds %}{{ breakdown.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+                {% endfor %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
               {% else %}
                 <span class="muted">No probe samples in this hour yet.</span>
@@ -97,6 +104,22 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if snapshot.monthly %}
+      <h3 class="status-subhead">Monthly reliability</h3>
+      <table class="activity-table status-table">
+        <thead><tr><th>Month</th><th>Status</th><th>Uptime</th><th>Samples</th></tr></thead>
+        <tbody>
+          {% for row in snapshot.monthly[:12] %}
+          <tr>
+            <td>{{ row.period_start[:7] }}</td>
+            <td><span class="component-status status-{{ row.status|replace('_', '-') }}">{{ row.status|replace('_', ' ') }}</span></td>
+            <td>{{ row.uptime_percent | uptime_pct(4) }}</td>
+            <td>{{ row.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
     </div>
 
     <div class="status-section">
@@ -126,7 +149,8 @@
 
   <div class="status-actions">
     <a class="btn" href="/status.json">View status.json</a>
-    <a class="btn" href="/status/history?window=24h">View 24h rollup</a>
+    <a class="btn" href="/status/history?window=48h">View 48h rollup</a>
+    <a class="btn" href="/status/history?window=monthly">View monthly rollups</a>
   </div>
 </section>
 {% endblock %}

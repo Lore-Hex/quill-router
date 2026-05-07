@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime as dt
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -20,9 +22,14 @@ from trusted_router.dashboard import (
 )
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
+from trusted_router.storage_models import utcnow
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.trust import gcp_release, trust_html
 from trusted_router.views import render_template
+
+STATUS_SNAPSHOT_CACHE_SECONDS = 15
+STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
+_STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -115,15 +122,21 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/status/history")
-    async def status_history(window: str = "24h") -> JSONResponse:
-        if window not in {"5m", "24h", "daily"}:
+    async def status_history(window: str = "48h") -> JSONResponse:
+        if window not in {"5m", "24h", "48h", "daily", "monthly"}:
             return JSONResponse(
-                {"error": {"message": "window must be 5m, 24h, or daily", "type": "bad_request"}},
+                {
+                    "error": {
+                        "message": "window must be 5m, 24h, 48h, daily, or monthly",
+                        "type": "bad_request",
+                    }
+                },
                 status_code=400,
             )
-        samples = STORE.synthetic_probe_samples(limit=settings.synthetic_status_sample_limit)
+        samples = _status_samples()
+        rollups = _status_rollups(window)
         return JSONResponse(
-            {"data": history_payload(samples, window)},
+            {"data": history_payload(samples, window, rollups=rollups)},
             headers={"cache-control": "max-age=15, public"},
         )
 
@@ -180,8 +193,43 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
 
 def _status_snapshot(settings: Settings) -> dict[str, Any]:
-    samples = STORE.synthetic_probe_samples(limit=settings.synthetic_status_sample_limit)
-    return status_snapshot(samples)
+    global _STATUS_CACHE
+    now = time.monotonic()
+    if settings.environment != "test" and _STATUS_CACHE is not None:
+        cached_at, payload = _STATUS_CACHE
+        if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
+            return payload
+    payload = status_snapshot(_status_samples(), rollups=_status_rollups("monthly"))
+    if settings.environment != "test":
+        _STATUS_CACHE = (now, payload)
+    return payload
+
+
+def _status_samples() -> list[Any]:
+    samples = []
+    for date in _dates_covering_recent_hours(hours=48):
+        samples.extend(STORE.synthetic_probe_samples(date=date, limit=STATUS_RAW_SAMPLE_LIMIT_PER_DAY))
+    deduped = {sample.id: sample for sample in samples}
+    return sorted(deduped.values(), key=lambda sample: sample.created_at, reverse=True)
+
+
+def _status_rollups(window: str) -> list[Any]:
+    if window == "daily":
+        return STORE.synthetic_rollups(period="day", limit=20_000)
+    if window == "monthly":
+        return STORE.synthetic_rollups(period="month", limit=20_000)
+    return []
+
+
+def _dates_covering_recent_hours(*, hours: int) -> list[str]:
+    now = utcnow()
+    cutoff = now - dt.timedelta(hours=hours)
+    dates = []
+    current = cutoff.date()
+    while current <= now.date():
+        dates.append(current.isoformat())
+        current += dt.timedelta(days=1)
+    return dates
 
 
 def _status_page_html(settings: Settings, *, host: str) -> str:

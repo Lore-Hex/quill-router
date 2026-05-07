@@ -30,6 +30,7 @@ from trusted_router.storage_models import (
     Reservation,
     SignupResult,
     SyntheticProbeSample,
+    SyntheticRollup,
     User,
     VerificationToken,
     WalletChallenge,
@@ -344,6 +345,12 @@ class Store(Protocol):
         monitor_region: str | None = ...,
         limit: int = ...,
     ) -> list[SyntheticProbeSample]: ...
+    def synthetic_rollups(
+        self,
+        *,
+        period: str | None = ...,
+        limit: int = ...,
+    ) -> list[SyntheticRollup]: ...
     def get_generation(self, generation_id: str) -> Generation | None: ...
     def activity(
         self,

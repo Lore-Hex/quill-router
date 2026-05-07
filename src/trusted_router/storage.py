@@ -30,6 +30,7 @@ from trusted_router.storage_models import (
     Reservation,
     SignupResult,
     SyntheticProbeSample,
+    SyntheticRollup,
     User,
     VerificationToken,
     WalletChallenge,
@@ -708,6 +709,14 @@ class InMemoryStore:
             monitor_region=monitor_region,
             limit=limit,
         )
+
+    def synthetic_rollups(
+        self,
+        *,
+        period: str | None = None,
+        limit: int = 1000,
+    ) -> list[SyntheticRollup]:
+        return self.synthetic_store.query_rollups(period=period, limit=limit)
 
     def get_generation(self, generation_id: str) -> Generation | None:
         return self.generation_store.get(generation_id)

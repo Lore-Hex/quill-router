@@ -5,14 +5,15 @@ import math
 from collections import defaultdict
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample, iso_now, utcnow
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
+from trusted_router.synthetic.components import (
+    COMPONENT_DEFINITIONS,
+    sample_component_ids,
+)
+from trusted_router.synthetic.rollups import merge_rollups
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
-# Last 24 hourly bars. We just started running synthetic monitoring;
-# nothing further back has data, and dragging out 90 days of "no data"
-# bars makes the page look broken. As the service ages we can extend
-# this — for now keep the strip honest.
-STATUS_HISTORY_HOURS = 24
+STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
 # shouldn't paint a whole hour red; tune the cutoffs to roughly match
 # what status.anthropic.com / GitHub status surface.
@@ -26,44 +27,22 @@ STATUS_ORDER = {
     "down": 3,
     "unknown": 4,
 }
-WINDOW_SECONDS = {"5m": 5 * 60, "24h": 24 * 60 * 60}
-API_PROBES = {"tls_health", "attestation_nonce", "openai_sdk_pong", "responses_pong"}
-COMPONENT_DEFINITIONS = (
-    {
-        "id": "canonical_api",
-        "name": "Canonical API",
-        "description": "api.quillrouter.com chat, Responses, TLS, and attestation checks.",
-    },
-    {
-        "id": "eu_regional_api",
-        "name": "EU Regional API",
-        "description": "api-europe-west4.quillrouter.com regional attested gateway checks.",
-    },
-    {
-        "id": "attestation",
-        "name": "Attestation",
-        "description": "Nonce and digest verification for public attested gateways.",
-    },
-    {
-        "id": "billing_settlement",
-        "name": "Billing and Settlement",
-        "description": "Authorize, settle, and accounting path used by the gateway.",
-    },
-    {
-        "id": "provider_fallback",
-        "name": "Provider Fallback",
-        "description": "Fail-first route selection and rollover to the next healthy provider.",
-    },
-)
+WINDOW_SECONDS = {"5m": 5 * 60, "24h": 24 * 60 * 60, "48h": 48 * 60 * 60}
 
 
-def status_snapshot(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
+def status_snapshot(
+    samples: list[SyntheticProbeSample],
+    *,
+    rollups: list[SyntheticRollup] | None = None,
+) -> dict[str, Any]:
     now = utcnow()
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     current = _current_status(ordered, now=now)
     five_minute = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["5m"])
     twenty_four_hour = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["24h"])
-    daily = _daily_rollups(ordered)
+    forty_eight_hour = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["48h"])
+    daily = _rollup_history(rollups or [], period="day") or _daily_rollups(ordered)
+    monthly = _rollup_history(rollups or [], period="month")
     components = _components(ordered, now=now)
     overall_status = _aggregate_component_statuses([component["status"] for component in components])
     return {
@@ -72,22 +51,49 @@ def status_snapshot(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
         "overall_status_label": _status_label(overall_status),
         "overall_status_class": _status_class(overall_status),
         "summary": _summary(overall_status),
+        "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
         "components": components,
         "recent_events": _recent_events(ordered, now=now),
         "windows": {
             "5m": five_minute,
             "24h": twenty_four_hour,
+            "48h": forty_eight_hour,
         },
         "daily": daily,
+        "monthly": monthly,
         "samples": [sample.public_dict() for sample in ordered[:100]],
     }
 
 
-def history_payload(samples: list[SyntheticProbeSample], window: str) -> dict[str, Any]:
-    snapshot = status_snapshot(samples)
+def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> dict[str, Any]:
+    cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
+    gateway_latencies = [
+        sample.latency_milliseconds
+        for sample in samples
+        if sample.probe_type == "tls_health"
+        and sample.status == "up"
+        and sample.latency_milliseconds is not None
+        and _parse_time(sample.created_at) >= cutoff
+    ]
+    return {
+        "gateway_overhead_p50_milliseconds": _percentile(gateway_latencies, 50),
+        "gateway_overhead_sample_count": len(gateway_latencies),
+        "window": "5m",
+    }
+
+
+def history_payload(
+    samples: list[SyntheticProbeSample],
+    window: str,
+    *,
+    rollups: list[SyntheticRollup] | None = None,
+) -> dict[str, Any]:
+    snapshot = status_snapshot(samples, rollups=rollups)
     if window == "daily":
         return {"window": "daily", "data": snapshot["daily"]}
+    if window == "monthly":
+        return {"window": "monthly", "data": snapshot["monthly"]}
     if window in snapshot["windows"]:
         return {"window": window, "data": snapshot["windows"][window]}
     return {"window": window, "data": {}}
@@ -142,6 +148,41 @@ def _daily_rollups(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
     ]
 
 
+def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict[str, Any]]:
+    by_period: dict[str, list[SyntheticRollup]] = defaultdict(list)
+    for rollup in rollups:
+        if rollup.period == period:
+            by_period[rollup.period_start].append(rollup)
+    rows: list[dict[str, Any]] = []
+    for period_start, period_rollups in sorted(by_period.items(), reverse=True):
+        merged = merge_rollups(period_rollups)
+        status_counts = _int_dict(merged["status_counts"])
+        rows.append(
+            {
+                "period": period,
+                "period_start": period_start,
+                "status": _aggregate_status_counts(status_counts),
+                "uptime_percent": _uptime_percent_counts(status_counts),
+                "sample_count": int(merged["sample_count"]),
+                "group_count": len(period_rollups),
+                "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+                "p95_latency_milliseconds": merged["p95_latency_milliseconds"],
+                "p50_ttfb_milliseconds": merged["p50_ttfb_milliseconds"],
+                "p95_ttfb_milliseconds": merged["p95_ttfb_milliseconds"],
+                "top_error": merged["top_error"],
+                "last_checked_at": merged["last_checked_at"],
+                "cost_microdollars": merged["cost_microdollars"],
+            }
+        )
+    return rows
+
+
+def _int_dict(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): int(raw) for key, raw in value.items()}
+
+
 def _rollup(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
     by_target_probe: dict[tuple[str, str], list[SyntheticProbeSample]] = defaultdict(list)
     for sample in samples:
@@ -158,6 +199,11 @@ def _rollup(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
             for sample in rows
             if sample.latency_milliseconds is not None
         ]
+        ttfbs = [
+            sample.ttfb_milliseconds
+            for sample in rows
+            if sample.ttfb_milliseconds is not None
+        ]
         groups.append(
             {
                 "target": target,
@@ -167,6 +213,8 @@ def _rollup(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
                 "sample_count": len(rows),
                 "p50_latency_milliseconds": _percentile(latencies, 50),
                 "p95_latency_milliseconds": _percentile(latencies, 95),
+                "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
+                "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
                 "last_checked_at": max(sample.created_at for sample in rows),
             }
         )
@@ -187,12 +235,16 @@ def _components(
     for definition in COMPONENT_DEFINITIONS:
         component_id = str(definition["id"])
         component_samples = [
-            sample for sample in samples if component_id in _sample_component_ids(sample)
+            sample for sample in samples if component_id in sample_component_ids(sample)
         ]
         day_cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["24h"])
+        five_minute_cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
         current_samples = _latest_recent_component_samples(component_samples, now=now)
         day_samples = [
             sample for sample in component_samples if _parse_time(sample.created_at) >= day_cutoff
+        ]
+        five_minute_samples = [
+            sample for sample in component_samples if _parse_time(sample.created_at) >= five_minute_cutoff
         ]
         status = _aggregate_status([sample.status for sample in current_samples])
         if not current_samples and component_samples:
@@ -201,6 +253,13 @@ def _components(
             sample.latency_milliseconds
             for sample in day_samples
             if sample.latency_milliseconds is not None
+        ]
+        gateway_latencies = [
+            sample.latency_milliseconds
+            for sample in five_minute_samples
+            if sample.probe_type == "tls_health"
+            and sample.status == "up"
+            and sample.latency_milliseconds is not None
         ]
         last_checked_at = max((sample.created_at for sample in component_samples), default=None)
         rows.append(
@@ -213,11 +272,46 @@ def _components(
                 if day_samples
                 else None,
                 "sample_count_24h": len(day_samples),
-                "p50_latency_milliseconds": _percentile(latencies, 50),
-                "p95_latency_milliseconds": _percentile(latencies, 95),
+                "p50_latency_milliseconds": _percentile(gateway_latencies, 50),
+                "p95_latency_milliseconds": _percentile(gateway_latencies, 95),
+                "end_to_end_p50_latency_milliseconds": _percentile(latencies, 50),
+                "end_to_end_p95_latency_milliseconds": _percentile(latencies, 95),
+                "latency_breakdown_5m": _latency_breakdown(five_minute_samples),
                 "last_checked_at": last_checked_at,
                 "monitor_regions": sorted({sample.monitor_region for sample in day_samples}),
                 "history": _component_history(component_samples, now=now),
+            }
+        )
+    return rows
+
+
+def _latency_breakdown(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
+    by_probe: dict[str, list[SyntheticProbeSample]] = defaultdict(list)
+    for sample in samples:
+        by_probe[sample.probe_type].append(sample)
+    rows: list[dict[str, Any]] = []
+    for probe_type, probe_samples in sorted(by_probe.items()):
+        latencies = [
+            sample.latency_milliseconds
+            for sample in probe_samples
+            if sample.latency_milliseconds is not None
+        ]
+        ttfbs = [
+            sample.ttfb_milliseconds
+            for sample in probe_samples
+            if sample.ttfb_milliseconds is not None
+        ]
+        statuses = [sample.status for sample in probe_samples]
+        rows.append(
+            {
+                "probe_type": probe_type,
+                "status": _aggregate_status(statuses),
+                "uptime_percent": _uptime_percent(statuses),
+                "sample_count": len(probe_samples),
+                "p50_latency_milliseconds": _percentile(latencies, 50),
+                "p95_latency_milliseconds": _percentile(latencies, 95),
+                "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
+                "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
             }
         )
     return rows
@@ -239,21 +333,6 @@ def _latest_recent_component_samples(
         for sample in latest.values()
         if _parse_time(sample.created_at) >= cutoff
     ]
-
-
-def _sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
-    ids = []
-    if sample.target == "canonical" and sample.probe_type in API_PROBES:
-        ids.append("canonical_api")
-    if sample.target == "europe-west4" and sample.probe_type in API_PROBES:
-        ids.append("eu_regional_api")
-    if sample.probe_type == "attestation_nonce":
-        ids.append("attestation")
-    if sample.target == "control-plane" and sample.probe_type == "gateway_authorize_settle":
-        ids.append("billing_settlement")
-    if sample.target == "control-plane" and sample.probe_type == "provider_fallback":
-        ids.append("provider_fallback")
-    return ids
 
 
 def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> list[dict[str, Any]]:
@@ -348,7 +427,7 @@ def _recent_events(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> 
         component_names = [
             str(definition["name"])
             for definition in COMPONENT_DEFINITIONS
-            if str(definition["id"]) in _sample_component_ids(sample)
+            if str(definition["id"]) in sample_component_ids(sample)
         ]
         events.append(
             {
@@ -382,6 +461,10 @@ def _aggregate_status(statuses: list[str]) -> str:
     if not statuses:
         return "unknown"
     counts = {status: statuses.count(status) for status in set(statuses)}
+    return _aggregate_status_counts(counts)
+
+
+def _aggregate_status_counts(counts: dict[str, int]) -> str:
     if counts.get("down", 0) >= 2:
         return "down"
     if counts.get("trust_degraded", 0) > 0:
@@ -406,8 +489,15 @@ def _worse_status(left: str, right: str) -> str:
 def _uptime_percent(statuses: list[str]) -> float:
     if not statuses:
         return 0.0
-    up = sum(1 for status in statuses if status == "up")
-    return round((up / len(statuses)) * 100.0, 4)
+    counts = {status: statuses.count(status) for status in set(statuses)}
+    return _uptime_percent_counts(counts)
+
+
+def _uptime_percent_counts(counts: dict[str, int]) -> float:
+    total = sum(counts.values())
+    if total <= 0:
+        return 0.0
+    return round((counts.get("up", 0) / total) * 100.0, 4)
 
 
 def _status_label(status: str) -> str:

@@ -4,7 +4,9 @@ import json
 from typing import Any
 
 from trusted_router.storage_gcp_codec import json_body, reverse_time_key
-from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.storage_gcp_synthetic_rollups import write_synthetic_rollups
+from trusted_router.storage_models import SyntheticProbeSample, utcnow
+from trusted_router.synthetic.rollups import raw_sample_is_within_retention
 
 
 def write_synthetic_probe_sample(table: Any, family: str, sample: SyntheticProbeSample) -> None:
@@ -23,6 +25,7 @@ def write_synthetic_probe_sample(table: Any, family: str, sample: SyntheticProbe
         row = table.direct_row(key.encode("utf-8"))
         row.set_cell(family, b"body", body)
         row.commit()
+    write_synthetic_rollups(table, family, sample)
 
 
 def synthetic_probe_samples(
@@ -51,6 +54,7 @@ def synthetic_probe_samples(
         and (target is None or sample.target == target)
         and (probe_type is None or sample.probe_type == probe_type)
         and (monitor_region is None or sample.monitor_region == monitor_region)
+        and raw_sample_is_within_retention(sample, now=utcnow())
     ]
     filtered.sort(key=lambda sample: sample.created_at, reverse=True)
     return filtered[:limit]

@@ -225,12 +225,16 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .status-banner h2 { margin:0 0 4px; font-size:19px; letter-spacing:0; }
 .status-banner p { margin:0; color:var(--muted); font-size:14px; line-height:1.45; }
 .status-banner > span { font-size:13px; font-weight:750; white-space:nowrap; }
+.status-banner-metrics { display:flex; flex-direction:column; align-items:flex-end; gap:2px; white-space:nowrap; }
+.status-banner-metrics span { font-size:13px; font-weight:750; }
+.status-banner-metrics strong { font-size:26px; line-height:1; color:var(--ink); }
+.status-banner-metrics small { color:var(--muted); font-size:12px; }
 .status-banner.status-up { border-color:#b8dec9; background:#f0faf4; }
-.status-banner.status-up > span { color:var(--green); }
+.status-banner.status-up > span, .status-banner.status-up .status-banner-metrics span { color:var(--green); }
 .status-banner.status-degraded, .status-banner.status-routing-degraded, .status-banner.status-trust-degraded { border-color:#ead49b; background:#fff8e4; }
-.status-banner.status-degraded > span, .status-banner.status-routing-degraded > span, .status-banner.status-trust-degraded > span { color:var(--amber); }
+.status-banner.status-degraded > span, .status-banner.status-routing-degraded > span, .status-banner.status-trust-degraded > span, .status-banner.status-degraded .status-banner-metrics span, .status-banner.status-routing-degraded .status-banner-metrics span, .status-banner.status-trust-degraded .status-banner-metrics span { color:var(--amber); }
 .status-banner.status-down { border-color:#f1c1bb; background:#fff1f0; }
-.status-banner.status-down > span { color:var(--red); }
+.status-banner.status-down > span, .status-banner.status-down .status-banner-metrics span { color:var(--red); }
 .status-banner.status-unknown { background:#fbfcfd; }
 .status-section { background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 .status-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid var(--line2); }
@@ -254,12 +258,13 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .component-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; color:var(--muted); font-size:12px; }
 .component-meta span { min-width:0; overflow-wrap:anywhere; }
 .component-meta strong { color:var(--ink); font-weight:750; }
-/* 24 hourly bars instead of 90 daily ones — fewer, fatter, easier to
- * read. Bars are interactive: hover or focus surfaces the rich tooltip
+/* 48 hourly bars instead of daily ones — enough recent proof without
+ * forcing the public page to scan months of raw samples. Bars are
+ * interactive: hover or focus surfaces the rich tooltip
  * with uptime / sample count / p50 / top error. Style mirrors
  * status.anthropic.com's look: muted for "no data", green for healthy,
  * amber for degraded, red for outage. */
-.history-strip { display:grid; grid-template-columns:repeat(24,1fr); gap:3px; min-width:0; min-height:28px; align-items:stretch; }
+.history-strip { display:grid; grid-template-columns:repeat(48,1fr); gap:2px; min-width:0; min-height:28px; align-items:stretch; }
 .history-bar { position:relative; display:block; min-width:0; height:26px; border-radius:3px; background:#dfe6ec; cursor:default; outline:none; }
 .history-bar.status-up { background:#19a06d; }
 .history-bar.status-degraded, .history-bar.status-routing-degraded { background:#d49b23; }
@@ -287,6 +292,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .history-day.status-unknown { background:#dfe6ec; }
 .status-columns { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
 .status-table .component-status { text-transform:capitalize; }
+.status-subhead { margin:18px 18px 10px; font-size:15px; }
 .event-list { display:grid; }
 .event-row { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:start; padding:14px 18px; border-bottom:1px solid var(--line2); }
 .event-row:last-child { border-bottom:0; }

@@ -30,6 +30,9 @@ from trusted_router.storage_gcp_synthetic_index import (
 from trusted_router.storage_gcp_synthetic_index import (
     write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
 )
+from trusted_router.storage_gcp_synthetic_rollups import (
+    synthetic_rollups as _bt_synthetic_rollups,
+)
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
@@ -104,6 +107,8 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert history.status_code == 200
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
+    assert "Gateway overhead p50" in page.text
+    assert "last-48-hour uptime history" in page.text
     text = status.text
     assert "reply exactly PONG" not in text
     assert "sk-tr-" not in text
@@ -111,11 +116,27 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert payload["samples"][0]["probe_type"] == "openai_sdk_pong"
     assert payload["samples"][0]["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
-    # 24 hourly bars (last 24 hours). Switched from 90 daily bars in
-    # commit that fixed gray-strip / status-anthropic-style tooltip:
-    # synthetic-sample retention is hours, not 90 days, so daily bars
-    # were mostly "no data" by definition.
-    assert len(payload["components"][0]["history"]) == 24
+    assert len(payload["components"][0]["history"]) == 48
+
+
+def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:
+    sample = _sample(
+        id="syn_monthly",
+        probe_type="tls_health",
+        status="up",
+        latency_milliseconds=88,
+    )
+    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+
+    history = client.get("/status/history?window=monthly")
+
+    assert history.status_code == 200
+    payload = history.json()["data"]
+    assert payload["window"] == "monthly"
+    assert payload["data"][0]["sample_count"] == 1
+    assert payload["data"][0]["p50_latency_milliseconds"] == 88
+    assert "sk-tr-" not in history.text
+    assert "reply exactly PONG" not in history.text
 
 
 def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
@@ -216,11 +237,15 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["overall_status"] == "down"
     assert snapshot["windows"]["5m"]["sample_count"] == 3
     assert snapshot["windows"]["24h"]["sample_count"] == 4
+    assert snapshot["windows"]["48h"]["sample_count"] == 4
     assert snapshot["daily"][0]["sample_count"] == 4
+    assert snapshot["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 25
     canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
     assert canonical["status"] == "down"
     assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
-    assert len(canonical["history"]) == 24
+    assert canonical["p50_latency_milliseconds"] == 25
+    assert canonical["end_to_end_p50_latency_milliseconds"] == 120
+    assert len(canonical["history"]) == 48
     assert snapshot["recent_events"][0]["component"] == "Canonical API"
 
 
@@ -318,7 +343,7 @@ def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
     _bt_write_synthetic_probe_sample(table, "m", sample)
 
     reverse = _reverse_time_key(sample.created_at)
-    assert table.committed == [
+    raw_keys = [
         f"synthetic_recent#{reverse}#syn_1".encode(),
         f"synthetic_target_recent#canonical#{reverse}#syn_1".encode(),
         f"synthetic_probe_target_recent#attestation_nonce#canonical#{reverse}#syn_1".encode(),
@@ -326,8 +351,49 @@ def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
         f"synthetic_day#2026-05-05#canonical#attestation_nonce#{reverse}#syn_1".encode(),
         f"synthetic_day_recent#2026-05-05#{reverse}#syn_1".encode(),
     ]
+    assert table.committed[:6] == raw_keys
+    assert any(key.startswith(b"synthetic_rollup#hour#2026-05-05T12:00:00Z#") for key in table.committed)
+    assert any(key.startswith(b"synthetic_rollup#day#2026-05-05T00:00:00Z#") for key in table.committed)
+    assert any(key.startswith(b"synthetic_rollup#month#2026-05-01T00:00:00Z#") for key in table.committed)
     assert b"sk-tr" not in b"".join(table.committed)
     assert b"prompt" not in b"".join(table.committed)
+
+
+def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
+    sample = _sample(
+        id="syn_rollup",
+        probe_type="tls_health",
+        status="up",
+        created_at="2026-05-05T12:00:00Z",
+        latency_milliseconds=123,
+    )
+    table = _FakeBigtable()
+
+    _bt_write_synthetic_probe_sample(table, "m", sample)
+    _bt_write_synthetic_probe_sample(table, "m", sample)
+    month = _bt_synthetic_rollups(table, "m", period="month", limit=20)
+    canonical = next(row for row in month if row.component == "canonical_api")
+
+    assert canonical.sample_count == 1
+    assert canonical.up_count == 1
+    assert canonical.latency_histogram == {"123": 1}
+
+
+def test_raw_synthetic_samples_expire_before_rollups() -> None:
+    old = _sample(
+        id="syn_old_raw",
+        probe_type="tls_health",
+        status="up",
+        created_at=(utcnow() - dt.timedelta(days=20)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=75,
+    )
+
+    STORE.record_synthetic_probe_sample(old)
+
+    assert STORE.synthetic_probe_samples(limit=10) == []
+    monthly = STORE.synthetic_rollups(period="month", limit=10)
+    assert monthly
+    assert monthly[0].sample_count == 1
 
 
 def test_gcp_synthetic_reads_daily_probe_target_index() -> None:
@@ -543,7 +609,12 @@ def _jwt(payload: dict[str, Any]) -> bytes:
 
 class _FakeCell:
     def __init__(self, value: Any) -> None:
-        self.value = json.dumps(asdict(value), separators=(",", ":"), sort_keys=True).encode()
+        if isinstance(value, bytes):
+            self.value = value
+        elif hasattr(value, "__dataclass_fields__"):
+            self.value = json.dumps(asdict(value), separators=(",", ":"), sort_keys=True).encode()
+        else:
+            self.value = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
 
 
 class _FakeReadRow:
@@ -552,26 +623,36 @@ class _FakeReadRow:
 
 
 class _FakeDirectRow:
-    def __init__(self, key: bytes, committed: list[bytes]) -> None:
+    def __init__(self, key: bytes, table: _FakeBigtable) -> None:
         self.key = key
-        self.committed = committed
+        self.table = table
+        self.value: bytes | None = None
 
-    def set_cell(self, *_args: Any) -> None:
+    def set_cell(self, _family: str, _qualifier: bytes, value: bytes) -> None:
+        self.value = value
         return None
 
     def commit(self) -> None:
-        self.committed.append(self.key)
+        self.table.committed.append(self.key)
+        if self.value is not None:
+            self.table.rows_by_key[self.key] = _FakeReadRow(self.value)
 
 
 class _FakeBigtable:
     def __init__(self, rows: list[_FakeReadRow] | None = None) -> None:
         self.rows = rows or []
+        self.rows_by_key: dict[bytes, _FakeReadRow] = {}
         self.reads: list[tuple[bytes, bytes, int]] = []
         self.committed: list[bytes] = []
 
     def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int) -> list[_FakeReadRow]:
         self.reads.append((start_key, end_key, limit))
-        return self.rows[:limit]
+        keyed_rows = [
+            row
+            for key, row in sorted(self.rows_by_key.items())
+            if start_key <= key < end_key
+        ]
+        return (keyed_rows + self.rows)[:limit]
 
     def direct_row(self, key: bytes) -> _FakeDirectRow:
-        return _FakeDirectRow(key, self.committed)
+        return _FakeDirectRow(key, self)

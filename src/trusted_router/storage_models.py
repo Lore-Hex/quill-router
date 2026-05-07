@@ -509,6 +509,60 @@ class SyntheticProbeSample:
 
 
 @dataclass
+class SyntheticRollup:
+    """Precomputed synthetic-monitor aggregate.
+
+    Rollups are metadata-only public-status material. They intentionally
+    contain no prompts, outputs, raw request bodies, API keys, workspace IDs,
+    or BYOK material.
+    """
+
+    id: str
+    period: str
+    period_start: str
+    component: str
+    target: str
+    probe_type: str
+    monitor_region: str
+    target_region: str | None = None
+    sample_count: int = 0
+    up_count: int = 0
+    down_count: int = 0
+    degraded_count: int = 0
+    routing_degraded_count: int = 0
+    trust_degraded_count: int = 0
+    unknown_count: int = 0
+    latency_histogram: dict[str, int] = field(default_factory=dict)
+    ttfb_histogram: dict[str, int] = field(default_factory=dict)
+    error_counts: dict[str, int] = field(default_factory=dict)
+    last_checked_at: str | None = None
+    cost_microdollars: int = 0
+    updated_at: str = field(default_factory=iso_now)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "period": self.period,
+            "period_start": self.period_start,
+            "component": self.component,
+            "target": self.target,
+            "probe_type": self.probe_type,
+            "monitor_region": self.monitor_region,
+            "target_region": self.target_region,
+            "sample_count": self.sample_count,
+            "up_count": self.up_count,
+            "down_count": self.down_count,
+            "degraded_count": self.degraded_count,
+            "routing_degraded_count": self.routing_degraded_count,
+            "trust_degraded_count": self.trust_degraded_count,
+            "unknown_count": self.unknown_count,
+            "last_checked_at": self.last_checked_at,
+            "cost_microdollars": self.cost_microdollars,
+            "updated_at": self.updated_at,
+        }
+
+
+@dataclass
 class SignupResult:
     """Outcome of a successful `STORE.signup()` call."""
 

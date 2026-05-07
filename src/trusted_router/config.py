@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     # while leaving headroom for cold-start.
     synthetic_monitor_timeout_seconds: float = 30.0
     synthetic_status_sample_limit: int = 5000
+    synthetic_status_raw_retention_days: int = 14
+    synthetic_status_rollup_retention_months: int = 24
     synthetic_status_us_url: str = "https://status-us.trustedrouter.com/status.json"
     synthetic_status_eu_url: str = "https://status-eu.trustedrouter.com/status.json"
     # IDs follow OpenRouter naming exactly to line up with the ingest

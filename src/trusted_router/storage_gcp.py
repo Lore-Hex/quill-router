@@ -25,6 +25,7 @@ from trusted_router.storage import (
     Reservation,
     SignupResult,
     SyntheticProbeSample,
+    SyntheticRollup,
     User,
     VerificationToken,
     WalletChallenge,
@@ -57,6 +58,9 @@ from trusted_router.storage_gcp_synthetic_index import (
 )
 from trusted_router.storage_gcp_synthetic_index import (
     write_synthetic_probe_sample as _bt_write_synthetic_probe_sample,
+)
+from trusted_router.storage_gcp_synthetic_rollups import (
+    synthetic_rollups as _bt_synthetic_rollups,
 )
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
@@ -867,6 +871,19 @@ class SpannerBigtableStore:
             target=target,
             probe_type=probe_type,
             monitor_region=monitor_region,
+            limit=limit,
+        )
+
+    def synthetic_rollups(
+        self,
+        *,
+        period: str | None = None,
+        limit: int = 1000,
+    ) -> list[SyntheticRollup]:
+        return _bt_synthetic_rollups(
+            self._bt_table,
+            self.generation_family,
+            period=period,
             limit=limit,
         )
 

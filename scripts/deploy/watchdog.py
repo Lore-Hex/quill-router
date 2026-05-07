@@ -37,8 +37,7 @@ import os
 import sys
 import time
 import urllib.request
-from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 # Worst-of: the per-region effective_status is the worst over its checks.
 # `unknown` is treated as severity 0 for ranking but reported separately
@@ -55,7 +54,7 @@ def fetch_per_region(url: str, regions: Iterable[str], timeout: int = 10) -> dic
     has no recent probes) from a real "up" reading.
     """
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - deploy script uses operator-provided HTTPS status URL.
             payload = json.load(response)
         checks = payload.get("data", {}).get("current", {}).get("checks", []) or []
     except Exception as exc:
@@ -127,7 +126,7 @@ def main() -> int:
     for minute in range(1, args.duration_min + 1):
         time.sleep(60)
         per_region = fetch_per_region(args.status_url, regions)
-        line = "  minute %d:" % minute
+        line = f"  minute {minute}:"
         for region in regions:
             status = per_region.get(region, "unknown")
             if region in rollback_set:
