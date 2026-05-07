@@ -89,11 +89,17 @@ jobs:
       - name: Smoke test prod
         run: |
           set -e
-          # Homepage 200
+          # Homepage is unauthenticated — always test it.
           code=$(curl -s -o /dev/null -w "%{http_code}" https://trustedrouter.com/)
           [[ "$code" == "200" ]] || { echo "homepage returned $code"; exit 1; }
-          # /v1/models returns the catalog with > 100 entries
-          count=$(curl -sH "authorization: Bearer ${{ secrets.SMOKE_TEST_API_KEY }}" \
-            https://trustedrouter.com/v1/models | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
-          [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
-          echo "smoke ok: homepage 200, $count models in catalog"
+          # /v1/models requires an API key; only run that check when a
+          # SMOKE_TEST_API_KEY secret is configured. Missing secret =>
+          # smoke test passes on homepage alone.
+          if [ -n "${{ secrets.SMOKE_TEST_API_KEY }}" ]; then
+            count=$(curl -sH "authorization: Bearer ${{ secrets.SMOKE_TEST_API_KEY }}" \
+              https://trustedrouter.com/v1/models | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
+            [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
+            echo "smoke ok: homepage 200, $count models in catalog"
+          else
+            echo "smoke ok: homepage 200 (skipped /v1/models — SMOKE_TEST_API_KEY not configured)"
+          fi
