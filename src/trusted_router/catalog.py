@@ -130,6 +130,11 @@ PROVIDERS: dict[str, Provider] = {
     "mistral": Provider(slug="mistral", name="Mistral", supports_prepaid=True),
     "kimi": Provider(slug="kimi", name="Kimi", supports_prepaid=True),
     "zai": Provider(slug="zai", name="Z.AI", supports_prepaid=True),
+    # Together AI hosts a broad open-weight catalog (Llama, DeepSeek
+    # incl. DeepSeek-OCR, Qwen, Mixtral) plus image gen (FLUX) and
+    # embeddings — categories TR didn't otherwise cover. OpenAI-
+    # compatible chat completions at api.together.xyz/v1.
+    "together": Provider(slug="together", name="Together", supports_embeddings=True, supports_prepaid=True),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -140,7 +145,7 @@ PROVIDERS: dict[str, Provider] = {
 # the control plane cannot authorize a prepaid route the enclave cannot
 # dispatch.
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
-    {"anthropic", "openai", "gemini", "cerebras", "deepseek", "mistral", "kimi", "zai"}
+    {"anthropic", "openai", "gemini", "cerebras", "deepseek", "mistral", "kimi", "zai", "together"}
 )
 
 

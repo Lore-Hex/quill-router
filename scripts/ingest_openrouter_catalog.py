@@ -53,6 +53,10 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "Z.ai": "zai",
     "ZhipuAI": "zai",
     "Zhipu AI": "zai",
+    # Together AI hosts open-weight models (Llama, DeepSeek incl.
+    # DeepSeek-OCR, Qwen, Mixtral) plus image gen + embeddings.
+    "Together": "together",
+    "Together AI": "together",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

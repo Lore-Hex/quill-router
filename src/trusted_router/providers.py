@@ -42,6 +42,7 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "mistral": (("MISTRAL_API_KEY",), "https://api.mistral.ai/v1"),
     "kimi": (("KIMI_API_KEY", "MOONSHOT_API_KEY"), "https://api.moonshot.ai/v1"),
     "zai": (("ZAI_API_KEY", "ZHIPU_API_KEY"), "https://api.z.ai/api/paas/v4"),
+    "together": (("TOGETHER_API_KEY",), "https://api.together.xyz/v1"),
 }
 
 __all__ = [

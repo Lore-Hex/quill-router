@@ -41,6 +41,8 @@ _PROVIDER_ALIASES = {
     "z-ai": "zai",
     "zhipu": "zai",
     "zhipuai": "zai",
+    "together-ai": "together",
+    "togetherai": "together",
 }
 
 # OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
@@ -59,12 +61,13 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 _THROUGHPUT_RANK = {
     "cerebras": 0,
     "gemini": 1,
-    "deepseek": 2,
-    "kimi": 3,
-    "zai": 4,
-    "mistral": 5,
-    "openai": 6,
-    "anthropic": 7,
+    "together": 2,  # speculative-decoded inference, generally fast for OS models
+    "deepseek": 3,
+    "kimi": 4,
+    "zai": 5,
+    "mistral": 6,
+    "openai": 7,
+    "anthropic": 8,
     "trustedrouter": 99,
 }
 

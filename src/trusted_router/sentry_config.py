@@ -53,6 +53,8 @@ SENSITIVE_STRING_FRAGMENTS: tuple[str, ...] = (
     "vertex_access_token",
     "zai_api_key",
     "zhipu_api_key",
+    "together_api_key",
+    "togetherai_api_key",
 )
 
 # Prefix matches: scrub the entire string if it starts with one of these.
