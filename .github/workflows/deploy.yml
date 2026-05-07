@@ -1,0 +1,99 @@
+# Auto-deploy the TrustedRouter control plane to Cloud Run on push to main.
+#
+# Trust posture: this is the *control plane* — billing, metadata, routing.
+# It is NOT the attested-enclave trust boundary; that's the separate
+# `deploy-enclave-gcp.yml` workflow in the quill-cloud-proxy repo.
+# Failures here surface as "site is down" or "API key expired"; they do
+# not affect prompt confidentiality, which the enclave guarantees.
+#
+# Auth: Workload Identity Federation. No JSON keys in GitHub Secrets.
+# A short-lived OIDC token from GitHub is exchanged for an
+# impersonation token on tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com,
+# scoped to this repo + main branch only.
+#
+# Trigger: deploys ONLY when files that affect the running service change.
+# Docs / README / unrelated config edits do not trigger a rollout.
+
+name: Deploy TR control plane
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "scripts/deploy/**"
+      - "frontend/src/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+# Only one deploy at a time. Two pushes within seconds of each other
+# serialize instead of racing to be the running revision.
+concurrency:
+  group: deploy-trusted-router
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # for Workload Identity Federation
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      REPO: trusted-router
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image ref from commit SHA
+        run: |
+          SHA="$(git rev-parse --short HEAD)"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:${SHA}"
+          echo "SHA=${SHA}" >> "$GITHUB_ENV"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build image via Cloud Build
+        run: |
+          gcloud builds submit \
+            --tag "${IMAGE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            .
+
+      - name: Push secrets to Secret Manager
+        # secrets.sh is idempotent — only uploads when the local key file
+        # has a value the GHA runner doesn't (it doesn't), so this is a
+        # no-op for the runner. Left in for symmetry with local deploys.
+        run: bash scripts/deploy/secrets.sh
+        continue-on-error: true   # secrets are managed locally; runner has none
+
+      - name: Roll out to Cloud Run
+        env:
+          IMAGE_TAG: ${{ env.SHA }}
+        run: bash scripts/deploy/rollout.sh
+
+      - name: Smoke test prod
+        run: |
+          set -e
+          # Homepage 200
+          code=$(curl -s -o /dev/null -w "%{http_code}" https://trustedrouter.com/)
+          [[ "$code" == "200" ]] || { echo "homepage returned $code"; exit 1; }
+          # /v1/models returns the catalog with > 100 entries
+          count=$(curl -sH "authorization: Bearer ${{ secrets.SMOKE_TEST_API_KEY }}" \
+            https://trustedrouter.com/v1/models | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
+          [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
+          echo "smoke ok: homepage 200, $count models in catalog"
