@@ -1,44 +1,113 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
-"""DeepSeek pricing-page parser (initial heuristic)."""
+# Initial version derived from a real fetch of
+# api-docs.deepseek.com/quick_start/pricing on 2026-05-08.
+# Captured fixture lives at tests/fixtures/pricing/deepseek.html.
+#
+# Page structure: a single <table> with model columns and price rows.
+# Header row: <td>MODEL</td><td>deepseek-v4-flash</td><td>deepseek-v4-pro</td>
+# Each price row has a label like "1M INPUT TOKENS (CACHE MISS)" with
+# per-model values like "$0.14" / "$0.435 (75% off)<del>$1.74</del>".
+# We use cache-miss input pricing (the headline rate, no cache discount)
+# and the bare output token price.
+"""DeepSeek pricing-page parser."""
 from __future__ import annotations
 
 import re
 
 from bs4 import BeautifulSoup
 
+# Native model id (as displayed in the column header) → OR-canonical id.
 _NAME_TO_OR_ID = {
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
-    "DeepSeek V4 Flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "deepseek-chat": "deepseek/deepseek-chat",
     "deepseek-reasoner": "deepseek/deepseek-reasoner",
 }
 
-_DOLLAR_PER_M_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)\s*/\s*(?:M|million)\b", re.IGNORECASE)
+_DOLLAR_RE = re.compile(r"\$([\d.]+)")
+
+
+def _to_micro_per_m(text: str | None) -> int | None:
+    if not text:
+        return None
+    # The HTML for discounted prices looks like
+    #   "$0.435 (75% off<sup>(3)</sup>)<del>$1.74</del>"
+    # We want the FIRST $-number, which is the actual current price
+    # (not the struck-through pre-discount value).
+    match = _DOLLAR_RE.search(text)
+    if not match:
+        return None
+    try:
+        return int(round(float(match.group(1)) * 1_000_000))
+    except (TypeError, ValueError):
+        return None
+
+
+_FOOTNOTE_RE = re.compile(r"\s*\(\d+\)\s*$")
+
+
+def _strip_footnote(name: str) -> str:
+    """DeepSeek annotates model names with footnote markers like
+    `deepseek-v4-flash (1)`. Strip them before mapping to OR-canonical ids."""
+    return _FOOTNOTE_RE.sub("", name).strip()
 
 
 def parse(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     out: dict = {}
-
-    for block in soup.find_all(["tr", "div", "section", "li"]):
-        text = block.get_text(" ", strip=True)
-        if not text:
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if not rows:
             continue
-        for display_name, or_id in _NAME_TO_OR_ID.items():
-            if display_name not in text:
+        # Find the header row: cells[0] is the literal "MODEL", cells[1:]
+        # are the per-model column headers.
+        header_models: list[str] = []
+        header_idx = -1
+        for i, row in enumerate(rows):
+            cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
+            if cells and cells[0].upper() == "MODEL":
+                header_models = [_strip_footnote(c) for c in cells[1:]]
+                header_idx = i
+                break
+        if not header_models:
+            continue
+        # Find the cache-miss input row and the output row. DeepSeek's
+        # layout uses a `PRICING` rowspan on the first pricing row, so
+        # the cache-miss row's first cell is the label not the rowspan
+        # category — in either case cells[0] holds the row label.
+        input_prices: list[str] | None = None
+        output_prices: list[str] | None = None
+        for row in rows[header_idx + 1 :]:
+            cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
+            if not cells:
                 continue
-            matches = _DOLLAR_PER_M_RE.findall(text)
-            if len(matches) < 2:
+            # Search across the first two cells for the label — handles
+            # both rowspan-prefixed rows ([PRICING, INPUT TOKENS, ...])
+            # and plain rows ([INPUT TOKENS, ...]).
+            label_text = " ".join(cells[: min(2, len(cells))]).upper()
+            # Prices are the last `len(header_models)` cells of the row,
+            # regardless of how many label cells precede them.
+            if len(cells) < len(header_models):
                 continue
-            try:
-                prompt_usd = float(matches[0].replace(",", ""))
-                completion_usd = float(matches[1].replace(",", ""))
-            except ValueError:
+            value_cells = cells[-len(header_models) :]
+            if "INPUT" in label_text and "CACHE MISS" in label_text:
+                input_prices = value_cells
+            elif "OUTPUT" in label_text and "TOKEN" in label_text:
+                output_prices = value_cells
+        if input_prices is None or output_prices is None:
+            continue
+        for idx, native in enumerate(header_models):
+            or_id = _NAME_TO_OR_ID.get(native)
+            if or_id is None:
+                continue
+            if idx >= len(input_prices) or idx >= len(output_prices):
+                continue
+            prompt = _to_micro_per_m(input_prices[idx])
+            completion = _to_micro_per_m(output_prices[idx])
+            if prompt is None or completion is None:
                 continue
             out[or_id] = {
-                "prompt_micro_per_m": int(round(prompt_usd * 1_000_000)),
-                "completion_micro_per_m": int(round(completion_usd * 1_000_000)),
+                "prompt_micro_per_m": prompt,
+                "completion_micro_per_m": completion,
             }
-            break
-
     return out

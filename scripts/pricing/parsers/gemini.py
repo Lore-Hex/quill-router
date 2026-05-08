@@ -1,44 +1,36 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
-"""Google Gemini pricing-page parser (initial heuristic)."""
+#
+# Both ai.google.dev/pricing (OAuth-redirects) and the Vertex
+# cloud.google.com/vertex-ai/generative-ai/pricing page have problems:
+#   * ai.google.dev — 302 to OAuth, never serves HTML
+#   * cloud.google.com — server-renders Anthropic-on-Vertex / Grok /
+#     DeepSeek prices, but Gemini 2.5 Pro / Flash / Flash-Lite headline
+#     rates are populated via JavaScript and not in the captured HTML.
+#
+# Hardcoded constants table for the Gemini models we route. Cross-check
+# vs OpenRouter catches drift; LLM self-heal rewrites this table when
+# prices change. Captured manually from ai.google.dev/pricing on
+# 2026-05-08 via a logged-in session.
+"""Google Gemini hardcoded-table parser (Vertex page is partly JS-rendered)."""
 from __future__ import annotations
 
-import re
-
-from bs4 import BeautifulSoup
-
-_NAME_TO_OR_ID = {
-    "Gemini 2.5 Flash": "google/gemini-2.5-flash",
-    "gemini-2.5-flash": "google/gemini-2.5-flash",
-    "Gemini 2.5 Pro": "google/gemini-2.5-pro",
-    "gemini-2.5-pro": "google/gemini-2.5-pro",
+# OR-canonical id → (prompt $/M, completion $/M).
+_HARDCODED_PRICES: dict[str, tuple[float, float]] = {
+    "google/gemini-2.5-pro": (1.25, 10.00),
+    "google/gemini-2.5-flash": (0.30, 2.50),
+    "google/gemini-2.5-flash-lite": (0.10, 0.40),
+    "google/gemini-2.0-flash-001": (0.10, 0.40),
+    "google/gemini-2.0-flash-lite-001": (0.075, 0.30),
+    "google/gemini-1.5-flash": (0.075, 0.30),
+    "google/gemini-1.5-pro": (1.25, 5.00),
 }
 
-_DOLLAR_PER_M_RE = re.compile(r"\$([\d,]+(?:\.\d+)?)\s*/\s*(?:1?M|million)\b", re.IGNORECASE)
 
-
-def parse(html: str) -> dict:
-    soup = BeautifulSoup(html, "html.parser")
+def parse(_html: str) -> dict:
     out: dict = {}
-
-    for block in soup.find_all(["tr", "div", "section", "li", "table"]):
-        text = block.get_text(" ", strip=True)
-        if not text:
-            continue
-        for display_name, or_id in _NAME_TO_OR_ID.items():
-            if display_name not in text:
-                continue
-            matches = _DOLLAR_PER_M_RE.findall(text)
-            if len(matches) < 2:
-                continue
-            try:
-                prompt_usd = float(matches[0].replace(",", ""))
-                completion_usd = float(matches[1].replace(",", ""))
-            except ValueError:
-                continue
-            out[or_id] = {
-                "prompt_micro_per_m": int(round(prompt_usd * 1_000_000)),
-                "completion_micro_per_m": int(round(completion_usd * 1_000_000)),
-            }
-            break
-
+    for or_id, (prompt_usd, completion_usd) in _HARDCODED_PRICES.items():
+        out[or_id] = {
+            "prompt_micro_per_m": int(round(prompt_usd * 1_000_000)),
+            "completion_micro_per_m": int(round(completion_usd * 1_000_000)),
+        }
     return out

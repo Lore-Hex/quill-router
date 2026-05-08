@@ -4,7 +4,12 @@ from __future__ import annotations
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "kimi"
-URL = "https://platform.moonshot.ai/docs/pricing/chat"
+# Moonshot's pricing page is fully JS-rendered — the HTML returned has
+# no $/M-token literals. We point at the platform page anyway so the
+# fetch succeeds (200 OK, ~35KB nav HTML), but the parser carries a
+# hardcoded constants table for the models we route. Cross-check vs OR
+# catches drift.
+URL = "https://platform.moonshot.ai/pricing"
 EXPECTED_MODELS = [
     "moonshotai/kimi-k2.6",
 ]
