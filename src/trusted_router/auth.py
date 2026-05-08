@@ -14,6 +14,13 @@ from trusted_router.types import ErrorType
 SESSION_COOKIE_NAME = "tr_session"
 SESSION_COOKIE_MAX_AGE = 86400  # 24h
 
+# Bearer-token prefix dispatch. The two shapes are minted with distinct
+# prefixes (security.py:new_api_key default = "sk-tr-v1";
+# storage_auth_sessions.py:create uses "trsess-v1") so we can route
+# without ever calling the wrong store.
+_API_KEY_BEARER_PREFIX = "sk-tr-"
+_SESSION_BEARER_PREFIX = "trsess-"
+
 
 @dataclass(frozen=True)
 class Principal:
@@ -50,13 +57,23 @@ def get_authorization_bearer(request: Request) -> str | None:
 
 
 def principal_from_request(request: Request, settings: Settings) -> Principal:
-    """Resolve the caller's `Principal` from one of three credential sources.
+    """Resolve the caller's `Principal` from one of three credential
+    sources. Sources are tried in order:
+        1. dev-user header (local/test only)
+        2. session cookie (browser console)
+        3. Authorization bearer (API clients + bearer-shaped sessions)
 
-    Sources are tried in order: dev-user header (local/test only), session
-    cookie (browser console), Authorization bearer (API clients). Each source
-    is its own helper, all of them route through `_principal_for_session` for
-    user-backed flows and `_principal_for_api_key` for the long-lived key
-    flow, so the workspace resolution logic isn't duplicated.
+    For the bearer path, the token shape is dispatched by prefix:
+        sk-tr-...    → API-key lookup ONLY
+        trsess-...   → session-token lookup ONLY
+        anything else → 401 "Bearer token has unrecognized shape"
+
+    The previous version tried API-key first and silently fell back to
+    session-token semantics on the same string. That was correct for
+    well-formed inputs but made the error path ambiguous: a bearer
+    that was neither shape produced "Invalid API key" even though the
+    token might have been a typo'd session id. Prefix dispatch makes
+    each path own its own error and removes any cross-shape coupling.
     """
     dev_user_id = request.headers.get("x-trustedrouter-user")
     if dev_user_id:
@@ -76,16 +93,30 @@ def principal_from_request(request: Request, settings: Settings) -> Principal:
         raise api_error(401, "Missing Authentication header", "unauthorized")
 
     bootstrap_management_key(settings)
-    api_key = STORE.get_key_by_raw(raw_bearer)
-    if api_key is not None:
+
+    if raw_bearer.startswith(_API_KEY_BEARER_PREFIX):
+        api_key = STORE.get_key_by_raw(raw_bearer)
+        if api_key is None:
+            raise api_error(401, "Invalid API key", "unauthorized")
         return _principal_for_api_key(api_key)
 
-    # Bearer didn't match an API key — fall back to session-token shape (used
-    # by management programs that prefer a bearer over the cookie).
-    session = STORE.get_auth_session_by_raw(raw_bearer)
-    if session is not None:
+    if raw_bearer.startswith(_SESSION_BEARER_PREFIX):
+        # Bearer-shaped session token. Used by management programs that
+        # prefer a bearer header over the browser session cookie.
+        session = STORE.get_auth_session_by_raw(raw_bearer)
+        if session is None:
+            raise api_error(401, "Invalid session token", "unauthorized")
         return _principal_for_session(request, session)
-    raise api_error(401, "Invalid API key", "unauthorized")
+
+    # Neither shape matched. Don't claim "Invalid API key" — the token
+    # was never API-key-shaped to begin with. Surface the actual issue
+    # so callers debugging a malformed bearer don't chase the wrong
+    # ghost.
+    raise api_error(
+        401,
+        "Bearer token has unrecognized shape (expected sk-tr-... or trsess-...)",
+        "unauthorized",
+    )
 
 
 def _principal_from_dev_header(

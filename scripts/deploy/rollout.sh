@@ -61,6 +61,7 @@ add_secret_env_if_exists "TR_GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 ENV_VARS=(
@@ -89,6 +90,11 @@ ENV_VARS=(
   "TR_AWS_REGION=us-east-1"
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
+  # Axiom log shipping. Token comes from Secret Manager via the
+  # add_secret_env_if_exists block above; dataset name is plain config.
+  # Empty AXIOM_API_TOKEN at runtime → handler is not registered (graceful no-op).
+  "AXIOM_DATASET=trusted-router"
+  "AXIOM_URL=https://api.axiom.co"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

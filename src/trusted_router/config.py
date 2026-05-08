@@ -33,6 +33,19 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
+
+    # Axiom log shipping. Token + org-id read from env at startup
+    # (`AXIOM_API_TOKEN`, `AXIOM_ORG_ID`) since those names match
+    # axiom-py / axiom-cli conventions; dataset is plain config so it
+    # can be overridden per environment (e.g. `staging-trusted-router`).
+    # Empty token at startup → handler is not registered (graceful no-op).
+    axiom_dataset: str = "trusted-router"
+    axiom_url: str = "https://api.axiom.co"
+    # Levels at and above this go to Axiom. INFO captures rate-limit
+    # decisions, structured business events, and the Bigtable swallowed-
+    # error log lines we just enriched. DEBUG would flood; ERROR alone
+    # would miss the request_id correlation in 429s.
+    axiom_log_level: str = "INFO"
     enable_sentry_test_route: bool = False
     sentry_floodgate_enabled: bool = True
     sentry_floodgate_window_seconds: int = 60 * 60

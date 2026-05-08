@@ -5,8 +5,6 @@ mocked LLM responses. This file focuses on the standalone primitives.
 """
 from __future__ import annotations
 
-import pytest
-
 from scripts.pricing.base import (
     MAX_PRICE_MICRO_PER_M,
     ModelPrice,

@@ -4,9 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from scripts.check_price_spike import check, _summary_line
+from scripts.check_price_spike import _summary_line, check
 
 
 def _make_snapshot(prices: dict[str, tuple[str, str]]) -> dict:

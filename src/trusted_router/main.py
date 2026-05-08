@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
+from trusted_router.axiom_config import init_axiom
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import error_response
 from trusted_router.middleware import register_http_middleware
@@ -56,6 +57,7 @@ def create_app(
         configure_store(create_store(settings))
     if init_observability:
         init_sentry(settings)
+        init_axiom(settings)
     app = FastAPI(title="TrustedRouter", version="0.1.0")
     app.state.settings = settings
 

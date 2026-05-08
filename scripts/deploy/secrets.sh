@@ -77,6 +77,13 @@ if gc secrets describe trustedrouter-tr-api-key-for-self-heal >/dev/null 2>&1; t
     --quiet >/dev/null \
     || log "WARN: per-secret binding returned non-zero (may already be present)"
 fi
+
+# Axiom logging — ship structured logs to a dedicated dataset for
+# slice-and-dice analysis (request_id correlation, rate-limit hits,
+# Bigtable write failures, etc.). The runtime SA reads
+# AXIOM_API_TOKEN from Secret Manager; the dataset name is plain
+# config and lives in env, not in Secret Manager.
+ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"
 require_secret_from_env_file "STRIPE_SECRET_KEY" "trustedrouter-stripe-secret-key" "STRIPE_KEY"
 require_secret_from_env_file "STRIPE_WEBHOOK_SECRET" "trustedrouter-stripe-webhook-secret"
 
