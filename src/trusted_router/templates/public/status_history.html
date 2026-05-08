@@ -1,0 +1,205 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="status-hero">
+  <div>
+    <span class="eyebrow">Public uptime rollups</span>
+    <h1>{{ heading }}</h1>
+    <p class="lead">{{ description }}</p>
+  </div>
+  <div class="status-updated">
+    <span>Last updated</span>
+    <strong>{{ snapshot.generated_at }}</strong>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+{% set rollup = history.data %}
+<section class="status-page status-history-page">
+  <div class="status-banner status-{{ snapshot.overall_status_class }}">
+    <div>
+      <h2>{{ snapshot.summary.headline }}</h2>
+      <p>{{ snapshot.summary.detail }}</p>
+    </div>
+    <div class="status-banner-metrics">
+      <span>{{ snapshot.overall_status_label }}</span>
+      <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
+      <small>In-region gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+      {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
+      <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if window in ["5m", "24h", "48h"] %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>{{ heading }}</h2>
+        <p>Aggregate status by target and probe type. Detailed component bars below show the last 48 hourly buckets.</p>
+      </div>
+      <span class="component-status status-{{ rollup.overall_status|replace('_', '-') }}">{{ rollup.overall_status|replace('_', ' ') }}</span>
+    </div>
+    <div class="status-history-summary">
+      <div><span>Window</span><strong>{{ history.window }}</strong></div>
+      <div><span>Samples</span><strong>{{ rollup.sample_count }}</strong></div>
+      <div><span>Probe groups</span><strong>{{ rollup.groups|length }}</strong></div>
+    </div>
+    {% if rollup.groups %}
+    <div class="status-table-scroll">
+    <table class="activity-table status-table status-history-table">
+      <thead>
+        <tr>
+          <th>Target</th>
+          <th>Probe</th>
+          <th>Status</th>
+          <th>Uptime</th>
+          <th>Samples</th>
+          <th>P50</th>
+          <th>P95</th>
+          <th>TTFT p50</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for group in rollup.groups %}
+        <tr>
+          <td>{{ group.target }}</td>
+          <td>{{ group.probe_type }}</td>
+          <td><span class="component-status status-{{ group.status|replace('_', '-') }}">{{ group.status|replace('_', ' ') }}</span></td>
+          <td>{{ group.uptime_percent | uptime_pct(4) }}</td>
+          <td>{{ group.sample_count }}</td>
+          <td>{% if group.p50_latency_milliseconds %}{{ group.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{% if group.p95_latency_milliseconds %}{{ group.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{% if group.p50_ttfb_milliseconds %}{{ group.p50_ttfb_milliseconds }} ms{% else %}n/a{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty status-empty">No rollup samples exist for this window yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>48-hour component timeline</h2>
+        <p>One bar per hour. Gray is only used when a bucket has no sample data.</p>
+      </div>
+      <div class="status-legend" aria-label="History legend">
+        <span><i class="history-day status-up"></i>Operational</span>
+        <span><i class="history-day status-degraded"></i>Degraded</span>
+        <span><i class="history-day status-down"></i>Outage</span>
+        <span><i class="history-day status-unknown"></i>No data</span>
+      </div>
+    </div>
+    <div class="component-list">
+      {% for component in snapshot.components %}
+      <article class="component-row">
+        <div class="component-main">
+          <div>
+            <h3>{{ component.name }}</h3>
+            <p>{{ component.description }}</p>
+          </div>
+          <span class="component-status status-{{ component.status_class }}">{{ component.status_label }}</span>
+        </div>
+        <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">
+          {% for bucket in component.history %}
+          <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
+            <span class="history-tooltip" role="tooltip" aria-hidden="true">
+              <strong>{{ bucket.bucket_start | replace("T", " ") | replace("+00:00", " UTC") }}</strong>
+              <em class="status-{{ bucket.status_class }}">{{ bucket.status_label }}</em>
+              {% if bucket.uptime_percent is not none %}
+                <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
+                <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
+                {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
+                {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
+              {% else %}
+                <span class="muted">No probe samples in this hour yet.</span>
+              {% endif %}
+            </span>
+          </span>
+          {% endfor %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>{% if window == "monthly" %}Monthly rollups{% else %}Daily rollups{% endif %}</h2>
+        <p>Precomputed reliability history from compact rollup records, retained for long-term public status reporting.</p>
+      </div>
+      <div class="status-legend" aria-label="Rollup legend">
+        <span><i class="history-day status-up"></i>Operational</span>
+        <span><i class="history-day status-degraded"></i>Degraded</span>
+        <span><i class="history-day status-down"></i>Outage</span>
+      </div>
+    </div>
+    {% if rollup %}
+    <div class="rollup-list">
+      {% for row in rollup %}
+      <article class="rollup-row">
+        <div>
+          <strong>{% if window == "monthly" %}{{ row.period_start[:7] }}{% elif row.date %}{{ row.date }}{% else %}{{ row.period_start[:10] }}{% endif %}</strong>
+          <span>{{ row.sample_count }} samples{% if row.group_count %} · {{ row.group_count }} groups{% endif %}</span>
+        </div>
+        <span class="component-status status-{{ row.status|replace('_', '-') }}">{{ row.status|replace('_', ' ') }}</span>
+        <div class="rollup-bar-track" aria-label="{{ row.uptime_percent | uptime_pct(4) }} uptime">
+          <span class="rollup-bar-fill status-{{ row.status|replace('_', '-') }}" style="width: {{ row.uptime_percent or 0 }}%"></span>
+        </div>
+        <div class="rollup-row-metrics">
+          <strong>{{ row.uptime_percent | uptime_pct(4) }}</strong>
+          <span>{% if row.p50_latency_milliseconds %}P50 {{ row.p50_latency_milliseconds }} ms{% else %}P50 n/a{% endif %}</span>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    <div class="status-table-scroll">
+    <table class="activity-table status-table status-history-table">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Status</th>
+          <th>Uptime</th>
+          <th>Samples</th>
+          <th>P50</th>
+          <th>P95</th>
+          <th>TTFT p50</th>
+          <th>Top error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rollup %}
+        <tr>
+          <td>{% if window == "monthly" %}{{ row.period_start[:7] }}{% elif row.date %}{{ row.date }}{% else %}{{ row.period_start[:10] }}{% endif %}</td>
+          <td><span class="component-status status-{{ row.status|replace('_', '-') }}">{{ row.status|replace('_', ' ') }}</span></td>
+          <td>{{ row.uptime_percent | uptime_pct(4) }}</td>
+          <td>{{ row.sample_count }}</td>
+          <td>{% if row.p50_latency_milliseconds %}{{ row.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{% if row.p95_latency_milliseconds %}{{ row.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{% if row.p50_ttfb_milliseconds %}{{ row.p50_ttfb_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{% if row.top_error %}{{ row.top_error }}{% else %}-{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty status-empty">No long-term rollup data exists yet. History starts when monitoring starts; we do not invent earlier uptime.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <div class="status-actions">
+    <a class="btn" href="/status">Back to status</a>
+    <a class="btn" href="{{ json_url }}">View JSON</a>
+    {% if window != "48h" %}<a class="btn" href="/status/history?window=48h">48-hour view</a>{% endif %}
+    {% if window != "monthly" %}<a class="btn" href="/status/history?window=monthly">Monthly view</a>{% endif %}
+  </div>
+</section>
+{% endblock %}

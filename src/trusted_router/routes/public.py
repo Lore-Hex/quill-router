@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
@@ -124,7 +124,11 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/status/history")
-    async def status_history(window: str = "48h") -> JSONResponse:
+    async def status_history(
+        request: Request,
+        window: str = "48h",
+        response_format: str | None = Query(default=None, alias="format"),
+    ) -> Response:
         if window not in {"5m", "24h", "48h", "daily", "monthly"}:
             return JSONResponse(
                 {
@@ -137,10 +141,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         samples = _status_samples(hours=1)
         rollups = _status_rollups(window)
-        return JSONResponse(
-            {"data": history_payload(samples, window, rollups=rollups)},
-            headers={"cache-control": "max-age=15, public"},
+        payload = history_payload(samples, window, rollups=rollups)
+        if not _wants_history_html(request, explicit_format=response_format):
+            return JSONResponse(
+                {"data": payload},
+                headers={"cache-control": "max-age=15, public"},
+            )
+        html = _status_history_page_html(
+            settings,
+            host=request.headers.get("host", ""),
+            window=window,
+            history=payload,
         )
+        return HTMLResponse(html, headers={"cache-control": "max-age=15, public"})
 
     @public_html_route("/models")
     async def models() -> str:
@@ -192,6 +205,59 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             f"{settings.trust_gcp_image_reference or 'not-configured'}\n",
             headers={"cache-control": "max-age=60, public"},
         )
+
+
+def _wants_history_html(request: Request, *, explicit_format: str | None) -> bool:
+    if explicit_format == "html":
+        return True
+    if explicit_format == "json":
+        return False
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept
+
+
+def _status_history_page_html(
+    settings: Settings,
+    *,
+    host: str,
+    window: str,
+    history: dict[str, Any],
+) -> str:
+    hostname = host.split(":", 1)[0].lower()
+    site_url = (
+        f"https://status.trustedrouter.com/status/history?window={window}"
+        if hostname == "status.trustedrouter.com"
+        else f"https://{settings.trusted_domain}/status/history?window={window}"
+    )
+    title = {
+        "48h": "48-hour Status History - TrustedRouter",
+        "monthly": "Monthly Status History - TrustedRouter",
+        "daily": "Daily Status History - TrustedRouter",
+        "24h": "24-hour Status History - TrustedRouter",
+        "5m": "Current Status History - TrustedRouter",
+    }[window]
+    heading = {
+        "48h": "48-hour status history",
+        "monthly": "Monthly status history",
+        "daily": "Daily status history",
+        "24h": "24-hour status history",
+        "5m": "Current status history",
+    }[window]
+    return render_template(
+        "public/status_history.html",
+        api_base_url=settings.api_base_url,
+        site_url=site_url,
+        title=title,
+        heading=heading,
+        description="Visual rollups from metadata-only synthetic checks.",
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=settings.release,
+        snapshot=_status_snapshot(settings),
+        history=history,
+        window=window,
+        json_url=f"/status/history?window={window}&format=json",
+    )
 
 
 def _status_snapshot(settings: Settings) -> dict[str, Any]:

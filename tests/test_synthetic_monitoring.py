@@ -144,6 +144,67 @@ def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:
     assert "reply exactly PONG" not in history.text
 
 
+def test_status_history_browser_requests_render_48h_visual_page(client: TestClient) -> None:
+    sample = _sample(
+        id="syn_48h_visual",
+        probe_type="tls_health",
+        status="up",
+        latency_milliseconds=33,
+    )
+    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+
+    history = client.get("/status/history?window=48h", headers={"accept": "text/html"})
+
+    assert history.status_code == 200
+    assert history.headers["content-type"].startswith("text/html")
+    assert "48-hour status history" in history.text
+    assert "Aggregate status by target and probe type" in history.text
+    assert "48-hour component timeline" in history.text
+    assert "View JSON" in history.text
+    assert "reply exactly PONG" not in history.text
+    assert "sk-tr-" not in history.text
+
+
+def test_status_history_browser_requests_render_monthly_visual_page(client: TestClient) -> None:
+    sample = _sample(
+        id="syn_monthly_visual",
+        probe_type="tls_health",
+        status="up",
+        latency_milliseconds=77,
+    )
+    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+
+    history = client.get("/status/history?window=monthly", headers={"accept": "text/html"})
+
+    assert history.status_code == 200
+    assert history.headers["content-type"].startswith("text/html")
+    assert "Monthly status history" in history.text
+    assert "Monthly rollups" in history.text
+    assert "Precomputed reliability history" in history.text
+    assert "View JSON" in history.text
+    assert "reply exactly PONG" not in history.text
+    assert "sk-tr-" not in history.text
+
+
+def test_status_history_format_json_overrides_browser_accept(client: TestClient) -> None:
+    sample = _sample(
+        id="syn_json_override",
+        probe_type="tls_health",
+        status="up",
+        latency_milliseconds=42,
+    )
+    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+
+    history = client.get(
+        "/status/history?window=48h&format=json",
+        headers={"accept": "text/html"},
+    )
+
+    assert history.status_code == 200
+    assert history.headers["content-type"].startswith("application/json")
+    assert history.json()["data"]["window"] == "48h"
+
+
 def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
     sample = _sample(
         id="syn_status_host",
