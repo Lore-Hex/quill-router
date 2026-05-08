@@ -151,10 +151,13 @@ def _or_pricing_to_micro_per_m(pricing: dict[str, Any]) -> ModelPrice | None:
         completion = Decimal(str(pricing.get("completion") or "0"))
     except Exception:  # noqa: BLE001
         return None
-    micro_per_m = lambda d: int((d * Decimal(1_000_000_000_000)).to_integral_value())
+
+    def _micro_per_m(d: Decimal) -> int:
+        return int((d * Decimal(1_000_000_000_000)).to_integral_value())
+
     return ModelPrice(
-        prompt_micro_per_m=micro_per_m(prompt),
-        completion_micro_per_m=micro_per_m(completion),
+        prompt_micro_per_m=_micro_per_m(prompt),
+        completion_micro_per_m=_micro_per_m(completion),
     )
 
 
@@ -296,7 +299,7 @@ def _summary_lines(
                 lines.append(trimmed.rstrip())
     if disagreements:
         lines.append("")
-        lines.append(f"OR cross-check disagreements (>2%, provider-direct wins):")
+        lines.append("OR cross-check disagreements (>2%, provider-direct wins):")
         for note in disagreements[:30]:
             lines.append(f"  {note}")
         if len(disagreements) > 30:

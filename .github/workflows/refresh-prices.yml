@@ -100,10 +100,14 @@ jobs:
         run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
 
       - name: Refresh provider-direct prices (with self-heal)
+        # `set -o pipefail` so the script's exit code propagates through
+        # the `| tee` and an exit-1 from refresh.py (too many providers
+        # failed entirely) actually fails the step. Without pipefail
+        # the pipe exit code is `tee`'s, which is 0 even when the
+        # script returned non-zero.
         run: |
+          set -o pipefail
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
-        # If too many providers fail entirely, this exits 1 and the
-        # workflow stops without touching the snapshot.
 
       - name: Sanity-check for price spikes
         run: |

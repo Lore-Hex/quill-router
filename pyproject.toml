@@ -31,6 +31,11 @@ packages = ["src/trusted_router"]
 
 [dependency-groups]
 dev = [
+  # beautifulsoup4 is used by the hourly pricing refresh workflow
+  # (scripts/pricing/parsers/*.py) and tests/test_pricing_*.py.
+  # Not used at runtime — catalog.py reads the committed JSON
+  # snapshot — so it stays out of the deployed wheel.
+  "beautifulsoup4>=4.12.0",
   "hypothesis>=6.152.4",
   "mypy>=1.13",
   "pytest>=8.3.0",

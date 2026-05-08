@@ -3,15 +3,23 @@
 Together has a real JSON pricing API at /v1/models, so this provider
 bypasses the parser tier entirely. No HTML scraping, no LLM self-heal —
 just hit the API and translate.
+
+`/v1/models` requires an API key (Bearer auth). The workflow can
+provide one via the TOGETHER_API_KEY env var. Without it, the fetch
+returns 401 and Together is counted as a single failure under
+MAX_TOLERATED_FAILURES — every other provider still refreshes.
 """
 from __future__ import annotations
 
-from typing import Any
+import os
+
+import httpx
 
 from scripts.pricing.base import (
+    PROVIDER_FETCH_TIMEOUT,
+    PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
-    fetch_json,
     validate,
 )
 
@@ -69,7 +77,14 @@ def _row_to_micro_per_m(price_per_token: object) -> int | None:
 
 
 def fetch() -> ProviderPricingResult:
-    payload = fetch_json(URL)
+    api_key = os.environ.get("TOGETHER_API_KEY")
+    headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
+        response = client.get(URL, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
     if isinstance(payload, dict):
         rows = payload.get("data") or []
     else:
