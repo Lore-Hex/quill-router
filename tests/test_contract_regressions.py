@@ -13,7 +13,7 @@ TEST_BYOK_KMS_KEY_NAME = (
 
 
 def test_catalog_prices_use_uniform_markup_and_exact_openrouter_decimal(client: TestClient) -> None:
-    """Under uniform pricing (cost+10%, $0.10/M floor), prompt_price and
+    """Under uniform pricing (cost+10%, $0.01/M floor), prompt_price and
     published_prompt are the same number — no 1¢/M discount theater. The
     `discount_microdollars_per_million_tokens` field is preserved for
     OpenRouter consumer compat but pinned to 0."""

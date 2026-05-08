@@ -1,0 +1,651 @@
+"""Human-only orchestration for the hourly self-healing pricing refresh.
+
+This module contains:
+  fetch_html           — the ONLY place network IO happens.
+  validate             — schema + plausibility checks on parser output.
+  ast_whitelist_check  — static gate on LLM-generated parser source.
+  sandbox_run_parser   — runs LLM-generated parser in a subprocess
+                         with no network, no filesystem, 5s timeout.
+  self_heal_parser     — calls TR's smartest model via TR's own API to
+                         rewrite parsers/<slug>.py when validation fails.
+  fetch_provider       — the per-provider entry point used by refresh.py.
+
+LLM-rewriteable code never imports this module — it lives in
+`scripts/pricing/parsers/<slug>.py` as pure `parse(html: str) -> dict`.
+Everything in this file is human-maintained.
+"""
+from __future__ import annotations
+
+import ast
+import difflib
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import textwrap
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+log = logging.getLogger("pricing")
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PARSERS_DIR = REPO_ROOT / "scripts" / "pricing" / "parsers"
+
+# ----------------------------------------------------------------------
+# Plausibility ranges and import whitelist for LLM-generated parser code.
+# ----------------------------------------------------------------------
+
+# Per-million-token prices in microdollars. $0.001/M = 1_000;
+# $1000/M = 1_000_000_000. Anything outside this is almost certainly a
+# parsing bug (units mismatch).
+MIN_PRICE_MICRO_PER_M = 0  # 0 is allowed for free tiers; below 0 is a bug.
+MAX_PRICE_MICRO_PER_M = 1_000_000_000
+
+# Imports allowed in LLM-generated parsers. No urllib, requests, socket,
+# os, subprocess, pathlib, open, __import__.
+PARSER_IMPORT_WHITELIST = frozenset(
+    {
+        "re",
+        "bs4",
+        "decimal",
+        "json",
+        "typing",
+        "dataclasses",
+    }
+)
+
+# Names that may NEVER appear in LLM-generated parser code regardless of
+# import path.
+PARSER_NAME_BLACKLIST = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "open",
+        "globals",
+        "locals",
+        "vars",
+        "input",
+        "breakpoint",
+        "memoryview",
+    }
+)
+
+# Maximum source size for a parser file. Real parsers should be <5KB;
+# anything bigger is suspicious.
+MAX_PARSER_SOURCE_BYTES = 30_000
+
+# Sandbox-subprocess timeout for running an LLM-generated parser once.
+SANDBOX_WALL_CLOCK_SECONDS = 5.0
+SANDBOX_OUTPUT_BYTES_MAX = 1_000_000
+
+# How many attempts the LLM gets per provider per hourly run. 1 by
+# design — if the rewrite fails, we don't loop; the next hourly run
+# retries from scratch.
+MAX_SELF_HEAL_ATTEMPTS_PER_HOUR = 1
+
+# TR's own API for self-heal calls. Eats own dogfood; free for us.
+TR_API_BASE = os.environ.get("TR_API_BASE", "https://api.trustedrouter.com")
+TR_SELF_HEAL_MODEL = os.environ.get("TR_SELF_HEAL_MODEL", "anthropic/claude-opus-4.7")
+TR_API_KEY_ENV = "TR_API_KEY"
+
+# User-Agent used for provider fetches. Realistic but identifies us.
+PROVIDER_FETCH_UA = (
+    "Mozilla/5.0 (compatible; TrustedRouterPriceRefresh/1.0; "
+    "+https://trustedrouter.com/about)"
+)
+
+PROVIDER_FETCH_TIMEOUT = 30.0
+
+
+# ----------------------------------------------------------------------
+# Result types.
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class ModelPrice:
+    """One model's prompt + completion price, in microdollars per million tokens."""
+
+    prompt_micro_per_m: int
+    completion_micro_per_m: int
+
+
+@dataclass
+class ProviderPricingResult:
+    """Result of fetching one provider's prices for one hourly run."""
+
+    slug: str
+    prices: dict[str, ModelPrice]
+    source: str  # "deterministic" | "self_healed" | "api"
+    heal_diff: str | None = None  # unified diff of the rewritten parser
+    fetched_url: str | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+# ----------------------------------------------------------------------
+# Network IO — the ONLY place we make outbound HTTP calls. Provider
+# modules pass their hardcoded URL constants in.
+# ----------------------------------------------------------------------
+
+
+def fetch_html(url: str) -> str:
+    """Fetch one provider's pricing page. Network IO lives here, only here.
+
+    URL must be passed in by the caller from a hardcoded constant in
+    `scripts/pricing/providers/<slug>.py`. The LLM-rewriteable parser
+    tier never sees a URL and cannot make network calls.
+    """
+    headers = {"User-Agent": PROVIDER_FETCH_UA}
+    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.text
+
+
+def fetch_json(url: str) -> Any:
+    """Fetch a provider JSON API (e.g., Together's /v1/models). The
+    only providers that bypass the parser tier are those with a real
+    JSON pricing API; this helper lives here so its network IO is also
+    accounted for in the human-only tier."""
+    headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
+    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
+        response = client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+# ----------------------------------------------------------------------
+# Validation — applied to deterministic parser output AND self-healed
+# parser output. Same rules either way.
+# ----------------------------------------------------------------------
+
+
+def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, list[str]]:
+    """Coerce a parser's return value (a dict of dicts) into a
+    {model_id: ModelPrice} and surface schema errors. Used for both
+    deterministic parser output and sandbox subprocess output."""
+    errors: list[str] = []
+    if not isinstance(raw, dict):
+        return None, [f"parser must return dict, got {type(raw).__name__}"]
+    out: dict[str, ModelPrice] = {}
+    for model_id, row in raw.items():
+        if not isinstance(model_id, str) or not model_id:
+            errors.append(f"non-string or empty model_id: {model_id!r}")
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9._\-/:]+", model_id):
+            errors.append(f"model_id has unexpected chars: {model_id!r}")
+            continue
+        if not isinstance(row, dict):
+            errors.append(f"{model_id}: row must be dict, got {type(row).__name__}")
+            continue
+        prompt = row.get("prompt_micro_per_m")
+        completion = row.get("completion_micro_per_m")
+        if not isinstance(prompt, int) or isinstance(prompt, bool):
+            errors.append(f"{model_id}: prompt_micro_per_m must be int, got {prompt!r}")
+            continue
+        if not isinstance(completion, int) or isinstance(completion, bool):
+            errors.append(
+                f"{model_id}: completion_micro_per_m must be int, got {completion!r}"
+            )
+            continue
+        out[model_id] = ModelPrice(
+            prompt_micro_per_m=prompt,
+            completion_micro_per_m=completion,
+        )
+    return (out if not errors else None), errors
+
+
+def validate(
+    prices: dict[str, ModelPrice], expected_models: list[str]
+) -> list[str]:
+    """Return a list of validation errors. Empty list = pass.
+
+    Checks:
+      - non-empty
+      - every prompt/completion in [MIN_PRICE_MICRO_PER_M, MAX_PRICE_MICRO_PER_M]
+      - every model in `expected_models` is present (drift detector)
+      - units sanity: at least one model has nonzero price
+        (otherwise the parser likely missed the price column entirely)
+    """
+    errors: list[str] = []
+    if not prices:
+        errors.append("empty pricing dict")
+        return errors
+    for model_id, row in prices.items():
+        if (
+            row.prompt_micro_per_m < MIN_PRICE_MICRO_PER_M
+            or row.prompt_micro_per_m > MAX_PRICE_MICRO_PER_M
+        ):
+            errors.append(
+                f"{model_id}: prompt {row.prompt_micro_per_m} outside "
+                f"[{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
+            )
+        if (
+            row.completion_micro_per_m < MIN_PRICE_MICRO_PER_M
+            or row.completion_micro_per_m > MAX_PRICE_MICRO_PER_M
+        ):
+            errors.append(
+                f"{model_id}: completion {row.completion_micro_per_m} outside "
+                f"[{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
+            )
+    missing = [m for m in expected_models if m not in prices]
+    if missing:
+        errors.append(f"expected models missing: {missing}")
+    has_nonzero = any(
+        row.prompt_micro_per_m > 0 or row.completion_micro_per_m > 0
+        for row in prices.values()
+    )
+    if not has_nonzero:
+        errors.append(
+            "all prices are zero — parser likely missed the price column "
+            "(units mismatch?)"
+        )
+    return errors
+
+
+# ----------------------------------------------------------------------
+# AST whitelist gate — runs BEFORE any execution of LLM-generated code.
+# ----------------------------------------------------------------------
+
+
+def ast_whitelist_check(source: str) -> list[str]:
+    """Return a list of policy violations. Empty = pass.
+
+    This is the static defense: if the LLM tries to import urllib or
+    call subprocess.run, this rejects the source before sandbox_run
+    even spawns a process.
+    """
+    errors: list[str] = []
+    if len(source.encode("utf-8")) > MAX_PARSER_SOURCE_BYTES:
+        errors.append(f"source > {MAX_PARSER_SOURCE_BYTES} bytes")
+        return errors
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return [f"syntax error: {exc}"]
+
+    parse_func_node: ast.FunctionDef | None = None
+    top_level_names: set[str] = set()
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".", 1)[0]
+                if root not in PARSER_IMPORT_WHITELIST:
+                    errors.append(f"import {alias.name!r} not in whitelist")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".", 1)[0]
+            if root not in PARSER_IMPORT_WHITELIST:
+                errors.append(f"from {node.module!r} import ... not in whitelist")
+        elif isinstance(node, ast.FunctionDef):
+            top_level_names.add(node.name)
+            if node.name == "parse":
+                parse_func_node = node
+        elif isinstance(node, ast.AsyncFunctionDef):
+            errors.append(f"async functions not allowed: {node.name!r}")
+        elif isinstance(node, ast.ClassDef):
+            errors.append(f"top-level class not allowed: {node.name!r}")
+        elif isinstance(node, ast.Assign):
+            # Allow simple module-level constants only (Name = literal).
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    top_level_names.add(target.id)
+                else:
+                    errors.append(
+                        f"complex top-level assignment target not allowed: "
+                        f"{ast.dump(target)}"
+                    )
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                top_level_names.add(node.target.id)
+        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            # Module docstring is fine.
+            pass
+        else:
+            errors.append(f"unexpected top-level node: {type(node).__name__}")
+
+    if parse_func_node is None:
+        errors.append("missing top-level function `parse`")
+        return errors
+
+    # Validate parse(html: str) -> dict signature.
+    args = parse_func_node.args
+    if (
+        len(args.args) != 1
+        or args.vararg is not None
+        or args.kwarg is not None
+        or args.kwonlyargs
+        or args.posonlyargs
+    ):
+        errors.append("parse() must take exactly one positional arg `html`")
+    elif args.args[0].arg != "html":
+        errors.append("parse() first arg must be named `html`")
+
+    # Walk the entire AST once for blacklisted name references.
+    for sub in ast.walk(tree):
+        if isinstance(sub, ast.Name) and sub.id in PARSER_NAME_BLACKLIST:
+            errors.append(f"forbidden name reference: {sub.id!r}")
+        elif isinstance(sub, ast.Attribute):
+            # Block dunder attribute access, which is the standard
+            # escape hatch (e.g., obj.__class__.__bases__[0].__subclasses__()).
+            if sub.attr.startswith("__") and sub.attr.endswith("__"):
+                if sub.attr not in {"__name__", "__doc__"}:
+                    errors.append(f"forbidden dunder attribute: {sub.attr!r}")
+        elif isinstance(sub, ast.Call):
+            func = sub.func
+            if isinstance(func, ast.Name) and func.id in PARSER_NAME_BLACKLIST:
+                errors.append(f"forbidden call: {func.id!r}")
+            if isinstance(func, ast.Name) and func.id == "getattr":
+                # Only allow getattr(x, "literal") — no dynamic attrs.
+                if len(sub.args) >= 2 and not (
+                    isinstance(sub.args[1], ast.Constant)
+                    and isinstance(sub.args[1].value, str)
+                ):
+                    errors.append("getattr with non-literal attr name not allowed")
+
+    return errors
+
+
+# ----------------------------------------------------------------------
+# Sandbox subprocess — actually runs the LLM-generated parser, with no
+# network, no filesystem (the source is passed via -c, the html via stdin).
+# ----------------------------------------------------------------------
+
+
+_SANDBOX_RUNNER_TEMPLATE = textwrap.dedent(
+    '''
+    import sys, json
+    {parser_source}
+
+    if __name__ == "__main__":
+        html = sys.stdin.read()
+        result = parse(html)
+        sys.stdout.write(json.dumps(result))
+    '''
+).strip()
+
+
+def sandbox_run_parser(
+    parser_source: str, html: str
+) -> tuple[dict[str, ModelPrice] | None, list[str]]:
+    """Run the LLM-generated parser in a fresh subprocess.
+
+    The subprocess starts with `-S -I` (no site-packages, isolated mode),
+    a minimal env (no PATH, no HOME, only PYTHONIOENCODING). HTML goes in
+    via stdin; result comes out via stdout as JSON. Wall-clock cap is
+    SANDBOX_WALL_CLOCK_SECONDS; output is capped at SANDBOX_OUTPUT_BYTES_MAX.
+
+    The subprocess can still `import bs4` etc. via the whitelist, but
+    cannot do network or filesystem IO via standard library means
+    (all such names are rejected by the AST whitelist before we get here).
+
+    Returns (prices, errors). On any failure, prices is None and errors
+    is non-empty.
+    """
+    runner = _SANDBOX_RUNNER_TEMPLATE.format(parser_source=parser_source)
+    env = {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        # Keep the venv's site-packages on the path (bs4 lives there)
+        # but strip everything else.
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+    }
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", runner],
+            input=html.encode("utf-8"),
+            capture_output=True,
+            timeout=SANDBOX_WALL_CLOCK_SECONDS,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, [f"sandbox timeout after {SANDBOX_WALL_CLOCK_SECONDS}s"]
+    if proc.returncode != 0:
+        stderr_tail = proc.stderr.decode("utf-8", errors="replace")[-500:]
+        return None, [f"sandbox exited {proc.returncode}: {stderr_tail}"]
+    if len(proc.stdout) > SANDBOX_OUTPUT_BYTES_MAX:
+        return None, [f"sandbox output > {SANDBOX_OUTPUT_BYTES_MAX} bytes"]
+    try:
+        raw = json.loads(proc.stdout.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, [f"sandbox output is not valid JSON: {exc}"]
+    prices, schema_errors = _coerce_to_model_prices(raw)
+    if schema_errors:
+        return None, schema_errors
+    return prices, []
+
+
+# ----------------------------------------------------------------------
+# Self-heal: ask TR's smartest model to rewrite the parser file.
+# ----------------------------------------------------------------------
+
+
+_SELF_HEAL_SYSTEM_PROMPT = """\
+You rewrite a single Python file at scripts/pricing/parsers/<slug>.py.
+
+The file MUST contain exactly one top-level function with this signature:
+
+    def parse(html: str) -> dict:
+        ...
+
+The function returns a dict like:
+    {
+        "anthropic/claude-opus-4.7": {
+            "prompt_micro_per_m": 15_000_000,    # $15/M tokens
+            "completion_micro_per_m": 75_000_000, # $75/M tokens
+        },
+        ...
+    }
+where each value is microdollars per million tokens (i.e. $1/M = 1_000_000).
+
+STRICT RULES:
+1. Only import from this whitelist: re, bs4, decimal, json, typing, dataclasses.
+2. Do NOT import: urllib, requests, socket, os, subprocess, pathlib, sys.
+3. Do NOT call: open, eval, exec, compile, __import__, getattr (except with a
+   string literal second arg).
+4. Do NOT use any dunder attribute access except __name__ / __doc__.
+5. Do NOT define classes; the file is functions and module-level constants only.
+6. Pure function: no side effects, no network, no filesystem.
+7. Return ONLY the complete new file content inside <file_content>...</file_content>
+   tags. Do NOT include explanations outside those tags.
+
+If the previous parser is broken because the page structure changed, look at
+the new HTML and write fresh CSS/regex extraction logic. Prefer BeautifulSoup
+(`from bs4 import BeautifulSoup`) for HTML structure parsing.
+"""
+
+
+_FILE_CONTENT_RE = re.compile(
+    r"<file_content>\s*(.*?)\s*</file_content>", re.DOTALL
+)
+
+
+def self_heal_parser(
+    *,
+    slug: str,
+    current_src: str,
+    html: str,
+    errors: list[str],
+) -> str:
+    """Call TR's smartest configured model to rewrite the parser source.
+
+    Returns the new parser source as a string. Raises RuntimeError on
+    LLM API failure or response shape failure (no `<file_content>` block,
+    empty content, etc.). Does NOT validate the returned source — that
+    is the caller's job (ast_whitelist_check + sandbox_run_parser).
+    """
+    api_key = os.environ.get(TR_API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError(
+            f"{TR_API_KEY_ENV} not set; cannot call TR for self-heal"
+        )
+    user_message = (
+        f"Provider slug: {slug}\n\n"
+        f"Validation errors from the current parser:\n"
+        f"{json.dumps(errors, indent=2)}\n\n"
+        f"Current parser source (scripts/pricing/parsers/{slug}.py):\n"
+        f"```python\n{current_src}\n```\n\n"
+        f"Live HTML from the provider's pricing page:\n"
+        f"```html\n{html}\n```\n"
+    )
+    body = {
+        "model": TR_SELF_HEAL_MODEL,
+        "messages": [
+            {"role": "system", "content": _SELF_HEAL_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(
+            f"{TR_API_BASE}/v1/chat/completions",
+            headers=headers,
+            json=body,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    try:
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"unexpected TR response shape: {exc}") from exc
+    if not isinstance(content, str):
+        raise RuntimeError(
+            f"unexpected TR content type: {type(content).__name__}"
+        )
+    match = _FILE_CONTENT_RE.search(content)
+    if not match:
+        raise RuntimeError(
+            "TR response missing <file_content>...</file_content> block"
+        )
+    new_src = match.group(1).strip()
+    if not new_src:
+        raise RuntimeError("TR response had empty <file_content> block")
+    return new_src
+
+
+def diff_sources(old: str, new: str, slug: str) -> str:
+    """Unified diff of two parser sources, for the commit body."""
+    return "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"a/scripts/pricing/parsers/{slug}.py",
+            tofile=f"b/scripts/pricing/parsers/{slug}.py",
+        )
+    )
+
+
+def parser_path(slug: str) -> Path:
+    return PARSERS_DIR / f"{slug}.py"
+
+
+# ----------------------------------------------------------------------
+# Per-provider orchestration. Used by `providers/<slug>.py:fetch()`.
+# ----------------------------------------------------------------------
+
+
+def fetch_provider(
+    *,
+    slug: str,
+    url: str,
+    expected_models: list[str],
+) -> ProviderPricingResult:
+    """Fetch one provider's prices via the deterministic parser, with
+    LLM self-heal as fallback.
+
+    Steps:
+      1. fetch_html(url)
+      2. import parsers/<slug>.py and call parse(html)
+      3. validate; on success, return.
+      4. on failure, call self_heal_parser to get a rewritten source.
+      5. ast_whitelist_check the new source. Reject on violation.
+      6. sandbox_run_parser the new source on the captured HTML.
+      7. validate the sandbox output.
+      8. only after all pass, write the new source to disk and return.
+    """
+    log.info("pricing.fetch slug=%s url=%s", slug, url)
+    html = fetch_html(url)
+
+    # Exec the parser source in a fresh namespace each call — sidesteps
+    # importlib.reload edge cases (the parser file may have been
+    # rewritten by an earlier self-heal in this same workflow run) and
+    # ensures we always run the on-disk version.
+    parser_source = parser_path(slug).read_text(encoding="utf-8")
+    parser_ns: dict[str, Any] = {}
+    exec(compile(parser_source, str(parser_path(slug)), "exec"), parser_ns)
+    parse_fn = parser_ns.get("parse")
+    if not callable(parse_fn):
+        raise RuntimeError(f"{slug}: parsers/{slug}.py has no callable `parse`")
+    raw = parse_fn(html)
+    prices, schema_errors = _coerce_to_model_prices(raw)
+    if schema_errors:
+        log.warning("pricing.parse schema_errors slug=%s errors=%s", slug, schema_errors)
+        prices = None
+    errors = schema_errors[:] if schema_errors else []
+    if prices is not None:
+        errors = validate(prices, expected_models)
+    if not errors:
+        return ProviderPricingResult(
+            slug=slug,
+            prices=prices or {},
+            source="deterministic",
+            fetched_url=url,
+        )
+
+    log.warning("pricing.deterministic_failed slug=%s errors=%s", slug, errors)
+
+    # Self-heal: rewrite parsers/<slug>.py.
+    current_src = parser_path(slug).read_text(encoding="utf-8")
+    try:
+        new_src = self_heal_parser(
+            slug=slug,
+            current_src=current_src,
+            html=html,
+            errors=errors,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"{slug}: self-heal LLM call failed: {exc}") from exc
+
+    ast_errors = ast_whitelist_check(new_src)
+    if ast_errors:
+        raise RuntimeError(
+            f"{slug}: self-heal AST whitelist failed: {ast_errors}"
+        )
+
+    sandbox_prices, sandbox_errors = sandbox_run_parser(new_src, html)
+    if sandbox_errors:
+        raise RuntimeError(
+            f"{slug}: self-heal sandbox failed: {sandbox_errors}"
+        )
+    assert sandbox_prices is not None  # for type checker
+    final_errors = validate(sandbox_prices, expected_models)
+    if final_errors:
+        raise RuntimeError(
+            f"{slug}: self-heal output failed validation: {final_errors}"
+        )
+
+    # All gates passed — persist the new parser source.
+    parser_path(slug).write_text(new_src, encoding="utf-8")
+    diff = diff_sources(current_src, new_src, slug)
+    return ProviderPricingResult(
+        slug=slug,
+        prices=sandbox_prices,
+        source="self_healed",
+        heal_diff=diff,
+        fetched_url=url,
+        notes=[
+            f"self-healed parser (validation errors: {len(errors)} → 0)"
+        ],
+    )

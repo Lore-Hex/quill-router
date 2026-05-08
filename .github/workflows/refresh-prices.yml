@@ -1,0 +1,142 @@
+# Hourly upstream-price refresh.
+#
+# Pulls each keyed provider's published prices, runs a self-healing
+# parser layer (LLM-rewrites the parser when validation fails), and
+# auto-commits the resulting snapshot to main. Existing deploy.yml
+# triggers on the snapshot path via its `src/**` filter — staged
+# regional rollout + per-region watchdog already guard the deploy.
+#
+# Trust shape:
+#   * Network IO and URL choice live in scripts/pricing/providers/
+#     (human-only). The LLM-rewriteable parser tier is a pure
+#     `parse(html: str) -> dict` function with no network/filesystem
+#     access; an AST whitelist + sandbox subprocess gate every
+#     LLM-generated parser before it's persisted to disk.
+#   * The runtime (TR control plane / enclave) does NOT call any
+#     pricing endpoint. It reads prices from the committed snapshot
+#     at startup. If every upstream is down for an hour, last hour's
+#     prices stay live.
+
+name: Refresh upstream prices
+
+on:
+  schedule:
+    # Top of every hour, UTC.
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+# Belt-and-suspenders: cron once-per-hour scheduling already prevents
+# overlap, but if a manual run kicks off mid-cron-fire, this serializes.
+concurrency:
+  group: refresh-prices
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # for Workload Identity Federation
+  contents: write   # auto-commit + push the snapshot diff to main
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      # The smartest model available via TR's own API, used by the
+      # self-heal flow to rewrite a broken parser. Override per env if
+      # needed.
+      TR_SELF_HEAL_MODEL: anthropic/claude-opus-4.7
+      TR_API_BASE: https://api.trustedrouter.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history so the auto-commit can push.
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Authenticate to GCP via WIF
+        # Same WIF setup as deploy.yml — short-lived OIDC token from
+        # GitHub exchanged for an impersonation token on tr-deploy@.
+        # tr-deploy@ has been granted accessor on ONLY the
+        # trustedrouter-tr-api-key-for-self-heal secret (per-secret IAM
+        # binding in scripts/deploy/secrets.sh), so this workflow
+        # cannot read any other TR secret.
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pull self-heal API key from Secret Manager
+        # Pull at workflow runtime instead of baking into a GHA secret.
+        # Same source-of-truth as the rest of TR: ~/.quill_cloud_keys.private
+        # → scripts/deploy/secrets.sh → GCP Secret Manager. To rotate
+        # the key, update the local file and run secrets.sh — the next
+        # hourly refresh picks up the new value automatically.
+        # The `add-mask` line ensures any accidental echoing of the
+        # value in subsequent steps is redacted in workflow logs.
+        run: |
+          set -euo pipefail
+          KEY=$(gcloud secrets versions access latest \
+            --secret=trustedrouter-tr-api-key-for-self-heal \
+            --project=quill-cloud-proxy)
+          echo "::add-mask::${KEY}"
+          echo "TR_API_KEY=${KEY}" >> "$GITHUB_ENV"
+
+      - name: Snapshot existing pricing file
+        run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
+
+      - name: Refresh provider-direct prices (with self-heal)
+        run: |
+          uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
+        # If too many providers fail entirely, this exits 1 and the
+        # workflow stops without touching the snapshot.
+
+      - name: Sanity-check for price spikes
+        run: |
+          uv run python scripts/check_price_spike.py \
+            /tmp/before.json src/trusted_router/data/openrouter_snapshot.json \
+            --summary | tee /tmp/spike-summary.txt
+        # Exits 1 on a literal-2x spike or both-prices-to-zero.
+
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          git config user.name "trustedrouter-pricing-bot"
+          git config user.email "noreply@trustedrouter.com"
+
+          # Stage the snapshot AND any self-healed parser modules.
+          git add \
+            src/trusted_router/data/openrouter_snapshot.json \
+            scripts/pricing/parsers/
+
+          if git diff --cached --quiet; then
+            echo "No price changes this hour — nothing to commit."
+            exit 0
+          fi
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%MZ")
+          SPIKE_LINE=$(head -n1 /tmp/spike-summary.txt 2>/dev/null || echo "")
+
+          {
+            echo "[bot] hourly price refresh: ${TIMESTAMP}"
+            echo ""
+            if [ -n "${SPIKE_LINE}" ]; then
+              echo "Diff: ${SPIKE_LINE}"
+              echo ""
+            fi
+            cat /tmp/refresh-summary.txt
+          } > /tmp/commit-msg.txt
+
+          git commit -F /tmp/commit-msg.txt
+          git push origin HEAD:main

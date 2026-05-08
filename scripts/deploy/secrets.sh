@@ -57,6 +57,26 @@ ensure_secret_from_env_file "ZAI_API_KEY" "trustedrouter-zai-api-key" "ZHIPU_API
 ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" "TOGETHERAI_API_KEY" "TOGETHER_AI_API_KEY"
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
+
+# Self-heal LLM key for the hourly pricing refresh GHA workflow.
+# Read from the local key file like every other TR secret; pushed to
+# Secret Manager and granted to tr-deploy@ (the GHA WIF SA) so the
+# workflow can pull it via `gcloud secrets versions access`.
+ensure_secret_from_env_file "TR_API_KEY_FOR_SELF_HEAL" "trustedrouter-tr-api-key-for-self-heal"
+# Bind tr-deploy@ here, right next to the secret creation, so that a
+# downstream `set -e` on a later step (e.g. an etag-conflict on a
+# project-role call) cannot strand this secret without an accessor.
+# `|| log` so add-iam-policy-binding's harmless "already exists" or
+# transient etag conflicts do not abort the rest of the script.
+TR_DEPLOY_SA="${TR_DEPLOY_SA:-tr-deploy@${PROJECT_ID}.iam.gserviceaccount.com}"
+if gc secrets describe trustedrouter-tr-api-key-for-self-heal >/dev/null 2>&1; then
+  log "granting ${TR_DEPLOY_SA} accessor on trustedrouter-tr-api-key-for-self-heal"
+  gc secrets add-iam-policy-binding trustedrouter-tr-api-key-for-self-heal \
+    --member="serviceAccount:${TR_DEPLOY_SA}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --quiet >/dev/null \
+    || log "WARN: per-secret binding returned non-zero (may already be present)"
+fi
 require_secret_from_env_file "STRIPE_SECRET_KEY" "trustedrouter-stripe-secret-key" "STRIPE_KEY"
 require_secret_from_env_file "STRIPE_WEBHOOK_SECRET" "trustedrouter-stripe-webhook-secret"
 

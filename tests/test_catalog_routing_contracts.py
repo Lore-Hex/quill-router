@@ -69,7 +69,7 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
-    """Under the uniform pricing formula (cost+10%, $0.10/M floor), TR no
+    """Under the uniform pricing formula (cost+10%, $0.01/M floor), TR no
     longer carries a separate 1¢/M discount. `prompt_price_*` and
     `published_*` are the same number — the customer pays the headline
     price. Any model where they differ is either pre-formula leftover

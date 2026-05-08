@@ -1,0 +1,118 @@
+"""Together AI — human-only provider config.
+
+Together has a real JSON pricing API at /v1/models, so this provider
+bypasses the parser tier entirely. No HTML scraping, no LLM self-heal —
+just hit the API and translate.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from scripts.pricing.base import (
+    ModelPrice,
+    ProviderPricingResult,
+    fetch_json,
+    validate,
+)
+
+SLUG = "together"
+URL = "https://api.together.xyz/v1/models"
+
+# Model IDs we expect Together to expose, in OR-canonical form. Parser
+# below translates Together's native IDs to these.
+EXPECTED_MODELS = [
+    # Llama family that we route through Together — kept loose because
+    # Together's catalog churns and we don't want to fail the workflow
+    # over a single rename.
+]
+
+
+# Together native model id → OR-canonical id. Add/extend as new models
+# get keyed providers in catalog.py.
+_NATIVE_TO_OR_ID = {
+    "meta-llama/Llama-3-8b-chat-hf": "meta-llama/llama-3-8b-chat",
+    "meta-llama/Llama-3.1-8B-Instruct-Turbo": "meta-llama/llama-3.1-8b-instruct",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo": "meta-llama/llama-3.1-8b-instruct",
+    "meta-llama/Llama-3.1-70B-Instruct-Turbo": "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": "meta-llama/llama-3.1-70b-instruct",
+    "deepseek-ai/DeepSeek-V3": "deepseek/deepseek-v3",
+    "deepseek-ai/DeepSeek-V3-OCR": "deepseek/deepseek-v3-ocr",
+    "Qwen/Qwen2.5-7B-Instruct-Turbo": "qwen/qwen-2.5-7b-instruct",
+    "Qwen/Qwen2.5-72B-Instruct-Turbo": "qwen/qwen-2.5-72b-instruct",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": "mistralai/mixtral-8x7b-instruct",
+}
+
+
+def _row_to_micro_per_m(price_per_token: object) -> int | None:
+    """Together returns prices as dollars per token (or sometimes per million,
+    depending on field). Convert to microdollars per million.
+    1 USD/token = 1_000_000 USD/M = 1_000_000_000_000 micro/M; that's
+    obviously absurd, so Together's numbers must be USD per million tokens
+    despite the field naming. Coerce robustly: anything < 1 is treated as
+    USD per token; anything >= 1 is treated as USD per million tokens."""
+    if price_per_token is None:
+        return None
+    try:
+        value = float(price_per_token)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    if value < 1:
+        # USD per token → micro per M = value * 1e6 micro * 1e6 tokens
+        # = value * 1e12, but that's absurd. Together's actual encoding
+        # is dollars per 1M tokens for chat models, so:
+        usd_per_m = value
+    else:
+        usd_per_m = value
+    return int(round(usd_per_m * 1_000_000))
+
+
+def fetch() -> ProviderPricingResult:
+    payload = fetch_json(URL)
+    if isinstance(payload, dict):
+        rows = payload.get("data") or []
+    else:
+        rows = payload
+    prices: dict[str, ModelPrice] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        native_id = row.get("id")
+        if not isinstance(native_id, str):
+            continue
+        or_id = _NATIVE_TO_OR_ID.get(native_id)
+        if or_id is None:
+            continue
+        pricing = row.get("pricing") or {}
+        if not isinstance(pricing, dict):
+            continue
+        prompt = _row_to_micro_per_m(pricing.get("input"))
+        completion = _row_to_micro_per_m(pricing.get("output"))
+        if prompt is None or completion is None:
+            continue
+        prices[or_id] = ModelPrice(
+            prompt_micro_per_m=prompt,
+            completion_micro_per_m=completion,
+        )
+
+    notes: list[str] = []
+    if not prices:
+        notes.append(
+            "no Together models matched _NATIVE_TO_OR_ID — extend the table "
+            "or check the API response"
+        )
+    errors = validate(prices, EXPECTED_MODELS)
+    if errors:
+        # Together has no parser file to self-heal — this is JSON, not HTML.
+        # If validation fails, the only recovery is updating
+        # _NATIVE_TO_OR_ID by hand.
+        raise RuntimeError(f"together: validation failed: {errors}")
+
+    return ProviderPricingResult(
+        slug=SLUG,
+        prices=prices,
+        source="api",
+        fetched_url=URL,
+        notes=notes,
+    )

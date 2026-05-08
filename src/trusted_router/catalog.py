@@ -69,12 +69,14 @@ class ModelPricingKwargs(TypedDict):
     published_completion_price_microdollars_per_million_tokens: int
 
 
-# Uniform pricing: customer pays cost + 10%, floor $0.10/M tokens. Same
+# Uniform pricing: customer pays cost + 10%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
 # runs the 1¢/M "discount theater". The floor catches free upstream tiers
-# so the catalog never advertises $0/M to end users.
+# so the catalog never advertises $0/M to end users; $0.01/M is ~10×
+# margin over real per-request infra cost (~$0.00001/req on a typical
+# 10K-token call), recovered via 10K-tokens × $0.01/M = $0.0001/req.
 _PRICE_MARKUP_RATIO = Decimal("1.10")
-_PRICE_FLOOR_MICRODOLLARS_PER_M = 100_000  # $0.10 per million tokens.
+_PRICE_FLOOR_MICRODOLLARS_PER_M = 10_000  # $0.01 per million tokens.
 
 
 def _customer_price(cost_microdollars_per_million: int) -> int:
@@ -104,7 +106,7 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
         per_token = Decimal(str(price_per_token))
     except (InvalidOperation, ValueError):
         # Malformed snapshot rows are pinned to the price floor — better
-        # to advertise $0.10/M than to crash module import or expose $0.
+        # to advertise $0.01/M than to crash module import or expose $0.
         return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
     cost = int(
         (per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value()
@@ -172,7 +174,7 @@ DEFAULT_AUTO_MODEL_ORDER = [
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
 # `data/openrouter_snapshot.json`. That guarantees pricing is uniformly
-# `cost × 1.10, $0.10/M floor` (per the formula), and that the catalog
+# `cost × 1.10, $0.01/M floor` (per the formula), and that the catalog
 # lists every model from every provider TR has a key for — no
 # hand-curated subset to drift out of sync with reality.
 MODELS: dict[str, Model] = {
@@ -298,7 +300,7 @@ def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | No
 def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
     Pricing is run through `_customer_price_from_dollars_per_token` so the
-    catalog uniformly applies the cost+10% / $0.10/M-floor formula."""
+    catalog uniformly applies the cost+10% / $0.01/M-floor formula."""
     if not _INGEST_PATH.exists():
         return {}, {}
     snapshot = json.loads(_INGEST_PATH.read_text(encoding="utf-8"))
@@ -410,7 +412,7 @@ _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
 # The ingest snapshot IS the catalog — there's no hand-coded subset to
 # protect. AUTO_MODEL_ID is the only seed; everything else comes from
 # `data/openrouter_snapshot.json`. Pricing across the whole catalog goes
-# through the same `cost × 1.10, $0.10/M floor` formula.
+# through the same `cost × 1.10, $0.01/M floor` formula.
 MODELS.update(_INGESTED_MODELS)
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
