@@ -274,6 +274,13 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .history-bar:hover, .history-bar:focus-visible { box-shadow:0 0 0 2px #1c2733, 0 0 0 4px rgba(28,39,51,0.18); }
 .history-bar .history-tooltip { position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); display:none; flex-direction:column; gap:4px; min-width:220px; max-width:280px; padding:10px 12px; background:#1c2733; color:#fff; border-radius:6px; font-size:12px; line-height:1.45; z-index:20; box-shadow:0 6px 18px rgba(15,23,42,0.18); pointer-events:none; }
 .history-bar .history-tooltip::after { content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:6px solid transparent; border-top-color:#1c2733; }
+/* Right-edge bars: anchor the tooltip to the bar's right edge instead
+ * of centering, so the popover opens to the LEFT and stays inside the
+ * viewport. With ~48 bars, the last 8 typically fall in the at-risk
+ * zone; tuning by row width is overkill. The arrow shifts to align
+ * with the bar's right edge. */
+.history-bar:nth-last-child(-n+8) .history-tooltip { left:auto; right:-2px; transform:none; }
+.history-bar:nth-last-child(-n+8) .history-tooltip::after { left:auto; right:8px; transform:none; }
 .history-bar:hover .history-tooltip, .history-bar:focus-visible .history-tooltip { display:flex; }
 .history-bar .history-tooltip strong { font-weight:700; color:#fff; }
 .history-bar .history-tooltip em { font-style:normal; font-weight:600; padding:1px 8px; border-radius:999px; align-self:flex-start; font-size:11px; background:rgba(255,255,255,0.1); }
