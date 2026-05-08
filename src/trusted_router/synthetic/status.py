@@ -86,7 +86,9 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
         "global_gateway_overhead_sample_count": len(global_latencies),
         "canonical_gateway_overhead_p50_milliseconds": _percentile(canonical_latencies, 50),
         "canonical_gateway_overhead_sample_count": len(canonical_latencies),
-        "window": "5m",
+        # Human-friendly label for the headline-metric subtitle; the
+        # actual rollup window stays at WINDOW_SECONDS["5m"] above.
+        "window": "last 5 min",
     }
 
 
