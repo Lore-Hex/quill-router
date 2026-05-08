@@ -1,5 +1,5 @@
 {
-  "source": "openrouter.ai/api/v1/models + /endpoints",
+  "source": "openrouter.ai/api/v1/models + provider-direct overrides",
   "filter": "kept models whose endpoints include one of TR's 9 keyed providers",
   "tr_keyed_providers": [
     "anthropic",
@@ -78,13 +78,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.93957703927492,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90079602227905,
+          "uptime_last_1d": 99.92726915766083,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-opus-4",
@@ -150,11 +152,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.52153110047847,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-opus-4.1",
@@ -221,11 +225,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.72426470588235,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-opus-4.5",
@@ -293,9 +299,10 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.972933695883,
+          "uptime_last_1d": 99.9113614875512,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Anthropic | anthropic/claude-4.5-opus-20251124",
@@ -328,13 +335,15 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.3421052631579,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.39225120283616,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-opus-4.6",
@@ -400,11 +409,12 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92717739586368,
+          "uptime_last_30m": 99.9206034140532,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90893115965265,
+          "uptime_last_1d": 99.77594418729456,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Anthropic | anthropic/claude-4.6-opus-20260205",
@@ -438,13 +448,15 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.32215483410631,
+          "uptime_last_1d": 98.75732291851588,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-opus-4.6-fast",
@@ -512,11 +524,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.99185535103437,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "anthropic/claude-opus-4.7",
@@ -579,12 +593,13 @@
             "response_format",
             "verbosity"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.96210685865859,
+          "status": -5,
+          "uptime_last_30m": 62.08082545141874,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.83873001799957,
+          "uptime_last_1d": 99.60037543421677,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Anthropic | anthropic/claude-4.7-opus-20260416",
@@ -616,13 +631,15 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87397605545053,
+          "uptime_last_30m": 97.32313575525812,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.81210028864112,
+          "uptime_last_1d": 99.64930428529979,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-sonnet-4",
@@ -687,12 +704,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-sonnet-4.5",
@@ -759,11 +778,12 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.76771196283391,
+          "uptime_last_30m": 99.54170485792851,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.7959250310194,
+          "uptime_last_1d": 96.36761580066081,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Anthropic | anthropic/claude-4.5-sonnet-20250929",
@@ -799,11 +819,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95511445813176,
+          "uptime_last_1d": 96.7965801570409,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "anthropic/claude-sonnet-4.6",
@@ -869,11 +891,12 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98438719750196,
+          "uptime_last_30m": 99.94053989772863,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96187571483036,
+          "uptime_last_1d": 99.81985203113398,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Anthropic | anthropic/claude-4.6-sonnet-20260217",
@@ -907,13 +930,15 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90627928772258,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.4152107580428,
+          "uptime_last_30m": 99.86816084377061,
+          "uptime_last_5m": 99.90566037735849,
+          "uptime_last_1d": 99.67783990148524,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "anthropic"
+          "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "arcee-ai/coder-large",
@@ -975,9 +1000,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "arcee-ai/maestro-reasoning",
@@ -1039,9 +1066,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "arcee-ai/spotlight",
@@ -1104,9 +1133,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "arcee-ai/virtuoso-large",
@@ -1170,9 +1201,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "deepcogito/cogito-v2.1-671b",
@@ -1234,13 +1267,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "deepseek/deepseek-chat-v3.1",
@@ -1302,13 +1337,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.94520547945206,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.9379114495934,
+          "uptime_last_30m": 99.26326129666012,
+          "uptime_last_5m": 98.84726224783861,
+          "uptime_last_1d": 98.81883907054238,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "deepseek/deepseek-r1-0528",
@@ -1371,11 +1408,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.5047052996533,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -1438,13 +1477,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99361708917989,
+          "uptime_last_30m": 99.99969879064444,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.70360810877833,
+          "uptime_last_1d": 99.48643232152322,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "deepseek"
+          "tr_provider_slug": "deepseek",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -1507,11 +1548,12 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98614446702383,
-          "uptime_last_5m": 99.9828414550446,
-          "uptime_last_1d": 99.97276559386692,
+          "uptime_last_30m": 99.99536951287276,
+          "uptime_last_5m": 99.96896819239721,
+          "uptime_last_1d": 99.54658136071343,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "deepseek"
+          "tr_provider_slug": "deepseek",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Together | deepseek/deepseek-v4-pro-20260423",
@@ -1548,13 +1590,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.6947063089195,
+          "uptime_last_30m": 99.62671090833679,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 95.90972268184525,
+          "uptime_last_1d": 98.50984792458284,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "essentialai/rnj-1-instruct",
@@ -1616,20 +1660,22 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-2.0-flash-001",
       "name": "Google: Gemini 2.0 Flash",
       "created": 1738769413,
       "description": "Gemini Flash 2.0 offers a significantly faster time to first token (TTFT) compared to [Gemini Flash 1.5](/google/gemini-flash-1.5), while maintaining quality on par with larger models like [Gemini Pro 1.5](/google/gemini-pro-1.5). It...",
-      "context_length": 1000000,
+      "context_length": 1048576,
       "architecture": {
         "modality": "text+image+file+audio+video->text",
         "input_modalities": [
@@ -1656,7 +1702,7 @@
         "input_cache_write": "0.00000008333333333333334"
       },
       "top_provider": {
-        "context_length": 1000000,
+        "context_length": 1048576,
         "max_completion_tokens": 8192,
         "is_moderated": false
       },
@@ -1696,13 +1742,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90228316168259,
-          "uptime_last_5m": 99.94909646220412,
-          "uptime_last_1d": 99.69980033420842,
+          "uptime_last_30m": 99.93647609495152,
+          "uptime_last_5m": 99.85976393595887,
+          "uptime_last_1d": 99.86639960371812,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "google/gemini-2.0-flash-lite-001",
@@ -1771,13 +1819,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.79879275653923,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.84393695052802,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.98866855524079,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "google/gemini-2.5-flash",
@@ -1853,13 +1903,15 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.64021663066298,
-          "uptime_last_5m": 99.72961509914113,
-          "uptime_last_1d": 99.77847697637998,
+          "uptime_last_30m": 99.13890260735225,
+          "uptime_last_5m": 98.52594339622641,
+          "uptime_last_1d": 99.79268484256092,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "google/gemini-2.5-flash-image",
@@ -1931,12 +1983,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96693668374938,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.98357963875205,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-2.5-flash-lite",
@@ -2012,13 +2066,15 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.93370204302389,
-          "uptime_last_5m": 99.87457240592931,
-          "uptime_last_1d": 99.79300442707296,
+          "uptime_last_30m": 99.9607562107562,
+          "uptime_last_5m": 99.88702692524947,
+          "uptime_last_1d": 99.8540544109759,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "google/gemini-2.5-pro",
@@ -2094,13 +2150,15 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.54094292803971,
-          "uptime_last_5m": 95.74468085106383,
-          "uptime_last_1d": 94.25261996690568,
+          "uptime_last_30m": 94.32773109243698,
+          "uptime_last_5m": 95.08196721311475,
+          "uptime_last_1d": 96.122125958014,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "google/gemini-2.5-pro-preview",
@@ -2175,13 +2233,15 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.54094292803971,
-          "uptime_last_5m": 95.74468085106383,
-          "uptime_last_1d": 94.25261996690568,
+          "uptime_last_30m": 94.32773109243698,
+          "uptime_last_5m": 95.08196721311475,
+          "uptime_last_1d": 96.122125958014,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-2.5-pro-preview-05-06",
@@ -2257,13 +2317,15 @@
             "stop"
           ],
           "status": -2,
-          "uptime_last_30m": 94.54094292803971,
-          "uptime_last_5m": 95.74468085106383,
-          "uptime_last_1d": 94.25261996690568,
+          "uptime_last_30m": 94.32773109243698,
+          "uptime_last_5m": 95.08196721311475,
+          "uptime_last_1d": 96.122125958014,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3-flash-preview",
@@ -2339,13 +2401,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7797043774872,
-          "uptime_last_5m": 99.88139084836757,
-          "uptime_last_1d": 99.76152580921178,
+          "uptime_last_30m": 99.91274196881673,
+          "uptime_last_5m": 99.95459361283487,
+          "uptime_last_1d": 99.74471768319468,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3-pro-image-preview",
@@ -2418,13 +2482,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92044550517105,
+          "uptime_last_30m": 99.82253771073647,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.69540481400438,
+          "uptime_last_1d": 99.70295726720686,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3.1-flash-image-preview",
@@ -2486,13 +2552,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.8458927359131,
-          "uptime_last_5m": 97.8902953586498,
-          "uptime_last_1d": 99.60550332672568,
+          "uptime_last_30m": 99.90094105993066,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.25799752665843,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3.1-flash-lite",
@@ -2568,13 +2636,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.64936886395512,
-          "uptime_last_5m": 99.43019943019942,
-          "uptime_last_1d": 99.6778350515464,
+          "uptime_last_30m": 99.58333333333333,
+          "uptime_last_5m": 99.84848484848486,
+          "uptime_last_1d": 99.53967046130896,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3.1-flash-lite-preview",
@@ -2650,13 +2720,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.22544186368172,
-          "uptime_last_5m": 99.22612801678909,
-          "uptime_last_1d": 99.30886464063487,
+          "uptime_last_30m": 99.40621912027846,
+          "uptime_last_5m": 99.2423690536898,
+          "uptime_last_1d": 99.13042075646172,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3.1-pro-preview",
@@ -2732,13 +2804,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.36695716669757,
-          "uptime_last_5m": 98.49812265331664,
-          "uptime_last_1d": 97.84435712726479,
+          "uptime_last_30m": 98.97167598773228,
+          "uptime_last_5m": 99.19770773638969,
+          "uptime_last_1d": 97.54936702276378,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemini-3.1-pro-preview-customtools",
@@ -2816,11 +2890,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98871045129971,
+          "uptime_last_1d": 99.99621899576528,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemma-3n-e4b-it",
@@ -2878,13 +2954,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9938446386803,
+          "uptime_last_30m": 99.9930531434526,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98945459147087,
+          "uptime_last_1d": 99.9891329433143,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemma-4-26b-a4b-it:free",
@@ -2945,11 +3023,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.88925036339724,
+          "uptime_last_1d": 99.77854875618219,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -3015,13 +3095,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 98.99357003075202,
-          "uptime_last_5m": 99.4475138121547,
-          "uptime_last_1d": 97.28245656873665,
+          "uptime_last_30m": 98.66156787762907,
+          "uptime_last_5m": 97.04301075268818,
+          "uptime_last_1d": 98.65686185454635,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/gemma-4-31b-it:free",
@@ -3082,11 +3164,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93137524018665,
+          "uptime_last_1d": 99.83664983664984,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/lyria-3-clip-preview",
@@ -3145,9 +3229,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "google/lyria-3-pro-preview",
@@ -3206,9 +3292,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini"
+          "tr_provider_slug": "gemini",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "liquid/lfm-2-24b-a2b",
@@ -3266,13 +3354,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "meta-llama/llama-3-8b-instruct",
@@ -3329,14 +3419,16 @@
             "logit_bias",
             "min_p"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.0084985835694,
+          "status": -2,
+          "uptime_last_30m": 93.36188436830835,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.3512702650629,
+          "uptime_last_1d": 99.41458135187432,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -3356,8 +3448,8 @@
         "instruct_type": "llama3"
       },
       "pricing": {
-        "prompt": "0.00000002",
-        "completion": "0.00000005"
+        "prompt": "0.0000001",
+        "completion": "0.0000001"
       },
       "top_provider": {
         "context_length": 16384,
@@ -3399,13 +3491,15 @@
             "logit_bias"
           ],
           "status": -5,
-          "uptime_last_30m": 22.164048865619545,
-          "uptime_last_5m": 22.07792207792208,
-          "uptime_last_1d": 15.657981530343006,
+          "uptime_last_30m": 24.369747899159663,
+          "uptime_last_5m": 21.052631578947366,
+          "uptime_last_1d": 77.67681695599734,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras"
+          "tr_provider_slug": "cerebras",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -3467,13 +3561,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.87640449438202,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.76811131678049,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.18493640131484,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "meta-llama/llama-guard-4-12b",
@@ -3532,13 +3628,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97921862011637,
+          "uptime_last_30m": 99.97660271408516,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98478968279575,
+          "uptime_last_1d": 99.36949544028676,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "minimax/minimax-m2.7",
@@ -3558,13 +3656,12 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000003",
-        "completion": "0.0000012",
-        "input_cache_read": "0.000000059"
+        "prompt": "0.000000299",
+        "completion": "0.0000012"
       },
       "top_provider": {
         "context_length": 196608,
-        "max_completion_tokens": null,
+        "max_completion_tokens": 131072,
         "is_moderated": false
       },
       "per_request_limits": null,
@@ -3604,13 +3701,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89853262566344,
-          "uptime_last_5m": 99.94511525795828,
-          "uptime_last_1d": 99.25276759473061,
+          "uptime_last_30m": 99.48900588417466,
+          "uptime_last_5m": 99.88317757009347,
+          "uptime_last_1d": 98.65684717899036,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/codestral-2508",
@@ -3671,13 +3770,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97242140099283,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94840812908436,
+          "uptime_last_1d": 99.94245619245619,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/devstral-2512",
@@ -3738,13 +3839,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87063389391979,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98046111762407,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.96549127870497,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/devstral-medium",
@@ -3807,11 +3910,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.16222391469917,
+          "uptime_last_1d": 99.69530773918342,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/devstral-small",
@@ -3872,13 +3977,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.69775474956822,
-          "uptime_last_5m": 99.08466819221968,
-          "uptime_last_1d": 99.17741264559068,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.96190438978647,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/ministral-14b-2512",
@@ -3939,14 +4046,16 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.89640526261266,
-          "uptime_last_5m": 99.62476547842401,
-          "uptime_last_1d": 96.06865366738205,
+          "status": -2,
+          "uptime_last_30m": 84.45283018867924,
+          "uptime_last_5m": 0,
+          "uptime_last_1d": 95.94158046464304,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/ministral-3b-2512",
@@ -4008,13 +4117,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98100845123919,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87407243066238,
+          "uptime_last_30m": 99.94350282485875,
+          "uptime_last_5m": 99.96854851391728,
+          "uptime_last_1d": 99.93806625754962,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/ministral-8b-2512",
@@ -4076,13 +4187,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.39777833250125,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.40171433570532,
+          "uptime_last_30m": 99.95511669658886,
+          "uptime_last_5m": 99.90557129367328,
+          "uptime_last_1d": 99.8117003841608,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mistral-large",
@@ -4102,8 +4215,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000002",
-        "completion": "0.000006",
+        "prompt": "0.0000005",
+        "completion": "0.0000015",
         "input_cache_read": "0.0000002"
       },
       "top_provider": {
@@ -4121,8 +4234,8 @@
           "tag": "mistral",
           "context_length": 128000,
           "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.000006",
+            "prompt": "0.0000005",
+            "completion": "0.0000015",
             "input_cache_read": "0.0000002",
             "discount": 0
           },
@@ -4145,11 +4258,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99011760055342,
+          "uptime_last_1d": 99.79127134724858,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mistral-large-2407",
@@ -4214,9 +4329,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-large-2411",
@@ -4278,12 +4395,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98180258403306,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.97521685254027,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-large-2512",
@@ -4345,13 +4464,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98072474942174,
+          "uptime_last_30m": 99.98061639852685,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93680295707603,
+          "uptime_last_1d": 99.85107634571138,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-medium-3",
@@ -4413,13 +4534,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.9836684328954,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-medium-3-5",
@@ -4482,12 +4605,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99943930788166,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mistral-medium-3.1",
@@ -4549,13 +4674,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.64349376114082,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97542469204068,
+          "uptime_last_1d": 99.95730681333032,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-nemo",
@@ -4575,8 +4702,8 @@
         "instruct_type": "mistral"
       },
       "pricing": {
-        "prompt": "0.00000002",
-        "completion": "0.00000003"
+        "prompt": "0.00000015",
+        "completion": "0.00000015"
       },
       "top_provider": {
         "context_length": 131072,
@@ -4615,13 +4742,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92495622446427,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95091869882988,
+          "uptime_last_30m": 99.94096314413426,
+          "uptime_last_5m": 99.8220640569395,
+          "uptime_last_1d": 99.95596083104502,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mistral-saba",
@@ -4684,11 +4813,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.9958361092605,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "mistralai/mistral-small-2603",
@@ -4752,13 +4883,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97448003062395,
+          "uptime_last_30m": 99.84222152098454,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.92081644138618,
+          "uptime_last_1d": 99.96003723802819,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mistral-small-3.2-24b-instruct",
@@ -4779,8 +4912,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000000075",
-        "completion": "0.0000002"
+        "prompt": "0.0000001",
+        "completion": "0.0000003"
       },
       "top_provider": {
         "context_length": 128000,
@@ -4819,13 +4952,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.79092255422947,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 96.8565941206333,
+          "uptime_last_30m": 99.84521533278703,
+          "uptime_last_5m": 99.59016393442623,
+          "uptime_last_1d": 99.67795579224465,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/mixtral-8x22b-instruct",
@@ -4890,9 +5025,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/pixtral-large-2411",
@@ -4956,11 +5093,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.67341606792945,
+          "uptime_last_1d": 99.73448390308663,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "mistralai/voxtral-small-24b-2507",
@@ -5024,13 +5163,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.80411361410381,
-          "uptime_last_5m": 98.75,
-          "uptime_last_1d": 99.80086292731497,
+          "uptime_last_30m": 99.67897271268058,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.63316799310994,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral"
+          "tr_provider_slug": "mistral",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "moonshotai/kimi-k2.5",
@@ -5051,8 +5192,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000044",
-        "completion": "0.000002",
+        "prompt": "0.0000006",
+        "completion": "0.0000025",
         "input_cache_read": "0.00000022"
       },
       "top_provider": {
@@ -5071,7 +5212,7 @@
           "context_length": 262144,
           "pricing": {
             "prompt": "0.0000006",
-            "completion": "0.000003",
+            "completion": "0.0000025",
             "input_cache_read": "0.0000001",
             "discount": 0
           },
@@ -5091,11 +5232,12 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96202050892518,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.77812046562168,
+          "uptime_last_1d": 99.87222004741892,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "kimi"
+          "tr_provider_slug": "kimi",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Together | moonshotai/kimi-k2.5-0127",
@@ -5131,13 +5273,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.44598337950139,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 90.6043261726009,
+          "uptime_last_30m": 96.53579676674366,
+          "uptime_last_5m": 95.91836734693877,
+          "uptime_last_1d": 94.57745567490618,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -5158,8 +5302,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000075",
-        "completion": "0.0000035",
+        "prompt": "0.0000006",
+        "completion": "0.0000025",
         "input_cache_read": "0.00000015"
       },
       "top_provider": {
@@ -5177,8 +5321,8 @@
           "tag": "moonshotai/int4",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.00000095",
-            "completion": "0.000004",
+            "prompt": "0.0000006",
+            "completion": "0.0000025",
             "input_cache_read": "0.00000016",
             "discount": 0
           },
@@ -5198,11 +5342,12 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7370727432077,
-          "uptime_last_5m": 98.75776397515527,
-          "uptime_last_1d": 99.9639198899251,
+          "uptime_last_30m": 99.93485342019544,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.93123515304441,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "kimi"
+          "tr_provider_slug": "kimi",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Together | moonshotai/kimi-k2.6-20260420",
@@ -5238,14 +5383,16 @@
             "structured_outputs",
             "response_format"
           ],
-          "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 96.31208526040619,
+          "status": -2,
+          "uptime_last_30m": 86.61417322834646,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 96.80424375727779,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "openai/gpt-3.5-turbo",
@@ -5309,11 +5456,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.99878311449676,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-3.5-turbo-16k",
@@ -5377,11 +5526,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.86130374479889,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-3.5-turbo-instruct",
@@ -5445,9 +5596,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4",
@@ -5511,11 +5664,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.88350419384902,
+          "uptime_last_1d": 99.64559952746603,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4-0314",
@@ -5581,9 +5736,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4-1106-preview",
@@ -5649,9 +5806,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4-turbo",
@@ -5714,13 +5873,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4-turbo-preview",
@@ -5786,9 +5947,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": null,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4.1",
@@ -5849,13 +6012,15 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.77395396041888,
-          "uptime_last_5m": 99.70264644662504,
-          "uptime_last_1d": 99.94570643579148,
+          "uptime_last_30m": 99.45831239180208,
+          "uptime_last_5m": 99.79491386382281,
+          "uptime_last_1d": 99.60075807474875,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4.1-mini",
@@ -5917,13 +6082,15 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 98.38699501587769,
-          "uptime_last_5m": 98.47227926078028,
-          "uptime_last_1d": 97.7984060566873,
+          "uptime_last_30m": 96.52242519876191,
+          "uptime_last_5m": 97.07874120302749,
+          "uptime_last_1d": 97.93653818218452,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4.1-nano",
@@ -5985,13 +6152,15 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 98.93667792986274,
-          "uptime_last_5m": 99.06710803490822,
-          "uptime_last_1d": 98.41857504322546,
+          "uptime_last_30m": 97.95395455744377,
+          "uptime_last_5m": 97.9240644632614,
+          "uptime_last_1d": 95.6198627801437,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o",
@@ -6057,13 +6226,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90340652971858,
-          "uptime_last_5m": 99.89806320081549,
-          "uptime_last_1d": 99.90045909394686,
+          "uptime_last_30m": 99.83562364389506,
+          "uptime_last_5m": 99.52380952380952,
+          "uptime_last_1d": 99.79242626283349,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-2024-05-13",
@@ -6130,11 +6301,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.85652797704448,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-2024-08-06",
@@ -6202,12 +6375,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96027354501858,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.81975892756562,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-2024-11-20",
@@ -6278,9 +6453,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-audio-preview",
@@ -6351,9 +6528,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-mini",
@@ -6420,13 +6599,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.83388204873795,
-          "uptime_last_5m": 99.86422608870562,
-          "uptime_last_1d": 99.88702432975761,
+          "uptime_last_30m": 99.8084663428175,
+          "uptime_last_5m": 99.77143699771437,
+          "uptime_last_1d": 99.8178939842406,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-mini-2024-07-18",
@@ -6497,9 +6678,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-mini-search-preview",
@@ -6553,13 +6736,15 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": 100,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-4o-search-preview",
@@ -6617,9 +6802,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5",
@@ -6680,13 +6867,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.63574550752793,
-          "uptime_last_5m": 99.90766389658357,
-          "uptime_last_1d": 99.8493749058593,
+          "uptime_last_30m": 99.752984767394,
+          "uptime_last_5m": 99.72105997210599,
+          "uptime_last_1d": 99.88145936690522,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-chat",
@@ -6748,9 +6937,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-codex",
@@ -6813,9 +7004,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-image",
@@ -6889,9 +7082,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-image-mini",
@@ -6965,9 +7160,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-mini",
@@ -7029,13 +7226,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.82860869697107,
-          "uptime_last_5m": 99.82512087233823,
-          "uptime_last_1d": 99.70089418880139,
+          "uptime_last_30m": 99.85172036842617,
+          "uptime_last_5m": 99.64211154190278,
+          "uptime_last_1d": 99.92979647867655,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-nano",
@@ -7096,13 +7295,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.62776191986468,
-          "uptime_last_5m": 96.89137268599372,
-          "uptime_last_1d": 98.2033421166076,
+          "uptime_last_30m": 97.79052402932392,
+          "uptime_last_5m": 97.79138421167724,
+          "uptime_last_1d": 98.47539918817553,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5-pro",
@@ -7166,9 +7367,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.1",
@@ -7229,13 +7432,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.65619628066885,
-          "uptime_last_5m": 99.59919839679358,
-          "uptime_last_1d": 90.60013452301544,
+          "uptime_last_30m": 99.77920070655773,
+          "uptime_last_5m": 99.37888198757764,
+          "uptime_last_1d": 99.8296702293977,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.1-chat",
@@ -7295,13 +7500,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96459997977142,
-          "uptime_last_5m": 99.96595165134491,
-          "uptime_last_1d": 99.96328588672507,
+          "uptime_last_30m": 99.72827765083679,
+          "uptime_last_5m": 99.39024390243902,
+          "uptime_last_1d": 99.95022618396295,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.1-codex",
@@ -7360,13 +7567,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.78991596638656,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87915556870868,
+          "uptime_last_30m": 99.03846153846155,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.92480698220879,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.1-codex-max",
@@ -7429,11 +7638,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.36065573770492,
+          "uptime_last_1d": 98.65819209039547,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.1-codex-mini",
@@ -7492,13 +7703,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.73890339425587,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.74519619892682,
+          "uptime_last_30m": 97.6,
+          "uptime_last_5m": 96.90721649484536,
+          "uptime_last_1d": 99.02022534816992,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.2",
@@ -7558,14 +7771,16 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.878227239469,
-          "uptime_last_5m": 93.76359680928209,
-          "uptime_last_1d": 92.5810478889379,
+          "status": 0,
+          "uptime_last_30m": 99.41485371342836,
+          "uptime_last_5m": 99.41544885177453,
+          "uptime_last_1d": 98.73438664719204,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.2-chat",
@@ -7624,13 +7839,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.46332737030411,
-          "uptime_last_5m": 97.6878612716763,
-          "uptime_last_1d": 99.80157825115175,
+          "uptime_last_30m": 98.37320574162679,
+          "uptime_last_5m": 97.5,
+          "uptime_last_1d": 99.62251897552463,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.2-codex",
@@ -7690,13 +7907,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.880810488677,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.51909565000156,
+          "uptime_last_30m": 99.39393939393939,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.57193968821876,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.2-pro",
@@ -7758,11 +7977,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.9089667728721,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.3-chat",
@@ -7822,13 +8043,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.86899151743637,
-          "uptime_last_5m": 99.11504424778761,
-          "uptime_last_1d": 99.8378093915264,
+          "uptime_last_30m": 99.68782518210197,
+          "uptime_last_5m": 99.25925925925925,
+          "uptime_last_1d": 99.90158318586583,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.3-codex",
@@ -7890,13 +8113,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.40236067533243,
-          "uptime_last_5m": 99.11894273127754,
-          "uptime_last_1d": 99.22558627931397,
+          "uptime_last_30m": 99.5350188898576,
+          "uptime_last_5m": 99.54407294832826,
+          "uptime_last_1d": 99.40710515981341,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.4",
@@ -7958,13 +8183,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.08513049061449,
-          "uptime_last_5m": 98.43662758235622,
-          "uptime_last_1d": 98.37313004812161,
+          "uptime_last_30m": 98.77940523746116,
+          "uptime_last_5m": 99.2225101814143,
+          "uptime_last_1d": 98.2296228144707,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.4-image-2",
@@ -8036,9 +8263,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.4-mini",
@@ -8100,13 +8329,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.42759543922818,
-          "uptime_last_5m": 99.15485955754411,
-          "uptime_last_1d": 99.15723301863285,
+          "uptime_last_30m": 99.15263102835024,
+          "uptime_last_5m": 98.86396737547335,
+          "uptime_last_1d": 99.00399188167883,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.4-nano",
@@ -8168,13 +8399,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.87295199770048,
-          "uptime_last_5m": 98.38515304892745,
-          "uptime_last_1d": 98.29885151726823,
+          "uptime_last_30m": 96.84854376797504,
+          "uptime_last_5m": 95.51839464882943,
+          "uptime_last_1d": 97.90731844384506,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.4-pro",
@@ -8236,11 +8469,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 38.77630553390491,
+          "uptime_last_1d": 90.0518134715026,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.5",
@@ -8302,13 +8537,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.49267872523686,
-          "uptime_last_5m": 97.78794813119755,
-          "uptime_last_1d": 98.21721859893859,
+          "uptime_last_30m": 98.37260677466863,
+          "uptime_last_5m": 98.46774193548387,
+          "uptime_last_1d": 98.04216178555971,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-5.5-pro",
@@ -8368,13 +8605,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-audio",
@@ -8445,9 +8684,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-audio-mini",
@@ -8518,9 +8759,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-chat-latest",
@@ -8590,9 +8833,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -8612,8 +8857,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000000039",
-        "completion": "0.00000018"
+        "prompt": "0.00000035",
+        "completion": "0.00000075"
       },
       "top_provider": {
         "context_length": 131072,
@@ -8657,11 +8902,12 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97667910447761,
+          "uptime_last_30m": 99.97490169831842,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98730071700554,
+          "uptime_last_1d": 99.97698099957083,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras"
+          "tr_provider_slug": "cerebras",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Together | openai/gpt-oss-120b",
@@ -8696,13 +8942,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.56971746635665,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 97.98413776291963,
+          "uptime_last_1d": 99.03519957654645,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -8762,13 +9010,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.62638875233507,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.78333931638029,
+          "uptime_last_1d": 94.14172950047124,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o1",
@@ -8832,9 +9082,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o1-pro",
@@ -8894,9 +9146,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o3",
@@ -8959,12 +9213,14 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o3-deep-research",
@@ -9038,9 +9294,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o3-mini",
@@ -9103,9 +9361,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o3-mini-high",
@@ -9168,9 +9428,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o3-pro",
@@ -9234,9 +9496,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o4-mini",
@@ -9300,11 +9564,13 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99900081932816,
+          "uptime_last_1d": 99.98876909254267,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o4-mini-deep-research",
@@ -9378,9 +9644,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "openai/o4-mini-high",
@@ -9446,9 +9714,11 @@
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "openai"
+          "tr_provider_slug": "openai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "qwen/qwen-2.5-7b-instruct",
@@ -9506,13 +9776,15 @@
             "min_p"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 98.60988247188172,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.86541539356904,
+          "uptime_last_1d": 99.4360665642859,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
@@ -9532,8 +9804,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.000000071",
-        "completion": "0.0000001"
+        "prompt": "0.0000006",
+        "completion": "0.0000012"
       },
       "top_provider": {
         "context_length": 262144,
@@ -9575,11 +9847,12 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95749832569162,
+          "uptime_last_30m": 99.43089430894308,
+          "uptime_last_5m": 99.75490196078431,
+          "uptime_last_1d": 99.93737839107195,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras"
+          "tr_provider_slug": "cerebras",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Together | qwen/qwen3-235b-a22b-07-25",
@@ -9611,13 +9884,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.38775510204081,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 67.18607305936072,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 94.27304521608794,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "qwen/qwen3-coder",
@@ -9679,11 +9954,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 97.29157850190437,
+          "uptime_last_1d": 60.80656101621755,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "qwen/qwen3-coder-next",
@@ -9746,13 +10023,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.53838262950931,
+          "uptime_last_1d": 99.97666277712952,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "qwen/qwen3.5-397b-a17b",
@@ -9819,13 +10098,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 97.83080260303689,
+          "uptime_last_30m": 99.19191919191918,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 94.56561546286876,
+          "uptime_last_1d": 96.82161859423131,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "qwen/qwen3.5-9b",
@@ -9890,14 +10171,16 @@
             "structured_outputs",
             "response_format"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.02466211508987,
-          "uptime_last_5m": 96.8574635241302,
-          "uptime_last_1d": 98.73892615880881,
+          "status": -5,
+          "uptime_last_30m": 43.31983805668016,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.07642954037176,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-4-32b",
@@ -9954,9 +10237,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-4.5",
@@ -10014,13 +10299,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.88674971687429,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.84831939941989,
+          "uptime_last_1d": 98.08098667471647,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "z-ai/glm-4.5-air",
@@ -10040,8 +10327,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000013",
-        "completion": "0.00000085",
+        "prompt": "0.0000002",
+        "completion": "0.0000011",
         "input_cache_read": "0.000000025"
       },
       "top_provider": {
@@ -10077,13 +10364,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98927889872847,
-          "uptime_last_5m": 99.9855814288804,
-          "uptime_last_1d": 99.98643667733825,
+          "uptime_last_30m": 99.99671297716614,
+          "uptime_last_5m": 99.99225346657371,
+          "uptime_last_1d": 99.97900173230246,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "z-ai/glm-4.5-air:free",
@@ -10138,13 +10427,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.85424700880056,
-          "uptime_last_5m": 98.27705031013095,
-          "uptime_last_1d": 98.11987119559572,
+          "uptime_last_30m": 98.39812463371752,
+          "uptime_last_5m": 98.13229571984435,
+          "uptime_last_1d": 98.01820927759209,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-4.5v",
@@ -10204,11 +10495,13 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.14914645103325,
+          "uptime_last_1d": 96.93877551020408,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "z-ai/glm-4.6",
@@ -10228,8 +10521,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000039",
-        "completion": "0.0000019"
+        "prompt": "0.0000006",
+        "completion": "0.0000022"
       },
       "top_provider": {
         "context_length": 204800,
@@ -10264,13 +10557,15 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.55233853006682,
-          "uptime_last_5m": 99.8019801980198,
-          "uptime_last_1d": 94.86951100026721,
+          "uptime_last_30m": 95.78488372093024,
+          "uptime_last_5m": 97.05882352941177,
+          "uptime_last_1d": 96.13682777399592,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "provider_direct"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "z-ai/glm-4.6v",
@@ -10329,13 +10624,15 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.99015586546349,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 97.76513612352701,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-4.7",
@@ -10355,12 +10652,13 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000038",
-        "completion": "0.00000174"
+        "prompt": "0.00000225",
+        "completion": "0.00000275",
+        "input_cache_read": "0.00000008"
       },
       "top_provider": {
         "context_length": 202752,
-        "max_completion_tokens": null,
+        "max_completion_tokens": 131072,
         "is_moderated": false
       },
       "per_request_limits": null,
@@ -10400,11 +10698,12 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.82584465343086,
-          "uptime_last_5m": 99.73684210526315,
-          "uptime_last_1d": 99.9403999430686,
+          "uptime_last_30m": 99.86130374479889,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.96970455353733,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras"
+          "tr_provider_slug": "cerebras",
+          "pricing_source": "provider_direct"
         },
         {
           "name": "Z.AI | z-ai/glm-4.7-20251222",
@@ -10433,13 +10732,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 96.01293103448276,
-          "uptime_last_5m": 99.66832504145937,
-          "uptime_last_1d": 94.39756929264668,
+          "uptime_last_30m": 96.00550964187327,
+          "uptime_last_5m": 96.29629629629629,
+          "uptime_last_1d": 95.0573711515886,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "provider_direct"
     },
     {
       "id": "z-ai/glm-4.7-flash",
@@ -10497,13 +10798,15 @@
             "response_format"
           ],
           "status": -5,
-          "uptime_last_30m": 78.07692307692308,
-          "uptime_last_5m": 77.98165137614679,
-          "uptime_last_1d": 72.65842134519177,
+          "uptime_last_30m": 70.1098901098901,
+          "uptime_last_5m": 77.21518987341773,
+          "uptime_last_1d": 74.57925498204352,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-5",
@@ -10567,12 +10870,13 @@
             "structured_outputs",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.76190476190476,
+          "status": 0,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 95.69993653850362,
+          "uptime_last_1d": 98.82131202880612,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         },
         {
           "name": "Z.AI | z-ai/glm-5-20260211",
@@ -10601,13 +10905,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.94367254975592,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.78977467129381,
+          "uptime_last_1d": 99.68582742265349,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-5-turbo",
@@ -10665,13 +10971,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.97585954645209,
-          "uptime_last_5m": 99.4535519125683,
-          "uptime_last_1d": 98.61311596048795,
+          "uptime_last_30m": 98.99441340782123,
+          "uptime_last_5m": 99.53917050691244,
+          "uptime_last_1d": 98.47610848041326,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-5.1",
@@ -10733,12 +11041,13 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.17241379310344,
+          "status": 0,
+          "uptime_last_30m": 97.19626168224299,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 76.87454752301169,
+          "uptime_last_1d": 83.84206104732567,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "together"
+          "tr_provider_slug": "together",
+          "pricing_source": "openrouter"
         },
         {
           "name": "Z.AI | z-ai/glm-5.1-20260406",
@@ -10767,13 +11076,15 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.27146696845381,
-          "uptime_last_5m": 99.49005609382968,
-          "uptime_last_1d": 99.24344542150808,
+          "uptime_last_30m": 99.04479340039076,
+          "uptime_last_5m": 99.31434599156118,
+          "uptime_last_1d": 99.09129444179516,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     },
     {
       "id": "z-ai/glm-5v-turbo",
@@ -10837,9 +11148,11 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai"
+          "tr_provider_slug": "zai",
+          "pricing_source": "openrouter"
         }
-      ]
+      ],
+      "pricing_source": "openrouter"
     }
   ]
 }
