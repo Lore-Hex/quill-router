@@ -57,9 +57,19 @@
         </div>
         <div class="component-meta">
           <span>24h uptime <strong>{{ component.uptime_24h_percent | uptime_pct(4) }}</strong></span>
-          <span>In-region overhead p50 <strong>{% if component.in_region_p50_latency_milliseconds %}{{ component.in_region_p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+          <span>Latency groups <strong>{{ component.latency_breakdown_5m|length }}</strong></span>
           <span>Last check <strong>{% if component.last_checked_at %}{{ component.last_checked_at }}{% else %}n/a{% endif %}</strong></span>
         </div>
+        {% if component.latency_breakdown_5m %}
+        <div class="component-breakdown" aria-label="{{ component.name }} latency breakdown">
+          {% for breakdown in component.latency_breakdown_5m %}
+          <span>
+            {{ breakdown.probe_type }} · {{ breakdown.region_pair }}
+            <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong>
+          </span>
+          {% endfor %}
+        </div>
+        {% endif %}
         <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">
           {% for bucket in component.history %}
           <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
@@ -69,9 +79,8 @@
               {% if bucket.uptime_percent is not none %}
                 <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
-                {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
-                {% for breakdown in component.latency_breakdown_5m %}
-                  <span>{{ breakdown.probe_type }} <strong>{% if breakdown.p50_latency_milliseconds %}{{ breakdown.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</strong></span>
+                {% for breakdown in bucket.latency_breakdown %}
+                  <span>{{ breakdown.probe_type }} · {{ breakdown.region_pair }} <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
                 {% endfor %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
               {% else %}

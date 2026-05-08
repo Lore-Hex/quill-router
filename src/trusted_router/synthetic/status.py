@@ -8,6 +8,7 @@ from typing import Any
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
+    component_name,
     sample_component_ids,
 )
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
@@ -189,7 +190,7 @@ def _daily_rollups(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
     for sample in samples:
         by_day[sample.created_at[:10]].append(sample)
     return [
-        {"date": day, **_rollup(rows)}
+        {"date": day, **_rollup(rows), "groups": _sample_group_breakdown(rows, include_component=True)}
         for day, rows in sorted(by_day.items(), reverse=True)
     ]
 
@@ -218,6 +219,7 @@ def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict
                 "top_error": merged["top_error"],
                 "last_checked_at": merged["last_checked_at"],
                 "cost_microdollars": merged["cost_microdollars"],
+                "groups": _rollup_group_breakdown(period_rollups, include_component=True),
             }
         )
     return rows
@@ -276,37 +278,13 @@ def _hour_rollups_in_window(
 
 
 def _rollup_from_rollups(rollups: list[SyntheticRollup]) -> dict[str, Any]:
-    by_target_probe: dict[tuple[str, str], list[SyntheticRollup]] = defaultdict(list)
-    for rollup in rollups:
-        by_target_probe[(rollup.target, rollup.probe_type)].append(rollup)
-
-    groups = []
+    groups = _rollup_group_breakdown(rollups)
     overall = "unknown"
-    total_samples = 0
-    for (target, probe_type), rows in sorted(by_target_probe.items()):
-        merged = merge_rollups(rows)
-        status_counts = _int_dict(merged["status_counts"])
-        group_status = _aggregate_status_counts(status_counts)
-        overall = _worse_status(overall, group_status)
-        total_samples += int(merged["sample_count"])
-        groups.append(
-            {
-                "target": target,
-                "probe_type": probe_type,
-                "status": group_status,
-                "uptime_percent": _uptime_percent_counts(status_counts),
-                "sample_count": int(merged["sample_count"]),
-                "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
-                "p95_latency_milliseconds": merged["p95_latency_milliseconds"],
-                "p50_ttfb_milliseconds": merged["p50_ttfb_milliseconds"],
-                "p95_ttfb_milliseconds": merged["p95_ttfb_milliseconds"],
-                "last_checked_at": merged["last_checked_at"],
-            }
-        )
-
+    for group in groups:
+        overall = _worse_status(overall, str(group["status"]))
     return {
         "overall_status": overall if groups else "unknown",
-        "sample_count": total_samples,
+        "sample_count": sum(int(group["sample_count"]) for group in groups),
         "groups": groups,
     }
 
@@ -318,40 +296,10 @@ def _int_dict(value: Any) -> dict[str, int]:
 
 
 def _rollup(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
-    by_target_probe: dict[tuple[str, str], list[SyntheticProbeSample]] = defaultdict(list)
-    for sample in samples:
-        by_target_probe[(sample.target, sample.probe_type)].append(sample)
-
-    groups = []
+    groups = _sample_group_breakdown(samples)
     overall = "unknown"
-    for (target, probe_type), rows in sorted(by_target_probe.items()):
-        statuses = [sample.status for sample in rows]
-        group_status = _aggregate_status(statuses)
-        overall = _worse_status(overall, group_status)
-        latencies = [
-            sample.latency_milliseconds
-            for sample in rows
-            if sample.latency_milliseconds is not None
-        ]
-        ttfbs = [
-            sample.ttfb_milliseconds
-            for sample in rows
-            if sample.ttfb_milliseconds is not None
-        ]
-        groups.append(
-            {
-                "target": target,
-                "probe_type": probe_type,
-                "status": group_status,
-                "uptime_percent": _uptime_percent(statuses),
-                "sample_count": len(rows),
-                "p50_latency_milliseconds": _percentile(latencies, 50),
-                "p95_latency_milliseconds": _percentile(latencies, 95),
-                "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
-                "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
-                "last_checked_at": max(sample.created_at for sample in rows),
-            }
-        )
+    for group in groups:
+        overall = _worse_status(overall, str(group["status"]))
 
     return {
         "overall_status": overall if groups else "unknown",
@@ -467,11 +415,37 @@ def _components(
 
 
 def _latency_breakdown(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
-    by_probe: dict[str, list[SyntheticProbeSample]] = defaultdict(list)
+    return _sample_group_breakdown(samples)
+
+
+def _sample_group_breakdown(
+    samples: list[SyntheticProbeSample],
+    *,
+    include_component: bool = False,
+) -> list[dict[str, Any]]:
+    by_group: dict[tuple[str, str, str, str, str], list[SyntheticProbeSample]] = defaultdict(list)
     for sample in samples:
-        by_probe[sample.probe_type].append(sample)
+        component_ids = sample_component_ids(sample) if include_component else [""]
+        if include_component and not component_ids:
+            component_ids = ["uncategorized"]
+        for component_id in component_ids:
+            by_group[
+                (
+                    component_id,
+                    sample.target,
+                    sample.probe_type,
+                    sample.monitor_region,
+                    sample.target_region or "",
+                )
+            ].append(sample)
     rows: list[dict[str, Any]] = []
-    for probe_type, probe_samples in sorted(by_probe.items()):
+    for (
+        component_id,
+        target,
+        probe_type,
+        monitor_region,
+        target_region,
+    ), probe_samples in sorted(by_group.items()):
         latencies = [
             sample.latency_milliseconds
             for sample in probe_samples
@@ -483,19 +457,81 @@ def _latency_breakdown(samples: list[SyntheticProbeSample]) -> list[dict[str, An
             if sample.ttfb_milliseconds is not None
         ]
         statuses = [sample.status for sample in probe_samples]
-        rows.append(
-            {
-                "probe_type": probe_type,
-                "status": _aggregate_status(statuses),
-                "uptime_percent": _uptime_percent(statuses),
-                "sample_count": len(probe_samples),
-                "p50_latency_milliseconds": _percentile(latencies, 50),
-                "p95_latency_milliseconds": _percentile(latencies, 95),
-                "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
-                "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
-            }
-        )
+        row = {
+            "target": target,
+            "probe_type": probe_type,
+            "monitor_region": monitor_region,
+            "target_region": target_region or None,
+            "region_pair": _region_pair(monitor_region, target_region or None),
+            "status": _aggregate_status(statuses),
+            "uptime_percent": _uptime_percent(statuses),
+            "sample_count": len(probe_samples),
+            "p50_latency_milliseconds": _percentile(latencies, 50),
+            "p95_latency_milliseconds": _percentile(latencies, 95),
+            "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
+            "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
+            "last_checked_at": max(sample.created_at for sample in probe_samples),
+        }
+        if include_component:
+            row["component"] = component_id
+            row["component_name"] = component_name(component_id)
+        rows.append(row)
     return rows
+
+
+def _rollup_group_breakdown(
+    rollups: list[SyntheticRollup],
+    *,
+    include_component: bool = False,
+) -> list[dict[str, Any]]:
+    by_group: dict[tuple[str, str, str, str, str], list[SyntheticRollup]] = defaultdict(list)
+    for rollup in rollups:
+        by_group[
+            (
+                rollup.component if include_component else "",
+                rollup.target,
+                rollup.probe_type,
+                rollup.monitor_region,
+                rollup.target_region or "",
+            )
+        ].append(rollup)
+    rows: list[dict[str, Any]] = []
+    for (
+        component_id,
+        target,
+        probe_type,
+        monitor_region,
+        target_region,
+    ), group_rollups in sorted(by_group.items()):
+        merged = merge_rollups(group_rollups)
+        status_counts = _int_dict(merged["status_counts"])
+        row = {
+            "target": target,
+            "probe_type": probe_type,
+            "monitor_region": monitor_region,
+            "target_region": target_region or None,
+            "region_pair": _region_pair(monitor_region, target_region or None),
+            "status": _aggregate_status_counts(status_counts),
+            "uptime_percent": _uptime_percent_counts(status_counts),
+            "sample_count": int(merged["sample_count"]),
+            "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+            "p95_latency_milliseconds": merged["p95_latency_milliseconds"],
+            "p50_ttfb_milliseconds": merged["p50_ttfb_milliseconds"],
+            "p95_ttfb_milliseconds": merged["p95_ttfb_milliseconds"],
+            "last_checked_at": merged["last_checked_at"],
+            "top_error": merged["top_error"],
+        }
+        if include_component:
+            row["component"] = component_id
+            row["component_name"] = component_name(component_id)
+        rows.append(row)
+    return rows
+
+
+def _region_pair(monitor_region: str, target_region: str | None) -> str:
+    if target_region:
+        return f"{monitor_region} -> {target_region}"
+    return monitor_region
 
 
 def _latest_recent_component_samples(
@@ -551,6 +587,7 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
                     "uptime_percent": None,
                     "sample_count": 0,
                     "p50_latency_milliseconds": None,
+                    "latency_breakdown": [],
                     "top_error": None,
                     "title": _history_title_hourly(bucket_start, "unknown", None, 0, None),
                 }
@@ -583,6 +620,7 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
                 "uptime_percent": uptime,
                 "sample_count": len(rows),
                 "p50_latency_milliseconds": _percentile(latencies, 50),
+                "latency_breakdown": _latency_breakdown(rows),
                 "top_error": top_error,
                 "title": _history_title_hourly(bucket_start, status, uptime, len(rows), top_error),
             }
@@ -629,6 +667,7 @@ def _component_history_from_rollups(
                     "uptime_percent": None,
                     "sample_count": 0,
                     "p50_latency_milliseconds": None,
+                    "latency_breakdown": [],
                     "top_error": None,
                     "title": _history_title_hourly(bucket_start, "unknown", None, 0, None),
                 }
@@ -668,6 +707,7 @@ def _sample_history_bucket(
         "uptime_percent": uptime,
         "sample_count": len(rows),
         "p50_latency_milliseconds": _percentile(latencies, 50),
+        "latency_breakdown": _latency_breakdown(rows),
         "top_error": top_error,
         "title": _history_title_hourly(bucket_start, status, uptime, len(rows), top_error),
     }
@@ -694,6 +734,7 @@ def _rollup_history_bucket(
         "uptime_percent": uptime,
         "sample_count": sample_count,
         "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+        "latency_breakdown": _rollup_group_breakdown(rows),
         "top_error": top_error,
         "title": _history_title_hourly(bucket_start, status, uptime, sample_count, top_error),
     }

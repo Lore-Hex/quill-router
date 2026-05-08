@@ -258,6 +258,9 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .component-meta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; color:var(--muted); font-size:12px; }
 .component-meta span { min-width:0; overflow-wrap:anywhere; }
 .component-meta strong { color:var(--ink); font-weight:750; }
+.component-breakdown { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:6px; color:var(--muted); font-size:12px; }
+.component-breakdown span { display:flex; justify-content:space-between; gap:10px; min-width:0; border:1px solid var(--line2); border-radius:6px; background:#fbfcfd; padding:7px 9px; overflow-wrap:anywhere; }
+.component-breakdown strong { color:var(--ink); white-space:nowrap; }
 /* 48 hourly bars instead of daily ones — enough recent proof without
  * forcing the public page to scan months of raw samples. Bars are
  * interactive: hover or focus surfaces the rich tooltip
@@ -313,6 +316,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .status-empty { margin:0; }
 .status-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .status-history-page .status-section { overflow:hidden; }
+.status-section-subhead { border-top:1px solid var(--line2); }
 .status-history-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:0 18px 18px; }
 .status-history-summary div { border:1px solid var(--line2); border-radius:8px; padding:12px; background:#fbfcfd; min-width:0; }
 .status-history-summary span { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }

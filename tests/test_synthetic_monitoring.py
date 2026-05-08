@@ -46,7 +46,7 @@ from trusted_router.synthetic.rollups import (
     new_rollup_for_sample,
     sample_rollup_ids,
 )
-from trusted_router.synthetic.status import status_snapshot
+from trusted_router.synthetic.status import history_payload, status_snapshot
 
 
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
@@ -158,7 +158,7 @@ def test_status_history_browser_requests_render_48h_visual_page(client: TestClie
     assert history.status_code == 200
     assert history.headers["content-type"].startswith("text/html")
     assert "48-hour status history" in history.text
-    assert "Aggregate status by target and probe type" in history.text
+    assert "Latency is broken out by target, probe, monitor region, and target region" in history.text
     assert "48-hour component timeline" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
@@ -181,6 +181,7 @@ def test_status_history_browser_requests_render_monthly_visual_page(client: Test
     assert "Monthly status history" in history.text
     assert "Monthly rollups" in history.text
     assert "Precomputed reliability history" in history.text
+    assert "Latency breakdown" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
     assert "sk-tr-" not in history.text
@@ -362,6 +363,83 @@ def test_status_headline_prefers_in_region_gateway_overhead() -> None:
     assert metrics["in_region_gateway_overhead_p50_milliseconds"] == 30
     assert metrics["global_gateway_overhead_p50_milliseconds"] == 400
     assert metrics["gateway_overhead_p50_milliseconds"] == 30
+
+
+def test_status_detail_latency_groups_are_not_region_blended() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_us_fast",
+            target="canonical",
+            target_region="us-central1",
+            monitor_region="us-central1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=25,
+        ),
+        _sample(
+            id="syn_eu_slow",
+            target="canonical",
+            target_region="us-central1",
+            monitor_region="europe-west4",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=450,
+        ),
+    ]
+
+    payload = history_payload(samples, "5m")
+
+    groups = payload["data"]["groups"]
+    assert len(groups) == 2
+    assert {
+        (group["monitor_region"], group["target_region"], group["p50_latency_milliseconds"])
+        for group in groups
+    } == {
+        ("us-central1", "us-central1", 25),
+        ("europe-west4", "us-central1", 450),
+    }
+
+
+def test_monthly_history_carries_per_region_latency_breakdown() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_month_us",
+            target="canonical",
+            target_region="us-central1",
+            monitor_region="us-central1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=31,
+        ),
+        _sample(
+            id="syn_month_eu",
+            target="canonical",
+            target_region="us-central1",
+            monitor_region="europe-west4",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=420,
+        ),
+    ]
+    rollups = _rollups_for_samples(samples)
+
+    payload = history_payload([], "monthly", rollups=rollups)
+
+    groups = payload["data"][0]["groups"]
+    assert len(groups) == 2
+    assert {
+        (group["component_name"], group["monitor_region"], group["target_region"], group["p50_latency_milliseconds"])
+        for group in groups
+    } == {
+        ("Canonical API", "us-central1", "us-central1", 31),
+        ("Canonical API", "europe-west4", "us-central1", 420),
+    }
 
 
 def test_status_uses_hourly_rollups_for_48h_history_when_raw_samples_are_recent_only() -> None:

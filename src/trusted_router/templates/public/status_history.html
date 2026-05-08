@@ -37,7 +37,7 @@
     <div class="status-section-head">
       <div>
         <h2>{{ heading }}</h2>
-        <p>Aggregate status by target and probe type. Detailed component bars below show the last 48 hourly buckets.</p>
+        <p>Latency is broken out by target, probe, monitor region, and target region. Detailed component bars below show the last 48 hourly buckets.</p>
       </div>
       <span class="component-status status-{{ rollup.overall_status|replace('_', '-') }}">{{ rollup.overall_status|replace('_', ' ') }}</span>
     </div>
@@ -53,6 +53,8 @@
         <tr>
           <th>Target</th>
           <th>Probe</th>
+          <th>Monitor</th>
+          <th>Target region</th>
           <th>Status</th>
           <th>Uptime</th>
           <th>Samples</th>
@@ -66,6 +68,8 @@
         <tr>
           <td>{{ group.target }}</td>
           <td>{{ group.probe_type }}</td>
+          <td>{{ group.monitor_region }}</td>
+          <td>{% if group.target_region %}{{ group.target_region }}{% else %}-{% endif %}</td>
           <td><span class="component-status status-{{ group.status|replace('_', '-') }}">{{ group.status|replace('_', ' ') }}</span></td>
           <td>{{ group.uptime_percent | uptime_pct(4) }}</td>
           <td>{{ group.sample_count }}</td>
@@ -114,7 +118,9 @@
               {% if bucket.uptime_percent is not none %}
                 <span>Uptime <strong>{{ bucket.uptime_percent | uptime_pct(2) }}</strong></span>
                 <span>Samples <strong>{{ bucket.sample_count }}</strong></span>
-                {% if bucket.p50_latency_milliseconds %}<span>P50 <strong>{{ bucket.p50_latency_milliseconds }} ms</strong></span>{% endif %}
+                {% for breakdown in bucket.latency_breakdown %}
+                  <span>{{ breakdown.probe_type }} · {{ breakdown.region_pair }} <strong>{% if breakdown.p50_latency_milliseconds %}p50 {{ breakdown.p50_latency_milliseconds }} ms{% else %}p50 n/a{% endif %}</strong></span>
+                {% endfor %}
                 {% if bucket.top_error %}<span class="err">Top error <strong>{{ bucket.top_error }}</strong></span>{% endif %}
               {% else %}
                 <span class="muted">No probe samples in this hour yet.</span>
@@ -154,7 +160,7 @@
         </div>
         <div class="rollup-row-metrics">
           <strong>{{ row.uptime_percent | uptime_pct(4) }}</strong>
-          <span>{% if row.p50_latency_milliseconds %}P50 {{ row.p50_latency_milliseconds }} ms{% else %}P50 n/a{% endif %}</span>
+          <span>{{ row.groups|length }} latency groups</span>
         </div>
       </article>
       {% endfor %}
@@ -167,9 +173,7 @@
           <th>Status</th>
           <th>Uptime</th>
           <th>Samples</th>
-          <th>P50</th>
-          <th>P95</th>
-          <th>TTFT p50</th>
+          <th>Latency groups</th>
           <th>Top error</th>
         </tr>
       </thead>
@@ -180,11 +184,51 @@
           <td><span class="component-status status-{{ row.status|replace('_', '-') }}">{{ row.status|replace('_', ' ') }}</span></td>
           <td>{{ row.uptime_percent | uptime_pct(4) }}</td>
           <td>{{ row.sample_count }}</td>
-          <td>{% if row.p50_latency_milliseconds %}{{ row.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
-          <td>{% if row.p95_latency_milliseconds %}{{ row.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
-          <td>{% if row.p50_ttfb_milliseconds %}{{ row.p50_ttfb_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          <td>{{ row.groups|length }}</td>
           <td>{% if row.top_error %}{{ row.top_error }}{% else %}-{% endif %}</td>
         </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <div class="status-section-head status-section-subhead">
+      <div>
+        <h2>Latency breakdown</h2>
+        <p>Each p50/p95 is scoped to one component, target, probe, monitor region, and target region.</p>
+      </div>
+    </div>
+    <div class="status-table-scroll">
+    <table class="activity-table status-table status-history-table">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Component</th>
+          <th>Target</th>
+          <th>Probe</th>
+          <th>Monitor</th>
+          <th>Target region</th>
+          <th>Samples</th>
+          <th>P50</th>
+          <th>P95</th>
+          <th>TTFT p50</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rollup %}
+          {% for group in row.groups %}
+          <tr>
+            <td>{% if window == "monthly" %}{{ row.period_start[:7] }}{% elif row.date %}{{ row.date }}{% else %}{{ row.period_start[:10] }}{% endif %}</td>
+            <td>{{ group.component_name }}</td>
+            <td>{{ group.target }}</td>
+            <td>{{ group.probe_type }}</td>
+            <td>{{ group.monitor_region }}</td>
+            <td>{% if group.target_region %}{{ group.target_region }}{% else %}-{% endif %}</td>
+            <td>{{ group.sample_count }}</td>
+            <td>{% if group.p50_latency_milliseconds %}{{ group.p50_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+            <td>{% if group.p95_latency_milliseconds %}{{ group.p95_latency_milliseconds }} ms{% else %}n/a{% endif %}</td>
+            <td>{% if group.p50_ttfb_milliseconds %}{{ group.p50_ttfb_milliseconds }} ms{% else %}n/a{% endif %}</td>
+          </tr>
+          {% endfor %}
         {% endfor %}
       </tbody>
     </table>
