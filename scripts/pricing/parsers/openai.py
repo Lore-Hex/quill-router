@@ -36,10 +36,35 @@ _NAME_TO_OR_ID = {
     "gpt-5.3-codex": "openai/gpt-5.3-codex",
 }
 
+# Legacy OpenAI models that the API still serves but that no longer
+# appear on the current pricing page (5.5/5.4 family is what's
+# advertised). We keep them so back-compat callers can still route
+# to model ids that have been around for years.
+#
+# Prices captured manually from openai.com/api/pricing/ via Wayback
+# Machine on 2026-05-08; OpenAI hasn't published updated rates for
+# these since the GPT-5 launch. The cross-check vs OR will surface
+# any drift the LLM self-heal didn't catch.
+_LEGACY_PRICES: dict[str, tuple[float, float]] = {
+    "openai/gpt-4o-mini": (0.15, 0.60),
+    "openai/gpt-4o": (2.50, 10.00),
+    "openai/gpt-4.1": (2.00, 8.00),
+    "openai/gpt-4.1-mini": (0.40, 1.60),
+    "openai/gpt-4.1-nano": (0.10, 0.40),
+    "openai/o1": (15.00, 60.00),
+    "openai/o1-mini": (1.10, 4.40),
+    "openai/o3": (2.00, 8.00),
+    "openai/o3-mini": (1.10, 4.40),
+    "openai/o4-mini": (1.10, 4.40),
+}
+
 # Threshold for OpenAI's Short context vs Long context tiers, in tokens.
-# Not stated on the page but consistent with their GPT-5 family docs;
-# 200k matches Gemini 2.5 Pro's tier shape.
-_SHORT_CONTEXT_THRESHOLD = 200_000
+# Verified from platform.openai.com/docs/models/gpt-5.5:
+# "For GPT-5.5, prompts with >272K input tokens are priced at 2x input
+# and 1.5x output for the full session for standard, batch, and flex."
+# Same rule applies to gpt-5.4 / gpt-5.4-pro / gpt-5.5-pro (the table
+# values verify: 10/5=2x input, 45/30=1.5x output).
+_SHORT_CONTEXT_THRESHOLD = 272_000
 
 
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
@@ -59,6 +84,11 @@ def _to_micro_per_m(text: str | None) -> int | None:
 
 def parse(md: str) -> dict:
     out: dict = {}
+    # Track which ids have been populated by the live page in this run.
+    # Live values override the legacy seed on collision; later
+    # Batch/Flex/Priority sections of the live page do NOT override
+    # the Standard tier (first table in the page is the canonical rate).
+    _live_seen: set[str] = set()
     # Walk every markdown table row that starts with "| " — Jina renders
     # OpenAI's HTML tables as pipe-delimited markdown.
     for line in md.splitlines():
@@ -71,10 +101,13 @@ def parse(md: str) -> dict:
         or_id = _NAME_TO_OR_ID.get(name)
         if or_id is None:
             continue
-        if or_id in out:
-            # First match wins — the Standard tier table appears first
-            # on the page; later sections (Batch / Flex / Priority) have
-            # discount rates we don't want to overwrite the headline with.
+        # The legacy seed populated `out` with flat back-compat prices
+        # for some ids; we DO want live-page data to overwrite legacy
+        # since live is fresher. But we don't want a Batch/Flex/Priority
+        # section to overwrite the Standard rate from earlier in the
+        # same page. Track which ids we've already populated from the
+        # live data via a separate set.
+        if or_id in _live_seen:
             continue
         # 6-column table (Standard / chat models): Input | Cached |
         # Output | Long Input | Long Cached | Long Output.
@@ -105,6 +138,7 @@ def parse(md: str) -> dict:
                     "prompt_micro_per_m": short_input,
                     "completion_micro_per_m": short_output,
                 }
+            _live_seen.add(or_id)
             continue
         # 4-column table (single-context models like Codex /
         # transcription): Input | Cached | Output. Skip if shape
@@ -117,4 +151,15 @@ def parse(md: str) -> dict:
                     "prompt_micro_per_m": single_input,
                     "completion_micro_per_m": single_output,
                 }
+                _live_seen.add(or_id)
+    # Add legacy back-compat entries for ids the live page didn't list.
+    # See _LEGACY_PRICES docstring for why these stay even though
+    # they're not on platform.openai.com/docs/pricing anymore.
+    for or_id, (prompt_usd, completion_usd) in _LEGACY_PRICES.items():
+        if or_id in out:
+            continue
+        out[or_id] = {
+            "prompt_micro_per_m": int(round(prompt_usd * 1_000_000)),
+            "completion_micro_per_m": int(round(completion_usd * 1_000_000)),
+        }
     return out

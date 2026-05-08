@@ -262,13 +262,21 @@ FREE_MODEL_ID = "trustedrouter/free"
 CHEAP_MODEL_ID = "trustedrouter/cheap"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITOR_MODEL_ID})
-# IDs follow OpenRouter naming exactly so they line up with what the
-# ingest snapshot produces. The picks span the 8 keyed providers so
-# `trustedrouter/auto` rolls over across providers if any one is down.
+# IDs follow snapshot naming exactly. The picks span the 8 keyed
+# providers so `trustedrouter/auto` rolls over across providers if any
+# one is down. Each entry must have a provider-direct price in the
+# snapshot — OR-only models can no longer reach the catalog (see
+# scripts/pricing/refresh.py:_merge_snapshot).
+#
+# 2026-05 update: replaced openai/gpt-4o-mini with openai/gpt-5.4-mini.
+# OpenAI's current pricing page only lists GPT-5.5/5.4 family + pro
+# variants; the older 4o family is still served but absent from the
+# canonical pricing surface, so we route auto callers to the current
+# headline mid-tier model instead.
 DEFAULT_AUTO_MODEL_ORDER = [
     "anthropic/claude-opus-4.7",
     "anthropic/claude-sonnet-4.6",
-    "openai/gpt-4o-mini",
+    "openai/gpt-5.4-mini",
     "google/gemini-2.5-flash",
     "deepseek/deepseek-v4-flash",
     "moonshotai/kimi-k2.6",
