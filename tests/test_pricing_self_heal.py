@@ -14,14 +14,13 @@ expectation is that fetch_provider:
 """
 from __future__ import annotations
 
-import importlib
-import os
 import textwrap
 from pathlib import Path
 
 import pytest
 
 from scripts.pricing import base as pricing_base
+from scripts.pricing import refresh
 
 
 @pytest.fixture
@@ -235,3 +234,92 @@ def test_self_heal_rejects_extra_method_signature(
             url="https://example.com/pricing",
             expected_models=["test/model"],
         )
+
+
+# ------------------------------------------------------------------
+# ID cross-check tests (refresh._cross_check_ids)
+# ------------------------------------------------------------------
+
+
+def _fake_or_snapshot(model_endpoints: list[tuple[str, str]]) -> dict:
+    """Build a minimal OR-snapshot-shaped dict from (model_id, slug) tuples."""
+    by_model: dict[str, list[str]] = {}
+    for model_id, slug in model_endpoints:
+        by_model.setdefault(model_id, []).append(slug)
+    models = []
+    for model_id, slugs in by_model.items():
+        models.append(
+            {
+                "id": model_id,
+                "endpoints": [{"tr_provider_slug": s} for s in slugs],
+            }
+        )
+    return {"models": models}
+
+
+def test_cross_check_ids_flags_or_models_missing_from_parser() -> None:
+    or_snapshot = _fake_or_snapshot(
+        [
+            ("anthropic/claude-opus-4.7", "anthropic"),
+            ("anthropic/claude-haiku-4.5", "anthropic"),
+            ("anthropic/claude-sonnet-4.6", "anthropic"),
+        ]
+    )
+    results = {
+        "anthropic": pricing_base.ProviderPricingResult(
+            slug="anthropic",
+            prices={
+                "anthropic/claude-opus-4.7": pricing_base.ModelPrice(1, 1),
+            },
+            source="deterministic",
+        ),
+    }
+    notes = refresh._cross_check_ids(results, or_snapshot)
+    joined = "\n".join(notes)
+    assert "OR knows" in joined
+    assert "claude-haiku-4.5" in joined
+    assert "claude-sonnet-4.6" in joined
+
+
+def test_cross_check_ids_flags_parser_models_or_does_not_list() -> None:
+    or_snapshot = _fake_or_snapshot(
+        [("anthropic/claude-opus-4.7", "anthropic")]
+    )
+    results = {
+        "anthropic": pricing_base.ProviderPricingResult(
+            slug="anthropic",
+            prices={
+                "anthropic/claude-opus-4.7": pricing_base.ModelPrice(1, 1),
+                "anthropic/claude-experimental-vapor": pricing_base.ModelPrice(1, 1),
+            },
+            source="deterministic",
+        ),
+    }
+    notes = refresh._cross_check_ids(results, or_snapshot)
+    joined = "\n".join(notes)
+    assert "parser found" in joined
+    assert "claude-experimental-vapor" in joined
+
+
+def test_cross_check_ids_no_notes_on_perfect_match() -> None:
+    or_snapshot = _fake_or_snapshot(
+        [
+            ("anthropic/claude-opus-4.7", "anthropic"),
+            ("anthropic/claude-haiku-4.5", "anthropic"),
+        ]
+    )
+    results = {
+        "anthropic": pricing_base.ProviderPricingResult(
+            slug="anthropic",
+            prices={
+                "anthropic/claude-opus-4.7": pricing_base.ModelPrice(1, 1),
+                "anthropic/claude-haiku-4.5": pricing_base.ModelPrice(1, 1),
+            },
+            source="deterministic",
+        ),
+    }
+    notes = refresh._cross_check_ids(results, or_snapshot)
+    # All notes for slugs with no provider data should also be empty —
+    # the function only emits notes when there's an actual mismatch.
+    anthropic_notes = [n for n in notes if n.startswith("anthropic:")]
+    assert anthropic_notes == []

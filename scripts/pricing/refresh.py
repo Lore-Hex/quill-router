@@ -197,6 +197,75 @@ def _cross_check(
     return notes
 
 
+def _cross_check_ids(
+    results: dict[str, ProviderPricingResult],
+    or_snapshot: dict[str, Any],
+) -> list[str]:
+    """Compare the set of model IDs each provider-direct parser produced
+    against the set of model IDs OR knows for that provider. Surfaces:
+
+    * Models OR has for this slug that our parser did NOT find (parser
+      is incomplete — likely missed a row, or page hides legacy SKUs).
+    * Models our parser found that OR does NOT know (legitimate new
+      model OR hasn't picked up yet, OR a parser hallucination/typo).
+
+    This is informational only — the workflow does not fail on
+    mismatches. The hardcoded `EXPECTED_MODELS` list per provider
+    remains the strict floor that triggers self-heal on validation
+    failure; this function operates on the looser "OR catalog vs
+    page reality" comparison.
+    """
+    notes: list[str] = []
+
+    # Build {slug: set(or_canonical_ids)} from OR snapshot. A model
+    # belongs to a slug if any of its endpoints is keyed to that slug.
+    or_by_slug: dict[str, set[str]] = {s: set() for s in PROVIDER_SLUGS}
+    for raw_model in or_snapshot.get("models", []):
+        if not isinstance(raw_model, dict):
+            continue
+        model_id = raw_model.get("id")
+        if not isinstance(model_id, str):
+            continue
+        for ep in raw_model.get("endpoints") or []:
+            if not isinstance(ep, dict):
+                continue
+            slug = ep.get("tr_provider_slug")
+            if isinstance(slug, str) and slug in or_by_slug:
+                or_by_slug[slug].add(model_id)
+
+    # Build {slug: set(model_ids_returned_by_parser)} from results.
+    provider_by_slug: dict[str, set[str]] = {
+        slug: set(result.prices.keys()) for slug, result in results.items()
+    }
+
+    for slug in PROVIDER_SLUGS:
+        or_set = or_by_slug.get(slug, set())
+        provider_set = provider_by_slug.get(slug, set())
+        if not provider_set and not or_set:
+            continue
+        only_or = or_set - provider_set
+        only_provider = provider_set - or_set
+        if only_or:
+            sample = sorted(only_or)[:5]
+            extra = f" (+{len(only_or) - 5} more)" if len(only_or) > 5 else ""
+            notes.append(
+                f"{slug}: OR knows {len(only_or)} model id(s) the parser did "
+                f"not find: {sample}{extra}"
+            )
+        if only_provider:
+            sample = sorted(only_provider)[:5]
+            extra = (
+                f" (+{len(only_provider) - 5} more)"
+                if len(only_provider) > 5
+                else ""
+            )
+            notes.append(
+                f"{slug}: parser found {len(only_provider)} model id(s) OR "
+                f"does not list: {sample}{extra}"
+            )
+    return notes
+
+
 def _merge_snapshot(
     or_snapshot: dict[str, Any],
     provider_index: dict[str, tuple[str, ModelPrice]],
@@ -275,6 +344,7 @@ def _summary_lines(
     healed: list[str],
     failures: list[tuple[str, str]],
     disagreements: list[str],
+    id_mismatches: list[str],
 ) -> list[str]:
     lines: list[str] = []
     lines.append("Per-provider results:")
@@ -297,9 +367,16 @@ def _summary_lines(
                 # Trim diff to first ~40 lines for the commit body.
                 trimmed = "".join(res.heal_diff.splitlines(keepends=True)[:40])
                 lines.append(trimmed.rstrip())
+    if id_mismatches:
+        lines.append("")
+        lines.append("ID mismatches between provider parser and OR catalog:")
+        for note in id_mismatches[:20]:
+            lines.append(f"  {note}")
+        if len(id_mismatches) > 20:
+            lines.append(f"  ... and {len(id_mismatches) - 20} more")
     if disagreements:
         lines.append("")
-        lines.append("OR cross-check disagreements (>2%, provider-direct wins):")
+        lines.append("OR cross-check price disagreements (>2%, provider-direct wins):")
         for note in disagreements[:30]:
             lines.append(f"  {note}")
         if len(disagreements) > 30:
@@ -332,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
             MAX_TOLERATED_FAILURES,
             failures,
         )
-        for line in _summary_lines(results, healed, failures, []):
+        for line in _summary_lines(results, healed, failures, [], []):
             print(line)
         return 1
 
@@ -341,6 +418,7 @@ def main(argv: list[str] | None = None) -> int:
 
     provider_index = _index_provider_prices(results)
     disagreements = _cross_check(provider_index, or_snapshot)
+    id_mismatches = _cross_check_ids(results, or_snapshot)
 
     merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
 
@@ -348,7 +426,7 @@ def main(argv: list[str] | None = None) -> int:
         _write_snapshot(merged)
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
-    summary = _summary_lines(results, healed, failures, disagreements)
+    summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)
     print(f"Hourly price refresh — {merged['model_count']} models")
     print(
         f"Sources: {sum(1 for r in results.values() if r.source == 'deterministic')} "
