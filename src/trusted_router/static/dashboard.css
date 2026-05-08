@@ -281,6 +281,11 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
  * with the bar's right edge. */
 .history-bar:nth-last-child(-n+8) .history-tooltip { left:auto; right:-2px; transform:none; }
 .history-bar:nth-last-child(-n+8) .history-tooltip::after { left:auto; right:8px; transform:none; }
+/* Top-row bars: anchor the tooltip BELOW the bar instead of above, so
+ * the popover doesn't clip against the header/viewport top edge. The
+ * arrow flips to point upward from underneath. */
+.component-list .component-row:first-child .history-bar .history-tooltip { bottom:auto; top:calc(100% + 8px); }
+.component-list .component-row:first-child .history-bar .history-tooltip::after { top:auto; bottom:100%; border-top-color:transparent; border-bottom-color:#1c2733; }
 .history-bar:hover .history-tooltip, .history-bar:focus-visible .history-tooltip { display:flex; }
 .history-bar .history-tooltip strong { font-weight:700; color:#fff; }
 .history-bar .history-tooltip em { font-style:normal; font-weight:600; padding:1px 8px; border-radius:999px; align-self:flex-start; font-size:11px; background:rgba(255,255,255,0.1); }
