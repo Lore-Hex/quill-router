@@ -10,7 +10,7 @@ from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     sample_component_ids,
 )
-from trusted_router.synthetic.rollups import merge_rollups
+from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
 STATUS_HISTORY_HOURS = 48
@@ -40,13 +40,19 @@ def status_snapshot(
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     current = _current_status(ordered, now=now)
     five_minute = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["5m"])
-    twenty_four_hour = _rollup_window_from_rollups(
-        precomputed_rollups, now=now, seconds=WINDOW_SECONDS["24h"]
-    ) or _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["24h"])
-    forty_eight_hour = _rollup_window_from_rollups(
-        precomputed_rollups, now=now, seconds=WINDOW_SECONDS["48h"]
-    ) or _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["48h"])
-    daily = _rollup_history(precomputed_rollups, period="day") or _daily_rollups(ordered)
+    twenty_four_hour = _window_rollup_with_rollup_backfill(
+        ordered,
+        precomputed_rollups,
+        now=now,
+        seconds=WINDOW_SECONDS["24h"],
+    )
+    forty_eight_hour = _window_rollup_with_rollup_backfill(
+        ordered,
+        precomputed_rollups,
+        now=now,
+        seconds=WINDOW_SECONDS["48h"],
+    )
+    daily = _recent_daily_rollups_with_history(ordered, precomputed_rollups)
     monthly = _rollup_history(precomputed_rollups, period="month")
     components = _components(ordered, now=now, rollups=precomputed_rollups)
     overall_status = _aggregate_component_statuses([component["status"] for component in components])
@@ -181,6 +187,20 @@ def _daily_rollups(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
     ]
 
 
+def _recent_daily_rollups_with_history(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+) -> list[dict[str, Any]]:
+    recent_days = _daily_rollups(samples)
+    recent_dates = {str(row["date"]) for row in recent_days if row.get("date")}
+    historical_days = [
+        row
+        for row in _rollup_history(rollups, period="day")
+        if str(row.get("period_start", ""))[:10] not in recent_dates
+    ]
+    return recent_days + historical_days
+
+
 def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict[str, Any]]:
     by_period: dict[str, list[SyntheticRollup]] = defaultdict(list)
     for rollup in rollups:
@@ -220,6 +240,31 @@ def _rollup_window_from_rollups(
     if not rows:
         return None
     return _rollup_from_rollups(rows)
+
+
+def _window_rollup_with_rollup_backfill(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+    seconds: int,
+) -> dict[str, Any]:
+    cutoff = now - dt.timedelta(seconds=seconds)
+    raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
+    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    backfill_rollups = [
+        rollup
+        for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
+        if rollup.period_start[:13] not in raw_hour_keys
+    ]
+    combined_rollups = [
+        new_rollup_for_sample(sample, period="hour", component="status_window")
+        for sample in raw_rows
+    ]
+    combined_rollups.extend(backfill_rollups)
+    if not combined_rollups:
+        return _rollup([])
+    return _rollup_from_rollups(combined_rollups)
 
 
 def _hour_rollups_in_window(
@@ -416,7 +461,11 @@ def _components(
                     if day_rollups
                     else {sample.monitor_region for sample in day_samples}
                 ),
-                "history": _component_history_from_rollups(component_hour_rollups, now=now)
+                "history": _component_history_from_rollups(
+                    component_hour_rollups,
+                    now=now,
+                    fallback_samples=component_samples,
+                )
                 if component_hour_rollups
                 else _component_history(component_samples, now=now),
             }
@@ -552,12 +601,16 @@ def _component_history_from_rollups(
     rollups: list[SyntheticRollup],
     *,
     now: dt.datetime,
+    fallback_samples: list[SyntheticProbeSample] | None = None,
 ) -> list[dict[str, Any]]:
     by_hour: dict[str, list[SyntheticRollup]] = defaultdict(list)
     for rollup in rollups:
         if rollup.period != "hour":
             continue
         by_hour[rollup.period_start[:13]].append(rollup)
+    fallback_by_hour: dict[str, list[SyntheticProbeSample]] = defaultdict(list)
+    for sample in fallback_samples or []:
+        fallback_by_hour[sample.created_at[:13]].append(sample)
 
     base = now.replace(minute=0, second=0, microsecond=0)
     hour_keys = [
@@ -570,6 +623,10 @@ def _component_history_from_rollups(
         rows = by_hour.get(hour_key, [])
         bucket_start = dt.datetime.strptime(hour_key, "%Y-%m-%dT%H").replace(tzinfo=dt.UTC)
         if not rows:
+            fallback_rows = fallback_by_hour.get(hour_key, [])
+            if fallback_rows:
+                history.append(_sample_history_bucket(bucket_start, fallback_rows))
+                continue
             history.append(
                 {
                     "bucket_start": bucket_start.isoformat(),
@@ -585,31 +642,68 @@ def _component_history_from_rollups(
             )
             continue
 
-        merged = merge_rollups(rows)
-        status_counts = _int_dict(merged["status_counts"])
-        uptime = _uptime_percent_counts(status_counts)
-        status = _history_status(
-            uptime,
-            has_trust_degraded=status_counts.get("trust_degraded", 0) > 0,
-        )
-        sample_count = int(merged["sample_count"])
-        top_error = merged["top_error"]
-        history.append(
-            {
-                "bucket_start": bucket_start.isoformat(),
-                "status": status,
-                "status_label": _status_label(status),
-                "status_class": _status_class(status),
-                "uptime_percent": uptime,
-                "sample_count": sample_count,
-                "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
-                "top_error": top_error,
-                "title": _history_title_hourly(
-                    bucket_start, status, uptime, sample_count, top_error
-                ),
-            }
-        )
+        history.append(_rollup_history_bucket(bucket_start, rows))
     return history
+
+
+def _sample_history_bucket(
+    bucket_start: dt.datetime,
+    rows: list[SyntheticProbeSample],
+) -> dict[str, Any]:
+    statuses = [sample.status for sample in rows]
+    uptime = _uptime_percent(statuses)
+    status = _history_status(uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses))
+
+    latencies = [
+        sample.latency_milliseconds
+        for sample in rows
+        if sample.latency_milliseconds is not None
+    ]
+    error_types = [sample.error_type for sample in rows if sample.error_type]
+    top_error: str | None = None
+    if error_types:
+        counts: dict[str, int] = {}
+        for error_type in error_types:
+            counts[error_type] = counts.get(error_type, 0) + 1
+        top_error = max(counts, key=lambda key: counts[key])
+
+    return {
+        "bucket_start": bucket_start.isoformat(),
+        "status": status,
+        "status_label": _status_label(status),
+        "status_class": _status_class(status),
+        "uptime_percent": uptime,
+        "sample_count": len(rows),
+        "p50_latency_milliseconds": _percentile(latencies, 50),
+        "top_error": top_error,
+        "title": _history_title_hourly(bucket_start, status, uptime, len(rows), top_error),
+    }
+
+
+def _rollup_history_bucket(
+    bucket_start: dt.datetime,
+    rows: list[SyntheticRollup],
+) -> dict[str, Any]:
+    merged = merge_rollups(rows)
+    status_counts = _int_dict(merged["status_counts"])
+    uptime = _uptime_percent_counts(status_counts)
+    status = _history_status(
+        uptime,
+        has_trust_degraded=status_counts.get("trust_degraded", 0) > 0,
+    )
+    sample_count = int(merged["sample_count"])
+    top_error = merged["top_error"]
+    return {
+        "bucket_start": bucket_start.isoformat(),
+        "status": status,
+        "status_label": _status_label(status),
+        "status_class": _status_class(status),
+        "uptime_percent": uptime,
+        "sample_count": sample_count,
+        "p50_latency_milliseconds": merged["p50_latency_milliseconds"],
+        "top_error": top_error,
+        "title": _history_title_hourly(bucket_start, status, uptime, sample_count, top_error),
+    }
 
 
 def _history_status(uptime: float, *, has_trust_degraded: bool) -> str:

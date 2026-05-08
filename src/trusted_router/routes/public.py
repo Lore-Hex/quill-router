@@ -135,7 +135,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 status_code=400,
             )
-        samples = _status_samples(hours=1)
+        samples = _status_samples(hours=48 if window in {"24h", "48h", "daily"} else 1)
         rollups = _status_rollups(window)
         return JSONResponse(
             {"data": history_payload(samples, window, rollups=rollups)},
@@ -201,7 +201,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
-    payload = status_snapshot(_status_samples(hours=1), rollups=_status_rollups("snapshot"))
+    payload = status_snapshot(_status_samples(hours=48), rollups=_status_rollups("snapshot"))
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
     return payload

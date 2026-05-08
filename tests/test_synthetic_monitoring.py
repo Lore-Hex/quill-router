@@ -243,7 +243,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["windows"]["5m"]["sample_count"] == 3
     assert snapshot["windows"]["24h"]["sample_count"] == 4
     assert snapshot["windows"]["48h"]["sample_count"] == 4
-    assert snapshot["daily"][0]["sample_count"] == 4
+    assert sum(row["sample_count"] for row in snapshot["daily"]) == 4
     assert snapshot["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 25
     assert snapshot["headline_metrics"]["gateway_overhead_scope"] == "in_region"
     canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
@@ -323,6 +323,34 @@ def test_status_uses_hourly_rollups_for_48h_history_when_raw_samples_are_recent_
     canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
     assert canonical["sample_count_24h"] == 1
     assert sum(bucket["sample_count"] for bucket in canonical["history"]) == 2
+
+
+def test_status_history_fills_missing_rollup_hours_from_raw_samples() -> None:
+    now = utcnow()
+    recent = _sample(
+        id="syn_rollup_recent",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=25,
+    )
+    old_raw_only = _sample(
+        id="syn_raw_only_26h",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(hours=26)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=55,
+    )
+    rollups = _rollups_for_samples([recent])
+
+    snapshot = status_snapshot([recent, old_raw_only], rollups=rollups)
+
+    assert snapshot["windows"]["24h"]["sample_count"] == 1
+    assert snapshot["windows"]["48h"]["sample_count"] == 2
+    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    non_empty_buckets = [bucket for bucket in canonical["history"] if bucket["sample_count"]]
+    assert len(non_empty_buckets) == 2
+    assert {bucket["p50_latency_milliseconds"] for bucket in non_empty_buckets} == {25, 55}
 
 
 def test_status_components_group_regions_and_control_plane() -> None:
