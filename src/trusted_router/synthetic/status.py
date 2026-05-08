@@ -34,8 +34,15 @@ def status_snapshot(
     samples: list[SyntheticProbeSample],
     *,
     rollups: list[SyntheticRollup] | None = None,
+    now: dt.datetime | None = None,
 ) -> dict[str, Any]:
-    now = utcnow()
+    # `now` defaults to wall-clock so production callers don't need to
+    # pass it; tests inject a fixed timestamp so daily-rollup bucketing
+    # is deterministic regardless of when the test happens to run
+    # (a sample created `now - 2h` falls into a different daily bucket
+    # depending on whether it's morning vs. late-night UTC).
+    if now is None:
+        now = utcnow()
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     current = _current_status(ordered, now=now)

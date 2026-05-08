@@ -204,7 +204,12 @@ def test_chat_monitor_model_requires_configured_monitor_key() -> None:
 
 
 def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
-    now = utcnow()
+    # Pin `now` to mid-day UTC so the `now - 2h` sample lands in the
+    # same daily bucket as `now - 30s`. With wall-clock `now`, running
+    # this test near 00:00 UTC pushed the 2h-old sample into the
+    # previous day, splitting the daily rollup and intermittently
+    # tripping `sum(... daily ...) == 4`.
+    now = dt.datetime(2026, 5, 7, 12, 0, 0, tzinfo=dt.UTC)
     samples = [
         _sample(
             id="syn_up",
@@ -236,7 +241,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
         ),
     ]
 
-    snapshot = status_snapshot(samples)
+    snapshot = status_snapshot(samples, now=now)
 
     assert snapshot["current"]["checks"]
     assert snapshot["overall_status"] == "down"
