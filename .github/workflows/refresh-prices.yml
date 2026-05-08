@@ -43,7 +43,10 @@ jobs:
       # self-heal flow to rewrite a broken parser. Override per env if
       # needed.
       TR_SELF_HEAL_MODEL: anthropic/claude-opus-4.7
-      TR_API_BASE: https://api.trustedrouter.com
+      # Inference API (NOT the trustedrouter.com marketing/control-plane
+      # domain). TLS terminates inside the attested enclave; this is
+      # what /v1/chat/completions calls reach.
+      TR_API_BASE: https://api.quillrouter.com
     steps:
       - uses: actions/checkout@v4
         with:

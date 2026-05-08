@@ -91,7 +91,10 @@ SANDBOX_OUTPUT_BYTES_MAX = 1_000_000
 MAX_SELF_HEAL_ATTEMPTS_PER_HOUR = 1
 
 # TR's own API for self-heal calls. Eats own dogfood; free for us.
-TR_API_BASE = os.environ.get("TR_API_BASE", "https://api.trustedrouter.com")
+# Inference API (NOT trustedrouter.com — that's the marketing/control
+# plane). TLS terminates inside the attested enclave; the workflow
+# overrides via TR_API_BASE env var so prod and staging can both work.
+TR_API_BASE = os.environ.get("TR_API_BASE", "https://api.quillrouter.com")
 TR_SELF_HEAL_MODEL = os.environ.get("TR_SELF_HEAL_MODEL", "anthropic/claude-opus-4.7")
 TR_API_KEY_ENV = "TR_API_KEY"
 
