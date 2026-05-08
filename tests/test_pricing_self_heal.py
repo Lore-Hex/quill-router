@@ -46,7 +46,9 @@ def tmp_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _stub_fetch_html(monkeypatch: pytest.MonkeyPatch, html: str) -> None:
-    monkeypatch.setattr(pricing_base, "fetch_html", lambda url: html)
+    monkeypatch.setattr(
+        pricing_base, "fetch_html", lambda url, extra_headers=None: html
+    )
 
 
 def _stub_self_heal(monkeypatch: pytest.MonkeyPatch, returned_src: str) -> None:

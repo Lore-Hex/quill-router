@@ -271,14 +271,23 @@ def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -
     return last_response
 
 
-def fetch_html(url: str) -> str:
+def fetch_html(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
     """Fetch one provider's pricing page. Network IO lives here, only here.
 
     URL must be passed in by the caller from a hardcoded constant in
     `scripts/pricing/providers/<slug>.py`. The LLM-rewriteable parser
     tier never sees a URL and cannot make network calls.
+
+    `extra_headers` lets a provider config request specific headers —
+    notably `X-Return-Format: markdown` for r.jina.ai-proxied URLs,
+    which we use for providers whose pricing pages are JS-rendered or
+    Cloudflare-blocked (OpenAI, Gemini, Z.AI). Anthropic / Cerebras /
+    Mistral / DeepSeek don't need this; they return server-rendered
+    HTML directly.
     """
     headers = {"User-Agent": PROVIDER_FETCH_UA}
+    if extra_headers:
+        headers.update(extra_headers)
     with _provider_client() as client:
         response = _get_with_retries(client, url, headers)
         response.raise_for_status()
@@ -792,12 +801,17 @@ def fetch_provider(
     slug: str,
     url: str,
     expected_models: list[str],
+    extra_headers: dict[str, str] | None = None,
 ) -> ProviderPricingResult:
     """Fetch one provider's prices via the deterministic parser, with
     LLM self-heal as fallback.
 
+    `extra_headers` lets a provider config request specific headers on
+    the fetch — e.g. `{"X-Return-Format": "markdown"}` for Jina-proxied
+    URLs that should return clean markdown instead of HTML.
+
     Steps:
-      1. fetch_html(url)
+      1. fetch_html(url, extra_headers=...)
       2. import parsers/<slug>.py and call parse(html)
       3. validate; on success, return.
       4. on failure, call self_heal_parser to get a rewritten source.
@@ -807,7 +821,7 @@ def fetch_provider(
       8. only after all pass, write the new source to disk and return.
     """
     log.info("pricing.fetch slug=%s url=%s", slug, url)
-    html = fetch_html(url)
+    html = fetch_html(url, extra_headers=extra_headers)
 
     # Exec the parser source in a fresh namespace each call — sidesteps
     # importlib.reload edge cases (the parser file may have been

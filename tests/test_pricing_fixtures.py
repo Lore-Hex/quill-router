@@ -75,10 +75,11 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
         (
             "openai",
             {
-                "openai/gpt-4o-mini",
-                "openai/gpt-4o",
+                "openai/gpt-5.5",
+                "openai/gpt-5.4",
+                "openai/gpt-5.4-mini",
             },
-            (0.05, 100.0),
+            (0.05, 300.0),  # gpt-5.4-pro completion is $180/M
         ),
         (
             "kimi",
@@ -87,8 +88,8 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
         ),
         (
             "zai",
-            {"z-ai/glm-4.6"},
-            (0.05, 10.0),
+            {"z-ai/glm-4.6", "z-ai/glm-4.5"},
+            (0.0, 15.0),  # GLM-4.5-X completion = $8.9/M; GLM-4.5-Flash is $0
         ),
     ],
 )
