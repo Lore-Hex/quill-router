@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -56,6 +57,8 @@ from trusted_router.services.inference import (
 from trusted_router.storage import STORE, configure_store, create_store
 from trusted_router.types import ErrorType, UsageType
 
+log = logging.getLogger(__name__)
+
 
 def create_app(
     settings: Settings | None = None,
@@ -70,6 +73,33 @@ def create_app(
         init_sentry(settings)
     app = FastAPI(title="TrustedRouter", version="0.1.0")
     app.state.settings = settings
+
+    @app.middleware("http")
+    async def request_id_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Generate (or accept from upstream) a per-request id and stash it
+        on `request.state.request_id`. Echoed in every response as
+        `X-TrustedRouter-Request-Id` and available to all downstream
+        handlers + log extras for correlation across middleware,
+        rate-limit decisions, inference, and Bigtable write failures.
+
+        Accepts an upstream-provided id (`X-Request-Id`, common LB header)
+        if it looks safe (alnum + dashes/underscores, ≤64 chars); otherwise
+        mints one. This means traces survive the LB hop without the LB
+        being able to inject log-injection payloads."""
+        upstream = request.headers.get("x-request-id", "").strip()
+        if upstream and len(upstream) <= 64 and all(
+            c.isalnum() or c in "-_" for c in upstream
+        ):
+            request_id = upstream
+        else:
+            request_id = uuid.uuid4().hex
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
+        return response
 
     @app.middleware("http")
     async def rate_limit_middleware(
@@ -164,11 +194,25 @@ def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | 
     )
     if hit.allowed:
         return None
+    request_id = getattr(request.state, "request_id", None)
+    log.info(
+        "rate_limit.exceeded",
+        extra={
+            "request_id": request_id,
+            "namespace": namespace,
+            "subject_fingerprint": subject,
+            "path": path,
+            "limit": hit.limit,
+            "retry_after_seconds": hit.retry_after_seconds,
+        },
+    )
     response = error_response(429, "Rate limit exceeded", ErrorType.RATE_LIMITED)
     response.headers["Retry-After"] = str(hit.retry_after_seconds)
     response.headers["X-RateLimit-Limit"] = str(hit.limit)
     response.headers["X-RateLimit-Remaining"] = str(hit.remaining)
     response.headers["X-RateLimit-Reset"] = hit.reset_at
+    if request_id:
+        response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
     return response
 
 

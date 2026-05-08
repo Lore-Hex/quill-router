@@ -4,14 +4,33 @@ import base64
 import hashlib
 import secrets
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from google.cloud import kms_v1
 
 from trusted_router.config import Settings
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 ALGORITHM = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
-_DEV_WRAPPING_KEY = b"trustedrouter-dev-byok-envelope!"  # 32 bytes.
+
+# Local/test fallback wrapping key — derived via HKDF from a label, not
+# a literal byte string. Anyone who reads this file can still
+# reconstruct the same key (the HKDF inputs are public), but the bytes
+# don't appear verbatim in source. The real defense is the gate in
+# `_wrapping_key()` which refuses this path outside `local`/`test`
+# environments — production MUST set TR_BYOK_KMS_KEY_NAME (preferred)
+# or TR_BYOK_ENVELOPE_KEY_B64.
+def _derive_dev_wrapping_key() -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"trustedrouter:byok:dev:salt:v1",
+        info=b"trustedrouter:byok:dev:envelope-wrapping-key:v1",
+    ).derive(b"trustedrouter-dev-only-do-not-use-in-production")
+
+
+_DEV_WRAPPING_KEY = _derive_dev_wrapping_key()
 
 
 def encrypt_byok_secret(

@@ -688,7 +688,10 @@ def test_gcp_bigtable_failure_after_spanner_commit_is_repairable(caplog, monkeyp
     assert ("generation_by_workspace", f"ws_1#2026-05-02#2026-05-02T12:00:00Z#{generation.id}") in db.rows
     key_row = json.loads(db.rows[("api_key", key.hash)].body)
     assert key_row["usage_microdollars"] == generation.total_cost_microdollars
-    assert "bigtable_generation_index_failed" in caplog.text
+    assert "bigtable.activity_index_write_failed" in caplog.text
+    # Enriched log extras: error_class + error_message + repairable_via.
+    assert "RuntimeError" in caplog.text
+    assert "bigtable unavailable" in caplog.text
 
     repaired: list[str] = []
 

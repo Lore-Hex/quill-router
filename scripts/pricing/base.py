@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,13 @@ PROVIDER_FETCH_UA = os.environ.get(
 )
 
 PROVIDER_FETCH_TIMEOUT = 30.0
+# Retry transient HTTP failures (TCP reset, DNS hiccup, 5xx). httpx's
+# transport-level retries fire on failed-to-connect errors; we layer
+# on our own retry around explicit 5xx responses since those are
+# returned bodies, not transport failures.
+PROVIDER_FETCH_TRANSPORT_RETRIES = 3
+PROVIDER_FETCH_5XX_RETRIES = 2
+PROVIDER_FETCH_5XX_BACKOFF_SECONDS = 1.5
 
 
 # ----------------------------------------------------------------------
@@ -145,6 +153,42 @@ class ProviderPricingResult:
 # ----------------------------------------------------------------------
 
 
+def _provider_client() -> httpx.Client:
+    """Construct an httpx.Client with transport-level retries on
+    connect-failures (TCP reset, DNS hiccup). 5xx responses are still
+    returned bodies and need application-level retry; that's handled
+    in `_get_with_retries` below."""
+    transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
+    return httpx.Client(
+        timeout=PROVIDER_FETCH_TIMEOUT,
+        follow_redirects=True,
+        transport=transport,
+    )
+
+
+def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -> httpx.Response:
+    """GET with N retries on 5xx and a fixed backoff. 4xx responses
+    do NOT retry — those mean "this URL is wrong" or "we're rate
+    limited" and retrying just makes it worse."""
+    last_response: httpx.Response | None = None
+    for attempt in range(PROVIDER_FETCH_5XX_RETRIES + 1):
+        response = client.get(url, headers=headers)
+        if response.status_code < 500:
+            return response
+        last_response = response
+        if attempt < PROVIDER_FETCH_5XX_RETRIES:
+            log.warning(
+                "pricing.fetch_5xx_retry url=%s status=%d attempt=%d/%d",
+                url,
+                response.status_code,
+                attempt + 1,
+                PROVIDER_FETCH_5XX_RETRIES,
+            )
+            time.sleep(PROVIDER_FETCH_5XX_BACKOFF_SECONDS * (attempt + 1))
+    assert last_response is not None
+    return last_response
+
+
 def fetch_html(url: str) -> str:
     """Fetch one provider's pricing page. Network IO lives here, only here.
 
@@ -153,8 +197,8 @@ def fetch_html(url: str) -> str:
     tier never sees a URL and cannot make network calls.
     """
     headers = {"User-Agent": PROVIDER_FETCH_UA}
-    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
-        response = client.get(url, headers=headers)
+    with _provider_client() as client:
+        response = _get_with_retries(client, url, headers)
         response.raise_for_status()
         return response.text
 
@@ -165,8 +209,8 @@ def fetch_json(url: str) -> Any:
     JSON pricing API; this helper lives here so its network IO is also
     accounted for in the human-only tier."""
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
-    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
-        response = client.get(url, headers=headers)
+    with _provider_client() as client:
+        response = _get_with_retries(client, url, headers)
         response.raise_for_status()
         return response.json()
 

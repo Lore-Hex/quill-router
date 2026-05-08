@@ -88,10 +88,20 @@ class SpannerGenerations:
         # be repaired from generation_by_workspace if the process crashes.
         try:
             _bt_write_generation(self._bt_table, self._family, generation)
-        except Exception:
+        except Exception as exc:
             log.exception(
-                "bigtable_generation_index_failed",
-                extra={"workspace_id": generation.workspace_id, "generation_id": generation.id},
+                "bigtable.activity_index_write_failed",
+                extra={
+                    "request_id": generation.request_id,
+                    "workspace_id": generation.workspace_id,
+                    "generation_id": generation.id,
+                    "model": generation.model,
+                    "provider_name": generation.provider_name,
+                    "provider": generation.provider,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    "repairable_via": "reconcile_activity()",
+                },
             )
         if generation.app != "TrustedRouter Synthetic":
             self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
@@ -102,10 +112,19 @@ class SpannerGenerations:
     def record_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         try:
             _bt_write_provider_benchmark(self._bt_table, self._family, sample)
-        except Exception:
+        except Exception as exc:
             log.exception(
-                "bigtable_provider_benchmark_index_failed",
-                extra={"model": sample.model, "provider": sample.provider, "status": sample.status},
+                "bigtable.benchmark_index_write_failed",
+                extra={
+                    "model": sample.model,
+                    "provider": sample.provider,
+                    "status": sample.status,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    # Benchmarks are not repairable — they're loss-tolerant
+                    # observability data, not billing. Log and move on.
+                    "loss_tolerated": True,
+                },
             )
 
     def benchmark_samples(
@@ -170,12 +189,19 @@ class SpannerGenerations:
             try:
                 _bt_write_generation(self._bt_table, self._family, generation)
                 repaired += 1
-            except Exception:
+            except Exception as exc:
                 log.exception(
-                    "bigtable_generation_index_failed",
+                    "bigtable.activity_index_reconcile_write_failed",
                     extra={
+                        "request_id": generation.request_id,
                         "workspace_id": generation.workspace_id,
                         "generation_id": generation.id,
+                        "model": generation.model,
+                        "provider_name": generation.provider_name,
+                        "provider": generation.provider,
+                        "error_class": type(exc).__name__,
+                        "error_message": str(exc)[:500],
+                        "context": "reconcile_activity",
                     },
                 )
         return repaired

@@ -36,6 +36,7 @@ import argparse
 import importlib
 import json
 import logging
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
@@ -70,10 +71,19 @@ PROVIDER_SLUGS = [
     "zai",
 ]
 
-# >2 providers failing entirely (network down, blocked, etc.) fails the
-# workflow and prevents committing a partial snapshot. ≤2 failures are
-# tolerated: those providers keep last hour's snapshot value.
-MAX_TOLERATED_FAILURES = 2
+# >N providers failing entirely (network down, blocked, etc.) fails
+# the workflow and prevents committing a partial snapshot. ≤N failures
+# are tolerated: those providers keep last hour's snapshot value.
+#
+# Default 2 of 9 (~22%) is a guess. Tune via TR_PRICING_MAX_FAILURES
+# env var once we have a few weeks of empirical failure-rate data.
+# Numbers we'd expect from observation:
+#   - blockable scrapers (OpenAI 403 to bot UA): ~rare with real UA
+#   - DNS hiccups / TLS handshake failures: ~1-2% per provider per run
+#   - LLM self-heal that the AST gate or sandbox rejects: rare-but-real
+# Set higher (e.g. 4) if observed failure rate is steady at ~30%; set
+# lower (e.g. 0) if we want strict "all-or-nothing" hourly refreshes.
+MAX_TOLERATED_FAILURES = int(os.environ.get("TR_PRICING_MAX_FAILURES", "2"))
 
 # Threshold for cross-check disagreements between provider-direct and
 # OR. Above this, we log a note. Provider-direct still wins.

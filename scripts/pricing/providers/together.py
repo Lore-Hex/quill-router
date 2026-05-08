@@ -17,6 +17,7 @@ import httpx
 
 from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
+    PROVIDER_FETCH_TRANSPORT_RETRIES,
     PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
@@ -81,7 +82,12 @@ def fetch() -> ProviderPricingResult:
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    with httpx.Client(timeout=PROVIDER_FETCH_TIMEOUT, follow_redirects=True) as client:
+    transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
+    with httpx.Client(
+        timeout=PROVIDER_FETCH_TIMEOUT,
+        follow_redirects=True,
+        transport=transport,
+    ) as client:
         response = client.get(URL, headers=headers)
         response.raise_for_status()
         payload = response.json()
@@ -117,12 +123,16 @@ def fetch() -> ProviderPricingResult:
             "no Together models matched _NATIVE_TO_OR_ID — extend the table "
             "or check the API response"
         )
+    # Validate but DO NOT raise on errors — the orchestrator distinguishes
+    # "this provider had problems" (notes attached, source still 'api')
+    # from "this provider is unusable" (raised exception, treated as a
+    # failure under MAX_TOLERATED_FAILURES). EXPECTED_MODELS is empty
+    # for Together so price-floor validation can't fail; only the
+    # all-zeros / non-empty check triggers, and an empty Together result
+    # is an expected outcome on auth-key absence.
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
-        # Together has no parser file to self-heal — this is JSON, not HTML.
-        # If validation fails, the only recovery is updating
-        # _NATIVE_TO_OR_ID by hand.
-        raise RuntimeError(f"together: validation failed: {errors}")
+        notes.append(f"validation notes: {errors}")
 
     return ProviderPricingResult(
         slug=SLUG,
