@@ -75,12 +75,14 @@ def enqueue_metadata_broadcast(
         )
 
 
-def drain_broadcast_queue(*, settings: Settings, limit: int = 100) -> None:
-    for job in STORE.due_broadcast_deliveries(limit=limit):
+def drain_broadcast_queue(*, settings: Settings, limit: int = 100) -> int:
+    attempted = 0
+    for job in STORE.claim_broadcast_deliveries(limit=limit):
+        attempted += 1
         generation = STORE.get_generation(job.generation_id)
         destination = STORE.get_broadcast_destination(job.workspace_id, job.destination_id)
         if generation is None or destination is None or not destination.enabled or destination.include_content:
-            STORE.mark_broadcast_delivery(job.id, success=True)
+            STORE.mark_broadcast_delivery(job.id, success=True, lease_owner=job.lease_owner)
             continue
         try:
             deliver_metadata_broadcast(
@@ -90,10 +92,16 @@ def drain_broadcast_queue(*, settings: Settings, limit: int = 100) -> None:
                 settings=settings,
             )
         except Exception as exc:
-            STORE.mark_broadcast_delivery(job.id, success=False, error=str(exc))
+            STORE.mark_broadcast_delivery(
+                job.id,
+                success=False,
+                error=str(exc),
+                lease_owner=job.lease_owner,
+            )
             log.exception("broadcast_metadata_delivery_failed destination=%s job=%s", destination.id, job.id)
             continue
-        STORE.mark_broadcast_delivery(job.id, success=True)
+        STORE.mark_broadcast_delivery(job.id, success=True, lease_owner=job.lease_owner)
+    return attempted
 
 
 def deliver_metadata_broadcast(
@@ -107,3 +115,9 @@ def deliver_metadata_broadcast(
     if adapter is None:
         return
     adapter.deliver_metadata(destination, generation, settle_body=settle_body, settings=settings)
+
+
+def should_drain_inline(settings: Settings) -> bool:
+    if settings.broadcast_inline_drain_enabled:
+        return True
+    return settings.environment.lower() in {"local", "test"}

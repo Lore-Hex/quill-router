@@ -141,10 +141,33 @@ class InMemoryBroadcastDestinations:
             jobs = [
                 job
                 for job in self.delivery_jobs.values()
-                if job.status == "pending" and job.next_attempt_at <= now
+                if _is_due(job, now)
             ]
         jobs.sort(key=lambda job: (job.next_attempt_at, job.created_at, job.id))
         return jobs[:limit]
+
+    def claim_deliveries(
+        self,
+        *,
+        limit: int = 100,
+        lease_seconds: int = 60,
+    ) -> list[BroadcastDeliveryJob]:
+        now = iso_now()
+        owner = f"bworker_{uuid.uuid4().hex}"
+        lease_until = _iso_after_seconds(lease_seconds)
+        with self._lock:
+            jobs = [
+                job
+                for job in self.delivery_jobs.values()
+                if _is_due(job, now)
+            ]
+            jobs.sort(key=lambda job: (job.next_attempt_at, job.created_at, job.id))
+            claimed = jobs[:limit]
+            for job in claimed:
+                job.lease_owner = owner
+                job.leased_until = lease_until
+                job.updated_at = now
+            return claimed
 
     def mark_delivery(
         self,
@@ -152,14 +175,19 @@ class InMemoryBroadcastDestinations:
         *,
         success: bool,
         error: str | None = None,
+        lease_owner: str | None = None,
         max_attempts: int = 8,
     ) -> BroadcastDeliveryJob | None:
         with self._lock:
             job = self.delivery_jobs.get(job_id)
             if job is None:
                 return None
+            if lease_owner is not None and job.lease_owner not in {None, lease_owner}:
+                return job
             job.attempts += 1
             job.updated_at = iso_now()
+            job.lease_owner = None
+            job.leased_until = None
             if success:
                 job.status = "sent"
                 job.last_error = None
@@ -179,3 +207,9 @@ def _backoff_seconds(attempts: int) -> int:
 
 def _iso_after_seconds(seconds: int) -> str:
     return (datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
+def _is_due(job: BroadcastDeliveryJob, now: str) -> bool:
+    if job.status != "pending" or job.next_attempt_at > now:
+        return False
+    return not job.leased_until or job.leased_until <= now

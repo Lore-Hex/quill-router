@@ -10,6 +10,7 @@ from trusted_router.money import (
     microdollars_to_decimal,
     token_cost_microdollars,
 )
+from trusted_router.storage import STORE
 
 
 def test_microdollars_format_without_float_rounding() -> None:
@@ -23,6 +24,21 @@ def test_decimal_inputs_convert_to_integer_microdollars_and_cents() -> None:
     assert dollars_to_microdollars("0.000001") == 1
     assert dollars_to_microdollars("25.123456") == 25_123_456
     assert dollars_to_cents("25.125") == 2513
+
+
+def test_storage_key_update_uses_decimal_microdollar_parsing() -> None:
+    user = STORE.ensure_user("money-limit@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    _, key = STORE.create_api_key(
+        workspace_id=workspace.id,
+        name="precise",
+        creator_user_id=user.id,
+    )
+
+    updated = STORE.update_key(key.hash, {"limit": "0.000001"})
+
+    assert updated is not None
+    assert updated.limit_microdollars == 1
 
 
 def test_per_million_token_prices_support_one_cent_discounts() -> None:

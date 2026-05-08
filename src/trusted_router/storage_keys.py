@@ -25,6 +25,7 @@ import threading
 import uuid
 from typing import Any
 
+from trusted_router.money import dollars_to_microdollars
 from trusted_router.security import (
     hash_api_key,
     key_label,
@@ -152,7 +153,7 @@ class InMemoryApiKeys:
                 key.disabled = bool(patch["disabled"])
             if "limit" in patch:
                 value = patch["limit"]
-                key.limit_microdollars = None if value is None else int(float(value) * 1_000_000)
+                key.limit_microdollars = None if value is None else dollars_to_microdollars(value)
             if "limit_microdollars" in patch:
                 key.limit_microdollars = patch["limit_microdollars"]
             if "limit_reset" in patch:

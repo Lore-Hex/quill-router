@@ -8,6 +8,7 @@ from typing import Any
 
 class _ParamTypes:
     STRING = "STRING"
+    INT64 = "INT64"
 
 
 @dataclass
@@ -210,12 +211,24 @@ def _execute_sql(
         return [[row.body]]
     if "STARTS_WITH" in sql:
         prefix = params.get("prefix", "")
-        return [[r.body] for (k, eid), r in db.rows.items() if k == kind and eid.startswith(prefix)]
+        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.startswith(prefix)]
+        rows.sort(key=lambda item: item[0])
+        if "LIMIT @limit" in sql:
+            rows = rows[: int(params["limit"])]
+        return [[body] for _, body in rows]
     if "ENDS_WITH" in sql:
         suffix = params.get("suffix", "")
-        return [[r.body] for (k, eid), r in db.rows.items() if k == kind and eid.endswith(suffix)]
+        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.endswith(suffix)]
+        rows.sort(key=lambda item: item[0])
+        if "LIMIT @limit" in sql:
+            rows = rows[: int(params["limit"])]
+        return [[body] for _, body in rows]
     if "WHERE kind=@kind" in sql:
-        return [[r.body] for (k, _), r in db.rows.items() if k == kind]
+        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind]
+        rows.sort(key=lambda item: item[0])
+        if "LIMIT @limit" in sql:
+            rows = rows[: int(params["limit"])]
+        return [[body] for _, body in rows]
     raise NotImplementedError(sql)
 
 
@@ -249,6 +262,7 @@ def make_fake_store(
 ) -> tuple[Any, FakeSpannerDatabase, FakeBigtableTable]:
     from trusted_router.storage_gcp import SpannerBigtableStore
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
+    from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
     from trusted_router.storage_gcp_byok import SpannerByok
     from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
     from trusted_router.storage_gcp_generations import SpannerGenerations
@@ -285,6 +299,7 @@ def make_fake_store(
         add_usage_to_key=store.api_keys.add_usage,
     )
     store.byok_store = SpannerByok(io)
+    store.broadcast_store = SpannerBroadcastDestinations(io)
     store.auth_session_store = SpannerAuthSessions(io)
     store.oauth_code_store = SpannerOAuthCodes(io)
     store.rate_limit_store = SpannerRateLimits(io)

@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from trusted_router.auth import SESSION_COOKIE_NAME
+from trusted_router.config import Settings
+from trusted_router.services.broadcast import should_drain_inline
 from trusted_router.services.broadcast_adapters import adapter_for, supported_destination_types
 from trusted_router.storage import STORE
 
@@ -44,6 +46,25 @@ def test_broadcast_adapter_registry_names_supported_types() -> None:
         assert adapter.type == destination_type
 
 
+def test_broadcast_inline_drain_defaults_to_non_production_only() -> None:
+    assert should_drain_inline(Settings(environment="test")) is True
+    assert should_drain_inline(Settings(environment="local")) is True
+    assert should_drain_inline(
+        Settings(
+            environment="production",
+            storage_backend="spanner-bigtable",
+            internal_gateway_token="token",  # noqa: S106 - placeholder test secret.
+            stripe_webhook_secret="whsec",  # noqa: S106 - placeholder test secret.
+            stripe_secret_key="sk_live",  # noqa: S106 - placeholder test secret.
+            sentry_dsn="https://example@sentry.invalid/1",
+            spanner_instance_id="inst",
+            spanner_database_id="db",
+            bigtable_instance_id="bt",
+            byok_kms_key_name="projects/p/locations/global/keyRings/r/cryptoKeys/k",
+        )
+    ) is False
+
+
 def test_unsupported_broadcast_destination_type_returns_stable_error(client: TestClient) -> None:
     response = client.post(
         "/v1/broadcast/destinations",
@@ -57,6 +78,33 @@ def test_unsupported_broadcast_destination_type_returns_stable_error(client: Tes
     assert response.status_code == 400
     assert response.json()["error"]["type"] == "bad_request"
     assert "unsupported broadcast destination type" in response.json()["error"]["message"]
+
+
+def test_broadcast_destinations_reject_nonlocal_plain_http(client: TestClient) -> None:
+    response = client.post(
+        "/v1/broadcast/destinations",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "type": "webhook",
+            "name": "plain http",
+            "endpoint": "http://webhook.example/otlp",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "endpoint must use https"
+
+
+def test_broadcast_destinations_allow_local_plain_http_for_dev(client: TestClient) -> None:
+    response = client.post(
+        "/v1/broadcast/destinations",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "type": "webhook",
+            "name": "local dev",
+            "endpoint": "http://127.0.0.1:4318/v1/traces",
+        },
+    )
+    assert response.status_code == 201, response.text
 
 
 def test_broadcast_destination_crud_redacts_secrets(
@@ -293,6 +341,102 @@ def test_metadata_broadcast_queues_and_retries_failures(
     assert drained.status_code == 200, drained.text
     assert STORE.broadcast_store.delivery_jobs[job.id].status == "sent"
     assert len(httpx_mock.get_requests()) == 2
+
+
+def test_metadata_broadcast_claims_jobs_with_short_lease(
+    client: TestClient,
+    httpx_mock: HTTPXMock,
+) -> None:
+    key = _create_key(client)
+    httpx_mock.add_response(url="https://leased.example/otlp", status_code=503)
+    created = client.post(
+        "/v1/broadcast/destinations",
+        headers={"x-trustedrouter-user": "broadcast@example.com"},
+        json={
+            "type": "webhook",
+            "name": "leased",
+            "endpoint": "https://leased.example/otlp",
+        },
+    )
+    assert created.status_code == 201, created.text
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "openai/gpt-4o-mini",
+            "estimated_input_tokens": 12,
+            "max_output_tokens": 8,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": authorize.json()["data"]["authorization_id"],
+            "actual_input_tokens": 12,
+            "actual_output_tokens": 8,
+            "request_id": "resp_lease",
+            "elapsed_seconds": 0.5,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    job = next(iter(STORE.broadcast_store.delivery_jobs.values()))
+    job.next_attempt_at = "2000-01-01T00:00:00Z"
+
+    first_claim = STORE.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+    second_claim = STORE.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+
+    assert [item.id for item in first_claim] == [job.id]
+    assert second_claim == []
+    assert STORE.broadcast_store.delivery_jobs[job.id].lease_owner
+    assert STORE.broadcast_store.delivery_jobs[job.id].leased_until
+
+
+def test_metadata_broadcast_expired_lease_can_be_reclaimed(
+    client: TestClient,
+    httpx_mock: HTTPXMock,
+) -> None:
+    key = _create_key(client)
+    httpx_mock.add_response(url="https://reclaimed.example/otlp", status_code=503)
+    created = client.post(
+        "/v1/broadcast/destinations",
+        headers={"x-trustedrouter-user": "broadcast@example.com"},
+        json={
+            "type": "webhook",
+            "name": "reclaimed",
+            "endpoint": "https://reclaimed.example/otlp",
+        },
+    )
+    assert created.status_code == 201, created.text
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "openai/gpt-4o-mini",
+            "estimated_input_tokens": 12,
+            "max_output_tokens": 8,
+        },
+    )
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": authorize.json()["data"]["authorization_id"],
+            "actual_input_tokens": 12,
+            "actual_output_tokens": 8,
+            "request_id": "resp_reclaim",
+            "elapsed_seconds": 0.5,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    job = next(iter(STORE.broadcast_store.delivery_jobs.values()))
+    job.next_attempt_at = "2000-01-01T00:00:00Z"
+    job.lease_owner = "dead-worker"
+    job.leased_until = "2000-01-01T00:00:01Z"
+
+    claimed = STORE.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+
+    assert [item.id for item in claimed] == [job.id]
+    assert STORE.broadcast_store.delivery_jobs[job.id].lease_owner != "dead-worker"
 
 
 def test_console_broadcast_page_creates_destination(client: TestClient) -> None:

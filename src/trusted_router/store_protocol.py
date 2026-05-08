@@ -256,12 +256,19 @@ class Store(Protocol):
         settle_body: dict[str, Any],
     ) -> BroadcastDeliveryJob: ...
     def due_broadcast_deliveries(self, *, limit: int = ...) -> list[BroadcastDeliveryJob]: ...
+    def claim_broadcast_deliveries(
+        self,
+        *,
+        limit: int = ...,
+        lease_seconds: int = ...,
+    ) -> list[BroadcastDeliveryJob]: ...
     def mark_broadcast_delivery(
         self,
         job_id: str,
         *,
         success: bool,
         error: str | None = ...,
+        lease_owner: str | None = ...,
     ) -> BroadcastDeliveryJob | None: ...
 
     # Credit ledger -----------------------------------------------------------

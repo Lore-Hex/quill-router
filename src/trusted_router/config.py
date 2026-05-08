@@ -85,6 +85,11 @@ class Settings(BaseSettings):
 
     stablecoin_checkout_enabled: bool = True
     multi_region_enabled: bool = True
+    # Local/test drains broadcast jobs opportunistically after settlement so
+    # tests and demos are deterministic. Production should leave this false:
+    # settlement enqueues durable jobs and a separate internal worker drains
+    # them via /v1/internal/broadcast/drain.
+    broadcast_inline_drain_enabled: bool = False
     # Attested gateway regions. Each entry is a Confidential Space VM
     # that terminates TLS *inside the enclave* — the trust property the
     # product is sold on (no third party ever sees prompt plaintext, not

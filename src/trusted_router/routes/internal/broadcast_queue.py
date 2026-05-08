@@ -15,6 +15,6 @@ def register(router: APIRouter) -> None:
     async def drain_broadcast(request: Request, settings: SettingsDep, limit: int = 100) -> dict[str, Any]:
         require_internal_gateway(request, settings)
         before = len(STORE.due_broadcast_deliveries(limit=limit))
-        drain_broadcast_queue(settings=settings, limit=limit)
+        attempted = drain_broadcast_queue(settings=settings, limit=limit)
         after = len(STORE.due_broadcast_deliveries(limit=limit))
-        return {"data": {"attempted": before, "remaining_due": after}}
+        return {"data": {"attempted": attempted or before, "remaining_due": after}}

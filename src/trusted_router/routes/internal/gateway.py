@@ -41,6 +41,7 @@ from trusted_router.services.broadcast import (
     drain_broadcast_queue,
     enqueue_metadata_broadcast,
     gateway_destination_payload,
+    should_drain_inline,
 )
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
 from trusted_router.types import ErrorType, UsageType
@@ -342,12 +343,12 @@ def _settle_gateway_authorization(
     if success and generation is not None:
         settle_body = body.model_dump(exclude_none=True)
         enqueue_metadata_broadcast(generation, settle_body=settle_body)
-        if background_tasks is not None:
+        if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
                 drain_broadcast_queue,
                 settings=settings,
             )
-        else:
+        elif should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
     if not success:
         STORE.record_provider_benchmark(

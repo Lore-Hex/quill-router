@@ -591,14 +591,28 @@ class SpannerBigtableStore:
     def due_broadcast_deliveries(self, *, limit: int = 100) -> list[BroadcastDeliveryJob]:
         return self.broadcast_store.due_deliveries(limit=limit)
 
+    def claim_broadcast_deliveries(
+        self,
+        *,
+        limit: int = 100,
+        lease_seconds: int = 60,
+    ) -> list[BroadcastDeliveryJob]:
+        return self.broadcast_store.claim_deliveries(limit=limit, lease_seconds=lease_seconds)
+
     def mark_broadcast_delivery(
         self,
         job_id: str,
         *,
         success: bool,
         error: str | None = None,
+        lease_owner: str | None = None,
     ) -> BroadcastDeliveryJob | None:
-        return self.broadcast_store.mark_delivery(job_id, success=success, error=error)
+        return self.broadcast_store.mark_delivery(
+            job_id,
+            success=success,
+            error=error,
+            lease_owner=lease_owner,
+        )
 
     def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
         def txn(transaction: Any) -> bool:
@@ -1046,6 +1060,7 @@ class SpannerBigtableStore:
         cls: type[T],
         prefix: str | None = None,
         suffix: str | None = None,
+        limit: int | None = None,
     ) -> list[T]:
         where = "kind=@kind"
         params: dict[str, Any] = {"kind": kind}
@@ -1058,9 +1073,14 @@ class SpannerBigtableStore:
             where += " AND ENDS_WITH(id, @suffix)"
             params["suffix"] = suffix
             param_types["suffix"] = self._param_types.STRING
+        suffix_sql = " ORDER BY id"
+        if limit is not None:
+            suffix_sql += " LIMIT @limit"
+            params["limit"] = int(limit)
+            param_types["limit"] = self._param_types.INT64
         with self._database.snapshot() as snapshot:
             rows = snapshot.execute_sql(
-                f"SELECT body FROM tr_entities WHERE {where}",  # noqa: S608 - where is built from fixed predicates; values are bound params.
+                f"SELECT body FROM tr_entities WHERE {where}{suffix_sql}",  # noqa: S608 - where/suffix are built from fixed predicates; values are bound params.
                 params=params,
                 param_types=param_types,
             )

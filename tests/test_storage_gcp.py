@@ -705,6 +705,76 @@ def test_gcp_bigtable_failure_after_spanner_commit_is_repairable(caplog, monkeyp
     assert key_after_repair["usage_microdollars"] == generation.total_cost_microdollars
 
 
+def test_gcp_broadcast_claims_due_jobs_with_lease() -> None:
+    store, db, _ = make_fake_store()
+    destination = store.create_broadcast_destination(
+        workspace_id="ws_1",
+        type="webhook",
+        name="webhook",
+        endpoint="https://webhook.example/otlp",
+    )
+    job = store.enqueue_broadcast_delivery(
+        workspace_id="ws_1",
+        destination_id=destination.id,
+        generation_id="gen_1",
+        settle_body={"request_id": "req_1"},
+    )
+    job.next_attempt_at = "2000-01-01T00:00:00Z"
+    store._write_entity("broadcast_delivery", job.id, job)
+    store._write_entity(
+        "broadcast_delivery_due",
+        f"pending#2000-01-01T00:00:00Z#{job.id}",
+        {
+            "job_id": job.id,
+            "next_attempt_at": job.next_attempt_at,
+            "workspace_id": job.workspace_id,
+        },
+    )
+
+    first_claim = store.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+    second_claim = store.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+
+    assert [item.id for item in first_claim] == [job.id]
+    assert second_claim == []
+    stored = json.loads(db.rows[("broadcast_delivery", job.id)].body)
+    assert stored["lease_owner"].startswith("bworker_")
+    assert stored["leased_until"]
+
+
+def test_gcp_broadcast_expired_lease_is_due_again() -> None:
+    store, _db, _ = make_fake_store()
+    destination = store.create_broadcast_destination(
+        workspace_id="ws_1",
+        type="webhook",
+        name="webhook",
+        endpoint="https://webhook.example/otlp",
+    )
+    job = store.enqueue_broadcast_delivery(
+        workspace_id="ws_1",
+        destination_id=destination.id,
+        generation_id="gen_1",
+        settle_body={"request_id": "req_1"},
+    )
+    job.next_attempt_at = "2000-01-01T00:00:00Z"
+    job.lease_owner = "dead-worker"
+    job.leased_until = "2000-01-01T00:00:01Z"
+    store._write_entity("broadcast_delivery", job.id, job)
+    store._write_entity(
+        "broadcast_delivery_due",
+        f"pending#2000-01-01T00:00:00Z#{job.id}",
+        {
+            "job_id": job.id,
+            "next_attempt_at": job.next_attempt_at,
+            "workspace_id": job.workspace_id,
+        },
+    )
+
+    claimed = store.claim_broadcast_deliveries(limit=10, lease_seconds=60)
+
+    assert [item.id for item in claimed] == [job.id]
+    assert claimed[0].lease_owner != "dead-worker"
+
+
 def test_reverse_time_key_sorts_newer_generations_first() -> None:
     older = _reverse_time_key("2026-05-01T00:00:00Z")
     newer = _reverse_time_key("2026-05-02T00:00:00Z")

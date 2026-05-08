@@ -148,6 +148,8 @@ class BroadcastDeliveryJob:
     attempts: int = 0
     next_attempt_at: str = field(default_factory=iso_now)
     last_error: str | None = None
+    lease_owner: str | None = None
+    leased_until: str | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
 

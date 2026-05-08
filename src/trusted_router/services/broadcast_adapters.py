@@ -4,6 +4,7 @@ import json
 import time
 from decimal import Decimal
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 
@@ -46,8 +47,9 @@ class PostHogBroadcastAdapter:
         return (endpoint or POSTHOG_DEFAULT_ENDPOINT).rstrip("/")
 
     def validate_endpoint(self, endpoint: str) -> str | None:
-        if not endpoint.startswith(("https://", "http://")):
-            return "endpoint must be an HTTP URL"
+        message = _validate_http_endpoint(endpoint)
+        if message is not None:
+            return message
         return None
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
@@ -106,9 +108,7 @@ class WebhookOTLPBroadcastAdapter:
     def validate_endpoint(self, endpoint: str) -> str | None:
         if not endpoint:
             return "endpoint is required"
-        if not endpoint.startswith(("https://", "http://")):
-            return "endpoint must be an HTTP URL"
-        return None
+        return _validate_http_endpoint(endpoint)
 
     async def test(self, destination: BroadcastDestination, settings: Settings) -> tuple[bool, str]:
         headers = _decrypt_headers(destination, settings)
@@ -324,6 +324,19 @@ def _secret_context(destination_id: str, kind: str) -> str:
 def _posthog_capture_url(endpoint: str) -> str:
     base = (endpoint or POSTHOG_DEFAULT_ENDPOINT).rstrip("/")
     return f"{base}/i/v0/e/"
+
+
+def _validate_http_endpoint(endpoint: str) -> str | None:
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        return "endpoint must be an HTTP URL"
+    if parsed.scheme == "http" and not _is_localhost(parsed.hostname or ""):
+        return "endpoint must use https"
+    return None
+
+
+def _is_localhost(hostname: str) -> bool:
+    return hostname.lower() in {"localhost", "127.0.0.1", "::1"}
 
 
 def _trace(body: dict[str, Any]) -> dict[str, Any]:
