@@ -276,6 +276,40 @@ def _cross_check_ids(
     return notes
 
 
+def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
+    """Render a ModelPrice into the snapshot's `pricing` block. The
+    headline (low-tier) rate is exposed as `pricing.prompt` /
+    `pricing.completion` for back-compat with consumers (and catalog.py)
+    that read flat fields. When a model has multiple tiers, also emit
+    `pricing.prompt_tiers` / `pricing.completion_tiers` arrays so the
+    billing path can pick the right rate per request."""
+    headline = price.tiers[0]
+    block: dict[str, Any] = {
+        "prompt": _micro_per_m_to_dollars_per_token(headline.prompt_micro_per_m),
+        "completion": _micro_per_m_to_dollars_per_token(
+            headline.completion_micro_per_m
+        ),
+    }
+    if len(price.tiers) > 1:
+        block["prompt_tiers"] = [
+            {
+                "max_prompt_tokens": t.max_prompt_tokens,
+                "prompt": _micro_per_m_to_dollars_per_token(t.prompt_micro_per_m),
+            }
+            for t in price.tiers
+        ]
+        block["completion_tiers"] = [
+            {
+                "max_prompt_tokens": t.max_prompt_tokens,
+                "completion": _micro_per_m_to_dollars_per_token(
+                    t.completion_micro_per_m
+                ),
+            }
+            for t in price.tiers
+        ]
+    return block
+
+
 def _merge_snapshot(
     or_snapshot: dict[str, Any],
     provider_index: dict[str, tuple[str, ModelPrice]],
@@ -283,60 +317,78 @@ def _merge_snapshot(
 ) -> dict[str, Any]:
     """Build the final snapshot.
 
-    For each OR model: if provider-direct has the same model id, replace
-    the model-level `pricing.prompt`/`pricing.completion` and the
-    matching endpoint's `pricing.prompt`/`pricing.completion` with the
-    provider-direct value. Tag both with `pricing_source`.
+    Policy: only models we have provider-direct prices for are in the
+    snapshot. OR is a cross-check signal, never a billing source — TR
+    routes directly to each provider (Anthropic, OpenAI, Gemini, etc.)
+    using TR's own keys, so prices MUST come from provider-direct
+    parsers. Anything OR-only falls out of the catalog by design.
+
+    For each provider-direct (model_id, price) pair we look up the OR
+    snapshot row to inherit non-pricing metadata (display name,
+    description, context_length, supported_parameters, endpoint shape).
+    OR-only models are dropped silently — they get listed in the
+    cross-check ID-mismatch notes for visibility.
     """
+    or_by_id = {
+        m["id"]: m
+        for m in or_snapshot.get("models", [])
+        if isinstance(m, dict) and isinstance(m.get("id"), str)
+    }
     merged_models: list[dict[str, Any]] = []
-    for raw_model in or_snapshot.get("models", []):
-        if not isinstance(raw_model, dict):
+    for model_id, (slug, price) in provider_index.items():
+        or_model = or_by_id.get(model_id)
+        if or_model is None:
+            # Provider gave us a price for a model OR doesn't list. We
+            # have no endpoint metadata, so we can't construct a valid
+            # catalog entry. Skip — the cross-check note already flags
+            # this case ("parser found N models OR doesn't list").
             continue
-        model_id = raw_model.get("id")
-        new_model = dict(raw_model)
-        provider_match = provider_index.get(model_id) if isinstance(model_id, str) else None
+        new_model = dict(or_model)
+        new_pricing = dict(new_model.get("pricing") or {})
+        new_pricing.update(_price_to_pricing_block(price))
+        new_model["pricing"] = new_pricing
+        tag = "self_healed_provider" if slug in healed_slugs else "provider_direct"
+        new_model["pricing_source"] = tag
 
-        if provider_match is not None:
-            slug, price = provider_match
-            tag = "self_healed_provider" if slug in healed_slugs else "provider_direct"
-            new_pricing = dict(new_model.get("pricing") or {})
-            new_pricing["prompt"] = _micro_per_m_to_dollars_per_token(
-                price.prompt_micro_per_m
-            )
-            new_pricing["completion"] = _micro_per_m_to_dollars_per_token(
-                price.completion_micro_per_m
-            )
-            new_model["pricing"] = new_pricing
-            new_model["pricing_source"] = tag
-
-            new_endpoints: list[dict[str, Any]] = []
-            for ep in new_model.get("endpoints") or []:
-                new_ep = dict(ep)
-                if new_ep.get("tr_provider_slug") == slug:
-                    new_ep_pricing = dict(new_ep.get("pricing") or {})
-                    new_ep_pricing["prompt"] = new_pricing["prompt"]
-                    new_ep_pricing["completion"] = new_pricing["completion"]
-                    new_ep["pricing"] = new_ep_pricing
-                    new_ep["pricing_source"] = tag
-                else:
-                    new_ep["pricing_source"] = "openrouter"
-                new_endpoints.append(new_ep)
-            new_model["endpoints"] = new_endpoints
-        else:
-            new_model["pricing_source"] = "openrouter"
-            new_endpoints = []
-            for ep in new_model.get("endpoints") or []:
-                new_ep = dict(ep)
-                new_ep["pricing_source"] = "openrouter"
-                new_endpoints.append(new_ep)
-            new_model["endpoints"] = new_endpoints
-
+        new_endpoints: list[dict[str, Any]] = []
+        for ep in new_model.get("endpoints") or []:
+            new_ep = dict(ep)
+            # Only the matching-slug endpoint gets the new prices; we
+            # don't have provider-direct prices for non-keyed endpoints.
+            # But we keep them — TR may route to them later when we add
+            # support, and OR's pricing for those endpoints is just
+            # informational on the snapshot.
+            if new_ep.get("tr_provider_slug") == slug:
+                new_ep_pricing = dict(new_ep.get("pricing") or {})
+                new_ep_pricing.update(_price_to_pricing_block(price))
+                new_ep["pricing"] = new_ep_pricing
+                new_ep["pricing_source"] = tag
+            else:
+                # Drop non-keyed endpoints from the snapshot — TR can't
+                # route to them. Keeping them would leak OR's price as
+                # part of the per-endpoint detail and confuse the
+                # billing path.
+                continue
+            new_endpoints.append(new_ep)
+        if not new_endpoints:
+            # Edge case: provider-direct has the model but OR records
+            # only non-matching endpoints for it. Without a routable
+            # endpoint we can't list the model — drop.
+            continue
+        new_model["endpoints"] = new_endpoints
         merged_models.append(new_model)
 
     merged_models.sort(key=lambda m: str(m.get("id") or ""))
     return {
-        "source": "openrouter.ai/api/v1/models + provider-direct overrides",
-        "filter": "kept models whose endpoints include one of TR's 9 keyed providers",
+        "source": (
+            "provider-direct (anthropic.com, openai.com, ai.google.dev, ...) "
+            "with openrouter.ai used only for cross-check sanity"
+        ),
+        "filter": (
+            "kept ONLY models with provider-direct prices; OR-only models are "
+            "dropped (TR never routes via OR — every model in this snapshot is "
+            "billable at the price set by the provider's own pricing page)"
+        ),
         "tr_keyed_providers": or_snapshot.get("tr_keyed_providers", []),
         "model_count": len(merged_models),
         "models": merged_models,

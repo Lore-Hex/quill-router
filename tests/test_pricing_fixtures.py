@@ -111,14 +111,38 @@ def test_parser_extracts_expected_models_within_price_band(
 
     lo, hi = price_band
     for or_id, row in result.items():
-        prompt = row["prompt_micro_per_m"] / 1_000_000
-        completion = row["completion_micro_per_m"] / 1_000_000
-        assert lo <= prompt <= hi, (
-            f"{slug}: {or_id} prompt ${prompt} outside ${lo}-${hi} band"
+        # Each row is either flat (prompt_micro_per_m + completion_micro_per_m)
+        # or tiered (tiers=[{max_prompt_tokens, prompt_micro_per_m, ...}, ...]).
+        # Verify every tier's prices land in the band.
+        tiers = _row_tiers(row)
+        for tier_idx, (prompt_d, completion_d) in enumerate(tiers):
+            assert lo <= prompt_d <= hi, (
+                f"{slug}: {or_id} tiers[{tier_idx}].prompt ${prompt_d} "
+                f"outside ${lo}-${hi} band"
+            )
+            assert lo <= completion_d <= hi, (
+                f"{slug}: {or_id} tiers[{tier_idx}].completion ${completion_d} "
+                f"outside ${lo}-${hi} band"
+            )
+
+
+def _row_tiers(row: dict) -> list[tuple[float, float]]:
+    """Return a list of (prompt_dollars_per_M, completion_dollars_per_M)
+    for every tier in the row. Handles both flat and tiered shapes."""
+    if "tiers" in row:
+        return [
+            (
+                t["prompt_micro_per_m"] / 1_000_000,
+                t["completion_micro_per_m"] / 1_000_000,
+            )
+            for t in row["tiers"]
+        ]
+    return [
+        (
+            row["prompt_micro_per_m"] / 1_000_000,
+            row["completion_micro_per_m"] / 1_000_000,
         )
-        assert lo <= completion <= hi, (
-            f"{slug}: {or_id} completion ${completion} outside ${lo}-${hi} band"
-        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -134,11 +158,38 @@ def test_parser_returns_well_shaped_dict(slug: str) -> None:
     for or_id, row in result.items():
         assert isinstance(or_id, str) and or_id, f"{slug}: bad model id: {or_id!r}"
         assert isinstance(row, dict), f"{slug}: row must be dict for {or_id}"
-        assert set(row.keys()) == {
-            "prompt_micro_per_m",
-            "completion_micro_per_m",
-        }, f"{slug}: {or_id} row has unexpected keys: {row.keys()}"
-        assert isinstance(row["prompt_micro_per_m"], int)
-        assert isinstance(row["completion_micro_per_m"], int)
-        assert row["prompt_micro_per_m"] >= 0
-        assert row["completion_micro_per_m"] >= 0
+        if "tiers" in row:
+            # Tiered shape: list of tier dicts with max_prompt_tokens +
+            # prompt_micro_per_m + completion_micro_per_m. Last tier
+            # MUST have max_prompt_tokens=None (uncapped fallback).
+            tiers = row["tiers"]
+            assert isinstance(tiers, list) and tiers, (
+                f"{slug}: {or_id} tiers must be non-empty list"
+            )
+            for idx, tier in enumerate(tiers):
+                assert isinstance(tier, dict)
+                assert set(tier.keys()) == {
+                    "max_prompt_tokens",
+                    "prompt_micro_per_m",
+                    "completion_micro_per_m",
+                }, f"{slug}: {or_id} tiers[{idx}] has unexpected keys"
+                threshold = tier["max_prompt_tokens"]
+                assert threshold is None or isinstance(threshold, int), (
+                    f"{slug}: {or_id} tiers[{idx}].max_prompt_tokens "
+                    f"must be int or None"
+                )
+                assert isinstance(tier["prompt_micro_per_m"], int)
+                assert isinstance(tier["completion_micro_per_m"], int)
+            assert tiers[-1]["max_prompt_tokens"] is None, (
+                f"{slug}: {or_id} last tier must have "
+                "max_prompt_tokens=None (uncapped)"
+            )
+        else:
+            assert set(row.keys()) == {
+                "prompt_micro_per_m",
+                "completion_micro_per_m",
+            }, f"{slug}: {or_id} row has unexpected keys: {row.keys()}"
+            assert isinstance(row["prompt_micro_per_m"], int)
+            assert isinstance(row["completion_micro_per_m"], int)
+            assert row["prompt_micro_per_m"] >= 0
+            assert row["completion_micro_per_m"] >= 0

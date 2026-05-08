@@ -28,6 +28,33 @@ class Provider:
 
 
 @dataclass(frozen=True)
+class PriceTier:
+    """One tier of context-conditional pricing. A request whose prompt
+    token count is ≤ `max_prompt_tokens` uses this tier's rates. The
+    LAST tier in `Model.price_tiers` MUST have `max_prompt_tokens=None`
+    (uncapped fallback). Most models have exactly one tier.
+
+    Both prompt and completion rates live on the tier — Gemini-Pro-shape
+    pricing flips both rates when context crosses 200k tokens.
+    """
+
+    max_prompt_tokens: int | None
+    prompt_price_microdollars_per_million_tokens: int
+    completion_price_microdollars_per_million_tokens: int
+
+
+def _flat_tier(prompt: int, completion: int) -> tuple[PriceTier, ...]:
+    """Construct a length-1 tier tuple (the common case)."""
+    return (
+        PriceTier(
+            max_prompt_tokens=None,
+            prompt_price_microdollars_per_million_tokens=prompt,
+            completion_price_microdollars_per_million_tokens=completion,
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class Model:
     id: str
     name: str
@@ -39,10 +66,18 @@ class Model:
     supports_embeddings: bool = False
     prepaid_available: bool = False
     byok_available: bool = True
+    # Headline (low-tier) rates: what /v1/models displays. For
+    # tier-aware billing, use `price_tiers` instead and pick the right
+    # tier based on the actual prompt token count.
     prompt_price_microdollars_per_million_tokens: int = 0
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    # Full tier list for context-conditional pricing. Defaults to a
+    # single tier matching the headline rates above; the ingest path
+    # populates multi-tier values when the snapshot carries them.
+    price_tiers: tuple[PriceTier, ...] = ()
+    published_price_tiers: tuple[PriceTier, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -56,10 +91,32 @@ class ModelEndpoint:
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    price_tiers: tuple[PriceTier, ...] = ()
+    published_price_tiers: tuple[PriceTier, ...] = ()
 
     @property
     def is_byok(self) -> bool:
         return self.usage_type.lower() == "byok"
+
+
+def select_price_tier(
+    tiers: tuple[PriceTier, ...], prompt_tokens: int
+) -> PriceTier:
+    """Pick the tier that applies to a request with `prompt_tokens` of
+    input. Walks the tiers in order; returns the first one whose
+    threshold accommodates the prompt size. The last tier always has
+    max_prompt_tokens=None and is the catch-all.
+
+    Used by the billing path to compute actual cost. For models with
+    a single uncapped tier (the common case), this returns that tier
+    regardless of `prompt_tokens`.
+    """
+    for tier in tiers:
+        if tier.max_prompt_tokens is None or prompt_tokens <= tier.max_prompt_tokens:
+            return tier
+    # Should be unreachable — the last tier always matches due to
+    # max_prompt_tokens=None — but defend against malformed catalog data.
+    return tiers[-1]
 
 
 class ModelPricingKwargs(TypedDict):
@@ -98,7 +155,7 @@ def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]
 
 
 def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, int, int]:
-    """Variant for OpenRouter-shaped inputs (dollars/token strings).
+    """Variant for snapshot-shaped inputs (dollars/token strings).
     Returns the same triple as `_priced`."""
     if not price_per_token:
         return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
@@ -113,6 +170,55 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
     )
     customer = _customer_price(cost)
     return customer, customer, cost
+
+
+def _read_pricing_tiers(
+    pricing: dict[str, Any], dimension: str
+) -> tuple[PriceTier, ...] | None:
+    """Read `pricing.prompt_tiers` / `pricing.completion_tiers` arrays
+    from the snapshot. Returns None if the snapshot has only flat
+    pricing for this model — caller should construct a single-tier
+    list from the headline rate in that case.
+
+    Tier shape in the snapshot:
+        prompt_tiers:     [{"max_prompt_tokens": int|None, "prompt": "$/tok"}]
+        completion_tiers: [{"max_prompt_tokens": int|None, "completion": "$/tok"}]
+    Both arrays have the same length and same `max_prompt_tokens`
+    sequence. Returned PriceTier objects pair them up.
+    """
+    raw_prompt = pricing.get("prompt_tiers")
+    raw_completion = pricing.get("completion_tiers")
+    if not isinstance(raw_prompt, list) or not isinstance(raw_completion, list):
+        return None
+    if not raw_prompt or len(raw_prompt) != len(raw_completion):
+        return None
+    tiers: list[PriceTier] = []
+    for prompt_tier, completion_tier in zip(raw_prompt, raw_completion, strict=False):
+        if not isinstance(prompt_tier, dict) or not isinstance(completion_tier, dict):
+            return None
+        threshold = prompt_tier.get("max_prompt_tokens")
+        if threshold is not None and not isinstance(threshold, int):
+            return None
+        prompt_per_token = str(prompt_tier.get("prompt") or "")
+        completion_per_token = str(completion_tier.get("completion") or "")
+        prompt_micro, _pub, _cost = _customer_price_from_dollars_per_token(
+            prompt_per_token
+        )
+        completion_micro, _pub2, _cost2 = _customer_price_from_dollars_per_token(
+            completion_per_token
+        )
+        tiers.append(
+            PriceTier(
+                max_prompt_tokens=threshold,
+                prompt_price_microdollars_per_million_tokens=prompt_micro,
+                completion_price_microdollars_per_million_tokens=completion_micro,
+            )
+        )
+    if tiers[-1].max_prompt_tokens is not None:
+        # Snapshot data is malformed — last tier should be uncapped.
+        # Return None so caller falls back to the headline rate.
+        return None
+    return tuple(tiers)
 
 
 PROVIDERS: dict[str, Provider] = {
@@ -324,7 +430,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         if publisher is None:
             continue
 
-        per_endpoint_prices: list[tuple[int, int, str, dict[str, Any]]] = []
+        per_endpoint_prices: list[
+            tuple[int, int, tuple[PriceTier, ...], str, dict[str, Any]]
+        ] = []
         for raw_ep in raw_endpoints:
             slug = raw_ep.get("tr_provider_slug")
             if not isinstance(slug, str) or slug not in PROVIDERS:
@@ -336,20 +444,34 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             completion_price, _, _ = _customer_price_from_dollars_per_token(
                 str(pricing.get("completion") or "0")
             )
-            per_endpoint_prices.append((prompt_price, completion_price, slug, raw_ep))
+            # Tier-aware pricing: read multi-tier from snapshot if present;
+            # otherwise synthesize a single-tier list from the headline rate.
+            tiers = _read_pricing_tiers(pricing, "prompt") or _flat_tier(
+                prompt_price, completion_price
+            )
+            per_endpoint_prices.append(
+                (prompt_price, completion_price, tiers, slug, raw_ep)
+            )
 
         if not per_endpoint_prices:
             continue
 
-        # Model-level price = cheapest endpoint, so the /v1/models top-level
-        # `pricing.prompt` doesn't lie when multiple providers serve the
-        # same model at different tiers.
-        cheapest_prompt = min(p for p, _c, _s, _e in per_endpoint_prices)
-        cheapest_completion = min(c for _p, c, _s, _e in per_endpoint_prices)
+        # Model-level price = cheapest endpoint headline, so /v1/models
+        # top-level `pricing.prompt` doesn't lie when multiple providers
+        # serve the same model at different tiers.
+        cheapest_prompt = min(p for p, _c, _t, _s, _e in per_endpoint_prices)
+        cheapest_completion = min(c for _p, c, _t, _s, _e in per_endpoint_prices)
+        # Tier list belongs to the cheapest endpoint (matches the
+        # headline rate above).
+        cheapest_tiers = next(
+            t
+            for p, _c, t, _s, _e in per_endpoint_prices
+            if p == cheapest_prompt
+        )
 
         ctx_candidates = [
             int(raw_model.get("context_length") or 0),
-            *(int(ep.get("context_length") or 0) for _p, _c, _s, ep in per_endpoint_prices),
+            *(int(ep.get("context_length") or 0) for _p, _c, _t, _s, ep in per_endpoint_prices),
         ]
         context_length = max(ctx_candidates) or 0
 
@@ -359,7 +481,8 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # the supports_messages flag off the publisher.
         supports_messages = publisher == "anthropic"
         prepaid_available = any(
-            slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, slug, _ep in per_endpoint_prices
+            slug in GATEWAY_PREPAID_PROVIDER_SLUGS
+            for _p, _c, _t, slug, _ep in per_endpoint_prices
         )
         models[model_id] = Model(
             id=model_id,
@@ -374,9 +497,11 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             completion_price_microdollars_per_million_tokens=cheapest_completion,
             published_prompt_price_microdollars_per_million_tokens=cheapest_prompt,
             published_completion_price_microdollars_per_million_tokens=cheapest_completion,
+            price_tiers=cheapest_tiers,
+            published_price_tiers=cheapest_tiers,
         )
 
-        for prompt_price, completion_price, slug, raw_ep in per_endpoint_prices:
+        for prompt_price, completion_price, tiers, slug, raw_ep in per_endpoint_prices:
             upstream_id = str(raw_ep.get("model_id") or model_id)
             if slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
                 credits_id = f"{model_id}@{slug}/prepaid"
@@ -390,6 +515,8 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
                     published_completion_price_microdollars_per_million_tokens=completion_price,
+                    price_tiers=tiers,
+                    published_price_tiers=tiers,
                 )
             if PROVIDERS[slug].supports_byok:
                 byok_id = f"{model_id}@{slug}/byok"
@@ -403,6 +530,8 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
                     published_completion_price_microdollars_per_million_tokens=completion_price,
+                    price_tiers=tiers,
+                    published_price_tiers=tiers,
                 )
 
     return models, endpoints

@@ -127,12 +127,94 @@ PROVIDER_FETCH_5XX_BACKOFF_SECONDS = 1.5
 # ----------------------------------------------------------------------
 
 
-@dataclass
-class ModelPrice:
-    """One model's prompt + completion price, in microdollars per million tokens."""
+@dataclass(frozen=True)
+class PriceTier:
+    """One tier of context-conditional pricing.
 
+    A request whose prompt token count is ≤ `max_prompt_tokens` uses
+    this tier's rates. The LAST tier in a model's list MUST have
+    `max_prompt_tokens=None`, which means "no upper bound — applies to
+    anything above the previous tier's threshold." Tiers are evaluated
+    in order; the first one whose threshold accommodates the prompt
+    wins.
+
+    Both prompt and completion rates are tier-conditional in the
+    Gemini-2.5-Pro shape (the prompt size sets the tier, both rates
+    use the same tier). For models without context tiering, a single
+    PriceTier with `max_prompt_tokens=None` is the whole story.
+    """
+
+    max_prompt_tokens: int | None
     prompt_micro_per_m: int
     completion_micro_per_m: int
+
+
+class ModelPrice:
+    """One model's price profile.
+
+    `tiers` is the canonical form (length-1 list for a flat rate;
+    length-2+ for context-conditional pricing). The constructor
+    accepts either the canonical `tiers=[...]` form or the legacy
+    flat-rate form (`prompt_micro_per_m`, `completion_micro_per_m`)
+    so existing callers keep working.
+
+    `prompt_micro_per_m` / `completion_micro_per_m` properties return
+    the headline (low-tier) rates — the values displayed on /v1/models
+    and used by code paths that don't yet speak tier-aware billing.
+    """
+
+    __slots__ = ("tiers",)
+
+    def __init__(
+        self,
+        prompt_micro_per_m: int | None = None,
+        completion_micro_per_m: int | None = None,
+        *,
+        tiers: list[PriceTier] | None = None,
+    ) -> None:
+        if tiers is not None:
+            if prompt_micro_per_m is not None or completion_micro_per_m is not None:
+                raise ValueError(
+                    "ModelPrice: pass either flat rates OR `tiers=`, not both"
+                )
+            if not tiers:
+                raise ValueError("ModelPrice: `tiers` cannot be empty")
+            if tiers[-1].max_prompt_tokens is not None:
+                raise ValueError(
+                    "ModelPrice: last tier must have max_prompt_tokens=None"
+                )
+            self.tiers = list(tiers)
+            return
+        if prompt_micro_per_m is None or completion_micro_per_m is None:
+            raise ValueError(
+                "ModelPrice: must supply prompt_micro_per_m + "
+                "completion_micro_per_m OR tiers="
+            )
+        self.tiers = [
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_micro_per_m=int(prompt_micro_per_m),
+                completion_micro_per_m=int(completion_micro_per_m),
+            )
+        ]
+
+    @property
+    def prompt_micro_per_m(self) -> int:
+        """Headline (low-tier) prompt rate."""
+        return self.tiers[0].prompt_micro_per_m
+
+    @property
+    def completion_micro_per_m(self) -> int:
+        """Headline (low-tier) completion rate."""
+        return self.tiers[0].completion_micro_per_m
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ModelPrice):
+            return NotImplemented
+        return self.tiers == other.tiers
+
+    def __repr__(self) -> str:
+        return f"ModelPrice(tiers={self.tiers!r})"
 
 
 @dataclass
@@ -222,9 +304,19 @@ def fetch_json(url: str) -> Any:
 
 
 def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, list[str]]:
-    """Coerce a parser's return value (a dict of dicts) into a
-    {model_id: ModelPrice} and surface schema errors. Used for both
-    deterministic parser output and sandbox subprocess output."""
+    """Coerce a parser's return value into a {model_id: ModelPrice}.
+
+    Each row in the parser output may be:
+      * **Flat**: `{"prompt_micro_per_m": int, "completion_micro_per_m": int}`
+        — single-tier pricing, the common case.
+      * **Tiered**: `{"tiers": [{"max_prompt_tokens": int|None,
+                                  "prompt_micro_per_m": int,
+                                  "completion_micro_per_m": int}, ...]}`
+        — context-conditional pricing (Gemini 2.5 Pro etc.).
+
+    Used for both deterministic parser output and sandbox subprocess
+    output. Both shapes go through the same validation paths.
+    """
     errors: list[str] = []
     if not isinstance(raw, dict):
         return None, [f"parser must return dict, got {type(raw).__name__}"]
@@ -239,6 +331,15 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
         if not isinstance(row, dict):
             errors.append(f"{model_id}: row must be dict, got {type(row).__name__}")
             continue
+        # Tiered shape takes precedence if `tiers` is present.
+        if "tiers" in row:
+            tiers, tier_errors = _coerce_tiers(model_id, row["tiers"])
+            if tier_errors:
+                errors.extend(tier_errors)
+                continue
+            out[model_id] = ModelPrice(tiers=tiers)
+            continue
+        # Flat shape.
         prompt = row.get("prompt_micro_per_m")
         completion = row.get("completion_micro_per_m")
         if not isinstance(prompt, int) or isinstance(prompt, bool):
@@ -256,6 +357,73 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
     return (out if not errors else None), errors
 
 
+def _coerce_tiers(
+    model_id: str, raw_tiers: object
+) -> tuple[list[PriceTier], list[str]]:
+    """Coerce a parser-supplied `tiers` array into a list of PriceTier.
+    Returns (tiers, errors); on errors, tiers is empty and errors lists
+    every problem found."""
+    errors: list[str] = []
+    if not isinstance(raw_tiers, list) or not raw_tiers:
+        return [], [f"{model_id}: tiers must be a non-empty list"]
+    coerced: list[PriceTier] = []
+    for idx, tier in enumerate(raw_tiers):
+        if not isinstance(tier, dict):
+            errors.append(f"{model_id}: tiers[{idx}] must be dict")
+            continue
+        max_prompt = tier.get("max_prompt_tokens")
+        prompt = tier.get("prompt_micro_per_m")
+        completion = tier.get("completion_micro_per_m")
+        if max_prompt is not None and not isinstance(max_prompt, int):
+            errors.append(
+                f"{model_id}: tiers[{idx}].max_prompt_tokens must be int or None"
+            )
+            continue
+        if isinstance(max_prompt, bool):  # bool is a subclass of int — guard it
+            errors.append(
+                f"{model_id}: tiers[{idx}].max_prompt_tokens must be int, got bool"
+            )
+            continue
+        if not isinstance(prompt, int) or isinstance(prompt, bool):
+            errors.append(f"{model_id}: tiers[{idx}].prompt_micro_per_m must be int")
+            continue
+        if not isinstance(completion, int) or isinstance(completion, bool):
+            errors.append(
+                f"{model_id}: tiers[{idx}].completion_micro_per_m must be int"
+            )
+            continue
+        coerced.append(
+            PriceTier(
+                max_prompt_tokens=max_prompt,
+                prompt_micro_per_m=prompt,
+                completion_micro_per_m=completion,
+            )
+        )
+    if errors:
+        return [], errors
+    if coerced[-1].max_prompt_tokens is not None:
+        return (
+            [],
+            [
+                f"{model_id}: last tier must have max_prompt_tokens=None "
+                "(uncapped fallback)"
+            ],
+        )
+    # Verify thresholds are strictly ascending (None always last).
+    last_threshold = -1
+    for idx, tier in enumerate(coerced[:-1]):
+        if tier.max_prompt_tokens is None or tier.max_prompt_tokens <= last_threshold:
+            return (
+                [],
+                [
+                    f"{model_id}: tier thresholds must be strictly ascending; "
+                    f"tiers[{idx}].max_prompt_tokens={tier.max_prompt_tokens}"
+                ],
+            )
+        last_threshold = tier.max_prompt_tokens
+    return coerced, []
+
+
 def validate(
     prices: dict[str, ModelPrice], expected_models: list[str]
 ) -> list[str]:
@@ -263,38 +431,41 @@ def validate(
 
     Checks:
       - non-empty
-      - every prompt/completion in [MIN_PRICE_MICRO_PER_M, MAX_PRICE_MICRO_PER_M]
+      - every tier's prompt/completion in [MIN, MAX]
       - every model in `expected_models` is present (drift detector)
-      - units sanity: at least one model has nonzero price
-        (otherwise the parser likely missed the price column entirely)
+      - units sanity: at least one tier across all models has nonzero
+        price (otherwise the parser likely missed the price column)
     """
     errors: list[str] = []
     if not prices:
         errors.append("empty pricing dict")
         return errors
     for model_id, row in prices.items():
-        if (
-            row.prompt_micro_per_m < MIN_PRICE_MICRO_PER_M
-            or row.prompt_micro_per_m > MAX_PRICE_MICRO_PER_M
-        ):
-            errors.append(
-                f"{model_id}: prompt {row.prompt_micro_per_m} outside "
-                f"[{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
-            )
-        if (
-            row.completion_micro_per_m < MIN_PRICE_MICRO_PER_M
-            or row.completion_micro_per_m > MAX_PRICE_MICRO_PER_M
-        ):
-            errors.append(
-                f"{model_id}: completion {row.completion_micro_per_m} outside "
-                f"[{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
-            )
+        for idx, tier in enumerate(row.tiers):
+            if (
+                tier.prompt_micro_per_m < MIN_PRICE_MICRO_PER_M
+                or tier.prompt_micro_per_m > MAX_PRICE_MICRO_PER_M
+            ):
+                errors.append(
+                    f"{model_id}: tiers[{idx}].prompt {tier.prompt_micro_per_m} "
+                    f"outside [{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
+                )
+            if (
+                tier.completion_micro_per_m < MIN_PRICE_MICRO_PER_M
+                or tier.completion_micro_per_m > MAX_PRICE_MICRO_PER_M
+            ):
+                errors.append(
+                    f"{model_id}: tiers[{idx}].completion "
+                    f"{tier.completion_micro_per_m} outside "
+                    f"[{MIN_PRICE_MICRO_PER_M}, {MAX_PRICE_MICRO_PER_M}]"
+                )
     missing = [m for m in expected_models if m not in prices]
     if missing:
         errors.append(f"expected models missing: {missing}")
     has_nonzero = any(
-        row.prompt_micro_per_m > 0 or row.completion_micro_per_m > 0
+        tier.prompt_micro_per_m > 0 or tier.completion_micro_per_m > 0
         for row in prices.values()
+        for tier in row.tiers
     )
     if not has_nonzero:
         errors.append(
