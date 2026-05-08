@@ -59,7 +59,7 @@ def status_snapshot(
         now=now,
         seconds=WINDOW_SECONDS["48h"],
     )
-    daily = _recent_daily_rollups_with_history(ordered, precomputed_rollups)
+    daily = _rollup_history(precomputed_rollups, period="day") or _daily_rollups(ordered)
     monthly = _rollup_history(precomputed_rollups, period="month")
     components = _components(ordered, now=now, rollups=precomputed_rollups)
     overall_status = _aggregate_component_statuses([component["status"] for component in components])
@@ -192,20 +192,6 @@ def _daily_rollups(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
         {"date": day, **_rollup(rows)}
         for day, rows in sorted(by_day.items(), reverse=True)
     ]
-
-
-def _recent_daily_rollups_with_history(
-    samples: list[SyntheticProbeSample],
-    rollups: list[SyntheticRollup],
-) -> list[dict[str, Any]]:
-    recent_days = _daily_rollups(samples)
-    recent_dates = {str(row["date"]) for row in recent_days if row.get("date")}
-    historical_days = [
-        row
-        for row in _rollup_history(rollups, period="day")
-        if str(row.get("period_start", ""))[:10] not in recent_dates
-    ]
-    return recent_days + historical_days
 
 
 def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict[str, Any]]:
