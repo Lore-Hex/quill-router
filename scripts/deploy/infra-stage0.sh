@@ -87,9 +87,11 @@ phase_nam6() {
     log "  Spanner instance $NEW_SPANNER_INSTANCE already exists"
   else
     log "  creating Spanner instance $NEW_SPANNER_INSTANCE (config=nam6, 100 PUs)"
+    # `--description` actually sets display_name in the GCP API and is
+    # capped at 30 characters. Keep it short.
     gc_or_dry spanner instances create "$NEW_SPANNER_INSTANCE" \
       --config=nam6 \
-      --description="TrustedRouter ledger (multi-region nam6, replaces regional-us-central1)" \
+      --description="TrustedRouter (nam6)" \
       --processing-units=100
   fi
 
@@ -120,8 +122,10 @@ phase_bt_hdd() {
     log "  Bigtable instance $NEW_BT_INSTANCE already exists"
   else
     log "  creating Bigtable instance $NEW_BT_INSTANCE with first cluster (us-central1-a, HDD)"
+    # Keep display-name short to match Spanner's 30-char limit
+    # convention (Bigtable's is more lenient but consistency helps).
     gc_or_dry bigtable instances create "$NEW_BT_INSTANCE" \
-      --display-name="TrustedRouter logs (HDD multi-cluster)" \
+      --display-name="TR logs (HDD multi)" \
       --instance-type=PRODUCTION \
       --cluster-config="id=${NEW_BT_INSTANCE}-c1,zone=us-central1-a,nodes=1" \
       --cluster-storage-type=HDD
