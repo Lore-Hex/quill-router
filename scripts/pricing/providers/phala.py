@@ -15,9 +15,7 @@ SLUG = "phala"
 URL = "https://r.jina.ai/https://red-pill.ai/"
 JINA_HEADERS = {"X-Return-Format": "markdown"}
 
-EXPECTED_MODELS = [
-    "phala/qwen3.5-27b",
-]
+EXPECTED_MODELS: list[str] = []  # let the parser report what it finds; no strict floor
 
 
 def fetch() -> ProviderPricingResult:

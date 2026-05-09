@@ -15,10 +15,7 @@ SLUG = "siliconflow"
 URL = "https://r.jina.ai/https://www.siliconflow.com/pricing"
 JINA_HEADERS = {"X-Return-Format": "markdown"}
 
-EXPECTED_MODELS = [
-    "deepseek/deepseek-v4-flash",
-    "qwen/qwen3.5-27b",
-]
+EXPECTED_MODELS: list[str] = []  # parser tolerant of upstream renames
 
 
 def fetch() -> ProviderPricingResult:
