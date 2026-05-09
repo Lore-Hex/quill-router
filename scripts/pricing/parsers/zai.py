@@ -31,10 +31,13 @@ _NAME_TO_OR_ID = {
     "GLM-4.5-Air": "z-ai/glm-4.5-air",
     "GLM-4.5-AirX": "z-ai/glm-4.5-airx",
     "GLM-4-32B-0414-128K": "z-ai/glm-4-32b",
-    # Free tier models — keep them for catalog completeness; the floor
-    # in catalog.py prevents them from advertising as $0/M.
-    "GLM-4.7-Flash": "z-ai/glm-4.7-flash",
-    "GLM-4.5-Flash": "z-ai/glm-4.5-flash",
+    # Free tier models — Z.AI calls them "Flash" on the pricing page,
+    # but OR canonicalizes the GLM-4.5 free variant as
+    # `z-ai/glm-4.5-air:free` (free tier of Air). Keep both naming
+    # forms aliased to the same id so existing :free-suffix logic
+    # in catalog.free_candidate_models() still picks them up.
+    "GLM-4.7-Flash": "z-ai/glm-4.7:free",
+    "GLM-4.5-Flash": "z-ai/glm-4.5-air:free",
     # Vision models share OR canonical ids.
     "GLM-5V-Turbo": "z-ai/glm-5v-turbo",
     "GLM-4.6V": "z-ai/glm-4.6v",

@@ -49,6 +49,12 @@ _NATIVE_TO_OR_ID = {
     "Qwen/Qwen2.5-7B-Instruct-Turbo": "qwen/qwen-2.5-7b-instruct",
     "Qwen/Qwen2.5-72B-Instruct-Turbo": "qwen/qwen-2.5-72b-instruct",
     "mistralai/Mixtral-8x7B-Instruct-v0.1": "mistralai/mixtral-8x7b-instruct",
+    # Together also hosts Moonshot's Kimi models — TR uses Together as a
+    # secondary endpoint for `moonshotai/kimi-k2.6` so the model has
+    # both kimi-direct and together endpoints in the snapshot.
+    "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "moonshotai/Kimi-K2-Instruct": "moonshotai/kimi-k2-instruct",
+    "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
 }
 
 
