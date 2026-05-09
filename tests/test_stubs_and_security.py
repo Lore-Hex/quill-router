@@ -173,7 +173,9 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert dashboard.status_code == 200
     # Marketing page hero copy stays.
     assert "Get an API key" in dashboard.text
-    assert "$25 USDC" in dashboard.text
+    assert "Stablecoin" in dashboard.text
+    assert "$25 USDC" not in dashboard.text
+    assert "Stripe Crypto" not in dashboard.text
     assert "multi-region" in dashboard.text  # pill copy or section header
     assert "regions-map-svg" in dashboard.text  # the new world map renders
     assert "https://quill.lorehex.co" in dashboard.text
@@ -304,6 +306,50 @@ def test_og_image_route_serves_png(client: TestClient) -> None:
     assert release.json()["platform"] == "gcp-confidential-space"
     assert release.json()["source_repositories"]["control_plane"] == "https://github.com/Lore-Hex/quill-router"
     assert release.json()["source_repositories"]["attested_gateway"] == "https://github.com/Lore-Hex/quill-cloud-proxy"
+
+
+def test_read_only_blocks_writes_but_lets_reads_through() -> None:
+    """Operational read-only flag (Stage 1 Spanner cutover prerequisite):
+    POST/PUT/PATCH/DELETE return 503 with `Retry-After`; GET/HEAD/OPTIONS
+    plus health checks pass through unchanged."""
+    locked_app = create_app(Settings(environment="test", read_only=True))
+    locked_client = TestClient(locked_app)
+
+    # Reads pass through.
+    models = locked_client.get("/v1/models")
+    assert models.status_code == 200
+
+    # Health checks bypass read-only too — the LB and watchdog need to keep
+    # seeing the service as up during the cutover so the region doesn't get
+    # ripped out of rotation while we're just doing maintenance.
+    assert locked_client.get("/health").status_code == 200
+
+    # Writes are blocked with a retry hint.
+    blocked = locked_client.post("/v1/signup", json={})
+    assert blocked.status_code == 503
+    assert blocked.json()["error"]["type"] == "service_unavailable"
+    assert blocked.headers["retry-after"] == "1800"
+
+    # CORS preflight (OPTIONS) is always allowed so browsers don't fail
+    # their preflight before they even try the real request.
+    preflight = locked_client.options(
+        "/v1/signup",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert preflight.status_code != 503
+
+
+def test_read_only_default_off_lets_writes_through() -> None:
+    """Production default is read_only=False; writes proceed normally."""
+    app = create_app(Settings(environment="test"))
+    client = TestClient(app)
+    # Validation error from empty body, NOT a 503 — proves the middleware
+    # didn't intercept the write.
+    resp = client.post("/v1/signup", json={})
+    assert resp.status_code != 503
 
 
 def test_rate_limit_returns_stable_openrouter_style_error() -> None:

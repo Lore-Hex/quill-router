@@ -71,6 +71,57 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         return response
 
     @app.middleware("http")
+    async def read_only_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Operational read-only mode. When `settings.read_only` is True,
+        every write-style request (POST/PUT/PATCH/DELETE) returns 503
+        with a `Retry-After` header. GET/HEAD/OPTIONS pass through.
+
+        Used during the Spanner regional → nam6 cutover (Stage 1 of the
+        multi-region expansion plan) to pause all writes for the ~30 min
+        backup→restore→env-var-flip window. Reads keep working off the
+        old instance; writes 503 with `Retry-After: 1800` so SDKs back
+        off and retry on the new instance after the cutover.
+
+        We deliberately allow the OPTIONS method (CORS preflight)
+        through so browsers don't fail their preflight before they even
+        try the real request — that produces confusing CORS errors in
+        the console instead of a clean 503 with a retry hint.
+
+        Health checks (`/health`, `/v1/health`) bypass too — the LB and
+        watchdog need to keep seeing the service as up so they don't
+        rip the region out of rotation while we're just doing
+        maintenance.
+        """
+        if not settings.read_only:
+            return await call_next(request)
+        method = request.method.upper()
+        if method in {"GET", "HEAD", "OPTIONS"}:
+            return await call_next(request)
+        path = request.url.path
+        if path in {"/health", "/v1/health", "/healthz", "/v1/healthz"}:
+            return await call_next(request)
+        log.info(
+            "read_only.write_blocked method=%s path=%s",
+            method,
+            path,
+            extra={"request_id": getattr(request.state, "request_id", "")},
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": 503,
+                    "message": "Service temporarily in read-only mode for planned maintenance. Retry in 30 minutes.",
+                    "type": ErrorType.SERVICE_UNAVAILABLE.value,
+                }
+            },
+            headers={"Retry-After": "1800"},
+        )
+
+    @app.middleware("http")
     async def rate_limit_middleware(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],

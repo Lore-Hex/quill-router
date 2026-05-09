@@ -60,3 +60,4 @@ class ErrorType(StrEnum):
     CONTENT_STORAGE_DISABLED = "content_storage_disabled"
     INTERNAL_ERROR = "internal_error"
     HTTP_ERROR = "http_error"
+    SERVICE_UNAVAILABLE = "service_unavailable"
