@@ -273,21 +273,29 @@ def test_http_redirects_to_https(client: httpx.Client) -> None:
 def test_signup_endpoint_is_idempotent_and_returns_management_key(client: httpx.Client) -> None:
     """The unauthenticated /v1/signup endpoint mints one-time keys.
     Verifying it stays online catches deploys that accidentally gated it
-    behind auth (which would block all new signups). The smoke uses a
-    timestamped email so the test is non-destructive against the
-    already-registered set. Uses example.com because pydantic's
-    email-validator rejects reserved TLDs like .local."""
-    import time
-    email = f"smoke-{int(time.time())}@example.com"
+    behind auth (which would block all new signups). Uses a single
+    stable smoke email so the prod signup table doesn't grow by one
+    junk row per /30min smoke run; example.com is a reserved
+    documentation domain (pydantic's email-validator rejects .local /
+    .invalid / .test). On the first-ever smoke run the row gets
+    created and the success-shape is validated; every subsequent run
+    asserts the 409 already_registered path, which is what the
+    idempotency check exercised before."""
+    email = "smoke@example.com"
     first = client.post("/v1/signup", json={"email": email})
-    assert first.status_code in {200, 201}, first.text
-    data = first.json()["data"]
-    assert data["email"] == email
-    assert data["key"].startswith("sk-tr-v1-")
-    assert data["key_id"].startswith("key_")
-    assert data["management"] is True
-    assert data["trial_credit_microdollars"] > 0
-    # Idempotent: re-submitting the same email returns 409 already_registered.
+    assert first.status_code in {201, 409}, first.text
+    if first.status_code == 201:
+        data = first.json()["data"]
+        assert data["email"] == email
+        assert data["key"].startswith("sk-tr-v1-")
+        assert data["key_id"].startswith("key_")
+        assert data["management"] is True
+        assert data["trial_credit_microdollars"] > 0
+    else:
+        assert first.json()["error"]["type"] == "already_registered"
+    # Re-submitting the same email is always 409 — the endpoint is
+    # idempotent against the registered set, regardless of which arm
+    # above ran.
     repeat = client.post("/v1/signup", json={"email": email})
     assert repeat.status_code == 409, repeat.text
     assert repeat.json()["error"]["type"] == "already_registered"
