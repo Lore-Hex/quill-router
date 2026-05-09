@@ -96,6 +96,7 @@ class SpannerBigtableStore:
         spanner_database_id: str,
         bigtable_instance_id: str,
         generation_table: str,
+        bigtable_app_profile_id: str = "",
     ) -> None:
         if not spanner_instance_id or not spanner_database_id or not bigtable_instance_id:
             raise ValueError("Spanner and Bigtable IDs are required")
@@ -115,11 +116,23 @@ class SpannerBigtableStore:
             .instance(spanner_instance_id)
             .database(spanner_database_id)
         )
-        self._bt_table = (
-            bigtable.Client(project=project_id, admin=True)
-            .instance(bigtable_instance_id)
-            .table(generation_table)
+        # Bigtable app-profile selection. Empty string = use the
+        # instance's implicit default profile (current behavior; single-
+        # cluster routing). Setting `tr-multi` (or whatever name we
+        # give the multi-cluster-routing-use-any profile) lets reads/
+        # writes go to the closest healthy cluster of three. Activates
+        # once the 3rd BT cluster (us-east4-a) is provisioned and the
+        # profile is created. See the multi-region expansion plan.
+        bt_instance = bigtable.Client(project=project_id, admin=True).instance(
+            bigtable_instance_id
         )
+        if bigtable_app_profile_id:
+            self._bt_table = bt_instance.table(
+                generation_table, app_profile_id=bigtable_app_profile_id
+            )
+        else:
+            self._bt_table = bt_instance.table(generation_table)
+        self._bigtable_app_profile_id = bigtable_app_profile_id
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.

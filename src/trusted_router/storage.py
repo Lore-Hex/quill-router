@@ -955,6 +955,9 @@ def create_store(settings: Any) -> Store:
             spanner_database_id=settings.spanner_database_id,
             bigtable_instance_id=settings.bigtable_instance_id,
             generation_table=settings.bigtable_generation_table,
+            bigtable_app_profile_id=getattr(
+                settings, "bigtable_app_profile_id", ""
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 

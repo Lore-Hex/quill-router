@@ -8,15 +8,19 @@ from trusted_router.config import Settings
 
 @dataclass(frozen=True)
 class RegionGeo:
-    """A GCP region's display label and lat/long. Used by the marketing
+    """A region's display label and lat/long. Used by the marketing
     page's world map. `lat`/`long` get projected to SVG x/y inline; we
     keep the raw coordinates here so other surfaces (status page,
-    docs) can reuse the same data."""
+    docs) can reuse the same data.
+
+    `cloud` defaults to `"gcp"` for back-compat. AWS regions set it to
+    `"aws"` so the homepage map can color-code multi-cloud points."""
 
     id: str
     city: str
     lat: float
     lng: float
+    cloud: str = "gcp"
 
 
 # GCP region locations — the cities Cloud Run actually runs in. Keep in
@@ -46,6 +50,28 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
     "asia-southeast2": RegionGeo("asia-southeast2", "Jakarta", -6.208, 106.846),
     "australia-southeast1": RegionGeo("australia-southeast1", "Sydney", -33.868, 151.209),
 }
+
+
+# AWS region locations — for the multi-cloud failover compute layer
+# (see Stage 4 of the multi-region expansion plan). The ID prefix
+# `aws-` distinguishes these from GCP regions in the configured-regions
+# list. Geo coordinates are AWS's published city for the region; the
+# homepage map color-codes via the `cloud` field on RegionGeo so users
+# can see we run in two clouds.
+AWS_REGION_GEO: dict[str, RegionGeo] = {
+    "aws-us-west-2": RegionGeo(
+        "aws-us-west-2", "Oregon (AWS)", 45.523, -122.676, cloud="aws"
+    ),
+}
+
+
+def _lookup_region_geo(region: str) -> RegionGeo | None:
+    """Return geo info for either a GCP or AWS region. Single lookup
+    point so callers don't have to know which cloud a region is in."""
+    geo = GCP_REGION_GEO.get(region)
+    if geo is not None:
+        return geo
+    return AWS_REGION_GEO.get(region)
 
 
 def configured_regions(settings: Settings) -> list[str]:
@@ -102,7 +128,7 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
     primary = choose_region(settings)
     out: list[dict[str, Any]] = []
     for region in configured_regions(settings):
-        geo = GCP_REGION_GEO.get(region)
+        geo = _lookup_region_geo(region)
         if geo is None:
             continue
         out.append(
@@ -114,6 +140,7 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
                 "x": _project_x(geo.lng),
                 "y": _project_y(geo.lat),
                 "primary": geo.id == primary,
+                "cloud": geo.cloud,
             }
         )
     return out

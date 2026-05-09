@@ -15,8 +15,15 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4}"
+TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4,us-east4,asia-northeast1,asia-southeast1,southamerica-east1}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
+# Comma-separated subset of TR_REGIONS that should run with min_scale=1
+# (always-on warm capacity). Anything in TR_REGIONS but NOT in
+# TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-
+# start tax on first request). Defaults to the regions where we run an
+# attested enclave MIG; the APAC + LATAM additions stay cold so they
+# show on the homepage map without paying for always-on Cloud Run.
+TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD 2>/dev/null || echo local)}"
@@ -25,6 +32,7 @@ SPANNER_INSTANCE_ID="${TR_SPANNER_INSTANCE_ID:-trusted-router}"
 SPANNER_DATABASE_ID="${TR_SPANNER_DATABASE_ID:-trusted-router}"
 BIGTABLE_INSTANCE_ID="${TR_BIGTABLE_INSTANCE_ID:-trusted-router-logs}"
 BIGTABLE_CLUSTER_ID="${TR_BIGTABLE_CLUSTER_ID:-trusted-router-logs-c1}"
+BIGTABLE_APP_PROFILE_ID="${TR_BIGTABLE_APP_PROFILE_ID:-}"
 BIGTABLE_GENERATION_TABLE="${TR_BIGTABLE_GENERATION_TABLE:-trustedrouter-generations}"
 BIGTABLE_INSTANCE_TYPE="${TR_BIGTABLE_INSTANCE_TYPE:-PRODUCTION}"
 KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"

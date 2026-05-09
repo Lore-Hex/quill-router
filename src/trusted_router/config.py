@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     internal_gateway_token: str | None = None
     stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
+    paypal_client_id: str | None = None
+    paypal_client_secret: str | None = None
+    paypal_webhook_id: str | None = None
+    paypal_api_base_url: str = "https://api-m.paypal.com"
     bootstrap_management_key: str | None = None
     byok_kms_key_name: str | None = None
     byok_envelope_key_b64: str | None = None
@@ -98,6 +102,21 @@ class Settings(BaseSettings):
 
     stablecoin_checkout_enabled: bool = True
     multi_region_enabled: bool = True
+    # Operational read-only flag. When set, write paths (credit
+    # reservations, gateway authorize, signup, etc.) return 503 with
+    # `Retry-After`; reads keep working. Used for the Spanner →
+    # nam6 migration and any future maintenance window that needs
+    # writes paused without dropping connections. Off in production
+    # by default; flipped via `gcloud run services update --update-env-vars
+    # TR_READ_ONLY=1` per region during a planned cutover. See the
+    # multi-region expansion plan for the cutover sequence.
+    read_only: bool = False
+    # Bigtable application profile name. The default profile uses
+    # single-cluster routing; `tr-multi` enables
+    # multi-cluster-routing-use-any once we have ≥3 BT clusters
+    # provisioned. Settable via env var so we can roll out the
+    # change region-by-region without re-deploying code.
+    bigtable_app_profile_id: str = ""
     # Local/test drains broadcast jobs opportunistically after settlement so
     # tests and demos are deterministic. Production should leave this false:
     # settlement enqueues durable jobs and a separate internal worker drains
@@ -194,6 +213,16 @@ class Settings(BaseSettings):
             missing.append("TR_GOOGLE_CLIENT_ID and TR_GOOGLE_CLIENT_SECRET must both be set or both unset")
         if bool(self.github_client_id) != bool(self.github_client_secret):
             missing.append("TR_GITHUB_CLIENT_ID and TR_GITHUB_CLIENT_SECRET must both be set or both unset")
+        paypal_fields = [
+            self.paypal_client_id,
+            self.paypal_client_secret,
+            self.paypal_webhook_id,
+        ]
+        if any(paypal_fields) and not all(paypal_fields):
+            missing.append(
+                "TR_PAYPAL_CLIENT_ID, TR_PAYPAL_CLIENT_SECRET, and TR_PAYPAL_WEBHOOK_ID "
+                "must all be set or all unset"
+            )
         if missing:
             joined = ", ".join(missing)
             raise ValueError(f"production configuration is not fail-closed: {joined}")
@@ -206,6 +235,10 @@ class Settings(BaseSettings):
     @property
     def github_oauth_enabled(self) -> bool:
         return bool(self.github_client_id and self.github_client_secret)
+
+    @property
+    def paypal_enabled(self) -> bool:
+        return bool(self.paypal_client_id and self.paypal_client_secret)
 
     @property
     def ses_enabled(self) -> bool:
@@ -232,6 +265,10 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "internal_gateway_token",
     "stripe_webhook_secret",
     "stripe_secret_key",
+    "paypal_client_id",
+    "paypal_client_secret",
+    "paypal_webhook_id",
+    "paypal_api_base_url",
     "sentry_dsn",
     "bootstrap_management_key",
     "byok_kms_key_name",
