@@ -141,6 +141,14 @@ def record_openai_stream_payload(state: ProviderStreamState, payload: dict[str, 
             state.input_tokens = int(usage["prompt_tokens"])
         if usage.get("completion_tokens") is not None:
             state.output_tokens = int(usage["completion_tokens"])
+        # OpenAI exposes cache hits via `prompt_tokens_details.cached_tokens`.
+        # We also accept the legacy top-level `cached_tokens` field that
+        # some compatible servers send.
+        details = usage.get("prompt_tokens_details")
+        if isinstance(details, dict) and details.get("cached_tokens") is not None:
+            state.cached_input_tokens = int(details["cached_tokens"])
+        elif usage.get("cached_tokens") is not None:
+            state.cached_input_tokens = int(usage["cached_tokens"])
         state.usage_estimated = False
 
 
@@ -157,6 +165,12 @@ def record_anthropic_stream_payload(state: ProviderStreamState, payload: dict[st
                     state.input_tokens = int(usage["input_tokens"])
                 if usage.get("output_tokens") is not None:
                     state.output_tokens = int(usage["output_tokens"])
+                # Anthropic exposes prompt-cache hits via
+                # `cache_read_input_tokens`. Cache writes
+                # (`cache_creation_input_tokens`) bill at full + 25%
+                # uplift but we don't separately track that yet.
+                if usage.get("cache_read_input_tokens") is not None:
+                    state.cached_input_tokens = int(usage["cache_read_input_tokens"])
                 state.usage_estimated = False
     elif payload_type == "content_block_delta":
         delta = payload.get("delta")
@@ -208,6 +222,9 @@ def record_gemini_stream_payload(state: ProviderStreamState, payload: dict[str, 
             state.input_tokens = int(usage["promptTokenCount"])
         if usage.get("candidatesTokenCount") is not None:
             state.output_tokens = int(usage["candidatesTokenCount"])
+        # Gemini exposes cache hits via `cachedContentTokenCount`.
+        if usage.get("cachedContentTokenCount") is not None:
+            state.cached_input_tokens = int(usage["cachedContentTokenCount"])
         state.usage_estimated = False
     text = "".join(text_parts)
     if text:

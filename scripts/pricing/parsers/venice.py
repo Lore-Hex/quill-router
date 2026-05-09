@@ -37,17 +37,18 @@ _NAME_TO_OR_ID = {
 
 
 _BLOCK_RE = re.compile(
-    r"`([\w.\-]+)`"                          # native id in backticks
-    r"[\s\S]{0,300}?"                        # short window (next price block)
+    r"`([\w.\-]+)`"                                          # native id in backticks
+    r"[\s\S]{0,300}?"                                         # short window (next price block)
     r"Input Price\$([\d.]+)"
-    r"\s*Output Price\$([\d.]+)",
+    r"\s*Output Price\$([\d.]+)"
+    r"(?:\s*Cache Read\$([\d.]+))?",                         # optional cached rate
 )
 
 
 def parse(md: str) -> dict:
     out: dict = {}
     for match in _BLOCK_RE.finditer(md):
-        native, input_usd, output_usd = match.groups()
+        native, input_usd, output_usd, cached_usd = match.groups()
         or_id = _NAME_TO_OR_ID.get(native)
         if or_id is None:
             continue
@@ -58,8 +59,16 @@ def parse(md: str) -> dict:
             output_micro = int(round(float(output_usd) * 1_000_000))
         except ValueError:
             continue
-        out[or_id] = {
+        row_out: dict = {
             "prompt_micro_per_m": input_micro,
             "completion_micro_per_m": output_micro,
         }
+        if cached_usd:
+            try:
+                row_out["prompt_cached_micro_per_m"] = int(
+                    round(float(cached_usd) * 1_000_000)
+                )
+            except ValueError:
+                pass
+        out[or_id] = row_out
     return out

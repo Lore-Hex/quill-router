@@ -71,11 +71,13 @@ def parse(html: str) -> dict:
                 break
         if not header_models:
             continue
-        # Find the cache-miss input row and the output row. DeepSeek's
-        # layout uses a `PRICING` rowspan on the first pricing row, so
-        # the cache-miss row's first cell is the label not the rowspan
-        # category — in either case cells[0] holds the row label.
+        # Find the cache-miss input row, the cache-hit (cached) row,
+        # and the output row. DeepSeek's layout uses a `PRICING`
+        # rowspan on the first pricing row, so the cache-miss row's
+        # first cell is the label not the rowspan category — in either
+        # case cells[0] (or cells[1]) holds the row label.
         input_prices: list[str] | None = None
+        cached_prices: list[str] | None = None
         output_prices: list[str] | None = None
         for row in rows[header_idx + 1 :]:
             cells = [td.get_text(" ", strip=True) for td in row.find_all(["td", "th"])]
@@ -92,6 +94,8 @@ def parse(html: str) -> dict:
             value_cells = cells[-len(header_models) :]
             if "INPUT" in label_text and "CACHE MISS" in label_text:
                 input_prices = value_cells
+            elif "INPUT" in label_text and "CACHE HIT" in label_text:
+                cached_prices = value_cells
             elif "OUTPUT" in label_text and "TOKEN" in label_text:
                 output_prices = value_cells
         if input_prices is None or output_prices is None:
@@ -106,8 +110,13 @@ def parse(html: str) -> dict:
             completion = _to_micro_per_m(output_prices[idx])
             if prompt is None or completion is None:
                 continue
-            out[or_id] = {
+            row_out: dict = {
                 "prompt_micro_per_m": prompt,
                 "completion_micro_per_m": completion,
             }
+            if cached_prices is not None and idx < len(cached_prices):
+                cached = _to_micro_per_m(cached_prices[idx])
+                if cached is not None:
+                    row_out["prompt_cached_micro_per_m"] = cached
+            out[or_id] = row_out
     return out

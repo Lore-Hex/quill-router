@@ -27,8 +27,11 @@ def _normalize(native_id: str) -> str:
 _LINK_PRICE_RE = re.compile(
     r"\| \[([\w./:_\-]+)\][^|]*"           # model id link
     r"\|\s*[\d,]+\s*"                       # context
-    r"\|\s*\$([\d.]+)[^|]*"                 # input price (optionally with cache-read)
-    r"\|\s*\$([\d.]+)[^|]*"                 # output price
+    r"\|\s*\$([\d.]+)\s*/Mt"                # headline input price
+    r"(?:[^|]*?Cache Read \$([\d.]+)\s*/Mt)?"  # optional cache-read in same cell
+    r"[^|]*"
+    r"\|\s*\$([\d.]+)\s*/Mt"                # output price
+    r"[^|]*"
     r"\|"
 )
 
@@ -36,7 +39,7 @@ _LINK_PRICE_RE = re.compile(
 def parse(md: str) -> dict:
     out: dict = {}
     for match in _LINK_PRICE_RE.finditer(md):
-        native, input_usd, output_usd = match.groups()
+        native, input_usd, cached_usd, output_usd = match.groups()
         or_id = _normalize(native)
         if or_id in out:
             continue
@@ -45,8 +48,16 @@ def parse(md: str) -> dict:
             output_micro = int(round(float(output_usd) * 1_000_000))
         except ValueError:
             continue
-        out[or_id] = {
+        row_out: dict = {
             "prompt_micro_per_m": input_micro,
             "completion_micro_per_m": output_micro,
         }
+        if cached_usd:
+            try:
+                row_out["prompt_cached_micro_per_m"] = int(
+                    round(float(cached_usd) * 1_000_000)
+                )
+            except ValueError:
+                pass
+        out[or_id] = row_out
     return out

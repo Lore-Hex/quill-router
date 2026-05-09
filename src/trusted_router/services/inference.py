@@ -182,7 +182,12 @@ async def _run_stream(
         if not saw_chunk:
             raise ProviderError(model.provider, 502, "empty provider stream")
         result = state.to_result()
-        actual_cost = cost_microdollars(model, result.input_tokens, result.output_tokens)
+        actual_cost = cost_microdollars(
+            model,
+            result.input_tokens,
+            result.output_tokens,
+            cached_input_tokens=getattr(result, "cached_input_tokens", 0),
+        )
         ticket.settle(actual_cost)
         STORE.add_generation(
             Generation.from_chat_result(
@@ -223,7 +228,12 @@ async def run_chat(
         usage_type_override=usage_type,
     ) as ticket:
         result = await client.chat(model, body)
-        actual_cost = cost_microdollars(model, result.input_tokens, result.output_tokens)
+        actual_cost = cost_microdollars(
+            model,
+            result.input_tokens,
+            result.output_tokens,
+            cached_input_tokens=getattr(result, "cached_input_tokens", 0),
+        )
         ticket.settle(actual_cost)
         generation = Generation.from_chat_result(
             result=result,

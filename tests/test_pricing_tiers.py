@@ -148,6 +148,126 @@ def test_cost_microdollars_falls_back_to_flat_rate_when_no_tiers() -> None:
     assert cost_microdollars(model, input_tokens=10_000, output_tokens=1_000) == 0
 
 
+def test_cost_microdollars_uses_cached_rate_for_cached_input_tokens() -> None:
+    """Heavy-cached prompt should bill at the cached rate for the
+    cached portion. Kimi K2.6 is uncached $0.95/M input, $0.16/M
+    cached. A 100k-token prompt with 80k cached tokens pays:
+        20k uncached × $0.95/M + 80k cached × $0.16/M + ...output."""
+    model = Model(
+        id="moonshotai/kimi-k2.6",
+        name="Kimi K2.6",
+        provider="kimi",
+        context_length=262_144,
+        prompt_price_microdollars_per_million_tokens=950_000,
+        completion_price_microdollars_per_million_tokens=4_000_000,
+        published_prompt_price_microdollars_per_million_tokens=950_000,
+        published_completion_price_microdollars_per_million_tokens=4_000_000,
+        price_tiers=(
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_price_microdollars_per_million_tokens=950_000,
+                completion_price_microdollars_per_million_tokens=4_000_000,
+                prompt_cached_price_microdollars_per_million_tokens=160_000,
+            ),
+        ),
+    )
+    cost = cost_microdollars(
+        model,
+        input_tokens=100_000,
+        output_tokens=10_000,
+        cached_input_tokens=80_000,
+    )
+    # 20_000 * 950_000 / 1_000_000 = 19_000 micro
+    # 80_000 * 160_000 / 1_000_000 = 12_800 micro
+    # 10_000 * 4_000_000 / 1_000_000 = 40_000 micro
+    # total = 71_800
+    assert cost == 19_000 + 12_800 + 40_000
+
+
+def test_cost_microdollars_zero_cached_falls_back_to_full_rate() -> None:
+    """A prompt with cached_input_tokens=0 (the default) bills the
+    entire prompt at the full rate. This is the fast path for callers
+    that don't pass the kwarg."""
+    model = Model(
+        id="test/model",
+        name="Test",
+        provider="kimi",
+        context_length=128_000,
+        prompt_price_microdollars_per_million_tokens=950_000,
+        completion_price_microdollars_per_million_tokens=4_000_000,
+        published_prompt_price_microdollars_per_million_tokens=950_000,
+        published_completion_price_microdollars_per_million_tokens=4_000_000,
+        price_tiers=(
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_price_microdollars_per_million_tokens=950_000,
+                completion_price_microdollars_per_million_tokens=4_000_000,
+                prompt_cached_price_microdollars_per_million_tokens=160_000,
+            ),
+        ),
+    )
+    cost = cost_microdollars(model, input_tokens=100_000, output_tokens=0)
+    assert cost == 95_000  # 100_000 * 950_000 / 1_000_000
+
+
+def test_cost_microdollars_clamps_cached_to_input_total() -> None:
+    """A misbehaving upstream that reports cached_tokens > input_tokens
+    must not let the customer pay negative for the uncached portion."""
+    model = Model(
+        id="test/model",
+        name="Test",
+        provider="kimi",
+        context_length=128_000,
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=2_000_000,
+        published_prompt_price_microdollars_per_million_tokens=1_000_000,
+        published_completion_price_microdollars_per_million_tokens=2_000_000,
+        price_tiers=(
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_price_microdollars_per_million_tokens=1_000_000,
+                completion_price_microdollars_per_million_tokens=2_000_000,
+                prompt_cached_price_microdollars_per_million_tokens=200_000,
+            ),
+        ),
+    )
+    # cached > input: clamp cached to input, uncached becomes 0.
+    cost = cost_microdollars(
+        model, input_tokens=100, output_tokens=0, cached_input_tokens=999_999
+    )
+    # All 100 input tokens billed at cached rate: 100 * 200_000 / 1M = 20 micro
+    assert cost == 20
+
+
+def test_cost_microdollars_no_cached_rate_billing_falls_back() -> None:
+    """When the tier has no cached rate (None), cached input tokens
+    bill at the full rate. This matches today's billing for providers
+    that don't expose a cache discount (e.g., legacy gpt-4o-mini)."""
+    model = Model(
+        id="test/model",
+        name="Test",
+        provider="kimi",
+        context_length=128_000,
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=2_000_000,
+        published_prompt_price_microdollars_per_million_tokens=1_000_000,
+        published_completion_price_microdollars_per_million_tokens=2_000_000,
+        price_tiers=(
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_price_microdollars_per_million_tokens=1_000_000,
+                completion_price_microdollars_per_million_tokens=2_000_000,
+                # No cached rate set.
+            ),
+        ),
+    )
+    cost = cost_microdollars(
+        model, input_tokens=100_000, output_tokens=0, cached_input_tokens=80_000
+    )
+    # Full rate × all 100k tokens, regardless of cache split.
+    assert cost == 100_000  # 100_000 * 1_000_000 / 1M
+
+
 def test_real_gemini_pro_model_in_catalog_has_tiers() -> None:
     """The real `google/gemini-2.5-pro` Model loaded from the snapshot
     should carry the two-tier price profile end-to-end (after the

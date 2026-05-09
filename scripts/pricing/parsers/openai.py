@@ -110,34 +110,42 @@ def parse(md: str) -> dict:
         if or_id in _live_seen:
             continue
         # 6-column table (Standard / chat models): Input | Cached |
-        # Output | Long Input | Long Cached | Long Output.
+        # Output | Long Input | Long Cached | Long Output. The cached
+        # columns are real prices (not "-") for the chat models that
+        # support cache reads (gpt-5.5, gpt-5.4 family).
         if len(cells) >= 7:
             short_input = _to_micro_per_m(cells[1])
+            short_cached = _to_micro_per_m(cells[2])
             short_output = _to_micro_per_m(cells[3])
             long_input = _to_micro_per_m(cells[4])
+            long_cached = _to_micro_per_m(cells[5])
             long_output = _to_micro_per_m(cells[6])
             if short_input is None or short_output is None:
                 continue
             if long_input is not None and long_output is not None:
-                out[or_id] = {
-                    "tiers": [
-                        {
-                            "max_prompt_tokens": _SHORT_CONTEXT_THRESHOLD,
-                            "prompt_micro_per_m": short_input,
-                            "completion_micro_per_m": short_output,
-                        },
-                        {
-                            "max_prompt_tokens": None,
-                            "prompt_micro_per_m": long_input,
-                            "completion_micro_per_m": long_output,
-                        },
-                    ],
-                }
-            else:
-                out[or_id] = {
+                tier_low: dict = {
+                    "max_prompt_tokens": _SHORT_CONTEXT_THRESHOLD,
                     "prompt_micro_per_m": short_input,
                     "completion_micro_per_m": short_output,
                 }
+                if short_cached is not None:
+                    tier_low["prompt_cached_micro_per_m"] = short_cached
+                tier_high: dict = {
+                    "max_prompt_tokens": None,
+                    "prompt_micro_per_m": long_input,
+                    "completion_micro_per_m": long_output,
+                }
+                if long_cached is not None:
+                    tier_high["prompt_cached_micro_per_m"] = long_cached
+                out[or_id] = {"tiers": [tier_low, tier_high]}
+            else:
+                row_out: dict = {
+                    "prompt_micro_per_m": short_input,
+                    "completion_micro_per_m": short_output,
+                }
+                if short_cached is not None:
+                    row_out["prompt_cached_micro_per_m"] = short_cached
+                out[or_id] = row_out
             _live_seen.add(or_id)
             continue
         # 4-column table (single-context models like Codex /
@@ -145,12 +153,16 @@ def parse(md: str) -> dict:
         # doesn't match what we expect.
         if len(cells) >= 4:
             single_input = _to_micro_per_m(cells[1])
+            single_cached = _to_micro_per_m(cells[2])
             single_output = _to_micro_per_m(cells[3])
             if single_input is not None and single_output is not None:
-                out[or_id] = {
+                row_out = {
                     "prompt_micro_per_m": single_input,
                     "completion_micro_per_m": single_output,
                 }
+                if single_cached is not None:
+                    row_out["prompt_cached_micro_per_m"] = single_cached
+                out[or_id] = row_out
                 _live_seen.add(or_id)
     # Add legacy back-compat entries for ids the live page didn't list.
     # See _LEGACY_PRICES docstring for why these stay even though

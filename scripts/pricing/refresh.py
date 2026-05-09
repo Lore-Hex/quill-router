@@ -287,10 +287,11 @@ def _cross_check_ids(
 def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
     """Render a ModelPrice into the snapshot's `pricing` block. The
     headline (low-tier) rate is exposed as `pricing.prompt` /
-    `pricing.completion` for back-compat with consumers (and catalog.py)
-    that read flat fields. When a model has multiple tiers, also emit
-    `pricing.prompt_tiers` / `pricing.completion_tiers` arrays so the
-    billing path can pick the right rate per request."""
+    `pricing.completion` / `pricing.input_cache_read` for back-compat
+    with consumers (and catalog.py) that read flat fields. When a
+    model has multiple tiers, also emit `pricing.prompt_tiers` /
+    `pricing.completion_tiers` arrays so the billing path can pick
+    the right rate per request."""
     headline = price.tiers[0]
     block: dict[str, Any] = {
         "prompt": _micro_per_m_to_dollars_per_token(headline.prompt_micro_per_m),
@@ -298,11 +299,27 @@ def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
             headline.completion_micro_per_m
         ),
     }
+    if headline.prompt_cached_micro_per_m is not None:
+        # Field name `input_cache_read` matches OR's snapshot convention
+        # (and Anthropic's own pricing block) so consumers that read
+        # the OR-shaped format don't need to learn a new key.
+        block["input_cache_read"] = _micro_per_m_to_dollars_per_token(
+            headline.prompt_cached_micro_per_m
+        )
     if len(price.tiers) > 1:
         block["prompt_tiers"] = [
             {
                 "max_prompt_tokens": t.max_prompt_tokens,
                 "prompt": _micro_per_m_to_dollars_per_token(t.prompt_micro_per_m),
+                **(
+                    {
+                        "input_cache_read": _micro_per_m_to_dollars_per_token(
+                            t.prompt_cached_micro_per_m
+                        )
+                    }
+                    if t.prompt_cached_micro_per_m is not None
+                    else {}
+                ),
             }
             for t in price.tiers
         ]

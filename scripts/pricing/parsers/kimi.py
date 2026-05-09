@@ -63,16 +63,25 @@ def parse(text: str) -> dict:
         if or_id in out:
             continue
         if col_c is not None:
-            # 5-column shape: cache_hit, cache_miss, output. Use cache_miss
-            # as the headline input rate (what a fresh request pays).
+            # 5-column shape: cache_hit, cache_miss, output. Use
+            # cache_miss as the headline (uncached) input rate, and
+            # cache_hit as the prompt_cached rate.
+            cached_micro = _to_micro_per_m(col_a)
             input_micro = _to_micro_per_m(col_b)
             output_micro = _to_micro_per_m(col_c)
+            row_out: dict = {
+                "prompt_micro_per_m": input_micro,
+                "completion_micro_per_m": output_micro,
+                "prompt_cached_micro_per_m": cached_micro,
+            }
         else:
-            # 4-column shape (V1 family): just input, output.
+            # 4-column shape (V1 family): just input, output. No cache
+            # discount documented for the V1 family.
             input_micro = _to_micro_per_m(col_a)
             output_micro = _to_micro_per_m(col_b)
-        out[or_id] = {
-            "prompt_micro_per_m": input_micro,
-            "completion_micro_per_m": output_micro,
-        }
+            row_out = {
+                "prompt_micro_per_m": input_micro,
+                "completion_micro_per_m": output_micro,
+            }
+        out[or_id] = row_out
     return out

@@ -36,20 +36,32 @@ class PriceTier:
 
     Both prompt and completion rates live on the tier — Gemini-Pro-shape
     pricing flips both rates when context crosses 200k tokens.
+
+    `prompt_cached_*` is the discounted rate for prompt tokens that
+    upstream reports as cache hits. None ⇒ upstream charges the same
+    rate cached or not (rare; most providers offer a cache discount).
+    Per-token billing splits the prompt into (uncached × full rate) +
+    (cached × cached rate); see `cost_microdollars` in routes/helpers.
     """
 
     max_prompt_tokens: int | None
     prompt_price_microdollars_per_million_tokens: int
     completion_price_microdollars_per_million_tokens: int
+    prompt_cached_price_microdollars_per_million_tokens: int | None = None
 
 
-def _flat_tier(prompt: int, completion: int) -> tuple[PriceTier, ...]:
+def _flat_tier(
+    prompt: int,
+    completion: int,
+    prompt_cached: int | None = None,
+) -> tuple[PriceTier, ...]:
     """Construct a length-1 tier tuple (the common case)."""
     return (
         PriceTier(
             max_prompt_tokens=None,
             prompt_price_microdollars_per_million_tokens=prompt,
             completion_price_microdollars_per_million_tokens=completion,
+            prompt_cached_price_microdollars_per_million_tokens=prompt_cached,
         ),
     )
 
@@ -181,10 +193,14 @@ def _read_pricing_tiers(
     list from the headline rate in that case.
 
     Tier shape in the snapshot:
-        prompt_tiers:     [{"max_prompt_tokens": int|None, "prompt": "$/tok"}]
+        prompt_tiers:     [{"max_prompt_tokens": int|None,
+                            "prompt": "$/tok",
+                            "input_cache_read": "$/tok"  # optional}]
         completion_tiers: [{"max_prompt_tokens": int|None, "completion": "$/tok"}]
+
     Both arrays have the same length and same `max_prompt_tokens`
-    sequence. Returned PriceTier objects pair them up.
+    sequence. Returned PriceTier objects pair them up; cached prompt
+    rate is parsed from `input_cache_read` (matches OR's convention).
     """
     raw_prompt = pricing.get("prompt_tiers")
     raw_completion = pricing.get("completion_tiers")
@@ -207,11 +223,18 @@ def _read_pricing_tiers(
         completion_micro, _pub2, _cost2 = _customer_price_from_dollars_per_token(
             completion_per_token
         )
+        cached_micro: int | None = None
+        cache_read = prompt_tier.get("input_cache_read")
+        if cache_read:
+            cached_micro, _pub3, _cost3 = _customer_price_from_dollars_per_token(
+                str(cache_read)
+            )
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,
                 prompt_price_microdollars_per_million_tokens=prompt_micro,
                 completion_price_microdollars_per_million_tokens=completion_micro,
+                prompt_cached_price_microdollars_per_million_tokens=cached_micro,
             )
         )
     if tiers[-1].max_prompt_tokens is not None:
@@ -496,10 +519,19 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             completion_price, _, _ = _customer_price_from_dollars_per_token(
                 str(pricing.get("completion") or "0")
             )
+            # Cached input rate — Anthropic / OpenAI / DeepSeek / Z.AI
+            # / Kimi / Novita / Venice all expose this; OR snapshot
+            # uses `input_cache_read` as the field name.
+            cached_price: int | None = None
+            cache_read = pricing.get("input_cache_read")
+            if cache_read:
+                cached_price, _, _ = _customer_price_from_dollars_per_token(
+                    str(cache_read)
+                )
             # Tier-aware pricing: read multi-tier from snapshot if present;
             # otherwise synthesize a single-tier list from the headline rate.
             tiers = _read_pricing_tiers(pricing, "prompt") or _flat_tier(
-                prompt_price, completion_price
+                prompt_price, completion_price, prompt_cached=cached_price
             )
             per_endpoint_prices.append(
                 (prompt_price, completion_price, tiers, slug, raw_ep)

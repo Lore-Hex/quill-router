@@ -192,13 +192,13 @@ def test_parser_returns_well_shaped_dict(slug: str) -> None:
             assert isinstance(tiers, list) and tiers, (
                 f"{slug}: {or_id} tiers must be non-empty list"
             )
+            _required = {"max_prompt_tokens", "prompt_micro_per_m", "completion_micro_per_m"}
+            _allowed = _required | {"prompt_cached_micro_per_m"}
             for idx, tier in enumerate(tiers):
                 assert isinstance(tier, dict)
-                assert set(tier.keys()) == {
-                    "max_prompt_tokens",
-                    "prompt_micro_per_m",
-                    "completion_micro_per_m",
-                }, f"{slug}: {or_id} tiers[{idx}] has unexpected keys"
+                assert _required <= set(tier.keys()) <= _allowed, (
+                    f"{slug}: {or_id} tiers[{idx}] has unexpected keys: {tier.keys()}"
+                )
                 threshold = tier["max_prompt_tokens"]
                 assert threshold is None or isinstance(threshold, int), (
                     f"{slug}: {or_id} tiers[{idx}].max_prompt_tokens "
@@ -206,16 +206,25 @@ def test_parser_returns_well_shaped_dict(slug: str) -> None:
                 )
                 assert isinstance(tier["prompt_micro_per_m"], int)
                 assert isinstance(tier["completion_micro_per_m"], int)
+                if "prompt_cached_micro_per_m" in tier:
+                    cached = tier["prompt_cached_micro_per_m"]
+                    assert cached is None or isinstance(cached, int)
             assert tiers[-1]["max_prompt_tokens"] is None, (
                 f"{slug}: {or_id} last tier must have "
                 "max_prompt_tokens=None (uncapped)"
             )
         else:
-            assert set(row.keys()) == {
-                "prompt_micro_per_m",
-                "completion_micro_per_m",
-            }, f"{slug}: {or_id} row has unexpected keys: {row.keys()}"
+            _required = {"prompt_micro_per_m", "completion_micro_per_m"}
+            _allowed = _required | {"prompt_cached_micro_per_m"}
+            assert _required <= set(row.keys()) <= _allowed, (
+                f"{slug}: {or_id} row has unexpected keys: {row.keys()}"
+            )
             assert isinstance(row["prompt_micro_per_m"], int)
             assert isinstance(row["completion_micro_per_m"], int)
             assert row["prompt_micro_per_m"] >= 0
             assert row["completion_micro_per_m"] >= 0
+            if "prompt_cached_micro_per_m" in row:
+                cached = row["prompt_cached_micro_per_m"]
+                assert cached is None or isinstance(cached, int)
+                if isinstance(cached, int):
+                    assert cached >= 0

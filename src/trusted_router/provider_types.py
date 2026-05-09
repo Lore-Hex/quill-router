@@ -16,6 +16,10 @@ class ProviderResult:
     usage_estimated: bool = True
     elapsed_seconds: float = 0.001
     first_token_seconds: float | None = None
+    # Number of input tokens upstream reported as cache hits. Subset
+    # of `input_tokens` (NOT additional). 0 when upstream didn't report
+    # cache stats or when the request was a fresh miss.
+    cached_input_tokens: int = 0
 
 
 @dataclass
@@ -30,6 +34,7 @@ class ProviderStreamState:
     first_token_seconds: float | None = None
     started_at: float = 0.0
     text_parts: list[str] | None = None
+    cached_input_tokens: int = 0
 
     def __post_init__(self) -> None:
         if self.text_parts is None:
@@ -58,6 +63,7 @@ class ProviderStreamState:
             usage_estimated=self.usage_estimated,
             elapsed_seconds=max(time.monotonic() - self.started_at, 0.001),
             first_token_seconds=self.first_token_seconds,
+            cached_input_tokens=self.cached_input_tokens,
         )
 
 

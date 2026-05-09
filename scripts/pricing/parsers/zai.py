@@ -75,12 +75,21 @@ def parse(md: str) -> dict:
         if or_id in out:
             continue
         # Text models table: Model | Input | Cached Input | Cached
-        # Input Storage | Output  → 5 cells.
+        # Input Storage | Output  → 5 cells. Cached Input cell is "-"
+        # for some models; _to_micro_per_m returns 0 for that, which
+        # we treat as "no cached rate" rather than "$0/M cached".
         if len(cells) >= 5:
             prompt = _to_micro_per_m(cells[1])
+            cached = _to_micro_per_m(cells[2])
             completion = _to_micro_per_m(cells[4])
-            out[or_id] = {
+            row_out: dict = {
                 "prompt_micro_per_m": prompt,
                 "completion_micro_per_m": completion,
             }
+            # Z.AI's "Limited-time Free" cells are caught as 0 by
+            # _to_micro_per_m. Only emit prompt_cached when it's a
+            # real positive number.
+            if cached > 0:
+                row_out["prompt_cached_micro_per_m"] = cached
+            out[or_id] = row_out
     return out

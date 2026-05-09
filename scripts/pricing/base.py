@@ -138,15 +138,16 @@ class PriceTier:
     in order; the first one whose threshold accommodates the prompt
     wins.
 
-    Both prompt and completion rates are tier-conditional in the
-    Gemini-2.5-Pro shape (the prompt size sets the tier, both rates
-    use the same tier). For models without context tiering, a single
-    PriceTier with `max_prompt_tokens=None` is the whole story.
+    `prompt_cached_micro_per_m` is the discounted rate that applies to
+    the cache-hit portion of an input prompt. None means "upstream
+    charges the same rate cached or not." Most providers offer a
+    discount (typically 50-90% off) for cache reads.
     """
 
     max_prompt_tokens: int | None
     prompt_micro_per_m: int
     completion_micro_per_m: int
+    prompt_cached_micro_per_m: int | None = None
 
 
 class ModelPrice:
@@ -170,10 +171,15 @@ class ModelPrice:
         prompt_micro_per_m: int | None = None,
         completion_micro_per_m: int | None = None,
         *,
+        prompt_cached_micro_per_m: int | None = None,
         tiers: list[PriceTier] | None = None,
     ) -> None:
         if tiers is not None:
-            if prompt_micro_per_m is not None or completion_micro_per_m is not None:
+            if (
+                prompt_micro_per_m is not None
+                or completion_micro_per_m is not None
+                or prompt_cached_micro_per_m is not None
+            ):
                 raise ValueError(
                     "ModelPrice: pass either flat rates OR `tiers=`, not both"
                 )
@@ -195,6 +201,11 @@ class ModelPrice:
                 max_prompt_tokens=None,
                 prompt_micro_per_m=int(prompt_micro_per_m),
                 completion_micro_per_m=int(completion_micro_per_m),
+                prompt_cached_micro_per_m=(
+                    int(prompt_cached_micro_per_m)
+                    if prompt_cached_micro_per_m is not None
+                    else None
+                ),
             )
         ]
 
@@ -351,6 +362,7 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
         # Flat shape.
         prompt = row.get("prompt_micro_per_m")
         completion = row.get("completion_micro_per_m")
+        cached = row.get("prompt_cached_micro_per_m")
         if not isinstance(prompt, int) or isinstance(prompt, bool):
             errors.append(f"{model_id}: prompt_micro_per_m must be int, got {prompt!r}")
             continue
@@ -359,9 +371,15 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
                 f"{model_id}: completion_micro_per_m must be int, got {completion!r}"
             )
             continue
+        if cached is not None and (not isinstance(cached, int) or isinstance(cached, bool)):
+            errors.append(
+                f"{model_id}: prompt_cached_micro_per_m must be int or None, got {cached!r}"
+            )
+            continue
         out[model_id] = ModelPrice(
             prompt_micro_per_m=prompt,
             completion_micro_per_m=completion,
+            prompt_cached_micro_per_m=cached,
         )
     return (out if not errors else None), errors
 
@@ -383,6 +401,7 @@ def _coerce_tiers(
         max_prompt = tier.get("max_prompt_tokens")
         prompt = tier.get("prompt_micro_per_m")
         completion = tier.get("completion_micro_per_m")
+        cached = tier.get("prompt_cached_micro_per_m")
         if max_prompt is not None and not isinstance(max_prompt, int):
             errors.append(
                 f"{model_id}: tiers[{idx}].max_prompt_tokens must be int or None"
@@ -401,11 +420,17 @@ def _coerce_tiers(
                 f"{model_id}: tiers[{idx}].completion_micro_per_m must be int"
             )
             continue
+        if cached is not None and (not isinstance(cached, int) or isinstance(cached, bool)):
+            errors.append(
+                f"{model_id}: tiers[{idx}].prompt_cached_micro_per_m must be int or None"
+            )
+            continue
         coerced.append(
             PriceTier(
                 max_prompt_tokens=max_prompt,
                 prompt_micro_per_m=prompt,
                 completion_micro_per_m=completion,
+                prompt_cached_micro_per_m=cached,
             )
         )
     if errors:
