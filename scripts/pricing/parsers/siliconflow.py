@@ -29,7 +29,9 @@ _NAME_TO_OR_ID: dict[str, str] = {}
 # Match the [Details](https://siliconflow.com/models/<slug>) anchor at
 # the end of each row, capturing the slug. We then look UP in the
 # preceding ~400 chars for the input/output $ amounts.
-_DETAILS_RE = re.compile(r"\[Details\]\(https://siliconflow\.com/models/([\w.\-]+)\)")
+_DETAILS_RE = re.compile(
+    r"\[Details\]\(https://(?:www\.)?siliconflow\.com/models/([\w.\-]+)\)"
+)
 _PRICE_RE = re.compile(r"\$\s*\n?\s*([\d.]+)")
 
 
