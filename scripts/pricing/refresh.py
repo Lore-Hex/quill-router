@@ -69,6 +69,14 @@ PROVIDER_SLUGS = [
     "mistral",
     "kimi",
     "zai",
+    # New backends added 2026-05-08. Each has a Jina-rendered or
+    # direct-fetch pricing source + a parser in scripts/pricing/parsers/.
+    "grok",
+    "novita",
+    "phala",
+    "siliconflow",
+    "tinfoil",
+    "venice",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

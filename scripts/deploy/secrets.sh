@@ -55,6 +55,15 @@ ensure_secret_from_env_file "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
 ensure_secret_from_env_file "KIMI_API_KEY" "trustedrouter-kimi-api-key" "MOONSHOT_API_KEY"
 ensure_secret_from_env_file "ZAI_API_KEY" "trustedrouter-zai-api-key" "ZHIPU_API_KEY" "Z_AI_API_KEY"
 ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" "TOGETHERAI_API_KEY" "TOGETHER_AI_API_KEY"
+# 2026-05 — six new backend providers. All OpenAI-compatible chat
+# completions; the existing enclave OpenAI-shape adapter dispatches
+# to whichever base URL the catalog selects per model.
+ensure_secret_from_env_file "GROK_API_KEY" "trustedrouter-grok-api-key" "XAI_API_KEY"
+ensure_secret_from_env_file "NOVITA_API_KEY" "trustedrouter-novita-api-key"
+ensure_secret_from_env_file "PHALA_API_KEY" "trustedrouter-phala-api-key" "REDPILL_API_KEY"
+ensure_secret_from_env_file "SILICON_FLOW_API_KEY" "trustedrouter-siliconflow-api-key" "SILICONFLOW_API_KEY"
+ensure_secret_from_env_file "TINFOIL_API_KEY" "trustedrouter-tinfoil-api-key"
+ensure_secret_from_env_file "VENICE_API_KEY" "trustedrouter-venice-api-key"
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
 
@@ -105,8 +114,9 @@ PY
   log "generated secret trustedrouter-internal-gateway-token"
 fi
 
-log "ensuring runtime IAM for ${RUN_SERVICE_ACCOUNT}"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/spanner.databaseUser"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/bigtable.user"
-ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/aiplatform.user"
+# Runtime-SA project-level IAM bindings live in infra.sh (Phase 1
+# bootstrap, run as a project Owner). Calling projects.setIamPolicy
+# requires roles/resourcemanager.projectIamAdmin, which the deploy SA
+# (tr-deploy@) deliberately does not have — granting it would let any
+# CI run mutate project IAM. secrets.sh runs as tr-deploy@ for secret
+# rotation, so it cannot do project-level bindings.

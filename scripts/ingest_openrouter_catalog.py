@@ -57,6 +57,23 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     # DeepSeek-OCR, Qwen, Mixtral) plus image gen + embeddings.
     "Together": "together",
     "Together AI": "together",
+    # xAI Grok.
+    "xAI": "grok",
+    "x-ai": "grok",
+    # Novita AI — multi-model serverless (OpenAI-compatible).
+    "Novita": "novita",
+    "Novita AI": "novita",
+    # Phala (RedPill) — TEE-attested confidential inference.
+    "Phala": "phala",
+    "RedPill": "phala",
+    # SiliconFlow — Chinese serverless inference.
+    "SiliconFlow": "siliconflow",
+    "Silicon Flow": "siliconflow",
+    # Tinfoil — TEE-attested confidential inference.
+    "Tinfoil": "tinfoil",
+    # Venice — privacy-focused LLM gateway.
+    "Venice": "venice",
+    "Venice.AI": "venice",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

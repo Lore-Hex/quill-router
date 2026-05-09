@@ -91,6 +91,31 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
             {"z-ai/glm-4.6", "z-ai/glm-4.5"},
             (0.0, 15.0),  # GLM-4.5-X completion = $8.9/M; GLM-4.5-Flash is $0
         ),
+        (
+            "grok",
+            {"x-ai/grok-4.3"},
+            (0.05, 5.0),
+        ),
+        (
+            "novita",
+            {"deepseek/deepseek-v4-flash"},
+            (0.0, 20.0),  # Long tail of open-weight models with very low rates
+        ),
+        (
+            "phala",
+            {"qwen/qwen3.5-27b"},
+            (0.0, 5.0),  # Embeddings can be free; chat models cap ~$2-3/M
+        ),
+        (
+            "siliconflow",
+            {"deepseek/deepseek-v4-flash", "qwen/qwen3-vl-32b-instruct"},
+            (0.0, 20.0),
+        ),
+        (
+            "venice",
+            {"z-ai/glm-4.6"},
+            (0.0, 10.0),
+        ),
     ],
 )
 def test_parser_extracts_expected_models_within_price_band(

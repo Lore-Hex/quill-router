@@ -243,6 +243,28 @@ PROVIDERS: dict[str, Provider] = {
     # embeddings — categories TR didn't otherwise cover. OpenAI-
     # compatible chat completions at api.together.xyz/v1.
     "together": Provider(slug="together", name="Together", supports_embeddings=True, supports_prepaid=True),
+    # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
+    # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
+    "grok": Provider(slug="grok", name="xAI Grok", supports_prepaid=True),
+    # Novita — multi-model serverless inference. OpenAI-compatible
+    # at api.novita.ai/v3/openai. Hosts DeepSeek, Qwen, Llama,
+    # GLM, Kimi (and many more) at competitive rates.
+    "novita": Provider(slug="novita", name="Novita AI", supports_prepaid=True),
+    # Phala (RedPill) — confidential AI inference inside Intel TDX
+    # / NVIDIA Confidential Compute enclaves. Verified attestation,
+    # end-to-end encrypted prompts. **On-brand for TR's trust story.**
+    # OpenAI-compatible at api.red-pill.ai/v1.
+    "phala": Provider(slug="phala", name="Phala", supports_prepaid=True, stores_content=False),
+    # SiliconFlow — Chinese serverless inference with 200+ open-weight
+    # models. OpenAI-compatible at api.siliconflow.com/v1.
+    "siliconflow": Provider(slug="siliconflow", name="SiliconFlow", supports_prepaid=True),
+    # Tinfoil — TEE-attested confidential inference. Verified-no-logs
+    # via remote attestation. **Also on-brand for TR's trust story.**
+    # OpenAI-compatible at inference.tinfoil.sh/v1.
+    "tinfoil": Provider(slug="tinfoil", name="Tinfoil", supports_prepaid=True, stores_content=False),
+    # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
+    # positioning. OpenAI-compatible at api.venice.ai/api/v1.
+    "venice": Provider(slug="venice", name="Venice", supports_prepaid=True, stores_content=False),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -253,7 +275,26 @@ PROVIDERS: dict[str, Provider] = {
 # the control plane cannot authorize a prepaid route the enclave cannot
 # dispatch.
 GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
-    {"anthropic", "openai", "gemini", "cerebras", "deepseek", "mistral", "kimi", "zai", "together"}
+    {
+        "anthropic",
+        "openai",
+        "gemini",
+        "cerebras",
+        "deepseek",
+        "mistral",
+        "kimi",
+        "zai",
+        "together",
+        # New providers — all OpenAI-compatible chat completions, so
+        # the existing enclave OpenAI-shape adapter can dispatch them
+        # by switching base URL + auth header.
+        "grok",
+        "novita",
+        "phala",
+        "siliconflow",
+        "tinfoil",
+        "venice",
+    }
 )
 
 
@@ -393,10 +434,13 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "z-ai": "zai",
     "zhipu": "zai",
     "zhipuai": "zai",
+    "x-ai": "grok",
+    "xai": "grok",
+    "phala": "phala",
     # `meta-llama/*`, `qwen/*`, `minimax/*` etc. fall back to whichever
-    # endpoint provider serves them — Cerebras hosts several llama
-    # variants, and that's what determines which TR-keyed provider
-    # answers the call.
+    # endpoint provider serves them — Cerebras / Novita / SiliconFlow
+    # all host open-weight Llama / Qwen variants, and the endpoint
+    # provider determines which TR-keyed provider answers the call.
 }
 
 
