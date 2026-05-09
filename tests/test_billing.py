@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 
@@ -114,11 +115,24 @@ def test_setup_intent_succeeded_webhook_saves_payment_method(user_headers: dict[
     assert account.stripe_payment_method_id == "pm_setup_456"
 
 
-def test_setup_checkout_completed_saves_customer_without_crediting_money(
+def test_setup_checkout_completed_saves_customer_and_grants_trial_credit(
     user_headers: dict[str, str], client
 ) -> None:
+    """A successful Stripe Checkout in `mode=setup` (saved-card capture
+    with no charge) is the moment we know the user has a Stripe-validated
+    card. Policy: grant the standard trial credit at this moment, not at
+    signup. The test resets the workspace credit + dedup ledger entry to
+    a pre-card-attach state first to override the conftest
+    auto_credit_test_workspaces fixture (which simulates "card already
+    attached" for the rest of the suite)."""
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    # Force pre-card-attach state — undo the conftest test-only auto-credit.
+    # Clearing both the credit balance AND the per-workspace "trial" event-id
+    # in the dedup ledger so the webhook's idempotent credit_workspace_once
+    # actually fires (otherwise it'd see the conftest fixture's grant as a
+    # prior trial-grant and no-op).
+    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_checkout_setup_1",
         "type": "checkout.session.completed",
@@ -135,10 +149,12 @@ def test_setup_checkout_completed_saves_customer_without_crediting_money(
     resp = client.post("/v1/internal/stripe/webhook", json=event)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["setup_saved"] is True
+    body = resp.json()["data"]
+    assert body["setup_saved"] is True
+    assert body["trial_credit_granted_microdollars"] == DEFAULT_TRIAL_CREDIT_MICRODOLLARS
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert account.total_credits_microdollars == before
+    assert account.total_credits_microdollars == DEFAULT_TRIAL_CREDIT_MICRODOLLARS
     assert account.stripe_customer_id == "cus_checkout_setup"
 
 

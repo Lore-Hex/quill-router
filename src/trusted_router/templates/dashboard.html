@@ -49,20 +49,20 @@
           <strong>100% open source</strong>
           <span class="oss-sub">Control plane and attested gateway, on GitHub. Audit, fork, or self-host.</span>
         </a>
-        <span class="eyebrow">Hosted, attested, OpenRouter-compatible.</span>
+        <span class="eyebrow">End-to-End Encrypted Router. Hosted, attested, OpenRouter-compatible.</span>
         <h1>One API. Every LLM. Provable privacy.</h1>
-        <p class="lead">One OpenAI-compatible key for Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt path is cryptographically attested non-logging, with 99.9% router availability.</p>
+        <p class="lead">One OpenAI-compatible key for hundreds of models across Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt is end-to-end encrypted, with 99.9% router availability.</p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
         </div>
-        <p class="signup-foot">Email/OAuth signups include trial credit. Wallet sign-in starts at $0. Migration credit is available by approval for teams spending more than $100/month on LLMs. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
+        <p class="signup-foot">Trial credit unlocks once you add a valid card (Stripe-validated, no charge required). Wallet sign-in starts at $0. Migration credit is available by approval for teams spending more than $100/month on LLMs. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
         <div class="proof">
           <div class="proof-card" id="uptime"><b>99.9% availability</b><span><span class="mono">trustedrouter/auto</span> fails over across providers for uptime higher than individual LLM endpoints.</span></div>
+          <div class="proof-card"><b>End-to-End Encrypted Router</b><span>TLS terminates inside the attested gateway; the SaaS control plane never sees prompts.</span></div>
           <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage-based billing. No monthly plan required.</span></div>
           <div class="proof-card"><b>Hosted OSS</b><span>Hosted service backed by open-source control plane and attested gateway code.</span></div>
           <div class="proof-card"><b>Verifiable API</b><span>The trust page publishes source commit, image reference, and image digest.</span></div>
-          <div class="proof-card"><b>$0.01 less per 1M tokens</b><span>Prepaid routes are priced one cent below published upstream rates where the provider allows it.</span></div>
         </div>
       </div>
       <aside class="router-scene-shell" aria-label="Visualization of attested model routing">
@@ -119,7 +119,14 @@ resp = client.chat.completions.create(
       <div class="panel">
         <div class="panel-head"><h2>Payments</h2><span class="pill">credits + BYOK</span></div>
         <div class="panel-body">
-          <p>Stripe Checkout is wired for prepaid credits, including <strong>$25 USDC</strong> stablecoin checkout through Stripe Crypto. Auto-refill keeps prepaid routes flowing once you've saved a card.</p>
+          <p>
+            {% if paypal_enabled %}
+            Stripe Checkout, PayPal, and <strong>Stablecoin</strong> checkout are wired for prepaid credits.
+            {% else %}
+            Stripe Checkout and <strong>Stablecoin</strong> checkout are wired for prepaid credits.
+            {% endif %}
+            Auto-refill keeps prepaid routes flowing once you've saved a Stripe card.
+          </p>
         </div>
       </div>
       <div class="panel">

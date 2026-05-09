@@ -21,10 +21,33 @@ from fastapi import APIRouter, Request
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
-from trusted_router.money import MICRODOLLARS_PER_CENT
+from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS, MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+
+def _grant_trial_credit_on_card_attach(workspace_id: str) -> int:
+    """First time a valid card is attached to this workspace, grant the
+    standard trial credit. Idempotent across webhook replays + repeat
+    setup_intents (e.g. user adds a second card later) by using a
+    deterministic per-workspace event_id — credit_workspace_once dedupes
+    via the stripe_events ledger so the trial only ever lands once.
+
+    Returns the amount actually credited (0 if already granted previously,
+    or DEFAULT_TRIAL_CREDIT_MICRODOLLARS on the first attach).
+
+    Trial credit was previously granted at signup; it now requires a
+    Stripe-validated card to defend against throwaway-email farming.
+    See storage.py / storage_gcp.py create_workspace for the matching
+    "$0 at creation" change.
+    """
+    event_id = f"trial:{workspace_id}"
+    if STORE.credit_workspace_once(
+        workspace_id, DEFAULT_TRIAL_CREDIT_MICRODOLLARS, event_id
+    ):
+        return DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+    return 0
 
 
 def register(router: APIRouter) -> None:
@@ -51,7 +74,14 @@ def register(router: APIRouter) -> None:
                 if obj.get("mode") == "setup":
                     if isinstance(customer_id, str):
                         STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                    return {"data": {"setup_saved": True, "event_id": event_id}}
+                    granted = _grant_trial_credit_on_card_attach(workspace_id)
+                    return {
+                        "data": {
+                            "setup_saved": True,
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": granted,
+                        }
+                    }
                 credited = STORE.credit_workspace_once(
                     workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
                 )
@@ -62,7 +92,18 @@ def register(router: APIRouter) -> None:
                 # with `setup_future_usage`).
                 if isinstance(customer_id, str):
                     STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                return {"data": {"credited": credited, "event_id": event_id}}
+                # A successful paid checkout is the strongest possible
+                # card-validation signal — Stripe just successfully charged
+                # the card. Grant the trial credit too if it hasn't been
+                # granted yet (idempotent via the per-workspace event_id).
+                granted = _grant_trial_credit_on_card_attach(workspace_id)
+                return {
+                    "data": {
+                        "credited": credited,
+                        "event_id": event_id,
+                        "trial_credit_granted_microdollars": granted,
+                    }
+                }
 
         if event_type == "setup_intent.succeeded":
             obj = event.get("data", {}).get("object", {})
@@ -81,7 +122,14 @@ def register(router: APIRouter) -> None:
                     customer_id=customer_id,
                     payment_method_id=payment_method,
                 )
-                return {"data": {"setup_saved": True, "event_id": event_id}}
+                granted = _grant_trial_credit_on_card_attach(workspace_id)
+                return {
+                    "data": {
+                        "setup_saved": True,
+                        "event_id": event_id,
+                        "trial_credit_granted_microdollars": granted,
+                    }
+                }
 
         if event_type == "payment_intent.succeeded":
             obj = event.get("data", {}).get("object", {})

@@ -193,12 +193,16 @@ class InMemoryStore:
             self.members[(workspace.id, owner_user_id)] = Member(
                 workspace_id=workspace.id, user_id=owner_user_id, role="owner"
             )
+            # Trial credit is NOT granted at workspace-creation time anymore.
+            # Policy moved to: grant the trial credit only after a valid
+            # credit card is attached (via the Stripe setup_intent.succeeded
+            # webhook in routes/internal/webhook.py). Stops free-credit
+            # farming with throwaway emails. Wallet sign-in already passed
+            # 0 explicitly, so its behavior is unchanged.
             self.credits[workspace.id] = CreditAccount(
                 workspace_id=workspace.id,
                 total_credits_microdollars=(
-                    DEFAULT_TRIAL_CREDIT_MICRODOLLARS
-                    if trial_credit_microdollars is None
-                    else trial_credit_microdollars
+                    0 if trial_credit_microdollars is None else trial_credit_microdollars
                 ),
             )
             return workspace
@@ -728,9 +732,18 @@ class InMemoryStore:
         self,
         *,
         period: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
-        return self.synthetic_store.query_rollups(period=period, limit=limit)
+        return self.synthetic_store.query_rollups(
+            period=period,
+            since=since,
+            until=until,
+            include_histograms=include_histograms,
+            limit=limit,
+        )
 
     def get_generation(self, generation_id: str) -> Generation | None:
         return self.generation_store.get(generation_id)

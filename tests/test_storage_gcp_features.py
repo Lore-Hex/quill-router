@@ -28,6 +28,20 @@ from trusted_router.storage_models import EmailSendBlock
 def _seed_workspace_and_key(store) -> tuple[str, str]:
     user = store.ensure_user("workspace-owner@example.com")
     workspace = store.list_workspaces_for_user(user.id)[0]
+    # Production policy creates new workspaces at $0 — trial credit is
+    # granted by the Stripe setup_intent.succeeded webhook on first
+    # card attach. Tests further down exercise gateway authorize +
+    # settle flows that need real credit on file, so simulate the
+    # post-card-attach state here. Helper is shared by every test in
+    # this file that needs a credited workspace; tests of the policy
+    # itself don't go through this helper.
+    from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+
+    store.credit_workspace_once(
+        workspace.id,
+        DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
+        f"trial:{workspace.id}",
+    )
     _, api_key = store.create_api_key(
         workspace_id=workspace.id,
         name="primary",

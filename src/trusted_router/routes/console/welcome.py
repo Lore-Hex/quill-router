@@ -18,6 +18,7 @@ def register(app: FastAPI) -> None:
         first: int | None = None,
     ) -> Response:
         credit = STORE.get_credit_account(ctx.workspace.id)
+        trial_microdollars = credit.total_credits_microdollars if credit else 0
         return HTMLResponse(render(
             "console/welcome.html",
             settings=settings,
@@ -27,7 +28,14 @@ def register(app: FastAPI) -> None:
             page_subtitle="Save your API key — it won't be shown again.",
             revealed_key=None if first is None else _reveal_first_key(ctx.workspace),
             workspace_name=ctx.workspace.name,
-            trial_credit=money(credit.total_credits_microdollars if credit else 0),
+            # `trial_credit` is the formatted display value; the matching
+            # raw amount is exposed too so the template can show the
+            # "add a card to unlock the trial" CTA when the workspace
+            # is still at $0 (the new default — see storage.py
+            # create_workspace + routes/internal/webhook.py for the
+            # card-attach grant flow).
+            trial_credit=money(trial_microdollars),
+            trial_credit_microdollars=trial_microdollars,
             api_base_url=settings.api_base_url,
         ))
 

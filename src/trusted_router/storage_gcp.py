@@ -170,9 +170,12 @@ class SpannerBigtableStore:
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
+            # New accounts start at $0; trial credit is granted on first
+            # valid-card attach via the Stripe webhook. See
+            # routes/internal/webhook.py + the create_workspace doc above.
             credit = CreditAccount(
                 workspace_id=workspace.id,
-                total_credits_microdollars=DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
+                total_credits_microdollars=0,
             )
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": new_user.id})
@@ -252,12 +255,16 @@ class SpannerBigtableStore:
     ) -> Workspace:
         workspace = Workspace(id=str(uuid.uuid4()), name=name, owner_user_id=owner_user_id)
         member = Member(workspace_id=workspace.id, user_id=owner_user_id, role="owner")
+        # Trial credit is NOT granted at workspace-creation time anymore.
+        # Policy moved to: grant the trial credit only after a valid
+        # credit card is attached (via the Stripe setup_intent.succeeded
+        # webhook in routes/internal/webhook.py). Stops free-credit
+        # farming with throwaway emails. Wallet sign-in already passed
+        # 0 explicitly, so its behavior is unchanged.
         credit = CreditAccount(
             workspace_id=workspace.id,
             total_credits_microdollars=(
-                DEFAULT_TRIAL_CREDIT_MICRODOLLARS
-                if trial_credit_microdollars is None
-                else trial_credit_microdollars
+                0 if trial_credit_microdollars is None else trial_credit_microdollars
             ),
         )
         with self._database.batch() as batch:
@@ -892,12 +899,18 @@ class SpannerBigtableStore:
         self,
         *,
         period: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
         return _bt_synthetic_rollups(
             self._bt_table,
             self.generation_family,
             period=period,
+            since=since,
+            until=until,
+            include_histograms=include_histograms,
             limit=limit,
         )
 

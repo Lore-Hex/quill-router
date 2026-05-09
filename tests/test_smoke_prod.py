@@ -290,7 +290,11 @@ def test_signup_endpoint_is_idempotent_and_returns_management_key(client: httpx.
         assert data["key"].startswith("sk-tr-v1-")
         assert data["key_id"].startswith("key_")
         assert data["management"] is True
-        assert data["trial_credit_microdollars"] > 0
+        # Signup no longer grants trial credit; that requires a
+        # Stripe-validated card-attach via webhook (see
+        # routes/internal/webhook.py). The signup response includes
+        # the field for back-compat shape but the value is now 0.
+        assert data["trial_credit_microdollars"] == 0
     else:
         assert first.json()["error"]["type"] == "already_registered"
     # Re-submitting the same email is always 409 — the endpoint is
