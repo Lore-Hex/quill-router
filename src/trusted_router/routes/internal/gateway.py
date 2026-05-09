@@ -10,6 +10,7 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -117,6 +118,16 @@ def register(router: APIRouter) -> None:
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
         reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+        # Per-request idempotency key. Generated here at the top of the
+        # handler so EVERY downstream write within this single authorize
+        # call carries the same key. Required for safe dual-write across
+        # two Spanner instances (Stage 5a) — when the application
+        # mirrors writes from primary nam6 to secondary eur3, identical
+        # idempotency keys on both sides ensure that a retried mirror
+        # attempt is a no-op rather than a double-debit. Today (with
+        # only one Spanner instance), this is foundational plumbing
+        # with no observable behavior change.
+        request_idempotency_key = str(uuid.uuid4())
         credit_reservation_id: str | None = None
         try:
             STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
@@ -127,7 +138,12 @@ def register(router: APIRouter) -> None:
 
         if has_credit_candidate:
             try:
-                credit_reservation = STORE.reserve(workspace.id, api_key.hash, estimate)
+                credit_reservation = STORE.reserve(
+                    workspace.id,
+                    api_key.hash,
+                    estimate,
+                    idempotency_key=request_idempotency_key,
+                )
                 credit_reservation_id = credit_reservation.id
             except ValueError as exc:
                 STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)

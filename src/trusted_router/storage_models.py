@@ -182,6 +182,16 @@ class Reservation:
     amount_microdollars: int
     settled: bool = False
     created_at: str = field(default_factory=iso_now)
+    # Caller-supplied idempotency key. When `reserve()` is invoked twice
+    # with the same key, the second call returns the existing reservation
+    # without applying the credit hold a second time. Required for safe
+    # dual-write across two Spanner instances (Stage 5a) and for safe
+    # change-stream replay (Stage 1 zero-downtime migration). The
+    # gateway-authorize handler uses the pre-generated authorization_id
+    # as the natural key. Optional + nullable for back-compat with
+    # callers that haven't been updated yet — those keep the pre-existing
+    # non-idempotent semantics.
+    idempotency_key: str | None = None
 
 
 @dataclass

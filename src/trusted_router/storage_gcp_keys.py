@@ -226,9 +226,38 @@ class SpannerApiKeys:
 
     # ── Credit reservations ─────────────────────────────────────────────
     def reserve(
-        self, workspace_id: str, key_hash: str, amount_microdollars: int
+        self,
+        workspace_id: str,
+        key_hash: str,
+        amount_microdollars: int,
+        *,
+        idempotency_key: str | None = None,
     ) -> Reservation:
         def txn(transaction: Any) -> Reservation:
+            # Idempotency first. We persist the lookup as a separate
+            # entity (kind = "reservation_idemp") with the key as the
+            # primary id. If found, fetch the original reservation and
+            # return it without re-debiting. Both writes (the lookup
+            # row + the reservation + the credit-account update)
+            # commit in the same Spanner transaction below, so a
+            # retry that finds the lookup is guaranteed to find the
+            # reservation too.
+            if idempotency_key is not None:
+                lookup = self._io.read_entity_tx(
+                    transaction,
+                    "reservation_idemp",
+                    idempotency_key,
+                    dict,
+                )
+                if lookup is not None:
+                    existing = self._io.read_entity_tx(
+                        transaction,
+                        "reservation",
+                        lookup["reservation_id"],
+                        Reservation,
+                    )
+                    if existing is not None:
+                        return existing
             account = self._read_credit_tx(transaction, workspace_id)
             available = (
                 account.total_credits_microdollars
@@ -243,9 +272,17 @@ class SpannerApiKeys:
                 workspace_id=workspace_id,
                 key_hash=key_hash,
                 amount_microdollars=amount_microdollars,
+                idempotency_key=idempotency_key,
             )
             self._io.write_entity_tx(transaction, "credit", workspace_id, account)
             self._io.write_entity_tx(transaction, "reservation", reservation.id, reservation)
+            if idempotency_key is not None:
+                self._io.write_entity_tx(
+                    transaction,
+                    "reservation_idemp",
+                    idempotency_key,
+                    {"reservation_id": reservation.id},
+                )
             return reservation
 
         return self._io.database.run_in_transaction(txn)

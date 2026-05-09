@@ -277,7 +277,12 @@ class Store(Protocol):
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool: ...
     def reserve(
-        self, workspace_id: str, key_hash: str, amount_microdollars: int
+        self,
+        workspace_id: str,
+        key_hash: str,
+        amount_microdollars: int,
+        *,
+        idempotency_key: str | None = ...,
     ) -> Reservation: ...
     def settle(self, reservation_id: str, actual_microdollars: int) -> None: ...
     def refund(self, reservation_id: str) -> None: ...
@@ -356,6 +361,9 @@ class Store(Protocol):
         self,
         *,
         period: str | None = ...,
+        since: str | None = ...,
+        until: str | None = ...,
+        include_histograms: bool = ...,
         limit: int = ...,
     ) -> list[SyntheticRollup]: ...
     def get_generation(self, generation_id: str) -> Generation | None: ...

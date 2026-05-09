@@ -595,8 +595,20 @@ class InMemoryStore:
             account.last_auto_refill_status = status
             return account
 
-    def reserve(self, workspace_id: str, key_hash: str, amount_microdollars: int) -> Reservation:
-        return self.api_keys.reserve(workspace_id, key_hash, amount_microdollars)
+    def reserve(
+        self,
+        workspace_id: str,
+        key_hash: str,
+        amount_microdollars: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Reservation:
+        return self.api_keys.reserve(
+            workspace_id,
+            key_hash,
+            amount_microdollars,
+            idempotency_key=idempotency_key,
+        )
 
     def settle(self, reservation_id: str, actual_microdollars: int) -> None:
         self.api_keys.settle(reservation_id, actual_microdollars)

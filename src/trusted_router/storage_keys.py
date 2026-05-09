@@ -58,6 +58,13 @@ class InMemoryApiKeys:
         self.keys: dict[str, ApiKey] = {}
         self.key_ids_by_lookup_hash: dict[str, str] = {}
         self.reservations: dict[str, Reservation] = {}
+        # Idempotency-key → reservation_id index. Populated whenever
+        # reserve() runs with a non-None idempotency_key. Looking up by
+        # key returns the existing reservation; a duplicate reserve()
+        # call with the same key is then a read, not a second debit.
+        # Required for safe dual-write across two Spanner instances
+        # (Stage 5a) and safe change-stream replay (Stage 1 ZDM).
+        self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
 
     def reset(self) -> None:
@@ -66,6 +73,7 @@ class InMemoryApiKeys:
         self.keys.clear()
         self.key_ids_by_lookup_hash.clear()
         self.reservations.clear()
+        self.reservation_id_by_idempotency_key.clear()
         self.gateway_authorizations.clear()
 
     # ── API key CRUD ────────────────────────────────────────────────────
@@ -233,8 +241,25 @@ class InMemoryApiKeys:
                 key.usage_microdollars += cost_microdollars
 
     # ── Credit reservations ─────────────────────────────────────────────
-    def reserve(self, workspace_id: str, key_hash: str, amount_microdollars: int) -> Reservation:
+    def reserve(
+        self,
+        workspace_id: str,
+        key_hash: str,
+        amount_microdollars: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Reservation:
         with self._lock:
+            # Idempotency check first. If the same key was already used,
+            # return the existing reservation without debiting credit a
+            # second time. The amount on the existing reservation may
+            # differ from what the caller passed (e.g., a retry with a
+            # newer cost estimate); we trust the first one — that's the
+            # whole point of idempotency.
+            if idempotency_key is not None:
+                existing_id = self.reservation_id_by_idempotency_key.get(idempotency_key)
+                if existing_id is not None:
+                    return self.reservations[existing_id]
             account = self._credits[workspace_id]
             available = (
                 account.total_credits_microdollars
@@ -249,8 +274,11 @@ class InMemoryApiKeys:
                 workspace_id=workspace_id,
                 key_hash=key_hash,
                 amount_microdollars=amount_microdollars,
+                idempotency_key=idempotency_key,
             )
             self.reservations[reservation.id] = reservation
+            if idempotency_key is not None:
+                self.reservation_id_by_idempotency_key[idempotency_key] = reservation.id
             return reservation
 
     def settle(self, reservation_id: str, actual_microdollars: int) -> None:
