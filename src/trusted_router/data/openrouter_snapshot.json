@@ -6,13 +6,19 @@
     "cerebras",
     "deepseek",
     "gemini",
+    "grok",
     "kimi",
     "mistral",
+    "novita",
     "openai",
+    "phala",
+    "siliconflow",
+    "tinfoil",
     "together",
+    "venice",
     "zai"
   ],
-  "model_count": 64,
+  "model_count": 101,
   "models": [
     {
       "id": "anthropic/claude-haiku-4.5",
@@ -78,9 +84,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95764506565014,
+          "uptime_last_30m": 99.85969835145563,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93592560046865,
+          "uptime_last_1d": 99.93395103073603,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -225,7 +231,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.6547756041427,
+          "uptime_last_1d": 99.64788732394366,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -297,9 +303,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.84591679506933,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90458553701414,
+          "uptime_last_1d": 99.90375806733847,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -337,7 +343,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.2706433967179,
+          "uptime_last_1d": 99.26931106471815,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -409,9 +415,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.72972972972973,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.78334880841845,
+          "uptime_last_1d": 99.78703939771142,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -450,7 +456,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.6822568671121,
+          "uptime_last_1d": 98.69451697127938,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -522,7 +528,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.32202098687844,
+          "uptime_last_1d": 99.2676116838488,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -557,9 +563,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91289198606272,
+          "uptime_last_30m": 99.83193277310924,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.6561136831964,
+          "uptime_last_1d": 99.65780184840891,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -629,7 +635,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -704,9 +710,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.85074626865672,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 96.38094045457392,
+          "uptime_last_1d": 96.3642085387601,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -745,7 +751,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 96.16471192534885,
+          "uptime_last_1d": 96.14067581246097,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -817,9 +823,9 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.9483337638853,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.74489385006926,
+          "uptime_last_1d": 99.74242315315963,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -856,11 +862,498 @@
             "verbosity"
           ],
           "status": 0,
-          "uptime_last_30m": 99.83140655105973,
+          "uptime_last_30m": 99.92494370778083,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.6828524136568,
+          "uptime_last_1d": 99.68767570172567,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "baidu/ernie-4.5-vl-28b-a3b",
+      "name": "Baidu: ERNIE 4.5 VL 28B A3B",
+      "created": 1755032836,
+      "description": "A powerful multimodal Mixture-of-Experts chat model featuring 28B total parameters with 3B activated per token, delivering exceptional text and vision understanding through its innovative heterogeneous MoE structure with modality-isolated routing....",
+      "context_length": 30000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000014",
+        "completion": "0.00000056"
+      },
+      "top_provider": {
+        "context_length": 30000,
+        "max_completion_tokens": 8000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | baidu/ernie-4.5-vl-28b-a3b",
+          "model_id": "baidu/ernie-4.5-vl-28b-a3b",
+          "model_name": "Baidu: ERNIE 4.5 VL 28B A3B",
+          "provider_name": "Novita",
+          "tag": "novita/fp16",
+          "context_length": 30000,
+          "pricing": {
+            "prompt": "0.00000014",
+            "completion": "0.00000056",
+            "discount": 0
+          },
+          "quantization": "fp16",
+          "max_completion_tokens": 8000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "baidu/ernie-4.5-vl-424b-a47b",
+      "name": "Baidu: ERNIE 4.5 VL 424B A47B ",
+      "created": 1751300903,
+      "description": "ERNIE-4.5-VL-424B-A47B is a multimodal Mixture-of-Experts (MoE) model from Baidu’s ERNIE 4.5 series, featuring 424B total parameters with 47B active per token. It is trained jointly on text and image data...",
+      "context_length": 123000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000042",
+        "completion": "0.00000125"
+      },
+      "top_provider": {
+        "context_length": 123000,
+        "max_completion_tokens": 16000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | baidu/ernie-4.5-vl-424b-a47b",
+          "model_id": "baidu/ernie-4.5-vl-424b-a47b",
+          "model_name": "Baidu: ERNIE 4.5 VL 424B A47B ",
+          "provider_name": "Novita",
+          "tag": "novita/fp16",
+          "context_length": 123000,
+          "pricing": {
+            "prompt": "0.00000042",
+            "completion": "0.00000125",
+            "discount": 0
+          },
+          "quantization": "fp16",
+          "max_completion_tokens": 16000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "deepseek/deepseek-r1-0528",
+      "name": "DeepSeek: R1 0528",
+      "created": 1748455170,
+      "description": "May 28th update to the [original DeepSeek R1](/deepseek/deepseek-r1) Performance on par with [OpenAI o1](/openai/o1), but open-sourced and with fully open reasoning tokens. It's 671B parameters in size, with 37B active...",
+      "context_length": 163840,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": "deepseek-r1"
+      },
+      "pricing": {
+        "prompt": "0.0000007",
+        "completion": "0.0000025",
+        "input_cache_read": "0.00000035"
+      },
+      "top_provider": {
+        "context_length": 163840,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | deepseek/deepseek-r1-0528",
+          "model_id": "deepseek/deepseek-r1-0528",
+          "model_name": "DeepSeek: R1 0528",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 163840,
+          "pricing": {
+            "prompt": "0.0000007",
+            "completion": "0.0000025",
+            "input_cache_read": "0.00000035",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": null,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "deepseek/deepseek-r1-distill-llama-70b",
+      "name": "DeepSeek: R1 Distill Llama 70B",
+      "created": 1737663169,
+      "description": "DeepSeek R1 Distill Llama 70B is a distilled large language model based on [Llama-3.3-70B-Instruct](/meta-llama/llama-3.3-70b-instruct), using outputs from [DeepSeek R1](/deepseek/deepseek-r1). The model combines advanced distillation techniques to achieve high performance across...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "deepseek-r1"
+      },
+      "pricing": {
+        "prompt": "0.0000008",
+        "completion": "0.0000008"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | deepseek/deepseek-r1-distill-llama-70b",
+          "model_id": "deepseek/deepseek-r1-distill-llama-70b",
+          "model_name": "DeepSeek: R1 Distill Llama 70B",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 8192,
+          "pricing": {
+            "prompt": "0.0000008",
+            "completion": "0.0000008",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 8192,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.9490161001789,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "deepseek/deepseek-v3.1-terminus",
+      "name": "DeepSeek: DeepSeek V3.1 Terminus",
+      "created": 1758548275,
+      "description": "DeepSeek-V3.1 Terminus is an update to [DeepSeek V3.1](/deepseek/deepseek-chat-v3.1) that maintains the model's original capabilities while addressing issues reported by users, including language consistency and agent capabilities, further optimizing the model's...",
+      "context_length": 163840,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": "deepseek-v3.1"
+      },
+      "pricing": {
+        "prompt": "0.00000027",
+        "completion": "0.000001",
+        "input_cache_read": "0.000000135"
+      },
+      "top_provider": {
+        "context_length": 163840,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | deepseek/deepseek-v3.1-terminus",
+          "model_id": "deepseek/deepseek-v3.1-terminus",
+          "model_name": "DeepSeek: DeepSeek V3.1 Terminus",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000027",
+            "completion": "0.000001",
+            "input_cache_read": "0.000000135",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.98316646760347,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "deepseek/deepseek-v3.2",
+      "name": "DeepSeek: DeepSeek V3.2",
+      "created": 1764594642,
+      "description": "DeepSeek-V3.2 is a large language model designed to harmonize high computational efficiency with strong reasoning and agentic tool-use performance. It introduces DeepSeek Sparse Attention (DSA), a fine-grained sparse attention mechanism...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.000000269",
+        "completion": "0.0000004",
+        "input_cache_read": "0.0000001345"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | deepseek/deepseek-v3.2-20251201",
+          "model_id": "deepseek/deepseek-v3.2",
+          "model_name": "DeepSeek: DeepSeek V3.2",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 163840,
+          "pricing": {
+            "prompt": "0.000000269",
+            "completion": "0.0000004",
+            "input_cache_read": "0.0000001345",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.9146466370775,
+          "uptime_last_5m": 99.97547216090263,
+          "uptime_last_1d": 99.9108350952047,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "deepseek/deepseek-v3.2-exp",
+      "name": "DeepSeek: DeepSeek V3.2 Exp",
+      "created": 1759150481,
+      "description": "DeepSeek-V3.2-Exp is an experimental large language model released by DeepSeek as an intermediate step between V3.1 and future architectures. It introduces DeepSeek Sparse Attention (DSA), a fine-grained sparse attention mechanism...",
+      "context_length": 163840,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "DeepSeek",
+        "instruct_type": "deepseek-v3.1"
+      },
+      "pricing": {
+        "prompt": "0.00000027",
+        "completion": "0.00000041"
+      },
+      "top_provider": {
+        "context_length": 163840,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | deepseek/deepseek-v3.2-exp",
+          "model_id": "deepseek/deepseek-v3.2-exp",
+          "model_name": "DeepSeek: DeepSeek V3.2 Exp",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 163840,
+          "pricing": {
+            "prompt": "0.00000027",
+            "completion": "0.00000041",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.74594779047943,
+          "uptime_last_5m": 88.2636655948553,
+          "uptime_last_1d": 99.08399319528041,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -886,7 +1379,7 @@
       "pricing": {
         "prompt": "0.00000014",
         "completion": "0.00000028",
-        "input_cache_read": "0.0000000028"
+        "input_cache_read": "0.000000028"
       },
       "top_provider": {
         "context_length": 1048576,
@@ -896,20 +1389,20 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "DeepSeek | deepseek/deepseek-v4-flash-20260423",
+          "name": "Novita | deepseek/deepseek-v4-flash-20260423",
           "model_id": "deepseek/deepseek-v4-flash",
           "model_name": "DeepSeek: DeepSeek V4 Flash",
-          "provider_name": "DeepSeek",
-          "tag": "deepseek",
+          "provider_name": "Novita",
+          "tag": "novita",
           "context_length": 1048576,
           "pricing": {
             "prompt": "0.00000014",
             "completion": "0.00000028",
-            "input_cache_read": "0.0000000028",
+            "input_cache_read": "0.000000028",
             "discount": 0
           },
           "quantization": "unknown",
-          "max_completion_tokens": 384000,
+          "max_completion_tokens": 393216,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -920,89 +1413,19 @@
             "stop",
             "frequency_penalty",
             "presence_penalty",
-            "logprobs",
-            "top_logprobs",
-            "tools",
+            "seed",
+            "top_k",
+            "repetition_penalty",
             "tool_choice",
+            "tools",
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99386025950636,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.49038415238051,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "deepseek",
-          "pricing_source": "provider_direct"
-        }
-      ],
-      "pricing_source": "provider_direct"
-    },
-    {
-      "id": "deepseek/deepseek-v4-pro",
-      "name": "DeepSeek: DeepSeek V4 Pro",
-      "created": 1777000679,
-      "description": "DeepSeek V4 Pro is a large-scale Mixture-of-Experts model from DeepSeek with 1.6T total parameters and 49B activated parameters, supporting a 1M-token context window. It is designed for advanced reasoning, coding,...",
-      "context_length": 1048576,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "DeepSeek",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.000000435",
-        "completion": "0.00000087",
-        "input_cache_read": "0.000000003625"
-      },
-      "top_provider": {
-        "context_length": 1048576,
-        "max_completion_tokens": 384000,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "DeepSeek | deepseek/deepseek-v4-pro-20260423",
-          "model_id": "deepseek/deepseek-v4-pro",
-          "model_name": "DeepSeek: DeepSeek V4 Pro",
-          "provider_name": "DeepSeek",
-          "tag": "deepseek",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000000435",
-            "completion": "0.00000087",
-            "input_cache_read": "0.000000003625",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 384000,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "stop",
-            "frequency_penalty",
-            "presence_penalty",
-            "logprobs",
-            "top_logprobs",
-            "tools",
-            "tool_choice",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.98021290909811,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.54674962449258,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "deepseek",
+          "uptime_last_30m": 99.96688960995961,
+          "uptime_last_5m": 99.93394980184941,
+          "uptime_last_1d": 98.01986650985178,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -1013,7 +1436,7 @@
       "name": "Google: Gemini 2.0 Flash",
       "created": 1738769413,
       "description": "Gemini Flash 2.0 offers a significantly faster time to first token (TTFT) compared to [Gemini Flash 1.5](/google/gemini-flash-1.5), while maintaining quality on par with larger models like [Gemini Pro 1.5](/google/gemini-pro-1.5). It...",
-      "context_length": 1048576,
+      "context_length": 1000000,
       "architecture": {
         "modality": "text+image+file+audio+video->text",
         "input_modalities": [
@@ -1040,7 +1463,7 @@
         "input_cache_write": "0.00000008333333333333334"
       },
       "top_provider": {
-        "context_length": 1048576,
+        "context_length": 1000000,
         "max_completion_tokens": 8192,
         "is_moderated": false
       },
@@ -1080,9 +1503,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.94068437953815,
-          "uptime_last_5m": 99.96964638033086,
-          "uptime_last_1d": 99.88750840024333,
+          "uptime_last_30m": 99.94471350538491,
+          "uptime_last_5m": 99.90626171728533,
+          "uptime_last_1d": 99.88588457577607,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1157,9 +1580,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.99754950009802,
+          "uptime_last_1d": 99.99755918965096,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1241,9 +1664,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87659955711074,
-          "uptime_last_5m": 99.84436729318807,
-          "uptime_last_1d": 99.76554798094412,
+          "uptime_last_30m": 99.84397461519582,
+          "uptime_last_5m": 99.90527740189445,
+          "uptime_last_1d": 99.76475249822964,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1325,9 +1748,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.74679537901567,
-          "uptime_last_5m": 99.87937273823884,
-          "uptime_last_1d": 99.80663229584368,
+          "uptime_last_30m": 99.85160758450124,
+          "uptime_last_5m": 99.88452655889145,
+          "uptime_last_1d": 99.80119099784352,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1451,7 +1874,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 96.93006161496055,
+          "uptime_last_1d": 96.93454846727423,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1533,9 +1956,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92297422203964,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.82850008080116,
+          "uptime_last_30m": 99.96743166076818,
+          "uptime_last_5m": 99.93081499930815,
+          "uptime_last_1d": 99.83173172183652,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1617,9 +2040,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.52516619183285,
-          "uptime_last_5m": 99.22222222222223,
-          "uptime_last_1d": 99.52889427214484,
+          "uptime_last_30m": 99.52550415183867,
+          "uptime_last_5m": 99.68847352024922,
+          "uptime_last_1d": 99.52883161533587,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1701,9 +2124,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.25136732134314,
-          "uptime_last_5m": 99.41076689581287,
-          "uptime_last_1d": 99.16124278147133,
+          "uptime_last_30m": 99.31510492858473,
+          "uptime_last_5m": 99.36039797459358,
+          "uptime_last_1d": 99.16160215169647,
           "supports_implicit_caching": true,
           "tr_provider_slug": "gemini",
           "pricing_source": "provider_direct"
@@ -1825,11 +2248,491 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.64077669902913,
-          "uptime_last_5m": 99.412915851272,
-          "uptime_last_1d": 97.60134913311977,
+          "uptime_last_30m": 99.00367068694284,
+          "uptime_last_5m": 98.3957219251337,
+          "uptime_last_1d": 97.61841372800542,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gemini",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "google/gemma-3-27b-it",
+      "name": "Google: Gemma 3 27B",
+      "created": 1741756359,
+      "description": "Gemma 3 introduces multimodality, supporting vision-language input and text outputs. It handles context windows up to 128k tokens, understands over 140 languages, and offers improved math, reasoning, and chat capabilities,...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemini",
+        "instruct_type": "gemma"
+      },
+      "pricing": {
+        "prompt": "0.000000119",
+        "completion": "0.0000002"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | google/gemma-3-27b-it",
+          "model_id": "google/gemma-3-27b-it",
+          "model_name": "Google: Gemma 3 27B",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 98304,
+          "pricing": {
+            "prompt": "0.000000119",
+            "completion": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 16384,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": -5,
+          "uptime_last_30m": 27.86885245901639,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 89.48041874125688,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it",
+      "name": "Google: Gemma 4 26B A4B ",
+      "created": 1775227989,
+      "description": "Gemma 4 26B A4B IT is an instruction-tuned Mixture-of-Experts (MoE) model from Google DeepMind. Despite 25.2B total parameters, only 3.8B activate per token during inference — delivering near-31B quality at...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "image",
+          "text",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemma",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000013",
+        "completion": "0.0000004"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | google/gemma-4-26b-a4b-it-20260403",
+          "model_id": "google/gemma-4-26b-a4b-it",
+          "model_name": "Google: Gemma 4 26B A4B ",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000013",
+            "completion": "0.0000004",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 131072,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 97.00929152148665,
+          "uptime_last_5m": 95.1501154734411,
+          "uptime_last_1d": 96.56466927649213,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "name": "Google: Gemma 4 31B",
+      "created": 1775148486,
+      "description": "Gemma 4 31B Instruct is Google DeepMind's 30.7B dense multimodal model supporting text and image input with text output. Features a 256K token context window, configurable thinking/reasoning mode, native function...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "image",
+          "text",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Gemma",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000014",
+        "completion": "0.0000004"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | google/gemma-4-31b-it-20260402",
+          "model_id": "google/gemma-4-31b-it",
+          "model_name": "Google: Gemma 4 31B",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000014",
+            "completion": "0.0000004",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 131072,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.26851724611791,
+          "uptime_last_5m": 99.57537154989384,
+          "uptime_last_1d": 95.80320729201051,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "inclusionai/ling-2.6-1t",
+      "name": "inclusionAI: Ling-2.6-1T",
+      "created": 1776948238,
+      "description": "Ling-2.6-1T is an instant (instruct) model from inclusionAI and the company’s trillion-parameter flagship, designed for real-world agents that require fast execution and high efficiency at scale. It uses a “fast...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000025",
+        "input_cache_read": "0.00000006"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | inclusionai/ling-2.6-1t-20260423",
+          "model_id": "inclusionai/ling-2.6-1t",
+          "model_name": "inclusionAI: Ling-2.6-1T",
+          "provider_name": "Novita",
+          "tag": "novita",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000025",
+            "input_cache_read": "0.00000006",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "inclusionai/ling-2.6-flash",
+      "name": "inclusionAI: Ling-2.6-flash",
+      "created": 1776795886,
+      "description": "Ling-2.6-flash is an instant (instruct) model from inclusionAI with 104B total parameters and 7.4B active parameters, designed for real-world agents that require fast responses, strong execution, and high token efficiency....",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.0000003",
+        "input_cache_read": "0.00000002"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | inclusionai/ling-2.6-flash-20260421",
+          "model_id": "inclusionai/ling-2.6-flash",
+          "model_name": "inclusionAI: Ling-2.6-flash",
+          "provider_name": "Novita",
+          "tag": "novita",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000003",
+            "input_cache_read": "0.00000002",
+            "discount": 0.2
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "meta-llama/llama-3-70b-instruct",
+      "name": "Meta: Llama 3 70B Instruct",
+      "created": 1713398400,
+      "description": "Meta's latest class of model (Llama 3) launched with a variety of sizes & flavors. This 70B instruct-tuned version was optimized for high quality dialogue usecases. It has demonstrated strong...",
+      "context_length": 8192,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "llama3"
+      },
+      "pricing": {
+        "prompt": "0.00000051",
+        "completion": "0.00000074"
+      },
+      "top_provider": {
+        "context_length": 8192,
+        "max_completion_tokens": 8000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | meta-llama/llama-3-70b-instruct",
+          "model_id": "meta-llama/llama-3-70b-instruct",
+          "model_name": "Meta: Llama 3 70B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 8192,
+          "pricing": {
+            "prompt": "0.00000051",
+            "completion": "0.00000074",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 8000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "meta-llama/llama-3-8b-instruct",
+      "name": "Meta: Llama 3 8B Instruct",
+      "created": 1713398400,
+      "description": "Meta's latest class of model (Llama 3) launched with a variety of sizes & flavors. This 8B instruct-tuned version was optimized for high quality dialogue usecases. It has demonstrated strong...",
+      "context_length": 8192,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "llama3"
+      },
+      "pricing": {
+        "prompt": "0.00000004",
+        "completion": "0.00000004"
+      },
+      "top_provider": {
+        "context_length": 8192,
+        "max_completion_tokens": 8192,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | meta-llama/llama-3-8b-instruct",
+          "model_id": "meta-llama/llama-3-8b-instruct",
+          "model_name": "Meta: Llama 3 8B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 8192,
+          "pricing": {
+            "prompt": "0.00000004",
+            "completion": "0.00000004",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 8192,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.98615821164094,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -1853,8 +2756,8 @@
         "instruct_type": "llama3"
       },
       "pricing": {
-        "prompt": "0.0000001",
-        "completion": "0.0000001"
+        "prompt": "0.00000002",
+        "completion": "0.00000005"
       },
       "top_provider": {
         "context_length": 16384,
@@ -1864,43 +2767,315 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Cerebras | meta-llama/llama-3.1-8b-instruct",
+          "name": "Novita | meta-llama/llama-3.1-8b-instruct",
           "model_id": "meta-llama/llama-3.1-8b-instruct",
           "model_name": "Meta: Llama 3.1 8B Instruct",
-          "provider_name": "Cerebras",
-          "tag": "cerebras/fp16",
-          "context_length": 32768,
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 16384,
           "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000001",
-            "input_cache_read": "0.0000001",
+            "prompt": "0.00000002",
+            "completion": "0.00000005",
             "discount": 0
           },
-          "quantization": "fp16",
-          "max_completion_tokens": 8192,
+          "quantization": "fp8",
+          "max_completion_tokens": 16384,
           "max_prompt_tokens": null,
           "supported_parameters": [
-            "response_format",
             "max_tokens",
             "temperature",
             "top_p",
             "stop",
-            "seed",
-            "logprobs",
-            "top_logprobs",
-            "tools",
-            "tool_choice",
-            "structured_outputs",
             "frequency_penalty",
             "presence_penalty",
-            "logit_bias"
+            "seed",
+            "top_k",
+            "repetition_penalty"
           ],
-          "status": -5,
-          "uptime_last_30m": 15.753424657534246,
-          "uptime_last_5m": 9.090909090909092,
-          "uptime_last_1d": 44.312744455695196,
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.37368900677261,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras",
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "microsoft/wizardlm-2-8x22b",
+      "name": "WizardLM-2 8x22B",
+      "created": 1713225600,
+      "description": "WizardLM-2 8x22B is Microsoft AI's most advanced Wizard model. It demonstrates highly competitive performance compared to leading proprietary models, and it consistently outperforms all existing state-of-the-art opensource models. It is...",
+      "context_length": 65535,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Mistral",
+        "instruct_type": "vicuna"
+      },
+      "pricing": {
+        "prompt": "0.00000062",
+        "completion": "0.00000062"
+      },
+      "top_provider": {
+        "context_length": 65535,
+        "max_completion_tokens": 8000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | microsoft/wizardlm-2-8x22b",
+          "model_id": "microsoft/wizardlm-2-8x22b",
+          "model_name": "WizardLM-2 8x22B",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 65535,
+          "pricing": {
+            "prompt": "0.00000062",
+            "completion": "0.00000062",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 8000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "minimax/minimax-m2",
+      "name": "MiniMax: MiniMax M2",
+      "created": 1761252093,
+      "description": "MiniMax-M2 is a compact, high-efficiency large language model optimized for end-to-end coding and agentic workflows. With 10 billion activated parameters (230 billion total), it delivers near-frontier intelligence across general reasoning,...",
+      "context_length": 196608,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+        "input_cache_read": "0.00000003"
+      },
+      "top_provider": {
+        "context_length": 196608,
+        "max_completion_tokens": 196608,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | minimax/minimax-m2",
+          "model_id": "minimax/minimax-m2",
+          "model_name": "MiniMax: MiniMax M2",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.00000003",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 131072,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.92433795712485,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "minimax/minimax-m2.1",
+      "name": "MiniMax: MiniMax M2.1",
+      "created": 1766454997,
+      "description": "MiniMax-M2.1 is a lightweight, state-of-the-art large language model optimized for coding, agentic workflows, and modern application development. With only 10 billion activated parameters, it delivers a major jump in real-world...",
+      "context_length": 196608,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+        "input_cache_read": "0.00000003"
+      },
+      "top_provider": {
+        "context_length": 196608,
+        "max_completion_tokens": 196608,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | minimax/minimax-m2.1",
+          "model_id": "minimax/minimax-m2.1",
+          "model_name": "MiniMax: MiniMax M2.1",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.00000003",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 131072,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 97.11538461538461,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.35070205340476,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "minimax/minimax-m2.5",
+      "name": "MiniMax: MiniMax M2.5",
+      "created": 1770908502,
+      "description": "MiniMax-M2.5 is a SOTA large language model designed for real-world productivity. Trained in a diverse range of complex real-world digital working environments, M2.5 builds upon the coding expertise of M2.1...",
+      "context_length": 196608,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+        "input_cache_read": "0.00000003"
+      },
+      "top_provider": {
+        "context_length": 196608,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | minimax/minimax-m2.5-20260211",
+          "model_id": "minimax/minimax-m2.5",
+          "model_name": "MiniMax: MiniMax M2.5",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 204800,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000012",
+            "input_cache_read": "0.00000003",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 131100,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.99049521592535,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -1967,7 +3142,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.55724225173941,
+          "uptime_last_1d": 99.55499046408137,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2036,7 +3211,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.976857878446,
+          "uptime_last_1d": 99.97870425043801,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2104,9 +3279,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.49847467968273,
-          "uptime_last_5m": 97.65258215962442,
-          "uptime_last_1d": 95.566274049992,
+          "uptime_last_30m": 99.38392607112854,
+          "uptime_last_5m": 99.51219512195122,
+          "uptime_last_1d": 95.52424657166625,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2174,9 +3349,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96670551023806,
-          "uptime_last_5m": 99.8997995991984,
-          "uptime_last_1d": 99.91230597099253,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.91288547778659,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2244,9 +3419,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97959808221974,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.5771009578255,
+          "uptime_last_30m": 98.47310847766636,
+          "uptime_last_5m": 97.5609756097561,
+          "uptime_last_1d": 99.56490816308387,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2313,9 +3488,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.73544973544973,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.8283335479164,
+          "uptime_last_1d": 99.82469642551736,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2411,8 +3586,8 @@
         "instruct_type": "mistral"
       },
       "pricing": {
-        "prompt": "0.00000015",
-        "completion": "0.00000015"
+        "prompt": "0.00000004",
+        "completion": "0.00000017"
       },
       "top_provider": {
         "context_length": 131072,
@@ -2422,20 +3597,19 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Mistral | mistralai/mistral-nemo",
+          "name": "Novita | mistralai/mistral-nemo",
           "model_id": "mistralai/mistral-nemo",
           "model_name": "Mistral: Mistral Nemo",
-          "provider_name": "Mistral",
-          "tag": "mistral",
-          "context_length": 131072,
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 60288,
           "pricing": {
-            "prompt": "0.00000015",
-            "completion": "0.00000015",
-            "input_cache_read": "0.000000015",
+            "prompt": "0.00000004",
+            "completion": "0.00000017",
             "discount": 0
           },
-          "quantization": "unknown",
-          "max_completion_tokens": null,
+          "quantization": "fp8",
+          "max_completion_tokens": 16000,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "max_tokens",
@@ -2445,17 +3619,15 @@
             "frequency_penalty",
             "presence_penalty",
             "seed",
-            "response_format",
-            "structured_outputs",
-            "tools",
-            "tool_choice"
+            "top_k",
+            "repetition_penalty"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99074074074073,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94147599523873,
+          "uptime_last_30m": 99.95588883987648,
+          "uptime_last_5m": 99.6415770609319,
+          "uptime_last_1d": 93.7412641714552,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "mistral",
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -2525,7 +3697,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95087588512283,
+          "uptime_last_1d": 99.95075035506186,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2592,9 +3764,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.74081721767061,
+          "uptime_last_30m": 99.96690659386117,
+          "uptime_last_5m": 99.94646680942184,
+          "uptime_last_1d": 99.76664566924444,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2661,9 +3833,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.97927890592622,
+          "uptime_last_1d": 99.98016660055534,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -2733,9 +3905,77 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.88753514526711,
+          "uptime_last_1d": 99.89187240944314,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "moonshotai/kimi-k2-0905",
+      "name": "MoonshotAI: Kimi K2 0905",
+      "created": 1757021147,
+      "description": "Kimi K2 0905 is the September update of [Kimi K2 0711](moonshotai/kimi-k2). It is a large-scale Mixture-of-Experts (MoE) language model developed by Moonshot AI, featuring 1 trillion total parameters with 32...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000006",
+        "completion": "0.0000025"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 262144,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | moonshotai/kimi-k2-0905",
+          "model_id": "moonshotai/kimi-k2-0905",
+          "model_name": "MoonshotAI: Kimi K2 0905",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.0000025",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 262144,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.0282201445255,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -2762,7 +4002,7 @@
       "pricing": {
         "prompt": "0.0000006",
         "completion": "0.000003",
-        "input_cache_read": "0.00000022"
+        "input_cache_read": "0.0000001"
       },
       "top_provider": {
         "context_length": 262144,
@@ -2800,9 +4040,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.63386727688787,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9007484303548,
+          "uptime_last_1d": 99.90161599400885,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
           "pricing_source": "provider_direct"
@@ -2831,7 +4071,7 @@
       "pricing": {
         "prompt": "0.00000095",
         "completion": "0.000004",
-        "input_cache_read": "0.00000015"
+        "input_cache_read": "0.00000016"
       },
       "top_provider": {
         "context_length": 262144,
@@ -2869,11 +4109,78 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.86928104575163,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9348063476886,
+          "uptime_last_1d": 99.93531132106241,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "nousresearch/hermes-2-pro-llama-3-8b",
+      "name": "NousResearch: Hermes 2 Pro - Llama-3 8B",
+      "created": 1716768000,
+      "description": "Hermes 2 Pro is an upgraded, retrained version of Nous Hermes 2, consisting of an updated and cleaned version of the OpenHermes 2.5 Dataset, as well as a newly introduced...",
+      "context_length": 8192,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Llama3",
+        "instruct_type": "chatml"
+      },
+      "pricing": {
+        "prompt": "0.00000014",
+        "completion": "0.00000014"
+      },
+      "top_provider": {
+        "context_length": 8192,
+        "max_completion_tokens": 8192,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | nousresearch/hermes-2-pro-llama-3-8b",
+          "model_id": "nousresearch/hermes-2-pro-llama-3-8b",
+          "model_name": "NousResearch: Hermes 2 Pro - Llama-3 8B",
+          "provider_name": "Novita",
+          "tag": "novita/fp16",
+          "context_length": 8192,
+          "pricing": {
+            "prompt": "0.00000014",
+            "completion": "0.00000014",
+            "discount": 0
+          },
+          "quantization": "fp16",
+          "max_completion_tokens": 8192,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -2937,10 +4244,10 @@
             "temperature",
             "top_p"
           ],
-          "status": -2,
-          "uptime_last_30m": 93.96825396825396,
-          "uptime_last_5m": 99.93920972644376,
-          "uptime_last_1d": 99.46581275957116,
+          "status": 0,
+          "uptime_last_30m": 99.9509975498775,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.5218468889758,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3007,10 +4314,10 @@
             "temperature",
             "top_p"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.36437623532147,
-          "uptime_last_5m": 98.61020629750271,
-          "uptime_last_1d": 97.53899766322257,
+          "status": 0,
+          "uptime_last_30m": 98.24115071308006,
+          "uptime_last_5m": 98.3776645915865,
+          "uptime_last_1d": 97.54411027898409,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3077,10 +4384,10 @@
             "temperature",
             "top_p"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.80548973863594,
-          "uptime_last_5m": 98.01912568306011,
-          "uptime_last_1d": 96.79259122894895,
+          "status": 0,
+          "uptime_last_30m": 98.83433051371982,
+          "uptime_last_5m": 99.26131117266851,
+          "uptime_last_1d": 96.8510200597647,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3152,9 +4459,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9258710155671,
-          "uptime_last_5m": 99.02439024390245,
-          "uptime_last_1d": 99.78979456647143,
+          "uptime_last_30m": 99.75216852540272,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.7894962252754,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3227,9 +4534,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9444578948118,
-          "uptime_last_5m": 99.91460290350128,
-          "uptime_last_1d": 99.82217156401047,
+          "uptime_last_30m": 99.94712855163954,
+          "uptime_last_5m": 99.85802176999526,
+          "uptime_last_1d": 99.82377215587121,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3264,11 +4571,13 @@
         "prompt_tiers": [
           {
             "max_prompt_tokens": 272000,
-            "prompt": "0.0000025"
+            "prompt": "0.0000025",
+            "input_cache_read": "0.00000025"
           },
           {
             "max_prompt_tokens": null,
-            "prompt": "0.000005"
+            "prompt": "0.000005",
+            "input_cache_read": "0.0000005"
           }
         ],
         "completion_tiers": [
@@ -3305,11 +4614,13 @@
             "prompt_tiers": [
               {
                 "max_prompt_tokens": 272000,
-                "prompt": "0.0000025"
+                "prompt": "0.0000025",
+                "input_cache_read": "0.00000025"
               },
               {
                 "max_prompt_tokens": null,
-                "prompt": "0.000005"
+                "prompt": "0.000005",
+                "input_cache_read": "0.0000005"
               }
             ],
             "completion_tiers": [
@@ -3337,9 +4648,9 @@
             "tool_choice"
           ],
           "status": -2,
-          "uptime_last_30m": 88.575515129844,
-          "uptime_last_5m": 96.94678685664438,
-          "uptime_last_1d": 96.26873670952722,
+          "uptime_last_30m": 91.78834622602645,
+          "uptime_last_5m": 57.68455022186365,
+          "uptime_last_1d": 96.12031812115013,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3406,10 +4717,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 92.45261344055142,
-          "uptime_last_5m": 99.03448275862068,
-          "uptime_last_1d": 98.71760808855595,
+          "status": 0,
+          "uptime_last_30m": 99.46554795701397,
+          "uptime_last_5m": 99.70182631382781,
+          "uptime_last_1d": 98.68142943474008,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3476,10 +4787,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 90.03728944323004,
-          "uptime_last_5m": 99.42656897100987,
-          "uptime_last_1d": 97.58056358986802,
+          "status": 0,
+          "uptime_last_30m": 99.87849331713244,
+          "uptime_last_5m": 99.89224782999102,
+          "uptime_last_1d": 97.72349859116662,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3584,10 +4895,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 93.38842975206612,
+          "status": 0,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 89.22847558702944,
+          "uptime_last_1d": 89.41132913735653,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3622,11 +4933,13 @@
         "prompt_tiers": [
           {
             "max_prompt_tokens": 272000,
-            "prompt": "0.000005"
+            "prompt": "0.000005",
+            "input_cache_read": "0.0000005"
           },
           {
             "max_prompt_tokens": null,
-            "prompt": "0.00001"
+            "prompt": "0.00001",
+            "input_cache_read": "0.000001"
           }
         ],
         "completion_tiers": [
@@ -3663,11 +4976,13 @@
             "prompt_tiers": [
               {
                 "max_prompt_tokens": 272000,
-                "prompt": "0.000005"
+                "prompt": "0.000005",
+                "input_cache_read": "0.0000005"
               },
               {
                 "max_prompt_tokens": null,
-                "prompt": "0.00001"
+                "prompt": "0.00001",
+                "input_cache_read": "0.000001"
               }
             ],
             "completion_tiers": [
@@ -3695,9 +5010,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 95.90669507681956,
-          "uptime_last_5m": 99.22779922779922,
-          "uptime_last_1d": 97.7998371661403,
+          "uptime_last_30m": 99.3046776232617,
+          "uptime_last_5m": 99.30348258706468,
+          "uptime_last_1d": 97.82014373371439,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -3803,7 +5118,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -3814,10 +5129,10 @@
       "pricing_source": "provider_direct"
     },
     {
-      "id": "openai/gpt-oss-120b",
-      "name": "OpenAI: gpt-oss-120b",
-      "created": 1754414231,
-      "description": "gpt-oss-120b is an open-weight, 117B-parameter Mixture-of-Experts (MoE) language model from OpenAI designed for high-reasoning, agentic, and general-purpose production use cases. It activates 5.1B parameters per forward pass and is optimized...",
+      "id": "openai/gpt-oss-20b",
+      "name": "OpenAI: gpt-oss-20b",
+      "created": 1754414229,
+      "description": "gpt-oss-20b is an open-weight 21B parameter model released by OpenAI under the Apache 2.0 license. It uses a Mixture-of-Experts (MoE) architecture with 3.6B active parameters per forward pass, optimized for...",
       "context_length": 131072,
       "architecture": {
         "modality": "text->text",
@@ -3831,31 +5146,30 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.00000035",
-        "completion": "0.00000075"
+        "prompt": "0.00000004",
+        "completion": "0.00000015"
       },
       "top_provider": {
         "context_length": 131072,
-        "max_completion_tokens": null,
+        "max_completion_tokens": 131072,
         "is_moderated": false
       },
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Cerebras | openai/gpt-oss-120b",
-          "model_id": "openai/gpt-oss-120b",
-          "model_name": "OpenAI: gpt-oss-120b",
-          "provider_name": "Cerebras",
-          "tag": "cerebras/fp16",
+          "name": "Novita | openai/gpt-oss-20b",
+          "model_id": "openai/gpt-oss-20b",
+          "model_name": "OpenAI: gpt-oss-20b",
+          "provider_name": "Novita",
+          "tag": "novita/fp4",
           "context_length": 131072,
           "pricing": {
-            "prompt": "0.00000035",
-            "completion": "0.00000075",
-            "input_cache_read": "0.00000035",
+            "prompt": "0.00000004",
+            "completion": "0.00000015",
             "discount": 0
           },
-          "quantization": "fp16",
-          "max_completion_tokens": 40960,
+          "quantization": "fp4",
+          "max_completion_tokens": 32768,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -3864,23 +5178,18 @@
             "temperature",
             "top_p",
             "stop",
-            "seed",
-            "logprobs",
-            "top_logprobs",
-            "tools",
-            "tool_choice",
-            "response_format",
-            "structured_outputs",
             "frequency_penalty",
             "presence_penalty",
-            "logit_bias"
+            "seed",
+            "top_k",
+            "repetition_penalty"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.82529699510832,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95719263859111,
+          "uptime_last_1d": 99.2935586459455,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "cerebras",
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4014,8 +5323,8 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
@@ -4152,10 +5461,143 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.9880578002468,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.98803159658502,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen-2.5-72b-instruct",
+      "name": "Qwen2.5 72B Instruct",
+      "created": 1726704000,
+      "description": "Qwen2.5 72B is the latest series of Qwen large language models. Qwen2.5 brings the following improvements upon Qwen2: - Significantly more knowledge and has greatly improved capabilities in coding and...",
+      "context_length": 32768,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen",
+        "instruct_type": "chatml"
+      },
+      "pricing": {
+        "prompt": "0.00000038",
+        "completion": "0.0000004"
+      },
+      "top_provider": {
+        "context_length": 32768,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen-2.5-72b-instruct",
+          "model_id": "qwen/qwen-2.5-72b-instruct",
+          "model_name": "Qwen2.5 72B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 32000,
+          "pricing": {
+            "prompt": "0.00000038",
+            "completion": "0.0000004",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 8192,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.88137603795967,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen2.5-vl-72b-instruct",
+      "name": "Qwen: Qwen2.5 VL 72B Instruct",
+      "created": 1738410311,
+      "description": "Qwen2.5-VL is proficient in recognizing common objects such as flowers, birds, fish, and insects. It is also highly capable of analyzing texts, charts, icons, graphics, and layouts within images.",
+      "context_length": 32000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000008",
+        "completion": "0.0000008"
+      },
+      "top_provider": {
+        "context_length": 32000,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen2.5-vl-72b-instruct",
+          "model_id": "qwen/qwen2.5-vl-72b-instruct",
+          "model_name": "Qwen: Qwen2.5 VL 72B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 32768,
+          "pricing": {
+            "prompt": "0.0000008",
+            "completion": "0.0000008",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 95.59203351891178,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4222,11 +5664,1215 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87987987987988,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.89841468298543,
+          "uptime_last_1d": 99.90024352316405,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+      "created": 1753972379,
+      "description": "Qwen3-Coder-30B-A3B-Instruct is a 30.5B parameter Mixture-of-Experts (MoE) model with 128 experts (8 active per forward pass), designed for advanced code generation, repository-scale understanding, and agentic tool use. Built on the...",
+      "context_length": 160000,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000007",
+        "completion": "0.00000027"
+      },
+      "top_provider": {
+        "context_length": 160000,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-coder-30b-a3b-instruct",
+          "model_id": "qwen/qwen3-coder-30b-a3b-instruct",
+          "model_name": "Qwen: Qwen3 Coder 30B A3B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 160000,
+          "pricing": {
+            "prompt": "0.00000007",
+            "completion": "0.00000027",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.80531023390988,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "name": "Qwen: Qwen3 Coder Next",
+      "created": 1770164101,
+      "description": "Qwen3-Coder-Next is an open-weight causal language model optimized for coding agents and local development workflows. It uses a sparse MoE design with 80B total parameters and only 3B activated per...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000002",
+        "completion": "0.0000015",
+        "input_cache_read": "0.00000007"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 262144,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-coder-next-2025-02-03",
+          "model_id": "qwen/qwen3-coder-next",
+          "model_name": "Qwen: Qwen3 Coder Next",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000015",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.35559461042766,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-instruct",
+      "name": "Qwen: Qwen3 Next 80B A3B Instruct",
+      "created": 1757612213,
+      "description": "Qwen3-Next-80B-A3B-Instruct is an instruction-tuned chat model in the Qwen3-Next series optimized for fast, stable responses without “thinking” traces. It targets complex tasks across reasoning, code generation, knowledge QA, and multilingual...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000015"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-next-80b-a3b-instruct-2509",
+          "model_id": "qwen/qwen3-next-80b-a3b-instruct",
+          "model_name": "Qwen: Qwen3 Next 80B A3B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000015",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.80575722837855,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "name": "Qwen: Qwen3 Next 80B A3B Thinking",
+      "created": 1757612284,
+      "description": "Qwen3-Next-80B-A3B-Thinking is a reasoning-first chat model in the Qwen3-Next line that outputs structured “thinking” traces by default. It’s designed for hard multi-step problems; math proofs, code synthesis/debugging, logic, and agentic...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000015"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-next-80b-a3b-thinking-2509",
+          "model_id": "qwen/qwen3-next-80b-a3b-thinking",
+          "model_name": "Qwen: Qwen3 Next 80B A3B Thinking",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000015",
+            "completion": "0.0000015",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-vl-235b-a22b-instruct",
+      "name": "Qwen: Qwen3 VL 235B A22B Instruct",
+      "created": 1758668687,
+      "description": "Qwen3-VL-235B-A22B Instruct is an open-weight multimodal model that unifies strong text generation with visual understanding across images and video. The Instruct model targets general vision-language use (VQA, document parsing, chart/table...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000015",
+        "input_cache_read": "0.00000011"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 16384,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-vl-235b-a22b-instruct",
+          "model_id": "qwen/qwen3-vl-235b-a22b-instruct",
+          "model_name": "Qwen: Qwen3 VL 235B A22B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000015",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": -5,
+          "uptime_last_30m": 77.23577235772358,
+          "uptime_last_5m": 84.44444444444444,
+          "uptime_last_1d": 80.90456924390335,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-vl-235b-a22b-thinking",
+      "name": "Qwen: Qwen3 VL 235B A22B Thinking",
+      "created": 1758668690,
+      "description": "Qwen3-VL-235B-A22B Thinking is a multimodal model that unifies strong text generation with visual understanding across images and video. The Thinking model is optimized for multimodal reasoning in STEM and math....",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000098",
+        "completion": "0.00000395"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-vl-235b-a22b-thinking",
+          "model_id": "qwen/qwen3-vl-235b-a22b-thinking",
+          "model_name": "Qwen: Qwen3 VL 235B A22B Thinking",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000098",
+            "completion": "0.00000395",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.1686460807601,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "name": "Qwen: Qwen3 VL 30B A3B Instruct",
+      "created": 1759794476,
+      "description": "Qwen3-VL-30B-A3B-Instruct is a multimodal model that unifies strong text generation with visual understanding for images and videos. Its Instruct variant optimizes instruction-following for general multimodal tasks. It excels in perception...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000002",
+        "completion": "0.0000007"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Phala | qwen/qwen3-vl-30b-a3b-instruct",
+          "model_id": "qwen/qwen3-vl-30b-a3b-instruct",
+          "model_name": "Qwen: Qwen3 VL 30B A3B Instruct",
+          "provider_name": "Phala",
+          "tag": "phala",
+          "context_length": 128000,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.0000007",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 128000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "min_p",
+            "repetition_penalty",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": -5,
+          "uptime_last_30m": 0,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 0,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "phala",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-thinking",
+      "name": "Qwen: Qwen3 VL 30B A3B Thinking",
+      "created": 1759794479,
+      "description": "Qwen3-VL-30B-A3B-Thinking is a multimodal model that unifies strong text generation with visual understanding for images and videos. Its Thinking variant enhances reasoning in STEM, math, and complex tasks. It excels...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000002",
+        "completion": "0.000001"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-vl-30b-a3b-thinking",
+          "model_id": "qwen/qwen3-vl-30b-a3b-thinking",
+          "model_name": "Qwen: Qwen3 VL 30B A3B Thinking",
+          "provider_name": "Novita",
+          "tag": "novita/fp16",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.0000002",
+            "completion": "0.000001",
+            "discount": 0
+          },
+          "quantization": "fp16",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.5872641509434,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "name": "Qwen: Qwen3 VL 8B Instruct",
+      "created": 1760463308,
+      "description": "Qwen3-VL-8B-Instruct is a multimodal vision-language model from the Qwen3-VL series, built for high-fidelity understanding and reasoning across text, images, and video. It features improved multimodal fusion with Interleaved-MRoPE for long-horizon...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "image",
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000008",
+        "completion": "0.0000005"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 32768,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3-vl-8b-instruct",
+          "model_id": "qwen/qwen3-vl-8b-instruct",
+          "model_name": "Qwen: Qwen3 VL 8B Instruct",
+          "provider_name": "Novita",
+          "tag": "novita/fp8",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000008",
+            "completion": "0.0000005",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.47477629360654,
+          "uptime_last_5m": 98.82766705744432,
+          "uptime_last_1d": 99.09469235064489,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3.5-122b-a10b",
+      "name": "Qwen: Qwen3.5-122B-A10B",
+      "created": 1772053789,
+      "description": "The Qwen3.5 122B-A10B native vision-language model is built on a hybrid architecture that integrates a linear attention mechanism with a sparse mixture-of-experts model, achieving higher inference efficiency. In terms of...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000004",
+        "completion": "0.0000032"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Novita | qwen/qwen3.5-122b-a10b-20260224",
+          "model_id": "qwen/qwen3.5-122b-a10b",
+          "model_name": "Qwen: Qwen3.5-122B-A10B",
+          "provider_name": "Novita",
+          "tag": "novita/bf16",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000004",
+            "completion": "0.0000032",
+            "discount": 0
+          },
+          "quantization": "bf16",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.64689265536724,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3.5-27b",
+      "name": "Qwen: Qwen3.5-27B",
+      "created": 1772053810,
+      "description": "The Qwen3.5 27B native vision-language Dense model incorporates a linear attention mechanism, delivering fast response times while balancing inference speed and performance. Its overall capabilities are comparable to those of...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000003",
+        "completion": "0.0000024"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Phala | qwen/qwen3.5-27b-20260224",
+          "model_id": "qwen/qwen3.5-27b",
+          "model_name": "Qwen: Qwen3.5-27B",
+          "provider_name": "Phala",
+          "tag": "phala",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000024",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 262144,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "min_p",
+            "repetition_penalty"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.25585813806207,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "phala",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "name": "Qwen: Qwen3.5 397B A17B",
+      "created": 1771223018,
+      "description": "The Qwen3.5 series 397B-A17B native vision-language model is built on a hybrid architecture that integrates a linear attention mechanism with a sparse mixture-of-experts model, achieving higher inference efficiency. It delivers...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000075",
+        "completion": "0.0000045",
+        "input_cache_read": "0.000000195"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 65536,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Venice | qwen/qwen3.5-397b-a17b-20260216",
+          "model_id": "qwen/qwen3.5-397b-a17b",
+          "model_name": "Qwen: Qwen3.5 397B A17B",
+          "provider_name": "Venice",
+          "tag": "venice",
+          "context_length": 128000,
+          "pricing": {
+            "prompt": "0.00000075",
+            "completion": "0.0000045",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 93.82239382239382,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "venice",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3.5-9b",
+      "name": "Qwen: Qwen3.5-9B",
+      "created": 1773152396,
+      "description": "Qwen3.5-9B is a multimodal foundation model from the Qwen3.5 family, designed to deliver strong reasoning, coding, and visual understanding in an efficient 9B-parameter architecture. It uses a unified vision-language design...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.00000015"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 81920,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Venice | qwen/qwen3.5-9b-20260310",
+          "model_id": "qwen/qwen3.5-9b",
+          "model_name": "Qwen: Qwen3.5-9B",
+          "provider_name": "Venice",
+          "tag": "venice/fp8",
+          "context_length": 256000,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.00000015",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice",
+            "logprobs",
+            "top_logprobs"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.47792175116366,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "venice",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "qwen/qwen3.6-27b",
+      "name": "Qwen: Qwen3.6 27B",
+      "created": 1777255064,
+      "description": "Qwen3.6 27B is a dense 27-billion-parameter language model from the Qwen Team at Alibaba, released in April 2026. It features hybrid multimodal capabilities — accepting text, image, and video inputs...",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Qwen3",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000033",
+        "completion": "0.00000325"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 81920,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Venice | qwen/qwen3.6-27b-20260422",
+          "model_id": "qwen/qwen3.6-27b",
+          "model_name": "Qwen: Qwen3.6 27B",
+          "provider_name": "Venice",
+          "tag": "venice/fp8",
+          "context_length": 256000,
+          "pricing": {
+            "prompt": "0.00000033",
+            "completion": "0.00000325",
+            "discount": 0
+          },
+          "quantization": "fp8",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "tool_choice",
+            "tools",
+            "structured_outputs",
+            "response_format"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.36320314928003,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "venice",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "x-ai/grok-4.20",
+      "name": "xAI: Grok 4.20",
+      "created": 1774979019,
+      "description": "Grok 4.20 is a reasoning model from xAI with industry-leading speed and agentic tool calling capabilities. It combines the lowest hallucination rate on the market with strict prompt adherance, delivering...",
+      "context_length": 2000000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Grok",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.0000025",
+        "web_search": "0.005",
+        "input_cache_read": "0.0000002"
+      },
+      "top_provider": {
+        "context_length": 2000000,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "xAI | x-ai/grok-4.20-20260309",
+          "model_id": "x-ai/grok-4.20",
+          "model_name": "xAI: Grok 4.20",
+          "provider_name": "xAI",
+          "tag": "xai",
+          "context_length": 2000000,
+          "pricing": {
+            "prompt": "0.00000125",
+            "completion": "0.0000025",
+            "web_search": "0.005",
+            "input_cache_read": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "logprobs",
+            "top_logprobs",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "structured_outputs"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 100,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "grok",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "x-ai/grok-4.20-multi-agent",
+      "name": "xAI: Grok 4.20 Multi-Agent",
+      "created": 1774979158,
+      "description": "Grok 4.20 Multi-Agent is a variant of xAI’s Grok 4.20 designed for collaborative, agent-based workflows. Multiple agents operate in parallel to conduct deep research, coordinate tool use, and synthesize information...",
+      "context_length": 2000000,
+      "architecture": {
+        "modality": "text+image+file->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "file"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Grok",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.0000025",
+        "web_search": "0.005",
+        "input_cache_read": "0.0000002"
+      },
+      "top_provider": {
+        "context_length": 2000000,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "xAI | x-ai/grok-4.20-multi-agent-20260309",
+          "model_id": "x-ai/grok-4.20-multi-agent",
+          "model_name": "xAI: Grok 4.20 Multi-Agent",
+          "provider_name": "xAI",
+          "tag": "xai",
+          "context_length": 2000000,
+          "pricing": {
+            "prompt": "0.00000125",
+            "completion": "0.0000025",
+            "web_search": "0.005",
+            "input_cache_read": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "logprobs",
+            "top_logprobs",
+            "response_format",
+            "structured_outputs"
+          ],
+          "status": 0,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.4468339307049,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "grok",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "x-ai/grok-4.3",
+      "name": "xAI: Grok 4.3",
+      "created": 1777591821,
+      "description": "Grok 4.3 is a reasoning model from xAI. It accepts text and image inputs with text output, and is suited for agentic workflows, instruction-following tasks, and applications requiring high factual...",
+      "context_length": 1000000,
+      "architecture": {
+        "modality": "text+image->text",
+        "input_modalities": [
+          "text",
+          "image"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Grok",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000125",
+        "completion": "0.0000025",
+        "web_search": "0.005",
+        "input_cache_read": "0.0000002"
+      },
+      "top_provider": {
+        "context_length": 1000000,
+        "max_completion_tokens": null,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "xAI | x-ai/grok-4.3-20260430",
+          "model_id": "x-ai/grok-4.3",
+          "model_name": "xAI: Grok 4.3",
+          "provider_name": "xAI",
+          "tag": "xai",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00000125",
+            "completion": "0.0000025",
+            "web_search": "0.005",
+            "input_cache_read": "0.0000002",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "logprobs",
+            "top_logprobs",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.97926391728714,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4349,9 +6995,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.59154929577466,
+          "uptime_last_30m": 98.38709677419355,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 97.33538985214338,
+          "uptime_last_1d": 97.3212853552906,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -4379,7 +7025,7 @@
       "pricing": {
         "prompt": "0.0000002",
         "completion": "0.0000011",
-        "input_cache_read": "0.000000025"
+        "input_cache_read": "0.00000003"
       },
       "top_provider": {
         "context_length": 131072,
@@ -4414,9 +7060,72 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99337190254803,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97858470230987,
+          "uptime_last_30m": 99.99766431541084,
+          "uptime_last_5m": 99.99173826834105,
+          "uptime_last_1d": 99.9788030713739,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "zai",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
+      "id": "z-ai/glm-4.5-air:free",
+      "name": "Z.ai: GLM 4.5 Air (free)",
+      "created": 1753471258,
+      "description": "GLM-4.5-Air is the lightweight variant of our latest flagship model family, also purpose-built for agent-centric applications. Like GLM-4.5, it adopts the Mixture-of-Experts (MoE) architecture but with a more compact parameter...",
+      "context_length": 131072,
+      "architecture": {
+        "modality": "text->text",
+        "input_modalities": [
+          "text"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "top_provider": {
+        "context_length": 131072,
+        "max_completion_tokens": 96000,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Z.AI | z-ai/glm-4.5-air:free",
+          "model_id": "z-ai/glm-4.5-air:free",
+          "model_name": "Z.ai: GLM 4.5 Air",
+          "provider_name": "Z.AI",
+          "tag": "z-ai",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0",
+            "completion": "0",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 96000,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 97.93296628996427,
+          "uptime_last_5m": 98.04421768707483,
+          "uptime_last_1d": 98.08916804335169,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -4482,7 +7191,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 97.19820131442407,
+          "uptime_last_1d": 97.52824858757062,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -4508,8 +7217,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000006",
-        "completion": "0.0000022"
+        "prompt": "0.00000085",
+        "completion": "0.00000275",
+        "input_cache_read": "0.0000003"
       },
       "top_provider": {
         "context_length": 204800,
@@ -4519,20 +7229,20 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Z.AI | z-ai/glm-4.6",
+          "name": "Venice | z-ai/glm-4.6",
           "model_id": "z-ai/glm-4.6",
           "model_name": "Z.ai: GLM 4.6",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 200000,
+          "provider_name": "Venice",
+          "tag": "venice/fp4",
+          "context_length": 198000,
           "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.0000022",
-            "input_cache_read": "0.00000011",
+            "prompt": "0.00000085",
+            "completion": "0.00000275",
+            "input_cache_read": "0.0000003",
             "discount": 0
           },
-          "quantization": "unknown",
-          "max_completion_tokens": 128000,
+          "quantization": "fp4",
+          "max_completion_tokens": 16384,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -4540,15 +7250,21 @@
             "max_tokens",
             "temperature",
             "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "response_format",
+            "structured_outputs",
             "tools",
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.36065573770492,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 94.58212339392975,
+          "uptime_last_1d": 99.55573505654282,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
+          "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4613,7 +7329,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 93.63839285714286,
+          "uptime_last_1d": 92.73584905660377,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -4639,9 +7355,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000006",
-        "completion": "0.0000022",
-        "input_cache_read": "0.00000008"
+        "prompt": "0.00000055",
+        "completion": "0.00000265",
+        "input_cache_read": "0.00000011"
       },
       "top_provider": {
         "context_length": 202752,
@@ -4651,20 +7367,20 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Z.AI | z-ai/glm-4.7-20251222",
+          "name": "Venice | z-ai/glm-4.7-20251222",
           "model_id": "z-ai/glm-4.7",
           "model_name": "Z.ai: GLM 4.7",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 200000,
+          "provider_name": "Venice",
+          "tag": "venice/fp4",
+          "context_length": 198000,
           "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.0000022",
+            "prompt": "0.00000055",
+            "completion": "0.00000265",
             "input_cache_read": "0.00000011",
             "discount": 0
           },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
+          "quantization": "fp4",
+          "max_completion_tokens": 16384,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -4672,16 +7388,21 @@
             "max_tokens",
             "temperature",
             "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
             "tools",
             "tool_choice",
+            "structured_outputs",
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.15773353751915,
-          "uptime_last_5m": 99.81132075471699,
-          "uptime_last_1d": 93.12023460410556,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.39686369119421,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
+          "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4705,8 +7426,8 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0",
-        "completion": "0",
+        "prompt": "0.00000013",
+        "completion": "0.0000005",
         "input_cache_read": "0.00000001"
       },
       "top_provider": {
@@ -4717,20 +7438,19 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Z.AI | z-ai/glm-4.7-flash-20260119",
+          "name": "Venice | z-ai/glm-4.7-flash-20260119",
           "model_id": "z-ai/glm-4.7-flash",
           "model_name": "Z.ai: GLM 4.7 Flash",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 200000,
+          "provider_name": "Venice",
+          "tag": "venice/fp8",
+          "context_length": 128000,
           "pricing": {
-            "prompt": "0",
-            "completion": "0",
-            "input_cache_read": "0.00000001",
+            "prompt": "0.00000013",
+            "completion": "0.0000005",
             "discount": 0
           },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
+          "quantization": "fp8",
+          "max_completion_tokens": 16384,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -4738,16 +7458,21 @@
             "max_tokens",
             "temperature",
             "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "response_format",
+            "structured_outputs",
             "tools",
-            "tool_choice",
-            "response_format"
+            "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 80.18018018018019,
-          "uptime_last_5m": 76.36363636363637,
-          "uptime_last_1d": 78.23013318184687,
+          "status": 0,
+          "uptime_last_30m": 99.33554817275747,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 98.62917398945518,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
+          "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4773,7 +7498,7 @@
       "pricing": {
         "prompt": "0.000001",
         "completion": "0.0000032",
-        "input_cache_read": "0.00000012"
+        "input_cache_read": "0.0000002"
       },
       "top_provider": {
         "context_length": 202752,
@@ -4783,20 +7508,20 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Z.AI | z-ai/glm-5-20260211",
+          "name": "Venice | z-ai/glm-5-20260211",
           "model_id": "z-ai/glm-5",
           "model_name": "Z.ai: GLM 5",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 202752,
+          "provider_name": "Venice",
+          "tag": "venice/fp8",
+          "context_length": 198000,
           "pricing": {
             "prompt": "0.000001",
             "completion": "0.0000032",
             "input_cache_read": "0.0000002",
             "discount": 0
           },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
+          "quantization": "fp8",
+          "max_completion_tokens": 32000,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -4804,82 +7529,21 @@
             "max_tokens",
             "temperature",
             "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
             "tools",
             "tool_choice",
-            "response_format"
+            "response_format",
+            "structured_outputs"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.18276374442794,
-          "uptime_last_5m": 99.20634920634922,
-          "uptime_last_1d": 99.55953924298132,
+          "status": -2,
+          "uptime_last_30m": 94.9438202247191,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 96.42955801104972,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
-          "pricing_source": "provider_direct"
-        }
-      ],
-      "pricing_source": "provider_direct"
-    },
-    {
-      "id": "z-ai/glm-5-turbo",
-      "name": "Z.ai: GLM 5 Turbo",
-      "created": 1773583573,
-      "description": "GLM-5 Turbo is a new model from Z.ai designed for fast inference and strong performance in agent-driven environments such as OpenClaw scenarios. It is deeply optimized for real-world agent workflows...",
-      "context_length": 202752,
-      "architecture": {
-        "modality": "text->text",
-        "input_modalities": [
-          "text"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000012",
-        "completion": "0.000004",
-        "input_cache_read": "0.00000024"
-      },
-      "top_provider": {
-        "context_length": 202752,
-        "max_completion_tokens": 131072,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Z.AI | z-ai/glm-5-turbo-20260315",
-          "model_id": "z-ai/glm-5-turbo",
-          "model_name": "Z.ai: GLM 5 Turbo",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 202752,
-          "pricing": {
-            "prompt": "0.0000012",
-            "completion": "0.000004",
-            "input_cache_read": "0.00000024",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "tools",
-            "tool_choice",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.04632152588556,
-          "uptime_last_5m": 96.72131147540983,
-          "uptime_last_1d": 98.49694121460114,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
+          "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
         }
       ],
@@ -4903,9 +7567,9 @@
         "instruct_type": null
       },
       "pricing": {
-        "prompt": "0.0000014",
-        "completion": "0.0000044",
-        "input_cache_read": "0.000000525"
+        "prompt": "0.00000175",
+        "completion": "0.0000055",
+        "input_cache_read": "0.00000033"
       },
       "top_provider": {
         "context_length": 202752,
@@ -4915,88 +7579,20 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Z.AI | z-ai/glm-5.1-20260406",
+          "name": "Venice | z-ai/glm-5.1-20260406",
           "model_id": "z-ai/glm-5.1",
           "model_name": "Z.ai: GLM 5.1",
-          "provider_name": "Z.AI",
-          "tag": "z-ai",
-          "context_length": 202752,
+          "provider_name": "Venice",
+          "tag": "venice/fp8",
+          "context_length": 200000,
           "pricing": {
-            "prompt": "0.0000014",
-            "completion": "0.0000044",
-            "input_cache_read": "0.00000026",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 131072,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "tools",
-            "tool_choice",
-            "response_format"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.44885926685465,
-          "uptime_last_5m": 99.78947368421053,
-          "uptime_last_1d": 99.12766458528264,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
-          "pricing_source": "provider_direct"
-        }
-      ],
-      "pricing_source": "provider_direct"
-    },
-    {
-      "id": "z-ai/glm-5v-turbo",
-      "name": "Z.ai: GLM 5V Turbo",
-      "created": 1775061458,
-      "description": "GLM-5V-Turbo is Z.ai’s first native multimodal agent foundation model, built for vision-based coding and agent-driven tasks. It natively handles image, video, and text inputs, excels at long-horizon planning, complex coding,...",
-      "context_length": 202752,
-      "architecture": {
-        "modality": "text+image+video->text",
-        "input_modalities": [
-          "image",
-          "text",
-          "video"
-        ],
-        "output_modalities": [
-          "text"
-        ],
-        "tokenizer": "Other",
-        "instruct_type": null
-      },
-      "pricing": {
-        "prompt": "0.0000012",
-        "completion": "0.000004",
-        "input_cache_read": "0.00000024"
-      },
-      "top_provider": {
-        "context_length": 202752,
-        "max_completion_tokens": 131072,
-        "is_moderated": false
-      },
-      "per_request_limits": null,
-      "endpoints": [
-        {
-          "name": "Z.AI | z-ai/glm-5v-turbo-20260401",
-          "model_id": "z-ai/glm-5v-turbo",
-          "model_name": "Z.ai: GLM 5V Turbo",
-          "provider_name": "Z.AI",
-          "tag": "z-ai/fp8",
-          "context_length": 202752,
-          "pricing": {
-            "prompt": "0.0000012",
-            "completion": "0.000004",
-            "input_cache_read": "0.00000024",
+            "prompt": "0.00000175",
+            "completion": "0.0000055",
+            "input_cache_read": "0.00000033",
             "discount": 0
           },
           "quantization": "fp8",
-          "max_completion_tokens": 131072,
+          "max_completion_tokens": 24000,
           "max_prompt_tokens": null,
           "supported_parameters": [
             "reasoning",
@@ -5004,16 +7600,21 @@
             "max_tokens",
             "temperature",
             "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "top_k",
+            "response_format",
+            "structured_outputs",
             "tools",
-            "tool_choice",
-            "response_format"
+            "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 100,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.36695505380882,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "zai",
+          "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
         }
       ],
