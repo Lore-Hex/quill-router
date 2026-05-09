@@ -63,3 +63,13 @@ gc kms keys add-iam-policy-binding "$BYOK_KMS_KEY_ID" \
   --member="serviceAccount:${RUN_SERVICE_ACCOUNT}" \
   --role="roles/cloudkms.cryptoKeyEncrypter" \
   --quiet >/dev/null
+
+# Runtime-SA project-level role grants. These call projects.setIamPolicy
+# and need roles/resourcemanager.projectIamAdmin on the caller, so they
+# must run as a project Owner — not as tr-deploy@ (which secrets.sh and
+# rollout.sh use). Idempotent: gcloud no-ops if the binding already exists.
+log "ensuring runtime IAM for ${RUN_SERVICE_ACCOUNT}"
+ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
+ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/spanner.databaseUser"
+ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/bigtable.user"
+ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/aiplatform.user"
