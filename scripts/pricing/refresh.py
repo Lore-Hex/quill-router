@@ -387,6 +387,7 @@ def _merge_snapshot(
             new_model["pricing_source"] = "provider_direct"
 
         new_endpoints: list[dict[str, Any]] = []
+        seen_slugs: set[str] = set()
         for ep in new_model.get("endpoints") or []:
             new_ep = dict(ep)
             ep_slug = new_ep.get("tr_provider_slug")
@@ -407,6 +408,35 @@ def _merge_snapshot(
                 else "provider_direct"
             )
             new_endpoints.append(new_ep)
+            seen_slugs.add(ep_slug)
+        # Synthesize endpoints for keyed providers OR doesn't list. This
+        # is how new TR-keyed providers (siliconflow, tinfoil, ...) make
+        # it into the catalog — OR's /endpoints feed lags or omits them
+        # entirely, but we still bill correctly because the parser pulled
+        # the price straight off the provider's own pricing page / API.
+        for missing_slug, missing_price in by_slug.items():
+            if missing_slug in seen_slugs:
+                continue
+            synth_ep: dict[str, Any] = {
+                "name": f"{missing_slug} | {model_id}",
+                "model_id": model_id,
+                "model_name": str(new_model.get("name") or model_id),
+                "provider_name": missing_slug,
+                "tag": missing_slug,
+                "tr_provider_slug": missing_slug,
+                "context_length": int(new_model.get("context_length") or 0),
+                "pricing": _price_to_pricing_block(missing_price),
+                "pricing_source": (
+                    "self_healed_provider"
+                    if missing_slug in healed_slugs
+                    else "provider_direct"
+                ),
+                "supported_parameters": list(
+                    new_model.get("supported_parameters") or []
+                ),
+                "quantization": "unknown",
+            }
+            new_endpoints.append(synth_ep)
         if not new_endpoints:
             # Edge case: provider-direct has the model but OR records
             # no matching endpoints for any priced slug. Drop.
