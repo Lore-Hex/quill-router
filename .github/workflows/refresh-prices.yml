@@ -96,6 +96,19 @@ jobs:
           echo "::add-mask::${KEY}"
           echo "TR_API_KEY=${KEY}" >> "$GITHUB_ENV"
 
+      - name: Pull TOGETHER_API_KEY from Secret Manager
+        # Together's /v1/models requires Bearer auth. Without this,
+        # together's adapter fails with 401 and the kimi+together /
+        # llama+together failover endpoints drop from the snapshot.
+        # tr-deploy@ has per-secret accessor on this one secret only.
+        run: |
+          set -euo pipefail
+          KEY=$(gcloud secrets versions access latest \
+            --secret=trustedrouter-together-api-key \
+            --project=quill-cloud-proxy)
+          echo "::add-mask::${KEY}"
+          echo "TOGETHER_API_KEY=${KEY}" >> "$GITHUB_ENV"
+
       - name: Snapshot existing pricing file
         run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
 

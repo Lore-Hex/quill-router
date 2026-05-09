@@ -149,15 +149,16 @@ def _micro_per_m_to_dollars_per_token(micro_per_m: int) -> str:
 
 def _index_provider_prices(
     results: dict[str, ProviderPricingResult]
-) -> dict[str, tuple[str, ModelPrice]]:
-    """Flatten {slug: ProviderPricingResult} into {model_id: (slug, price)}.
-    Used for the cross-check and the merge step."""
-    out: dict[str, tuple[str, ModelPrice]] = {}
+) -> dict[str, dict[str, ModelPrice]]:
+    """Flatten {slug: ProviderPricingResult} into
+    {model_id: {slug: price, slug2: price2, ...}}. A single model can be
+    served by multiple keyed providers (e.g. meta-llama/llama-3.1-8b is
+    on Cerebras AND Novita; moonshotai/kimi-k2.6 is on Kimi-direct AND
+    Together) — each gets its own provider-direct price for billing."""
+    out: dict[str, dict[str, ModelPrice]] = {}
     for slug, result in results.items():
         for model_id, price in result.prices.items():
-            # Provider-direct wins on collision (rare; would mean two
-            # providers claim the same OR-canonical id).
-            out[model_id] = (slug, price)
+            out.setdefault(model_id, {})[slug] = price
     return out
 
 
@@ -180,7 +181,7 @@ def _or_pricing_to_micro_per_m(pricing: dict[str, Any]) -> ModelPrice | None:
 
 
 def _cross_check(
-    provider_index: dict[str, tuple[str, ModelPrice]],
+    provider_index: dict[str, dict[str, ModelPrice]],
     or_snapshot: dict[str, Any],
 ) -> list[str]:
     """Compare provider-direct prices against OR's prices. Returns a
@@ -193,25 +194,26 @@ def _cross_check(
         for m in or_snapshot.get("models", [])
         if isinstance(m, dict) and isinstance(m.get("id"), str)
     }
-    for model_id, (slug, provider_price) in provider_index.items():
+    for model_id, by_slug in provider_index.items():
         or_model = or_models.get(model_id)
         if or_model is None:
             continue
         or_price = _or_pricing_to_micro_per_m(or_model.get("pricing") or {})
         if or_price is None:
             continue
-        for dim in ("prompt_micro_per_m", "completion_micro_per_m"):
-            p = getattr(provider_price, dim)
-            o = getattr(or_price, dim)
-            if o == 0 and p == 0:
-                continue
-            denom = max(p, o, 1)
-            rel_diff = abs(p - o) / denom
-            if rel_diff > CROSS_CHECK_DISAGREE_THRESHOLD:
-                notes.append(
-                    f"{model_id} [{dim}]: provider({slug})={p} vs OR={o} "
-                    f"(diff {rel_diff:.1%})"
-                )
+        for slug, provider_price in by_slug.items():
+            for dim in ("prompt_micro_per_m", "completion_micro_per_m"):
+                p = getattr(provider_price, dim)
+                o = getattr(or_price, dim)
+                if o == 0 and p == 0:
+                    continue
+                denom = max(p, o, 1)
+                rel_diff = abs(p - o) / denom
+                if rel_diff > CROSS_CHECK_DISAGREE_THRESHOLD:
+                    notes.append(
+                        f"{model_id} [{dim}]: provider({slug})={p} vs OR={o} "
+                        f"(diff {rel_diff:.1%})"
+                    )
     return notes
 
 
@@ -337,7 +339,7 @@ def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
 
 def _merge_snapshot(
     or_snapshot: dict[str, Any],
-    provider_index: dict[str, tuple[str, ModelPrice]],
+    provider_index: dict[str, dict[str, ModelPrice]],
     healed_slugs: set[str],
 ) -> dict[str, Any]:
     """Build the final snapshot.
@@ -348,11 +350,12 @@ def _merge_snapshot(
     using TR's own keys, so prices MUST come from provider-direct
     parsers. Anything OR-only falls out of the catalog by design.
 
-    For each provider-direct (model_id, price) pair we look up the OR
-    snapshot row to inherit non-pricing metadata (display name,
-    description, context_length, supported_parameters, endpoint shape).
-    OR-only models are dropped silently — they get listed in the
-    cross-check ID-mismatch notes for visibility.
+    A single model can have multiple provider-direct endpoints (e.g.
+    meta-llama/llama-3.1-8b on both Cerebras and Novita;
+    moonshotai/kimi-k2.6 on both Kimi-direct and Together). Each such
+    endpoint keeps its own provider-direct price. Endpoints whose slug
+    has NO provider-direct price are dropped — TR can't bill them
+    correctly without using OR data.
     """
     or_by_id = {
         m["id"]: m
@@ -360,7 +363,7 @@ def _merge_snapshot(
         if isinstance(m, dict) and isinstance(m.get("id"), str)
     }
     merged_models: list[dict[str, Any]] = []
-    for model_id, (slug, price) in provider_index.items():
+    for model_id, by_slug in provider_index.items():
         or_model = or_by_id.get(model_id)
         if or_model is None:
             # Provider gave us a price for a model OR doesn't list. We
@@ -369,36 +372,44 @@ def _merge_snapshot(
             # this case ("parser found N models OR doesn't list").
             continue
         new_model = dict(or_model)
+        # Model-level headline pricing = the cheapest provider-direct
+        # tier across all endpoints (matches OR's convention and what
+        # /v1/models top-level pricing should show).
+        cheapest = min(by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m)
         new_pricing = dict(new_model.get("pricing") or {})
-        new_pricing.update(_price_to_pricing_block(price))
+        new_pricing.update(_price_to_pricing_block(cheapest))
         new_model["pricing"] = new_pricing
-        tag = "self_healed_provider" if slug in healed_slugs else "provider_direct"
-        new_model["pricing_source"] = tag
+        # Tag pricing_source as self-healed if ANY of the slugs that
+        # priced this model went through the LLM rewrite.
+        if any(slug in healed_slugs for slug in by_slug):
+            new_model["pricing_source"] = "self_healed_provider"
+        else:
+            new_model["pricing_source"] = "provider_direct"
 
         new_endpoints: list[dict[str, Any]] = []
         for ep in new_model.get("endpoints") or []:
             new_ep = dict(ep)
-            # Only the matching-slug endpoint gets the new prices; we
-            # don't have provider-direct prices for non-keyed endpoints.
-            # But we keep them — TR may route to them later when we add
-            # support, and OR's pricing for those endpoints is just
-            # informational on the snapshot.
-            if new_ep.get("tr_provider_slug") == slug:
-                new_ep_pricing = dict(new_ep.get("pricing") or {})
-                new_ep_pricing.update(_price_to_pricing_block(price))
-                new_ep["pricing"] = new_ep_pricing
-                new_ep["pricing_source"] = tag
-            else:
-                # Drop non-keyed endpoints from the snapshot — TR can't
-                # route to them. Keeping them would leak OR's price as
-                # part of the per-endpoint detail and confuse the
-                # billing path.
+            ep_slug = new_ep.get("tr_provider_slug")
+            if not isinstance(ep_slug, str):
                 continue
+            ep_price = by_slug.get(ep_slug)
+            if ep_price is None:
+                # Drop non-priced endpoints — without provider-direct
+                # pricing we can't bill the route, so listing it is
+                # misleading.
+                continue
+            new_ep_pricing = dict(new_ep.get("pricing") or {})
+            new_ep_pricing.update(_price_to_pricing_block(ep_price))
+            new_ep["pricing"] = new_ep_pricing
+            new_ep["pricing_source"] = (
+                "self_healed_provider"
+                if ep_slug in healed_slugs
+                else "provider_direct"
+            )
             new_endpoints.append(new_ep)
         if not new_endpoints:
             # Edge case: provider-direct has the model but OR records
-            # only non-matching endpoints for it. Without a routable
-            # endpoint we can't list the model — drop.
+            # no matching endpoints for any priced slug. Drop.
             continue
         new_model["endpoints"] = new_endpoints
         merged_models.append(new_model)
