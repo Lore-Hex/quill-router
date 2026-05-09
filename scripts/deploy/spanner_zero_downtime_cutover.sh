@@ -83,25 +83,46 @@ log "Target instance: $NEW_INSTANCE"
 log "Database:        $DATABASE"
 log "Mode: $([ $DRY_RUN -eq 1 ] && echo DRY-RUN || echo APPLY) phase: $PHASE"
 
-# ─── Phase A: Backup + restore (seed nam6 from a snapshot) ───────────────
+# ─── Phase A: Avro export + import (seed nam6 from $OLD_INSTANCE) ────────
+# IMPORTANT: A first attempt used Spanner backup/restore. Spanner refuses
+# to restore a backup across instance configs (regional-us-central1 →
+# nam6 is forbidden — both instances must share the same instanceConfig).
+# The error from a real run: "Cannot create database ... because the
+# backup and the database are in instances with different instance
+# configurations."
+#
+# The supported pattern for cross-config migration is the Dataflow
+# `Cloud_Spanner_to_GCS_Avro` template — exports a consistent snapshot
+# of every table to Avro on GCS, captures the snapshot timestamp T0 in
+# the export metadata, and the matching `GCS_Avro_to_Cloud_Spanner`
+# template re-imports into the new (different-config) instance. Phase B
+# then starts a change stream from T0 so writes that land between
+# T0 and the cutover replicate in the gap.
+#
+# We KEEP the backup as a forensic safety net (already created above —
+# don't delete on re-runs).
 phase_A() {
-  log "=== phase A: backup → restore (seed nam6 from $OLD_INSTANCE) ==="
+  log "=== phase A: avro export → import (cross-config seed for $NEW_INSTANCE) ==="
 
-  # 1. Backup the source. Idempotent: if the named backup already exists,
-  #    skip and reuse it. We use a fixed name (default `migration-seed`)
-  #    so re-runs of phase A don't accumulate backups. Override with
-  #    TR_MIGRATION_BACKUP_NAME if you want a fresh snapshot.
+  # 0. Take a backup of the source as a forensic safety net. The backup
+  #    is NOT used for the seed (different instanceConfig), but it lets
+  #    us point-in-time-recover the source if anything goes wrong.
   if gc spanner backups describe "$BACKUP_NAME" --instance="$OLD_INSTANCE" \
        >/dev/null 2>&1; then
-    log "  backup $BACKUP_NAME already exists on $OLD_INSTANCE"
+    log "  forensic backup $BACKUP_NAME already exists on $OLD_INSTANCE (kept as safety net)"
+    if [ $DRY_RUN -eq 0 ]; then
+      local t0
+      t0=$(gc spanner backups describe "$BACKUP_NAME" --instance="$OLD_INSTANCE" \
+             --format="value(versionTime)")
+      log "  backup version_time (T0 reference): $t0"
+    fi
   else
-    log "  creating backup $BACKUP_NAME from $OLD_INSTANCE/$DATABASE (30d retention)"
+    log "  creating forensic backup $BACKUP_NAME on $OLD_INSTANCE (30d retention)"
     gc_or_dry spanner backups create "$BACKUP_NAME" \
       --instance="$OLD_INSTANCE" \
       --database="$DATABASE" \
       --retention-period=30d \
       --async
-    log "  backup created async; waiting for completion..."
     if [ $DRY_RUN -eq 0 ]; then
       until gc spanner backups describe "$BACKUP_NAME" --instance="$OLD_INSTANCE" \
               --format="value(state)" 2>/dev/null | grep -q READY; do
@@ -111,33 +132,115 @@ phase_A() {
     fi
   fi
 
-  # Print the backup version_time as T0 — Phase B uses this to start the
-  # change stream from a consistent snapshot (so writes during the backup
-  # window aren't double-replicated).
+  # 1. Make sure the export bucket exists (regional, same region as the
+  #    Dataflow job).
+  local export_bucket="${TR_SPANNER_EXPORT_BUCKET:-gs://${PROJECT_ID}-spanner-export}"
+  local export_path="${export_bucket}/${BACKUP_NAME}"
   if [ $DRY_RUN -eq 0 ]; then
-    local t0
-    t0=$(gc spanner backups describe "$BACKUP_NAME" --instance="$OLD_INSTANCE" \
-           --format="value(versionTime)")
-    log "  backup version_time (T0): $t0"
-    log "  echo this somewhere safe; phase B needs --start-time=\$T0"
+    if ! gsutil ls -b "$export_bucket" >/dev/null 2>&1; then
+      log "  creating export bucket $export_bucket (regional in $DATAFLOW_REGION)"
+      gsutil mb -p "$PROJECT_ID" -l "$DATAFLOW_REGION" -b on "$export_bucket"
+    else
+      log "  export bucket $export_bucket already exists"
+    fi
+    # Make sure Dataflow temp staging area exists too (Phase B uses it
+    # but it doesn't hurt to provision it here).
+    if ! gsutil ls -b "$DATAFLOW_TEMP_BUCKET" >/dev/null 2>&1; then
+      gsutil mb -p "$PROJECT_ID" -l "$DATAFLOW_REGION" -b on "$DATAFLOW_TEMP_BUCKET"
+    fi
   fi
 
-  # 2. Restore into the nam6 instance. Database name on the destination
-  #    matches the source ($DATABASE) so the application's
-  #    TR_SPANNER_DATABASE_ID flips with TR_SPANNER_INSTANCE_ID.
-  #
-  # Stage 0's infra-stage0.sh created an EMPTY $DATABASE on $NEW_INSTANCE
-  # with the schema mirrored from source — that has to go before we can
-  # restore a backup over it. Spanner doesn't support "restore over an
-  # existing database"; the restore operation creates the database. So
-  # the safe pattern: detect the empty stub, drop it, then restore.
-  #
-  # Only auto-drop if the database has ZERO rows on the target. If it
-  # has any rows, that means a previous Phase A restore already landed
-  # data — bail out and let the operator decide whether to re-seed.
+  # 2. Export source database to Avro on GCS. Idempotent: if the export
+  #    output prefix already has tr_entities-manifest.json, skip the
+  #    export and reuse it. The first export is the slow part (~minutes
+  #    for a small database, hours for TB-scale).
+  if [ $DRY_RUN -eq 0 ] && \
+     gsutil ls "${export_path}/tr_entities-manifest.json" >/dev/null 2>&1; then
+    log "  Avro export already present at $export_path (reusing)"
+  else
+    log "  launching Dataflow Avro-export job → $export_path"
+    if [ $DRY_RUN -eq 1 ]; then
+      cat <<EOF >&2
+  [dry-run] gcloud dataflow jobs run ${DATAFLOW_JOB_NAME}-export \\
+    --project=$PROJECT_ID --region=$DATAFLOW_REGION \\
+    --gcs-location=gs://dataflow-templates/latest/Cloud_Spanner_to_GCS_Avro \\
+    --staging-location=$DATAFLOW_TEMP_BUCKET/staging \\
+    --parameters=instanceId=$OLD_INSTANCE,databaseId=$DATABASE,outputDir=$export_path,snapshotTime=now
+EOF
+    else
+      gcloud dataflow jobs run "${DATAFLOW_JOB_NAME}-export" \
+        --project="$PROJECT_ID" \
+        --region="$DATAFLOW_REGION" \
+        --gcs-location=gs://dataflow-templates/latest/Cloud_Spanner_to_GCS_Avro \
+        --staging-location="$DATAFLOW_TEMP_BUCKET/staging" \
+        --parameters="instanceId=${OLD_INSTANCE},databaseId=${DATABASE},outputDir=${export_path}"
+      log "  export job launched; waiting for completion..."
+      # Poll until the job completes. Status DONE = success; any other
+      # terminal state = bail.
+      local export_state=""
+      until [ "$export_state" = "Done" ] || [ "$export_state" = "JOB_STATE_DONE" ]; do
+        sleep 30
+        export_state=$(gcloud dataflow jobs list \
+          --project="$PROJECT_ID" --region="$DATAFLOW_REGION" \
+          --filter="name=${DATAFLOW_JOB_NAME}-export" \
+          --format="value(state)" 2>/dev/null | head -1)
+        log "    export job state: $export_state"
+        if [ "$export_state" = "Failed" ] || [ "$export_state" = "Cancelled" ] || \
+           [ "$export_state" = "JOB_STATE_FAILED" ] || [ "$export_state" = "JOB_STATE_CANCELLED" ]; then
+          log "  ERROR: export job ended in $export_state — bailing"
+          return 1
+        fi
+      done
+      log "  export complete"
+    fi
+  fi
+
+  # 3. The Avro export wrote into a sub-prefix named
+  #    `<srcInstance>-<srcDb>-<jobId>/` under the outputDir we passed.
+  #    Find the most recent such sub-prefix — that's what the import
+  #    template expects as its `inputDir` (and the manifest lives there).
+  #    Cache the path in a variable shared with step 5.
+  local import_input_dir=""
+  if [ $DRY_RUN -eq 0 ]; then
+    import_input_dir=$(gsutil ls -d "${export_path}/${OLD_INSTANCE}-${DATABASE}-*" 2>/dev/null \
+      | tail -1 | sed 's:/$::')
+    if [ -z "$import_input_dir" ]; then
+      log "  ERROR: could not find export sub-prefix under $export_path"
+      log "  bucket contents:"
+      gsutil ls -r "${export_path}/" >&2 || true
+      return 1
+    fi
+    log "  detected export sub-prefix: $import_input_dir"
+
+    # The Avro export's manifest carries the snapshot timestamp T0.
+    # Phase B's change stream needs --start-time=$T0 so writes that
+    # landed during the export are replicated.
+    local t0_avro
+    t0_avro=$(gsutil cat "${import_input_dir}/tr_entities-manifest.json" 2>/dev/null \
+      | python3 -c "import json, sys; m=json.load(sys.stdin); print(m.get('snapshotTime') or m.get('snapshot_time') or '')" \
+      2>/dev/null || echo "")
+    if [ -n "$t0_avro" ]; then
+      log "  Avro snapshot timestamp T0: $t0_avro"
+      log "  echo this somewhere safe; Phase B needs --start-time=$t0_avro"
+    else
+      log "  WARN: couldn't parse snapshotTime from manifest; check ${import_input_dir}/tr_entities-manifest.json"
+      log "  Phase B can fall back to the forensic backup version_time as T0"
+    fi
+  fi
+
+  # 4. Create-or-recreate target database on nam6. The import template
+  #    expects a database that ALREADY exists with matching DDL — it
+  #    populates rows but doesn't create the database. Drop the empty
+  #    stub from Stage 0 (and re-create with the same DDL) only when
+  #    the existing target is verified empty.
+  local target_exists=0
   if gc spanner databases describe "$DATABASE" --instance="$NEW_INSTANCE" \
        >/dev/null 2>&1; then
-    log "  database $DATABASE already exists on $NEW_INSTANCE; checking if empty"
+    target_exists=1
+  fi
+
+  if [ $target_exists -eq 1 ]; then
+    log "  target database $DATABASE exists on $NEW_INSTANCE; checking if empty"
     local target_rows="0"
     if [ $DRY_RUN -eq 0 ]; then
       target_rows=$(gc spanner databases execute-sql "$DATABASE" \
@@ -145,31 +248,53 @@ phase_A() {
         --sql="SELECT COUNT(*) AS n FROM tr_entities" 2>/dev/null \
         | tail -1 | tr -d '[:space:]')
     fi
-    if [ "$target_rows" = "0" ]; then
-      log "  target $NEW_INSTANCE/$DATABASE is empty (Stage 0 stub); dropping for restore"
-      gc_or_dry spanner databases delete "$DATABASE" --instance="$NEW_INSTANCE" \
-        --quiet
-    else
-      log "  target $NEW_INSTANCE/$DATABASE has $target_rows rows — Phase A already restored data"
-      log "  (re-seed by dropping the db manually if you really want to start over)"
-      return
+    if [ "$target_rows" != "0" ]; then
+      log "  target has $target_rows rows already — Phase A previously seeded data"
+      log "  (skip re-import; if you want to redo, drop the db manually)"
+      return 0
     fi
+    log "  target empty; reusing for import"
+  else
+    log "  creating target database $DATABASE on $NEW_INSTANCE with mirrored DDL"
+    gc_or_dry spanner databases create "$DATABASE" \
+      --instance="$NEW_INSTANCE" \
+      --database-dialect=GOOGLE_STANDARD_SQL \
+      --ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'
   fi
 
-  log "  restoring $BACKUP_NAME → $NEW_INSTANCE/$DATABASE"
-  gc_or_dry spanner databases restore \
-    --source-backup="projects/${PROJECT_ID}/instances/${OLD_INSTANCE}/backups/${BACKUP_NAME}" \
-    --destination-instance="$NEW_INSTANCE" \
-    --destination-database="$DATABASE" \
-    --async
-
-  if [ $DRY_RUN -eq 0 ]; then
-    log "  restore in progress; waiting..."
-    until gc spanner databases describe "$DATABASE" --instance="$NEW_INSTANCE" \
-            --format="value(state)" 2>/dev/null | grep -q READY; do
-      sleep 15
+  # 5. Import the Avro export into nam6.
+  log "  launching Dataflow Avro-import job → $NEW_INSTANCE/$DATABASE"
+  if [ $DRY_RUN -eq 1 ]; then
+    cat <<EOF >&2
+  [dry-run] gcloud dataflow jobs run ${DATAFLOW_JOB_NAME}-import \\
+    --project=$PROJECT_ID --region=$DATAFLOW_REGION \\
+    --gcs-location=gs://dataflow-templates/latest/GCS_Avro_to_Cloud_Spanner \\
+    --staging-location=$DATAFLOW_TEMP_BUCKET/staging \\
+    --parameters=instanceId=$NEW_INSTANCE,databaseId=$DATABASE,inputDir=<sub-prefix-detected-at-runtime>
+EOF
+  else
+    gcloud dataflow jobs run "${DATAFLOW_JOB_NAME}-import" \
+      --project="$PROJECT_ID" \
+      --region="$DATAFLOW_REGION" \
+      --gcs-location=gs://dataflow-templates/latest/GCS_Avro_to_Cloud_Spanner \
+      --staging-location="$DATAFLOW_TEMP_BUCKET/staging" \
+      --parameters="instanceId=${NEW_INSTANCE},databaseId=${DATABASE},inputDir=${import_input_dir}"
+    log "  import job launched; waiting for completion..."
+    local import_state=""
+    until [ "$import_state" = "Done" ] || [ "$import_state" = "JOB_STATE_DONE" ]; do
+      sleep 30
+      import_state=$(gcloud dataflow jobs list \
+        --project="$PROJECT_ID" --region="$DATAFLOW_REGION" \
+        --filter="name=${DATAFLOW_JOB_NAME}-import" \
+        --format="value(state)" 2>/dev/null | head -1)
+      log "    import job state: $import_state"
+      if [ "$import_state" = "Failed" ] || [ "$import_state" = "Cancelled" ] || \
+         [ "$import_state" = "JOB_STATE_FAILED" ] || [ "$import_state" = "JOB_STATE_CANCELLED" ]; then
+        log "  ERROR: import job ended in $import_state — bailing"
+        return 1
+      fi
     done
-    log "  restore READY on $NEW_INSTANCE"
+    log "  import complete; nam6 is seeded"
   fi
 }
 
