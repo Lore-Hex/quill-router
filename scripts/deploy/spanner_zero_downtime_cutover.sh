@@ -1,30 +1,49 @@
 #!/usr/bin/env bash
-# Stage 1 of the multi-region expansion plan, zero-downtime variant:
-# migrate the credit ledger from `trusted-router` (regional-us-central1)
-# to `trusted-router-nam6` (multi-region nam6) using Spanner change
-# streams + Dataflow as the replicator. Practiced once before there are
-# users so the next migration (eur3 hot replica in Stage 5a, or even
-# CRDB in Stage 5b) can use the same playbook.
+# Stage 1 of the multi-region expansion plan: migrate the credit
+# ledger from `trusted-router` (regional-us-central1) to
+# `trusted-router-nam6` (multi-region nam6).
 #
-# Approach:
-#   Phase A — Take a backup of `trusted-router`, restore into nam6. Note
-#             the backup's version_time as T0.
-#   Phase B — Create a change stream `tr_migration` on the source. Launch
-#             the GCP-provided Dataflow template
-#             `Cloud_Spanner_change_streams_to_Cloud_Spanner` starting
-#             from T0, sinking to nam6.
-#   Phase C — Verify steady-state replication: row counts and max
-#             updated_at timestamps match within seconds-scale lag.
-#   Phase D — Read flip: feature flag TR_SPANNER_READ_FROM_NAM6=1 rolled
-#             region-by-region. Application keeps writing to source; the
-#             change stream keeps replicating those writes to nam6.
-#   Phase E — Write flip: pause the LB ~2-3s, wait for stream lag = 0,
-#             update Cloud Run env vars to point at nam6 for writes,
-#             unpause LB. (Phase E is NOT automated by this script — it
-#             prints the runbook for the operator.)
-#   Phase F — Stop the Dataflow stream + drop the change stream after
-#             1 hour clean. Keep the source alive 7 more days as a
-#             forensic-restore safety net, then delete.
+# Originally planned as a zero-downtime migration via Spanner change
+# streams + Dataflow. We learned (the hard way, mid-apply) that GCP
+# does NOT publish a `Spanner_Change_Streams_to_Cloud_Spanner` flex
+# template — the v2 source exists in the open-source DataflowTemplates
+# repo but isn't pre-staged in dataflow-templates-${REGION}/latest/flex/.
+# The only Spanner change-stream sinks GCP ships are BigQuery, GCS,
+# PubSub, and Sharded File Sink — none of them land back in Spanner.
+#
+# Since "user has no users yet" makes a brief read-only window free in
+# user impact, we pivoted to the read-only-window variant (the original
+# plan's "highest-risk step" — it's actually fine when no traffic is
+# affected). The pre-flight idempotency-key code we shipped for
+# Stage 1 is still useful for Stage 5a's eur3 hot-replica pattern,
+# where the dual-write + change-stream story actually pays off.
+#
+# Approach (revised):
+#   Phase A — Avro-export source → import into nam6. Cross-config
+#             move (regional-us-central1 → nam6) requires Avro
+#             export+import; backup-restore is forbidden across
+#             instanceConfig boundaries.
+#   Phase B — Set TR_READ_ONLY=1 on every Cloud Run revision. Re-run
+#             Phase A to refresh nam6's data with the latest writes
+#             (the read-only flag stops new writes; reads keep working
+#             off the source). The middleware at
+#             src/trusted_router/middleware.py:read_only_middleware
+#             handles this — POST/PUT/PATCH/DELETE return 503 with
+#             Retry-After: 1800; GET/HEAD/OPTIONS pass through.
+#   Phase C — Verify nam6 row counts and max(updated_at) match source.
+#   Phase D — Update TR_SPANNER_INSTANCE_ID env var on every Cloud
+#             Run revision to nam6. Application now reads + writes
+#             nam6.
+#   Phase E — Drop TR_READ_ONLY. Synthetic write+read in each region.
+#   Phase F — After 7 days clean: delete the old `trusted-router`
+#             instance. Until then it stays alive as a forensic-restore
+#             safety net.
+#
+# What this script DOES NOT automate:
+#   - The actual Cloud Run env-var flips in Phase B/D/E. Those are
+#     printed as runbook commands the operator copy-pastes. The
+#     reasoning: the flip blast radius is "every region in prod" and
+#     the right pace is human-judgment-paced, not script-paced.
 #
 # Each phase is idempotent: re-running picks up where it left off and
 # skips already-done work.
@@ -32,10 +51,8 @@
 # Usage:
 #   bash scripts/deploy/spanner_zero_downtime_cutover.sh                        # dry-run all
 #   bash scripts/deploy/spanner_zero_downtime_cutover.sh --apply --phase A      # apply one
-#   bash scripts/deploy/spanner_zero_downtime_cutover.sh --apply                # apply A→C
-#                                                                                 (D and E
-#                                                                                 require explicit
-#                                                                                 --phase D / E)
+#   bash scripts/deploy/spanner_zero_downtime_cutover.sh --apply --phase C      # verify
+#   Phases B/D/E are operator-driven runbooks (printed, not executed).
 
 set -euo pipefail
 
@@ -53,7 +70,13 @@ DATAFLOW_JOB_NAME="${TR_DATAFLOW_JOB_NAME:-tr-spanner-migration}"
 DATAFLOW_TEMP_BUCKET="${TR_DATAFLOW_TEMP_BUCKET:-gs://${PROJECT_ID}-dataflow-tmp}"
 
 DRY_RUN=1
-PHASE="A,B,C"
+# Default to Phase A only — the data-moving phase, fully automated.
+# Phases B/D/E are operator runbooks (printed, not executed); Phase C
+# is verification (read-only, safe but cost-incurring on Spanner ops).
+# Phase F is destructive and runs only after a 7-day cool-down. Keep
+# the default conservative so a stray --apply doesn't roll an
+# operator runbook automatically.
+PHASE="A"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) DRY_RUN=0; shift ;;
@@ -298,80 +321,47 @@ EOF
   fi
 }
 
-# ─── Phase B: Change stream + Dataflow replicator ────────────────────────
+# ─── Phase B: Set read-only on every region (operator-driven runbook) ────
+#
+# The plan was originally a Spanner change-stream + Dataflow replicator,
+# but GCP doesn't ship a Spanner→Spanner template (only Spanner→BigQuery,
+# →GCS, →PubSub, →ShardedFileSink). Using the v2 source from the
+# DataflowTemplates open-source repo would mean a Maven build + custom
+# staging — significant work. Since the user has no users yet, a brief
+# read-only window is free in user impact, and we have the right
+# middleware shipped (read_only_middleware in src/trusted_router/middleware.py)
+# to handle it cleanly. So Phase B prints the runbook commands the
+# operator runs to set TR_READ_ONLY=1 on every Cloud Run revision.
 phase_B() {
-  log "=== phase B: change stream + Dataflow replicator ==="
-
-  # 1. Create the change stream. Use NEW_VALUES (capture full post-image
-  #    on every write) and 7d retention (covers the full migration plus
-  #    rollback safety).
-  log "  creating change stream $CHANGE_STREAM on $OLD_INSTANCE/$DATABASE"
-  local create_stream_ddl="CREATE CHANGE STREAM ${CHANGE_STREAM} FOR tr_entities OPTIONS (retention_period = '7d', value_capture_type = 'NEW_VALUES')"
-  if [ $DRY_RUN -eq 1 ]; then
-    echo "  [dry-run] gcloud spanner databases ddl update $DATABASE --instance=$OLD_INSTANCE --ddl='$create_stream_ddl'"
-  else
-    # Skip if it already exists (DDL is idempotent only via try/skip).
-    if gc spanner databases execute-sql "$DATABASE" --instance="$OLD_INSTANCE" \
-         --sql="SELECT NAME FROM information_schema.change_streams WHERE NAME='${CHANGE_STREAM}'" 2>&1 \
-         | grep -q "$CHANGE_STREAM"; then
-      log "  change stream $CHANGE_STREAM already exists"
-    else
-      gc spanner databases ddl update "$DATABASE" --instance="$OLD_INSTANCE" \
-        --ddl="$create_stream_ddl"
-      log "  change stream created"
-    fi
-  fi
-
-  # 2. Make sure the Dataflow temp bucket exists. The streaming job
-  #    needs a place to land staging files.
-  if [ $DRY_RUN -eq 0 ]; then
-    if ! gsutil ls -b "$DATAFLOW_TEMP_BUCKET" >/dev/null 2>&1; then
-      log "  creating Dataflow temp bucket $DATAFLOW_TEMP_BUCKET"
-      gsutil mb -p "$PROJECT_ID" -l "$DATAFLOW_REGION" -b on "$DATAFLOW_TEMP_BUCKET"
-    else
-      log "  Dataflow temp bucket $DATAFLOW_TEMP_BUCKET already exists"
-    fi
-  fi
-
-  # 3. Launch the Dataflow streaming job. The template
-  #    `Cloud_Spanner_change_streams_to_Cloud_Spanner` is shipped by
-  #    GCP and reads every change-stream record, replays it as an UPSERT
-  #    into the destination instance.
-  log "  launching Dataflow streaming job $DATAFLOW_JOB_NAME"
-  if [ $DRY_RUN -eq 1 ]; then
-    cat <<EOF >&2
-  [dry-run] gcloud dataflow flex-template run $DATAFLOW_JOB_NAME \\
-    --project=$PROJECT_ID \\
-    --region=$DATAFLOW_REGION \\
-    --template-file-gcs-location=gs://dataflow-templates/latest/flex/Spanner_Change_Streams_to_Cloud_Spanner \\
-    --parameters=spannerProjectId=$PROJECT_ID,spannerInstanceId=$OLD_INSTANCE,spannerDatabaseId=$DATABASE,spannerMetadataInstanceId=$OLD_INSTANCE,spannerMetadataDatabaseId=$DATABASE,spannerChangeStreamName=$CHANGE_STREAM,sinkProjectId=$PROJECT_ID,sinkInstanceId=$NEW_INSTANCE,sinkDatabaseId=$DATABASE \\
-    --staging-location=$DATAFLOW_TEMP_BUCKET/staging \\
-    --temp-location=$DATAFLOW_TEMP_BUCKET/temp
-EOF
-  else
-    # Skip if a streaming job with this name is already RUNNING — Dataflow
-    # job names are reusable but a new launch with the same name will create
-    # a *second* job, doubling cost.
-    local existing
-    existing=$(gcloud dataflow jobs list \
-      --project="$PROJECT_ID" --region="$DATAFLOW_REGION" \
-      --filter="name=$DATAFLOW_JOB_NAME AND state=Running" \
-      --format="value(id)" 2>/dev/null | head -1)
-    if [ -n "$existing" ]; then
-      log "  Dataflow job $DATAFLOW_JOB_NAME already running (id=$existing)"
-    else
-      gcloud dataflow flex-template run "$DATAFLOW_JOB_NAME" \
-        --project="$PROJECT_ID" \
-        --region="$DATAFLOW_REGION" \
-        --template-file-gcs-location=gs://dataflow-templates/latest/flex/Spanner_Change_Streams_to_Cloud_Spanner \
-        --parameters="spannerProjectId=$PROJECT_ID,spannerInstanceId=$OLD_INSTANCE,spannerDatabaseId=$DATABASE,spannerMetadataInstanceId=$OLD_INSTANCE,spannerMetadataDatabaseId=$DATABASE,spannerChangeStreamName=$CHANGE_STREAM,sinkProjectId=$PROJECT_ID,sinkInstanceId=$NEW_INSTANCE,sinkDatabaseId=$DATABASE" \
-        --staging-location="$DATAFLOW_TEMP_BUCKET/staging" \
-        --temp-location="$DATAFLOW_TEMP_BUCKET/temp"
-      log "  Dataflow job launched"
-    fi
-  fi
-
-  log "  Phase B complete. Watch dataflow.googleapis.com/job/system_lag_seconds; <5s = caught up."
+  log "=== phase B: set read-only on every region (operator runbook) ==="
+  log ""
+  log "  GOAL: stop new writes everywhere so Phase A can re-run against"
+  log "  a quiet source, with confidence the row-count/max-timestamp"
+  log "  checksum in Phase C reflects a snapshot the application can't"
+  log "  contradict by writing during the cutover."
+  log ""
+  log "  Per region (us-central1, europe-west4):"
+  log ""
+  log "    gcloud run services update trusted-router --region=\$R \\"
+  log "      --update-env-vars=TR_READ_ONLY=1 \\"
+  log "      --project=$PROJECT_ID"
+  log ""
+  log "  Verification per region (synthetic write should 503):"
+  log ""
+  log "    SMOKE_KEY=\$(gcloud secrets versions access latest \\"
+  log "      --secret=trustedrouter-synthetic-monitor-api-key \\"
+  log "      --project=$PROJECT_ID)"
+  log "    curl -X POST https://api-\$R.quillrouter.com/v1/signup \\"
+  log "      -H \"Authorization: Bearer \$SMOKE_KEY\" -d '{}'"
+  log "    # expected: 503 with {\"error\":{\"type\":\"service_unavailable\"}}"
+  log ""
+  log "  Once read-only is confirmed in all regions:"
+  log "    bash scripts/deploy/spanner_zero_downtime_cutover.sh \\"
+  log "      --apply --phase A   # re-run Avro export to pick up final writes"
+  log "    bash scripts/deploy/spanner_zero_downtime_cutover.sh \\"
+  log "      --apply --phase C   # row-count + max-updated_at parity check"
+  log ""
+  log "  Then run Phase D (env-var swap) to flip writes to nam6."
 }
 
 # ─── Phase C: Verify steady-state replication ────────────────────────────
@@ -394,103 +384,76 @@ phase_C() {
     > /tmp/spanner-target.txt 2>&1
   cat /tmp/spanner-target.txt | head -30
 
-  log "  diff (rows in source vs target — expect identical or 1-2 row drift on hot kinds):"
+  log "  diff (rows in source vs target — expect identical when source"
+  log "  has been read-only since the latest Phase A re-run):"
   diff /tmp/spanner-source.txt /tmp/spanner-target.txt || true
-
-  log "  Dataflow lag:"
-  gcloud monitoring time-series list \
-    --project="$PROJECT_ID" \
-    --filter='metric.type="dataflow.googleapis.com/job/system_lag_seconds" AND resource.labels.job_name="'"$DATAFLOW_JOB_NAME"'"' \
-    --interval-end-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --interval-start-time="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u --date='5 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" \
-    --format="value(points[0].value.doubleValue)" 2>/dev/null | head -3 || true
 }
 
-# ─── Phase D: Read flip (TR_SPANNER_READ_FROM_NAM6=1 per region) ─────────
+# ─── Phase D: Write flip (operator runbook) ──────────────────────────────
 phase_D() {
-  log "=== phase D: read flip (rolling region-by-region) ==="
-  log "  Application keeps writing to $OLD_INSTANCE. Reads switch to $NEW_INSTANCE."
-  log "  Change stream still flows old → new, so writes still appear on new"
-  log "  before the read happens (within stream lag, typically <5s)."
+  log "=== phase D: flip TR_SPANNER_INSTANCE_ID to nam6 (operator runbook) ==="
   log ""
-  log "  Order: us-central1 first (5-min watch), then europe-west4."
-  log "  WATCH FOR: stale-read errors. The credit-reservation read-after-write"
-  log "  pattern is the most likely surface — if a freshly-written reservation"
-  log "  isn't yet replicated to $NEW_INSTANCE, the read returns 'not found'."
+  log "  PRECONDITIONS (verify before running):"
+  log "    - Phase B: TR_READ_ONLY=1 set on every Cloud Run revision"
+  log "    - Phase A: re-ran after read-only landed; nam6 holds the final"
+  log "      pre-cutover snapshot"
+  log "    - Phase C: row counts and max(updated_at) match source ↔ nam6"
   log ""
-  log "  Per-region command (you run; this script doesn't roll Cloud Run):"
+  log "  Per region, in order (us-central1 first, then europe-west4):"
   log ""
-  log "    gcloud run services update trusted-router --region=us-central1 \\"
-  log "      --update-env-vars=TR_SPANNER_READ_FROM_NAM6=1 \\"
+  log "    gcloud run services update trusted-router --region=\$R \\"
+  log "      --update-env-vars=TR_SPANNER_INSTANCE_ID=$NEW_INSTANCE \\"
   log "      --project=$PROJECT_ID"
   log ""
-  log "  After 5 min clean on us-central1, repeat for europe-west4."
-  log "  After 30 min clean across all regions: proceed to Phase E."
+  log "  Watch the synthetic monitor + 5xx rate for 5 min after each"
+  log "  region's flip before doing the next one. If anything goes wrong:"
+  log ""
+  log "    gcloud run services update trusted-router --region=\$R \\"
+  log "      --update-env-vars=TR_SPANNER_INSTANCE_ID=$OLD_INSTANCE \\"
+  log "      --project=$PROJECT_ID"
+  log ""
+  log "  (Reverts in seconds; the old instance is still alive and"
+  log "  in read-only mode at the application layer, so nothing has"
+  log "  diverged.)"
 }
 
-# ─── Phase E: Write flip (~2-3s 503 window) ──────────────────────────────
+# ─── Phase E: Drop read-only (operator runbook) ──────────────────────────
 phase_E() {
-  log "=== phase E: write flip (operator-driven; this script prints the runbook) ==="
+  log "=== phase E: drop TR_READ_ONLY (operator runbook) ==="
   log ""
-  log "  GOAL: switch writes from $OLD_INSTANCE → $NEW_INSTANCE without"
-  log "  losing or double-applying any in-flight write."
+  log "  PRECONDITIONS:"
+  log "    - Phase D: every region's TR_SPANNER_INSTANCE_ID points at nam6"
+  log "    - Synthetic read+write against nam6 succeeds in every region"
   log ""
-  log "  STEPS:"
-  log "    1. (Optional) flip TR_READ_ONLY=1 globally if you want a clean"
-  log "       2-3s pause via 503 Retry-After. Skipping this means a few"
-  log "       in-flight requests may see a transient error during the env"
-  log "       var update."
+  log "  Per region:"
   log ""
-  log "    2. Verify Dataflow lag = 0:"
-  log "       gcloud monitoring time-series list ... system_lag_seconds < 1"
+  log "    gcloud run services update trusted-router --region=\$R \\"
+  log "      --remove-env-vars=TR_READ_ONLY \\"
+  log "      --project=$PROJECT_ID"
   log ""
-  log "    3. For each region in (us-central1, europe-west4):"
-  log "       gcloud run services update trusted-router --region=\$R \\"
-  log "         --update-env-vars=TR_SPANNER_INSTANCE_ID=$NEW_INSTANCE \\"
-  log "         --project=$PROJECT_ID"
-  log ""
-  log "    4. Drop TR_READ_ONLY (if you set it in step 1)."
-  log ""
-  log "    5. Synthetic write+read in each region. Confirm OK."
-  log ""
-  log "  Then proceed to Phase F (stop replicator, decommission window)."
+  log "  Cutover complete after this. Watch p99 commit latency on nam6"
+  log "  for 60 min — multi-region writes are 20-40ms on nam6 vs 5-10ms"
+  log "  on the regional source. That's expected."
 }
 
-# ─── Phase F: Stop replicator + 7-day decommission window ────────────────
+# ─── Phase F: 7-day decommission window ──────────────────────────────────
 phase_F() {
-  log "=== phase F: stop replicator + decommission window ==="
+  log "=== phase F: decommission window ==="
   log ""
-  log "  RUN ONLY AFTER 1+ HOUR OF CLEAN PHASE-E TRAFFIC ON $NEW_INSTANCE."
+  log "  RUN ONLY AFTER 7 DAYS OF CLEAN PHASE-E TRAFFIC ON $NEW_INSTANCE."
+  log "  Until then, $OLD_INSTANCE stays alive as a forensic-restore"
+  log "  safety net (~$73/mo, cheap insurance for the cutover window)."
   log ""
-
-  if [ $DRY_RUN -eq 1 ]; then
-    log "  [dry-run] would cancel Dataflow job $DATAFLOW_JOB_NAME"
-    log "  [dry-run] would drop change stream $CHANGE_STREAM"
-    log "  [dry-run] would NOT delete $OLD_INSTANCE (manual after 7 days)"
-    return
-  fi
-
-  local job_id
-  job_id=$(gcloud dataflow jobs list \
-    --project="$PROJECT_ID" --region="$DATAFLOW_REGION" \
-    --filter="name=$DATAFLOW_JOB_NAME AND state=Running" \
-    --format="value(id)" 2>/dev/null | head -1)
-  if [ -n "$job_id" ]; then
-    log "  cancelling Dataflow job $DATAFLOW_JOB_NAME (id=$job_id)"
-    gcloud dataflow jobs cancel "$job_id" --region="$DATAFLOW_REGION" --project="$PROJECT_ID"
-  else
-    log "  no running Dataflow job named $DATAFLOW_JOB_NAME"
-  fi
-
-  log "  dropping change stream $CHANGE_STREAM"
-  gc spanner databases ddl update "$DATABASE" --instance="$OLD_INSTANCE" \
-    --ddl="DROP CHANGE STREAM ${CHANGE_STREAM}" || \
-    log "  (drop already done or never existed)"
-
-  log ""
-  log "  $OLD_INSTANCE is INTENTIONALLY left alive for 7 days as a"
-  log "  forensic-restore safety net. Delete it manually on day 7:"
+  log "  Day 7+:"
   log "    gcloud spanner instances delete $OLD_INSTANCE --project=$PROJECT_ID"
+  log ""
+  log "  The forensic backup on $OLD_INSTANCE was deleted with the"
+  log "  instance. If you want to retain it past day 7, copy to a"
+  log "  long-lived backup before the instance delete:"
+  log ""
+  log "    gcloud spanner backups create $BACKUP_NAME-archive \\"
+  log "      --instance=$OLD_INSTANCE --database=$DATABASE \\"
+  log "      --retention-period=180d --project=$PROJECT_ID"
 }
 
 # ─── Dispatch (comma-separated phases or single letter) ──────────────────
