@@ -34,11 +34,21 @@ if [ -n "${GCP_SA_KEY_KMS_WRAPPED:-}" ]; then
 
   # base64-decode the wrapped value, pipe ciphertext to KMS Decrypt,
   # base64-decode the response (aws CLI returns plaintext as base64).
+  #
+  # Region: the KMS CMK that wrapped this secret lives in the SAME
+  # region as the Secrets Manager that hosts it, by construction
+  # (see tools/deploy-aws-nitro.sh). That region is us-west-2 today.
+  # Don't fall back to $TR_AWS_REGION here — that one is the app's
+  # outbound AWS API region (SES in us-east-1, e.g.) and is NOT the
+  # KMS-key region. Prefer the AWS-defined env vars Fargate injects
+  # (AWS_REGION / AWS_DEFAULT_REGION) which match the running task,
+  # which is the same region as the wrapping CMK.
+  KMS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
   PLAINTEXT_JSON=$(
     echo "$GCP_SA_KEY_KMS_WRAPPED" \
       | base64 -d \
       | aws kms decrypt \
-          --region "${TR_AWS_REGION:-us-west-2}" \
+          --region "$KMS_REGION" \
           --ciphertext-blob fileb:///dev/stdin \
           --query Plaintext --output text \
       | base64 -d
