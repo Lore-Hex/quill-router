@@ -14,14 +14,12 @@ import base64
 import socket
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pytest_httpx import HTTPXMock
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-
 
 # A 1×1 transparent PNG — small enough that decoding is unambiguous.
 _TINY_PNG = bytes.fromhex(
@@ -40,7 +38,7 @@ def fetch_image_settings() -> Settings:
     return Settings(
         environment="test",
         sentry_dsn=None,
-        internal_gateway_token="test-internal-secret",
+        internal_gateway_token="test-internal-secret",  # noqa: S106 — fixture token, not a real secret
         stripe_secret_key=None,
         stripe_webhook_secret=None,
         google_client_id=None,

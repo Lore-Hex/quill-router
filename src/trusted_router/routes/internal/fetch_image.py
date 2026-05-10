@@ -42,7 +42,6 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.schemas import GatewayFetchImageRequest
 from trusted_router.types import ErrorType
 
-
 # Mirrored from enclave-go/internal/llm/multimodal.go const block. Keep
 # in lockstep — both ends MUST agree on the size cap so a request that
 # the enclave will accept doesn't get rejected here (or vice versa).
@@ -82,15 +81,15 @@ def _resolve_or_reject(host: str) -> None:
     resolves to both a public and a private address."""
     try:
         infos = socket.getaddrinfo(host, None)
-    except (socket.gaierror, UnicodeError):
+    except (socket.gaierror, UnicodeError) as exc:
         raise api_error(
             400, "image fetch: resolve failed", ErrorType.BAD_REQUEST
-        )
+        ) from exc
     if not infos:
         raise api_error(
             400, "image fetch: resolve failed", ErrorType.BAD_REQUEST
         )
-    for family, _, _, _, sockaddr in infos:
+    for _family, _, _, _, sockaddr in infos:
         ip = sockaddr[0]
         if not _is_safe_public_ip(ip):
             raise api_error(
@@ -179,14 +178,14 @@ def register(router: APIRouter) -> None:
         ) as client:
             try:
                 media_type, data = await _fetch_with_redirect_chain(client, url)
-            except httpx.TimeoutException:
+            except httpx.TimeoutException as exc:
                 raise api_error(
                     400, "image fetch: timeout", ErrorType.BAD_REQUEST
-                )
-            except httpx.HTTPError:
+                ) from exc
+            except httpx.HTTPError as exc:
                 raise api_error(
                     400, "image fetch: fetch failed", ErrorType.BAD_REQUEST
-                )
+                ) from exc
         if not media_type:
             # Sniff a minimal media type — match the Go enclave's
             # contentTypeMedia + http.DetectContentType behavior on
