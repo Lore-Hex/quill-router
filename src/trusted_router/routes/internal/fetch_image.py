@@ -90,7 +90,10 @@ def _resolve_or_reject(host: str) -> None:
             400, "image fetch: resolve failed", ErrorType.BAD_REQUEST
         )
     for _family, _, _, _, sockaddr in infos:
-        ip = sockaddr[0]
+        # sockaddr is `tuple[str, int] | tuple[str, int, int, int]` —
+        # element 0 is always the host string. mypy needs the cast to
+        # know that, since the type is unioned.
+        ip = str(sockaddr[0])
         if not _is_safe_public_ip(ip):
             raise api_error(
                 400,

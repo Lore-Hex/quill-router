@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import broadcast_queue, fetch_image, gateway, paypal, sentry, synthetic, webhook
+from . import broadcast_queue as broadcast_queue
+from . import fetch_image as fetch_image
+from . import gateway as gateway
+from . import paypal as paypal
+from . import sentry as sentry
+from . import synthetic as synthetic
+from . import webhook as webhook
 
 
 def register_internal_routes(router: APIRouter) -> None:

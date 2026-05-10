@@ -182,9 +182,9 @@ async def control_plane_health_probe(
             "control_plane_health",
             target,
             monitor_region,
-            url="(no control_plane_url configured)",
+            "(no control_plane_url configured)",
             status="down",
-            latency_milliseconds=0.0,
+            latency_milliseconds=0,
             error_type="missing_control_plane_url",
         )
     url = _root_url(target.control_plane_url, "/health")
