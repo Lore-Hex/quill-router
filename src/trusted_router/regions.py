@@ -115,9 +115,36 @@ def region_payload(settings: Settings) -> list[dict[str, Any]]:
                 if region == primary
                 else f"https://{settings.regional_api_hostname_template.format(region=region)}/v1"
             ),
+            # Per-region Cloud Run direct URL. The synthetic monitor
+            # uses this for /health probes that need to hit a
+            # SPECIFIC region's Cloud Run (not whichever region the
+            # global LB picks). The Cloud Run-managed cert covers
+            # `*.{region}.run.app` so it works for every region we
+            # have a Cloud Run service in — including the cold ones
+            # where the regional `api-{region}.quillrouter.com`
+            # hostname doesn't have a cert.
+            #
+            # Cold/warm doesn't matter: Cloud Run direct URLs work
+            # whether the service is at min-scale=0 or 1; they just
+            # incur a cold-start on first request after idle. The
+            # synthetic monitor probes them anyway because the cold-
+            # start tax IS the metric we want to measure.
+            "control_plane_url": _cloud_run_direct_url(settings, region),
         }
         for region in configured_regions(settings)
     ]
+
+
+def _cloud_run_direct_url(settings: Settings, region: str) -> str:
+    """Build the Cloud Run direct URL for `region`. Format is
+    `https://{service}-{project_number}.{region}.run.app`.
+
+    project_number is read from settings if available so per-region
+    URLs work in dev/staging projects without code edits. Falls back
+    to the prod hash if unset (tests / unconfigured environments)."""
+    project_number = getattr(settings, "gcp_project_number", "") or "44325983244"
+    service = getattr(settings, "cloud_run_service_name", "") or "trusted-router"
+    return f"https://{service}-{project_number}.{region}.run.app"
 
 
 def region_map_payload(settings: Settings) -> list[dict[str, Any]]:

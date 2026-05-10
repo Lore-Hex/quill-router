@@ -22,6 +22,16 @@ class SyntheticTarget:
     name: str
     api_base_url: str
     region: str | None = None
+    # Cloud Run direct URL for this region's control plane. When set,
+    # the synthetic monitor probes /health here too — separately from
+    # api_base_url's enclave probe — so we get a distinct per-region
+    # signal even when api_base_url's regional hostname CNAMEs to the
+    # global LB (cold regions, or warm regions whose ACME cert hasn't
+    # been issued yet because the MIG is at targetSize=0).
+    #
+    # None for the canonical target since that probe already hits the
+    # global enclave LB by definition.
+    control_plane_url: str | None = None
 
 
 def configured_targets(settings: Settings) -> list[SyntheticTarget]:
@@ -29,8 +39,27 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
     for region in region_payload(settings):
         name = str(region["id"])
         api_base_url = str(region["api_base_url"])
-        if all(existing.api_base_url != api_base_url for existing in targets):
-            targets.append(SyntheticTarget(name, api_base_url, name))
+        control_plane_url = region.get("control_plane_url") or None
+        # If the api_base_url is already represented (e.g. the primary
+        # region whose api_base_url == settings.api_base_url), skip
+        # adding a duplicate enclave target — but DO still attach the
+        # control_plane_url to the canonical target so we don't lose
+        # the per-region health probe.
+        existing = next((t for t in targets if t.api_base_url == api_base_url), None)
+        if existing is not None:
+            if control_plane_url and existing.control_plane_url is None:
+                # Replace canonical target with one carrying the
+                # primary's Cloud Run direct URL.
+                targets[targets.index(existing)] = SyntheticTarget(
+                    existing.name,
+                    existing.api_base_url,
+                    existing.region,
+                    control_plane_url,
+                )
+            continue
+        targets.append(
+            SyntheticTarget(name, api_base_url, name, control_plane_url)
+        )
     return targets
 
 
@@ -48,6 +77,21 @@ async def run_synthetic_once(
         for target in configured_targets(settings):
             samples.append(await tls_health_probe(client, target, monitor_region=region))
             samples.append(await attestation_nonce_probe(client, target, monitor_region=region))
+            # Per-region control plane health via Cloud Run direct URL.
+            # tls_health above probes target.api_base_url which is the
+            # ENCLAVE (api-{region}.quillrouter.com) — that path can be
+            # broken by an enclave-side issue (MIG at size 0, ACME cert
+            # not issued, etc.) while the regional Cloud Run is fine.
+            # This separate probe pins the control-plane signal per
+            # region so dashboards can tell "the Cloud Run instance is
+            # up but the regional enclave isn't" from "the whole
+            # region is dead".
+            if target.control_plane_url:
+                samples.append(
+                    await control_plane_health_probe(
+                        client, target, monitor_region=region
+                    )
+                )
             if key:
                 samples.append(
                     await openai_chat_pong_probe(
@@ -102,6 +146,67 @@ async def tls_health_probe(
     except httpx.HTTPError as exc:
         return _sample(
             "tls_health",
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=_elapsed_ms(started),
+            error_type=exc.__class__.__name__,
+        )
+
+
+async def control_plane_health_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+) -> SyntheticProbeSample:
+    """Probe `/health` on the per-region Cloud Run direct URL.
+
+    Distinct from tls_health_probe (which hits the enclave-fronted
+    api_base_url) — this one bypasses the enclave LB entirely and
+    pins the request to the specific Cloud Run service running in
+    `target.region`. It's the only way to tell:
+
+      * "the Cloud Run instance in us-east4 is fine but its enclave
+        cert hasn't issued yet" (control_plane up, tls_health down),
+      * "the regional Cloud Run is OOM-killing" (control_plane down,
+        tls_health up because LB routes around to a different region).
+
+    The endpoint is /health (not /healthz) — that's what FastAPI
+    registered in main.py: `@router.get("/health")`. /healthz returns
+    401 because it falls through to the auth-required catch-all.
+    """
+    if not target.control_plane_url:
+        return _sample(
+            "control_plane_health",
+            target,
+            monitor_region,
+            url="(no control_plane_url configured)",
+            status="down",
+            latency_milliseconds=0.0,
+            error_type="missing_control_plane_url",
+        )
+    url = _root_url(target.control_plane_url, "/health")
+    started = time.perf_counter()
+    try:
+        response = await client.get(url)
+        latency_ms = _elapsed_ms(started)
+        ok = response.status_code == 200 and _health_ok(response)
+        return _sample(
+            "control_plane_health",
+            target,
+            monitor_region,
+            url,
+            status="up" if ok else "down",
+            latency_milliseconds=latency_ms,
+            ttfb_milliseconds=latency_ms,
+            http_status=response.status_code,
+            error_type=None if ok else "bad_health_response",
+        )
+    except httpx.HTTPError as exc:
+        return _sample(
+            "control_plane_health",
             target,
             monitor_region,
             url,

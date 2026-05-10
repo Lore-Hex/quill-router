@@ -44,10 +44,50 @@ PROBES: list[tuple[str, str]] = [
     ("venice",      "z-ai/glm-4.6"),
 ]
 
+# Per-region enclave URLs the smoke targets. We deliberately use the
+# regional hostnames (api-<region>.quillrouter.com) instead of letting
+# the global LB on api.quillrouter.com pick a backend, because we
+# want to *prove* each warm region's enclave is healthy. The global
+# LB's geolocation routing was flattening all probe traffic into
+# whichever region was geographically closest to the smoke client,
+# which left other regions un-monitored.
+#
+# Regions are listed in the same order as TR_REGIONS in
+# scripts/deploy/_lib.sh — the source of truth for "which regions
+# are configured."
+#
+# Caveats per region:
+#   - us-central1: this is the primary region. The canonical hostname
+#     api.quillrouter.com points here; no separate api-us-central1
+#     cert exists (would TLS-fail because the enclave's autocert
+#     entry covers only the canonical name in primary, see
+#     regions.py::region_payload).
+#   - us-east4: regional autocert is configured (QUILL_API_HOST=
+#     api-us-east4.quillrouter.com on the enclave MIG template), but
+#     the cert can only be issued once the MIG has at least one
+#     running instance. If the MIG is at targetSize=0 the smoke will
+#     fail TLS for this region — that's a deployment-state signal,
+#     not a smoke bug. Resize the MIG and re-probe.
+#   - asia-northeast1, asia-southeast1, southamerica-east1: control-
+#     plane only (no enclave MIG by design). They serve
+#     authorize/settle from local Cloud Run instances but the
+#     inference path lands on the closest warm enclave. The smoke
+#     skips the enclave probe for these regions; the synthetic
+#     monitor's separate /health probe via Cloud Run direct URLs
+#     covers the control-plane health for them.
 REGIONS = {
-    "us": "https://api.quillrouter.com",
-    "europe": "https://api-europe-west4.quillrouter.com",
+    "us-central1":        "https://api.quillrouter.com",
+    "europe-west4":       "https://api-europe-west4.quillrouter.com",
+    "us-east4":           "https://api-us-east4.quillrouter.com",
+    # Aliases preserved for backward-compat with operator muscle memory.
+    "us":                 "https://api.quillrouter.com",
+    "europe":             "https://api-europe-west4.quillrouter.com",
 }
+
+# Regions that have a regional enclave MIG. The smoke iterates these
+# by default; the aliases above are accepted via --regions for legacy
+# callers but produce duplicate probes against the same backend.
+ENCLAVE_REGIONS = ("us-central1", "europe-west4", "us-east4")
 
 
 @dataclass
@@ -128,7 +168,10 @@ def probe_one(api_key: str, region_name: str, base_url: str, provider: str, mode
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--regions", nargs="+", default=list(REGIONS.keys()), help="us / europe / both"
+        "--regions", nargs="+", default=list(ENCLAVE_REGIONS),
+        help="Regions to probe. Default: all enclave-capable regions "
+             "(us-central1, europe-west4, us-east4). Pass legacy "
+             "aliases ('us', 'europe') if you want the old behavior."
     )
     parser.add_argument(
         "--workers", type=int, default=4,

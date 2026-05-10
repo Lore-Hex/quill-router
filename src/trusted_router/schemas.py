@@ -43,7 +43,7 @@ class CheckoutRequest(_Lenient):
     workspace_id: str | None = None
     success_url: str | None = None
     cancel_url: str | None = None
-    payment_method: Literal["auto", "stablecoin", "crypto", "usdc"] = "auto"
+    payment_method: Literal["auto", "stablecoin", "crypto", "usdc", "paypal"] = "auto"
 
     @field_validator("amount")
     @classmethod
@@ -158,6 +158,16 @@ class GatewayAuthorizeRequest(_Lenient):
         if self.max_tokens is not None:
             return self.max_tokens
         return 512
+
+
+class GatewayFetchImageRequest(_Lenient):
+    # AWS Nitro enclaves have no DNS/network stack of their own, so when a
+    # caller references an image by URL the enclave proxies the fetch
+    # through this endpoint. The control plane resolves DNS, rejects
+    # private/loopback IPs (the same SSRF check the GCP-direct enclave
+    # variant does locally in llm/multimodal_direct.go), and returns
+    # the bytes as base64 to be re-embedded inline by the enclave.
+    url: str = Field(min_length=1)
 
 
 class GatewayValidateRequest(_Lenient):
