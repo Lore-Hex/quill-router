@@ -15,7 +15,6 @@ Reads TR_API_KEY from env. If not set, prints a no-op message.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 import time
@@ -134,7 +133,10 @@ def probe_one(api_key: str, region_name: str, base_url: str, provider: str, mode
                     err = ""
                     try:
                         err = response.read().decode("utf-8")[:200]
-                    except Exception:
+                    except (httpx.HTTPError, UnicodeDecodeError):
+                        # Best-effort error-body capture; if decode or
+                        # the trailing read fails the smoke still returns
+                        # a useful Result with status_code + ttfb.
                         pass
                     return Result(
                         provider=provider,
