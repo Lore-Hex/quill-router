@@ -68,6 +68,9 @@ add_secret_env_if_exists "TR_GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
+add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
+add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
 add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
@@ -105,6 +108,46 @@ ENV_VARS=(
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
+prune_failed_revisions() {
+  # `gcloud run deploy --no-traffic` waits for the LATEST revision on the
+  # service to be Ready before returning success. If a previous deploy
+  # left a NotReady revision (container failed to start, OOM during
+  # startup probe, missing env, etc.) AND the latest revision is that
+  # NotReady one, the new deploy gets misreported as failed even when
+  # it successfully created a fresh revision behind the latest tag.
+  #
+  # Caught the hard way during the 2026-05-10 cutover: paypal.py was
+  # uncommitted, an earlier deploy created revision 00131-zkk (Failed),
+  # and every subsequent deploy returned "Revision 00131-zkk is not
+  # ready" instead of failing-clean — leaving the operator to
+  # manually `update-traffic` to the actually-healthy fresh revision.
+  #
+  # Fix: before deploying, find revisions whose Ready condition is
+  # neither True nor pending and which currently have no traffic
+  # routed (so they're safe to delete) and remove them. Idempotent;
+  # no-op when everything is healthy.
+  local target="$1"
+  local serving
+  serving=$(gc run services describe "$SERVICE" --region "$target" \
+    --format='value(status.traffic[].revisionName)' 2>/dev/null \
+    | tr ';' ' ')
+  local failed_revs
+  failed_revs=$(gc run revisions list --service "$SERVICE" --region "$target" \
+    --format='value(metadata.name,status.conditions[0].status)' 2>/dev/null \
+    | awk '$2 == "False" { print $1 }')
+  for rev in $failed_revs; do
+    # Skip if this NotReady revision is somehow still in the traffic
+    # split — better to leave it and let the operator decide than risk
+    # hitting a revision we deleted while live.
+    case " $serving " in
+      *" $rev "*) continue ;;
+    esac
+    log "  pruning failed revision ${rev} in ${target}"
+    gc run revisions delete "$rev" --region "$target" --quiet >/dev/null 2>&1 \
+      || log "  WARN: failed to prune ${rev}; will let gcloud's deploy step error if it cares"
+  done
+}
+
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
@@ -121,11 +164,16 @@ deploy_one_region() {
   else
     log "deploying Cloud Run service ${SERVICE} to ${target}"
   fi
+  prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
       --allow-unauthenticated \
       --port 8080 \
+      --memory "${TR_CLOUD_RUN_MEMORY:-512Mi}" \
+      --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-4}" \
+      --min-instances "${TR_CLOUD_RUN_MIN_INSTANCES:-1}" \
+      --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-60}" \
       --set-env-vars "$SET_ENV_VARS" \
       --update-secrets "$UPDATE_SECRETS" \
       ${traffic_arg} \
