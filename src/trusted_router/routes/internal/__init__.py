@@ -7,15 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from trusted_router.routes.internal import (
-    broadcast_queue,
-    fetch_image,
-    gateway,
-    paypal,
-    sentry,
-    synthetic,
-    webhook,
-)
+from . import broadcast_queue, fetch_image, gateway, paypal, sentry, synthetic, webhook
 
 
 def register_internal_routes(router: APIRouter) -> None:
