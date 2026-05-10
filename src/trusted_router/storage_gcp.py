@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import uuid
 from typing import Any, TypeVar
 
@@ -108,10 +109,40 @@ class SpannerBigtableStore:
                 "TR_STORAGE_BACKEND=spanner-bigtable"
             ) from exc
 
+        # Cross-cloud credential bootstrap. On GCP (Cloud Run / GCE) the
+        # default ADC chain finds the runtime SA automatically and
+        # `credentials=None` is correct. On AWS ECS Fargate (Stage 4D
+        # control plane), there's no metadata service the GCP SDK can
+        # use, so we feed it a service-account key JSON via env. The
+        # AWS task definition mounts the key from Secrets Manager into
+        # `GCP_SERVICE_ACCOUNT_KEY_JSON`; we parse it once and pass to
+        # both Spanner and Bigtable clients explicitly. Same SA the
+        # Nitro enclave uses for cross-cloud Spanner reads.
+        credentials = None
+        sa_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_JSON", "").strip()
+        if sa_json:
+            try:
+                from google.oauth2 import service_account
+            except ImportError as exc:  # pragma: no cover
+                raise RuntimeError(
+                    "Install google-auth for cross-cloud SA-key auth"
+                ) from exc
+            try:
+                info = json.loads(sa_json)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "GCP_SERVICE_ACCOUNT_KEY_JSON is set but not valid JSON"
+                ) from exc
+            credentials = service_account.Credentials.from_service_account_info(info)
+
         self._spanner = spanner
         self._param_types = param_types
         self._database = (
-            spanner.Client(project=project_id, disable_builtin_metrics=True)
+            spanner.Client(
+                project=project_id,
+                credentials=credentials,
+                disable_builtin_metrics=True,
+            )
             .instance(spanner_instance_id)
             .database(spanner_database_id)
         )
@@ -122,9 +153,11 @@ class SpannerBigtableStore:
         # writes go to the closest healthy cluster of three. Activates
         # once the 3rd BT cluster (us-east4-a) is provisioned and the
         # profile is created. See the multi-region expansion plan.
-        bt_instance = bigtable.Client(project=project_id, admin=True).instance(
-            bigtable_instance_id
-        )
+        bt_instance = bigtable.Client(
+            project=project_id,
+            credentials=credentials,
+            admin=True,
+        ).instance(bigtable_instance_id)
         if bigtable_app_profile_id:
             self._bt_table = bt_instance.table(
                 generation_table, app_profile_id=bigtable_app_profile_id
