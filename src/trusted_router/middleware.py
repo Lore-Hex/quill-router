@@ -126,6 +126,20 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
+        # Read-only mode bypasses rate-limiting entirely: STORE.hit_rate_limit
+        # writes to the Spanner rate_limit table on every request (it's a
+        # windowed-counter increment), and during a Stage-1 cutover we
+        # need ALL writes silent so the snapshot we exported on the
+        # source matches the snapshot we imported on nam6. Without this
+        # bypass GETs continue rate-limit-writing through the read-only
+        # window — we observed ~9 rate_limit rows landing on source after
+        # Phase B during the 2026-05-10 cutover, missed by Phase A's
+        # export. Skipping the limiter for the cutover window is safe
+        # because the window is short (~30min) and traffic is bounded by
+        # LB capacity anyway; rate limits resume the moment Phase E
+        # drops the flag.
+        if settings.read_only:
+            return await call_next(request)
         limited = _rate_limit_request(request, settings)
         if limited is not None:
             return limited

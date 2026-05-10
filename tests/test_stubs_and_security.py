@@ -352,6 +352,42 @@ def test_read_only_default_off_lets_writes_through() -> None:
     assert resp.status_code != 503
 
 
+def test_read_only_bypasses_rate_limit_writes() -> None:
+    """Read-only mode must short-circuit rate-limiting too.
+
+    `STORE.hit_rate_limit` does a windowed-counter Spanner write on
+    every allowed request. During a Stage-1 cutover (Phase B-D
+    window) we need ALL writes silent so the source snapshot we
+    exported and imported into nam6 doesn't drift before Phase D
+    flips the env var. The 2026-05-10 cutover surfaced this: ~9
+    rate_limit rows landed on source after Phase B set TR_READ_ONLY
+    because the rate-limit middleware writes regardless of method.
+
+    With read_only=True, even an aggressive rate limit (1 per window)
+    must NOT 429 — every request is just allowed through. Limits
+    resume the moment Phase E drops the flag.
+    """
+    locked_app = create_app(
+        Settings(
+            environment="test",
+            read_only=True,
+            rate_limit_ip_per_window=1,
+            rate_limit_window_seconds=60,
+        )
+    )
+    locked_client = TestClient(locked_app)
+    # Two GETs in the same window. Without the bypass, the second would
+    # be 429 (since limit=1). With the bypass, both pass — the
+    # underlying Spanner write was skipped on each.
+    first = locked_client.get("/v1/models")
+    second = locked_client.get("/v1/models")
+    assert first.status_code == 200
+    assert second.status_code == 200, (
+        f"second GET should not be 429 in read-only mode (got "
+        f"{second.status_code}); rate-limit middleware leaked a write"
+    )
+
+
 def test_rate_limit_returns_stable_openrouter_style_error() -> None:
     limited_app = create_app(
         Settings(
