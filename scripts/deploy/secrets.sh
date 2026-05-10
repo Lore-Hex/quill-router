@@ -105,6 +105,9 @@ ensure_secret_from_env_file "GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 ensure_secret_from_env_file "GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
 ensure_secret_from_env_file "AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 ensure_secret_from_env_file "AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
+ensure_secret_from_env_file "PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
+ensure_secret_from_env_file "PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
+ensure_secret_from_env_file "PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
 if ! gc secrets describe trustedrouter-internal-gateway-token >/dev/null 2>&1; then
   ensure_secret_value trustedrouter-internal-gateway-token "$(python3 - <<'PY'
 import secrets

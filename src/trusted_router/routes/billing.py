@@ -10,6 +10,10 @@ from trusted_router.errors import api_error, deprecated
 from trusted_router.money import money_pair
 from trusted_router.routes.helpers import json_body
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.paypal_billing import (
+    capture_paypal_order_for_workspace,
+    create_paypal_checkout_session,
+)
 from trusted_router.services.stripe_billing import (
     create_billing_portal_session,
     create_checkout_session,
@@ -50,15 +54,46 @@ def register_billing_routes(router: APIRouter) -> None:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
         return JSONResponse(
             {
-                "data": create_checkout_session(
-                    body=body,
-                    workspace_id=workspace_id,
-                    customer_email=_checkout_customer_email(principal),
-                    settings=settings,
+                "data": (
+                    create_paypal_checkout_session(
+                        body=body,
+                        workspace_id=workspace_id,
+                        customer_email=_checkout_customer_email(principal),
+                        settings=settings,
+                    )
+                    if body.payment_method == "paypal"
+                    else create_checkout_session(
+                        body=body,
+                        workspace_id=workspace_id,
+                        customer_email=_checkout_customer_email(principal),
+                        settings=settings,
+                    )
                 )
             },
             status_code=201,
         )
+
+    @router.post("/billing/paypal/orders/{order_id}/capture")
+    async def billing_paypal_capture(
+        order_id: str,
+        principal: ManagementPrincipal,
+        settings: SettingsDep,
+    ) -> dict[str, dict[str, Any]]:
+        result = capture_paypal_order_for_workspace(
+            order_id=order_id,
+            workspace_id=principal.workspace.id,
+            settings=settings,
+        )
+        return {
+            "data": {
+                "order_id": result.order_id or order_id,
+                "capture_id": result.capture_id,
+                "workspace_id": result.workspace_id,
+                "credited": result.credited,
+                "status": result.status,
+                **money_pair("amount", result.amount_microdollars),
+            }
+        }
 
     @router.post("/billing/portal")
     async def billing_portal(

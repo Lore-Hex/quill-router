@@ -16,6 +16,10 @@ from pydantic import ValidationError
 from trusted_router.auth import SettingsDep
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.paypal_billing import (
+    capture_paypal_order_for_workspace,
+    create_paypal_checkout_session,
+)
 from trusted_router.services.stripe_billing import (
     create_billing_portal_session,
     create_checkout_session,
@@ -56,6 +60,7 @@ def register(app: FastAPI) -> None:
             ),
             last_auto_refill_at=credit.last_auto_refill_at if credit else None,
             last_auto_refill_status=credit.last_auto_refill_status if credit else None,
+            paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
             api_base_url=settings.api_base_url,
         ))
 
@@ -70,6 +75,11 @@ def register(app: FastAPI) -> None:
         amount: str = Form(...),
         payment_method: str = Form("auto"),
     ) -> Response:
+        success_url = (
+            f"https://{settings.trusted_domain}/console/credits/paypal/capture"
+            if payment_method == "paypal"
+            else f"https://{settings.trusted_domain}/console/credits?checkout=success"
+        )
         try:
             # CheckoutRequest validates payment_method against the Literal
             # set; the cast just tells mypy that the form value will be
@@ -78,23 +88,51 @@ def register(app: FastAPI) -> None:
                 amount=amount,
                 workspace_id=ctx.workspace.id,
                 payment_method=cast(Any, payment_method),
-                success_url=f"https://{settings.trusted_domain}/console/credits?checkout=success",
+                success_url=success_url,
                 cancel_url=f"https://{settings.trusted_domain}/console/credits?checkout=cancel",
             )
         except ValidationError:
             return RedirectResponse(url="/console/credits?error=invalid_checkout", status_code=303)
         try:
-            data = create_checkout_session(
-                body=body,
-                workspace_id=ctx.workspace.id,
-                customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
-                settings=settings,
+            data = (
+                create_paypal_checkout_session(
+                    body=body,
+                    workspace_id=ctx.workspace.id,
+                    customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
+                    settings=settings,
+                )
+                if body.payment_method == "paypal"
+                else create_checkout_session(
+                    body=body,
+                    workspace_id=ctx.workspace.id,
+                    customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
+                    settings=settings,
+                )
             )
         except HTTPException:
             return RedirectResponse(url="/console/credits?error=checkout_unavailable", status_code=303)
         if str(data.get("mode", "")).startswith("mock"):
             return RedirectResponse(url="/console/credits?checkout=mock", status_code=303)
         return RedirectResponse(url=str(data["url"]), status_code=303)
+
+    @app.get("/console/credits/paypal/capture")
+    async def console_paypal_capture(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+        token: str = "",
+    ) -> Response:
+        if not token:
+            return RedirectResponse(url="/console/credits?error=paypal_missing_order", status_code=303)
+        try:
+            result = capture_paypal_order_for_workspace(
+                order_id=token,
+                workspace_id=ctx.workspace.id,
+                settings=settings,
+            )
+        except HTTPException:
+            return RedirectResponse(url="/console/credits?error=paypal_capture_failed", status_code=303)
+        suffix = "paypal=credited" if result.credited else "paypal=duplicate"
+        return RedirectResponse(url=f"/console/credits?checkout=success&{suffix}", status_code=303)
 
     @app.post("/console/credits/payment-methods/add")
     async def console_add_payment_method(

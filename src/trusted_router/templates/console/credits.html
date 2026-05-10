@@ -17,6 +17,9 @@
           <select name="payment_method">
             <option value="auto">Stripe card</option>
             <option value="stablecoin">Stripe USDC / stablecoin</option>
+            {% if paypal_enabled %}
+            <option value="paypal">PayPal</option>
+            {% endif %}
           </select>
         </label>
       </div>
@@ -34,7 +37,7 @@
   </div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
-      Save a Stripe card for auto-refill. One-time credit purchases and USDC checkout still happen above.
+      Save a Stripe card for auto-refill. One-time credit purchases can use Stripe, PayPal, or USDC checkout above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}

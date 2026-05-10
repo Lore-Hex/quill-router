@@ -122,6 +122,7 @@ def dashboard_html(settings: Settings) -> str:
         "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
         "apiBaseUrl": settings.api_base_url,
         "stablecoinCheckoutEnabled": settings.stablecoin_checkout_enabled,
+        "paypalEnabled": settings.paypal_enabled,
         "googleEnabled": settings.google_oauth_enabled,
         "githubEnabled": settings.github_oauth_enabled,
     }
@@ -137,6 +138,7 @@ def dashboard_html(settings: Settings) -> str:
         tr_config=json.dumps(tr_config),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
+        paypal_enabled=settings.paypal_enabled,
         map_regions=map_regions,
         primary_region=settings.primary_region,
         static_version=_static_version(settings),
