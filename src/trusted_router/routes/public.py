@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
@@ -29,9 +32,27 @@ from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
 STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
-STATUS_RECENT_SAMPLE_LIMIT = 5_000
-STATUS_ROLLUP_LIMIT = 20_000
+STATUS_LIVE_SAMPLE_LIMIT = 500
+STATUS_HOUR_ROLLUP_LIMIT = 5_000
+STATUS_DAY_ROLLUP_LIMIT = 25_000
+STATUS_MONTH_ROLLUP_LIMIT = 50
+STATUS_ROLLUP_RETENTION_MONTHS = 24
+STATUS_RESPONSE_CACHE_SECONDS = 60
+STATUS_RESPONSE_STALE_SECONDS = 600
+STATUS_HISTORY_CACHE_SECONDS = 300
+STATUS_HISTORY_STALE_SECONDS = 1_800
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
+_STATUS_RESPONSE_CACHE: dict[str, _CachedPublicBody] = {}
+_STATUS_RESPONSE_REFRESHING: set[str] = set()
+_STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
+
+
+@dataclass(frozen=True)
+class _CachedPublicBody:
+    cached_at: float
+    body: bytes
+    media_type: str
+    cache_control: str
 
 
 class _CachedStaticFiles(StaticFiles):
@@ -79,13 +100,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return decorator
 
     @public_html_route("/", include_slash=False)
-    async def dashboard(request: Request) -> str:
+    async def dashboard(request: Request, background_tasks: BackgroundTasks) -> Any:
         host = request.headers.get("host", "")
         hostname = host.split(":", 1)[0].lower()
         if hostname == "trust.trustedrouter.com":
             return trust_html(settings)
         if hostname == "status.trustedrouter.com":
-            return _status_page_html(settings, host=hostname)
+            return _cached_status_page_response(
+                settings,
+                host=hostname,
+                background_tasks=background_tasks,
+            )
         return dashboard_html(settings)
 
     @public_html_route("/trust")
@@ -113,19 +138,29 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_page_html(settings, "security")
 
     @public_html_route("/status")
-    async def status_page(request: Request) -> str:
-        return _status_page_html(settings, host=request.headers.get("host", ""))
+    async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
+        return _cached_status_page_response(
+            settings,
+            host=request.headers.get("host", ""),
+            background_tasks=background_tasks,
+        )
 
     @app.get("/status.json")
-    async def status_json() -> JSONResponse:
-        return JSONResponse(
-            {"data": _status_snapshot(settings)},
-            headers={"cache-control": "max-age=15, public"},
+    async def status_json(background_tasks: BackgroundTasks) -> Response:
+        return _cached_public_response(
+            settings,
+            key="status:json",
+            media_type="application/json",
+            ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
+            stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: _json_body({"data": _status_snapshot(settings)}),
         )
 
     @app.get("/status/history")
     async def status_history(
         request: Request,
+        background_tasks: BackgroundTasks,
         window: str = "48h",
         response_format: str | None = Query(default=None, alias="format"),
     ) -> Response:
@@ -139,21 +174,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 },
                 status_code=400,
             )
-        samples = _status_samples(hours=1)
-        rollups = _status_rollups(window)
-        payload = history_payload(samples, window, rollups=rollups)
         if not _wants_history_html(request, explicit_format=response_format):
-            return JSONResponse(
-                {"data": payload},
-                headers={"cache-control": "max-age=15, public"},
+            return _cached_public_response(
+                settings,
+                key=f"status:history:{window}:json",
+                media_type="application/json",
+                ttl_seconds=STATUS_HISTORY_CACHE_SECONDS,
+                stale_seconds=STATUS_HISTORY_STALE_SECONDS,
+                background_tasks=background_tasks,
+                build=lambda: _json_body({"data": _status_history_payload(window)}),
             )
-        html = _status_history_page_html(
+        return _cached_public_response(
             settings,
-            host=request.headers.get("host", ""),
-            window=window,
-            history=payload,
+            key=f"status:history:{window}:html:{request.headers.get('host', '')}",
+            media_type="text/html",
+            ttl_seconds=STATUS_HISTORY_CACHE_SECONDS,
+            stale_seconds=STATUS_HISTORY_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: _status_history_page_html(
+                settings,
+                host=request.headers.get("host", ""),
+                window=window,
+                history=_status_history_payload(window),
+            ).encode(),
         )
-        return HTMLResponse(html, headers={"cache-control": "max-age=15, public"})
 
     @public_html_route("/models")
     async def models() -> str:
@@ -205,6 +249,138 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             f"{settings.trust_gcp_image_reference or 'not-configured'}\n",
             headers={"cache-control": "max-age=60, public"},
         )
+
+
+def _cached_status_page_response(
+    settings: Settings,
+    *,
+    host: str,
+    background_tasks: BackgroundTasks,
+) -> Response:
+    return _cached_public_response(
+        settings,
+        key=f"status:page:{host}",
+        media_type="text/html",
+        ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
+        stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
+        background_tasks=background_tasks,
+        build=lambda: _status_page_html(settings, host=host).encode(),
+    )
+
+
+def _cached_public_response(
+    settings: Settings,
+    *,
+    key: str,
+    media_type: str,
+    ttl_seconds: int,
+    stale_seconds: int,
+    background_tasks: BackgroundTasks,
+    build: Callable[[], bytes],
+) -> Response:
+    cache_control = _public_cache_control(ttl_seconds=ttl_seconds, stale_seconds=stale_seconds)
+    if settings.environment == "test":
+        return Response(
+            content=build(),
+            media_type=media_type,
+            headers={"cache-control": cache_control, "x-tr-cache": "bypass"},
+        )
+
+    now = time.monotonic()
+    with _STATUS_RESPONSE_CACHE_LOCK:
+        cached = _STATUS_RESPONSE_CACHE.get(key)
+        if cached is not None:
+            age = now - cached.cached_at
+            if age < ttl_seconds:
+                return _cached_body_response(cached, cache_state="hit")
+            if age < ttl_seconds + stale_seconds:
+                _schedule_cached_response_refresh(
+                    key=key,
+                    media_type=media_type,
+                    cache_control=cache_control,
+                    build=build,
+                    background_tasks=background_tasks,
+                )
+                return _cached_body_response(cached, cache_state="stale")
+
+    body = build()
+    cached = _CachedPublicBody(
+        cached_at=time.monotonic(),
+        body=body,
+        media_type=media_type,
+        cache_control=cache_control,
+    )
+    with _STATUS_RESPONSE_CACHE_LOCK:
+        _STATUS_RESPONSE_CACHE[key] = cached
+    return _cached_body_response(cached, cache_state="miss")
+
+
+def _schedule_cached_response_refresh(
+    *,
+    key: str,
+    media_type: str,
+    cache_control: str,
+    build: Callable[[], bytes],
+    background_tasks: BackgroundTasks,
+) -> None:
+    _ = background_tasks
+    with _STATUS_RESPONSE_CACHE_LOCK:
+        if key in _STATUS_RESPONSE_REFRESHING:
+            return
+        _STATUS_RESPONSE_REFRESHING.add(key)
+    refresh_thread = threading.Thread(
+        target=_refresh_cached_response,
+        args=(key, media_type, cache_control, build),
+        daemon=True,
+    )
+    refresh_thread.start()
+
+
+def _refresh_cached_response(
+    key: str,
+    media_type: str,
+    cache_control: str,
+    build: Callable[[], bytes],
+) -> None:
+    try:
+        body = build()
+        with _STATUS_RESPONSE_CACHE_LOCK:
+            _STATUS_RESPONSE_CACHE[key] = _CachedPublicBody(
+                cached_at=time.monotonic(),
+                body=body,
+                media_type=media_type,
+                cache_control=cache_control,
+            )
+    finally:
+        with _STATUS_RESPONSE_CACHE_LOCK:
+            _STATUS_RESPONSE_REFRESHING.discard(key)
+
+
+def _cached_body_response(cached: _CachedPublicBody, *, cache_state: str) -> Response:
+    return Response(
+        content=cached.body,
+        media_type=cached.media_type,
+        headers={
+            "cache-control": cached.cache_control,
+            "x-tr-cache": cache_state,
+        },
+    )
+
+
+def _public_cache_control(*, ttl_seconds: int, stale_seconds: int) -> str:
+    browser_ttl = min(ttl_seconds, 15)
+    return (
+        f"public, max-age={browser_ttl}, s-maxage={ttl_seconds}, "
+        f"stale-while-revalidate={stale_seconds}"
+    )
+
+
+def _json_body(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+
+
+def _status_history_payload(window: str) -> dict[str, Any]:
+    return history_payload(_status_samples(hours=1), window, rollups=_status_rollups(window))
 
 
 def _wants_history_html(request: Request, *, explicit_format: str | None) -> bool:
@@ -267,6 +443,10 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _STATUS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
+    # Keep the public status hot path bounded: current state and headline
+    # latency come from a small live sample window, while 24h/48h/monthly
+    # history comes from compact rollups precomputed when the monitor writes
+    # each sample. Do not scan raw 48h/day Bigtable rows on page load.
     payload = status_snapshot(_status_samples(hours=1), rollups=_status_rollups("snapshot"))
     if settings.environment != "test":
         _STATUS_CACHE = (now, payload)
@@ -275,7 +455,7 @@ def _status_snapshot(settings: Settings) -> dict[str, Any]:
 
 def _status_samples(*, hours: int = 48) -> list[Any]:
     if hours <= 1:
-        return STORE.synthetic_probe_samples(limit=STATUS_RECENT_SAMPLE_LIMIT)
+        return STORE.synthetic_probe_samples(limit=STATUS_LIVE_SAMPLE_LIMIT)
     samples = []
     for date in _dates_covering_recent_hours(hours=hours):
         samples.extend(STORE.synthetic_probe_samples(date=date, limit=STATUS_RAW_SAMPLE_LIMIT_PER_DAY))
@@ -284,19 +464,60 @@ def _status_samples(*, hours: int = 48) -> list[Any]:
 
 
 def _status_rollups(window: str) -> list[Any]:
+    now = utcnow()
     if window == "snapshot":
         return [
-            *STORE.synthetic_rollups(period="hour", limit=STATUS_ROLLUP_LIMIT),
-            *STORE.synthetic_rollups(period="day", limit=STATUS_ROLLUP_LIMIT),
-            *STORE.synthetic_rollups(period="month", limit=STATUS_ROLLUP_LIMIT),
+            *STORE.synthetic_rollups(
+                period="hour",
+                since=_hour_rollup_since(now, hours=48),
+                limit=STATUS_HOUR_ROLLUP_LIMIT,
+            ),
         ]
     if window in {"24h", "48h"}:
-        return STORE.synthetic_rollups(period="hour", limit=STATUS_ROLLUP_LIMIT)
+        return STORE.synthetic_rollups(
+            period="hour",
+            since=_hour_rollup_since(now, hours=24 if window == "24h" else 48),
+            limit=STATUS_HOUR_ROLLUP_LIMIT,
+        )
     if window == "daily":
-        return STORE.synthetic_rollups(period="day", limit=STATUS_ROLLUP_LIMIT)
+        return STORE.synthetic_rollups(
+            period="day",
+            since=_day_rollup_since(now, months=STATUS_ROLLUP_RETENTION_MONTHS),
+            limit=STATUS_DAY_ROLLUP_LIMIT,
+        )
     if window == "monthly":
-        return STORE.synthetic_rollups(period="month", limit=STATUS_ROLLUP_LIMIT)
+        return STORE.synthetic_rollups(
+            period="day",
+            since=_day_rollup_since(now, months=STATUS_ROLLUP_RETENTION_MONTHS),
+            include_histograms=False,
+            limit=STATUS_MONTH_ROLLUP_LIMIT,
+        )
     return []
+
+
+def _hour_rollup_since(now: dt.datetime, *, hours: int) -> str:
+    base = now.astimezone(dt.UTC).replace(minute=0, second=0, microsecond=0)
+    return _iso_utc(base - dt.timedelta(hours=max(hours - 1, 0)))
+
+
+def _day_rollup_since(now: dt.datetime, *, months: int) -> str:
+    return _iso_utc(_month_floor(now, months=months))
+
+
+def _month_rollup_since(now: dt.datetime, *, months: int) -> str:
+    return _iso_utc(_month_floor(now, months=months))
+
+
+def _month_floor(now: dt.datetime, *, months: int) -> dt.datetime:
+    current = now.astimezone(dt.UTC)
+    month_index = current.year * 12 + current.month - 1
+    cutoff_index = month_index - max(months - 1, 0)
+    year, zero_based_month = divmod(cutoff_index, 12)
+    return dt.datetime(year, zero_based_month + 1, 1, tzinfo=dt.UTC)
+
+
+def _iso_utc(value: dt.datetime) -> str:
+    return value.astimezone(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _dates_covering_recent_hours(*, hours: int) -> list[str]:

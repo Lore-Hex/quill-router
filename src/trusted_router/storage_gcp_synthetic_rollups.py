@@ -33,15 +33,22 @@ def synthetic_rollups(
     family: str,
     *,
     period: str | None,
-    limit: int,
+    since: str | None = None,
+    until: str | None = None,
+    include_histograms: bool = True,
+    limit: int = 1000,
 ) -> list[SyntheticRollup]:
     prefix = f"synthetic_rollup#{period}#" if period else "synthetic_rollup#"
-    rows = table.read_rows(start_key=prefix.encode("utf-8"), end_key=(prefix + "~").encode("utf-8"), limit=limit)
-    rollups = _rollups_from_rows(rows, family)
+    start_key = f"{prefix}{since or ''}".encode()
+    end_suffix = f"{until}~" if until else "~"
+    rows = table.read_rows(start_key=start_key, end_key=f"{prefix}{end_suffix}".encode(), limit=limit)
+    rollups = _rollups_from_rows(rows, family, include_histograms=include_histograms)
     filtered = [
         rollup
         for rollup in rollups
         if (period is None or rollup.period == period)
+        and (since is None or rollup.period_start >= since)
+        and (until is None or rollup.period_start <= until)
         and rollup_is_within_retention(rollup, now=utcnow())
     ]
     filtered.sort(key=lambda rollup: rollup.period_start, reverse=True)
@@ -77,11 +84,16 @@ def _row_exists(table: Any, family: str, key: bytes) -> bool:
 
 def _read_rollup(table: Any, family: str, key: bytes) -> SyntheticRollup | None:
     rows = table.read_rows(start_key=key, end_key=key + b"\x00", limit=1)
-    rollups = _rollups_from_rows(rows, family)
+    rollups = _rollups_from_rows(rows, family, include_histograms=True)
     return rollups[0] if rollups else None
 
 
-def _rollups_from_rows(rows: Any, family: str) -> list[SyntheticRollup]:
+def _rollups_from_rows(
+    rows: Any,
+    family: str,
+    *,
+    include_histograms: bool,
+) -> list[SyntheticRollup]:
     rollups: list[SyntheticRollup] = []
     for row in rows:
         cells = row.cells.get(family, {}).get(b"body", [])
@@ -91,6 +103,9 @@ def _rollups_from_rows(rows: Any, family: str) -> list[SyntheticRollup]:
             payload = json.loads(cells[0].value.decode("utf-8"))
             if not isinstance(payload, dict) or payload.get("period") not in {"hour", "day", "month"}:
                 continue
+            if not include_histograms:
+                payload["latency_histogram"] = {}
+                payload["ttfb_histogram"] = {}
             rollups.append(SyntheticRollup(**payload))
         except (TypeError, ValueError):
             continue

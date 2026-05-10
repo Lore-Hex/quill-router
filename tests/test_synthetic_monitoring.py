@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
@@ -110,6 +111,8 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert status.status_code == 200
     assert page.status_code == 200
     assert history.status_code == 200
+    assert "s-maxage" in status.headers["cache-control"]
+    assert "stale-while-revalidate" in status.headers["cache-control"]
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
     assert "In-region gateway overhead p50" in page.text
@@ -122,6 +125,50 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert payload["samples"][0]["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
     assert len(payload["components"][0]["history"]) == 48
+
+
+def test_public_status_response_cache_reuses_rendered_body() -> None:
+    import trusted_router.routes.public as public_routes
+
+    with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+        public_routes._STATUS_RESPONSE_CACHE.clear()
+        public_routes._STATUS_RESPONSE_REFRESHING.clear()
+    calls = 0
+
+    def build() -> bytes:
+        nonlocal calls
+        calls += 1
+        return f"payload-{calls}".encode()
+
+    try:
+        first = public_routes._cached_public_response(
+            Settings(environment="local"),
+            key="test:status-cache",
+            media_type="application/json",
+            ttl_seconds=60,
+            stale_seconds=300,
+            background_tasks=BackgroundTasks(),
+            build=build,
+        )
+        second = public_routes._cached_public_response(
+            Settings(environment="local"),
+            key="test:status-cache",
+            media_type="application/json",
+            ttl_seconds=60,
+            stale_seconds=300,
+            background_tasks=BackgroundTasks(),
+            build=build,
+        )
+    finally:
+        with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+            public_routes._STATUS_RESPONSE_CACHE.clear()
+            public_routes._STATUS_RESPONSE_REFRESHING.clear()
+
+    assert first.body == b"payload-1"
+    assert first.headers["x-tr-cache"] == "miss"
+    assert second.body == b"payload-1"
+    assert second.headers["x-tr-cache"] == "hit"
+    assert calls == 1
 
 
 def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:
@@ -139,7 +186,7 @@ def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:
     payload = history.json()["data"]
     assert payload["window"] == "monthly"
     assert payload["data"][0]["sample_count"] == 1
-    assert payload["data"][0]["p50_latency_milliseconds"] == 88
+    assert payload["data"][0]["uptime_percent"] == 100.0
     assert "sk-tr-" not in history.text
     assert "reply exactly PONG" not in history.text
 
@@ -204,6 +251,56 @@ def test_status_history_format_json_overrides_browser_accept(client: TestClient)
     assert history.status_code == 200
     assert history.headers["content-type"].startswith("application/json")
     assert history.json()["data"]["window"] == "48h"
+
+
+def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(monkeypatch: pytest.MonkeyPatch) -> None:
+    import trusted_router.routes.public as public_routes
+
+    now = utcnow()
+    recent = _sample(
+        id="syn_live",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(seconds=30)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=31,
+    )
+    old = _sample(
+        id="syn_rollup_old",
+        probe_type="responses_pong",
+        status="up",
+        created_at=(now - dt.timedelta(hours=26)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=99,
+    )
+    rollups = _rollups_for_samples([recent, old])
+    sample_calls: list[dict[str, Any]] = []
+    rollup_calls: list[dict[str, Any]] = []
+
+    class FakeStatusStore:
+        def synthetic_probe_samples(self, **kwargs: Any) -> list[SyntheticProbeSample]:
+            sample_calls.append(kwargs)
+            return [recent]
+
+        def synthetic_rollups(self, **kwargs: Any) -> list[Any]:
+            rollup_calls.append(kwargs)
+            period = kwargs["period"]
+            since = kwargs.get("since")
+            return [
+                rollup
+                for rollup in rollups
+                if rollup.period == period and (since is None or rollup.period_start >= since)
+            ]
+
+    monkeypatch.setattr(public_routes, "STORE", FakeStatusStore())
+
+    payload = public_routes._status_snapshot(Settings(environment="test"))
+
+    assert sample_calls == [{"limit": public_routes.STATUS_LIVE_SAMPLE_LIMIT}]
+    assert [call["period"] for call in rollup_calls] == ["hour"]
+    assert all(call["since"] for call in rollup_calls)
+    assert all("until" not in call for call in rollup_calls)
+    assert payload["windows"]["5m"]["sample_count"] == 1
+    assert payload["windows"]["48h"]["sample_count"] == 2
+    assert payload["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 31
 
 
 def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
@@ -625,6 +722,41 @@ def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
     assert canonical.sample_count == 1
     assert canonical.up_count == 1
     assert canonical.latency_histogram == {"123": 1}
+
+
+def test_gcp_synthetic_rollups_use_period_start_range() -> None:
+    old = _sample(
+        id="syn_rollup_old_range",
+        probe_type="tls_health",
+        status="up",
+        created_at="2026-05-05T11:10:00Z",
+        latency_milliseconds=80,
+    )
+    recent = _sample(
+        id="syn_rollup_recent_range",
+        probe_type="tls_health",
+        status="up",
+        created_at="2026-05-05T12:10:00Z",
+        latency_milliseconds=40,
+    )
+    table = _FakeBigtable()
+    _bt_write_synthetic_probe_sample(table, "m", old)
+    _bt_write_synthetic_probe_sample(table, "m", recent)
+
+    rows = _bt_synthetic_rollups(
+        table,
+        "m",
+        period="hour",
+        since="2026-05-05T12:00:00Z",
+        limit=20,
+    )
+
+    assert {row.period_start for row in rows} == {"2026-05-05T12:00:00Z"}
+    assert table.reads[-1] == (
+        b"synthetic_rollup#hour#2026-05-05T12:00:00Z",
+        b"synthetic_rollup#hour#~",
+        20,
+    )
 
 
 def test_raw_synthetic_samples_expire_before_rollups() -> None:

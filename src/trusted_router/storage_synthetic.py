@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+from dataclasses import replace
 
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
 from trusted_router.synthetic.rollups import (
@@ -67,6 +68,9 @@ class InMemorySyntheticChecks:
         self,
         *,
         period: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
         with self._lock:
@@ -74,6 +78,8 @@ class InMemorySyntheticChecks:
                 rollup
                 for rollup in self.rollups.values()
                 if (period is None or rollup.period == period)
+                and (since is None or rollup.period_start >= since)
+                and (until is None or rollup.period_start <= until)
             ]
         rows = [
             rollup
@@ -81,4 +87,9 @@ class InMemorySyntheticChecks:
             if rollup_is_within_retention(rollup, now=dt.datetime.now(dt.UTC))
         ]
         rows.sort(key=lambda rollup: rollup.period_start, reverse=True)
+        if not include_histograms:
+            rows = [
+                replace(rollup, latency_histogram={}, ttfb_histogram={})
+                for rollup in rows
+            ]
         return rows[:limit]

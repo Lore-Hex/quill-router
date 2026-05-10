@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 from collections import defaultdict
+from dataclasses import replace
 from typing import Any
 
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
@@ -136,11 +137,15 @@ def history_payload(
     *,
     rollups: list[SyntheticRollup] | None = None,
 ) -> dict[str, Any]:
-    snapshot = status_snapshot(samples, rollups=rollups)
+    precomputed_rollups = rollups or []
     if window == "daily":
-        return {"window": "daily", "data": snapshot["daily"]}
+        return {
+            "window": "daily",
+            "data": _rollup_history(precomputed_rollups, period="day") or _daily_rollups(samples),
+        }
     if window == "monthly":
-        return {"window": "monthly", "data": snapshot["monthly"]}
+        return {"window": "monthly", "data": _monthly_history(precomputed_rollups)}
+    snapshot = status_snapshot(samples, rollups=precomputed_rollups)
     if window in snapshot["windows"]:
         return {"window": window, "data": snapshot["windows"][window]}
     return {"window": window, "data": {}}
@@ -223,6 +228,26 @@ def _rollup_history(rollups: list[SyntheticRollup], *, period: str) -> list[dict
             }
         )
     return rows
+
+
+def _monthly_history(rollups: list[SyntheticRollup]) -> list[dict[str, Any]]:
+    month_rollups = [rollup for rollup in rollups if rollup.period == "month"]
+    if month_rollups:
+        return _rollup_history(month_rollups, period="month")
+    day_rollups = [rollup for rollup in rollups if rollup.period == "day"]
+    if not day_rollups:
+        return []
+    return _rollup_history(
+        [
+            replace(
+                rollup,
+                period="month",
+                period_start=f"{rollup.period_start[:7]}-01T00:00:00Z",
+            )
+            for rollup in day_rollups
+        ],
+        period="month",
+    )
 
 
 def _rollup_window_from_rollups(
