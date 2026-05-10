@@ -5,7 +5,6 @@ import threading
 import uuid
 from typing import Any, cast
 
-from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok

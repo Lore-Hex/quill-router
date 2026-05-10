@@ -6,7 +6,6 @@ import logging
 import uuid
 from typing import Any, TypeVar
 
-from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
 from trusted_router.storage import (
     ApiKey,
     AuthSession,
