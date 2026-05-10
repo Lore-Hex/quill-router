@@ -4,11 +4,11 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter — One API. Every LLM. Provable privacy."
+OG_TITLE = "TrustedRouter — End-to-End Encrypted Router for every LLM"
 OG_DESCRIPTION = (
     "Hosted, OpenRouter-compatible router for Anthropic, OpenAI, Google, and "
-    "more — prepaid or BYOK. Every prompt path terminates inside a measured "
-    "Confidential Space workload. 100% open source."
+    "more — prepaid or BYOK. TLS terminates inside a measured Confidential "
+    "Space workload, and the SaaS control plane never sees prompts."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630

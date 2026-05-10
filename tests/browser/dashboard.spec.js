@@ -100,11 +100,12 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   expect(overflow).toBeLessThanOrEqual(2);
 });
 
-test("homepage exposes pricing, stablecoin, open-source, and trust claims", async ({ page }) => {
+test("homepage exposes stablecoin, open-source, and trust claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("$0.01 less per 1M tokens")).toBeVisible();
-  await expect(page.getByText("$25 USDC")).toBeVisible();
+  await expect(page.getByText("End-to-End Encrypted Router").first()).toBeVisible();
+  await expect(page.getByText("Stablecoin")).toBeVisible();
+  await expect(page.getByText("No subscriptions")).toBeVisible();
   await expect(page.getByText("Hosted OSS")).toBeVisible();
   await expect(page.locator(".panel-body .mono", { hasText: "api.quillrouter.com" })).toBeVisible();
   await expect(page.getByRole("link", { name: "trusted-router-py" })).toHaveAttribute(

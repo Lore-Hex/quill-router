@@ -1,5 +1,14 @@
 # TrustedRouter
 
+[![CI](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/ci.yml)
+[![Deploy](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/deploy.yml)
+[![Prod smoke](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml/badge.svg)](https://github.com/Lore-Hex/quill-router/actions/workflows/prod-smoke.yml)
+[![Status](https://img.shields.io/website?url=https%3A%2F%2Fstatus.trustedrouter.com&label=status)](https://status.trustedrouter.com)
+[![Verifiable trust](https://img.shields.io/website?url=https%3A%2F%2Ftrust.trustedrouter.com&label=trust)](https://trust.trustedrouter.com)
+[![JavaScript SDK](https://img.shields.io/npm/v/@lore-hex/trusted-router?label=JS%20SDK&logo=npm)](https://www.npmjs.com/package/@lore-hex/trusted-router)
+[![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+
 TrustedRouter is an OpenRouter-compatible production LLM router with an
 attested API plane and a regular SaaS control plane.
 
@@ -134,10 +143,8 @@ benchmark/ranking samples so uptime probes do not pollute customer analytics.
 
 ## Public Positioning
 
-- Pricing target: prepaid routes are priced at `$0.01` less per 1 million
-  tokens than the published provider price, tracked as integer microdollars per
-  million tokens so the ledger can represent one-cent-per-million discounts
-  without floating point math.
+- Pricing: prepaid and BYOK usage is tracked as integer microdollars, not
+  floating point dollars, so tiny token costs remain auditable in the ledger.
 - Uptime target: `trustedrouter/auto` is a real chat model alias in local/test
   control-plane inference and rolls to the next configured provider on upstream
   provider failures. Chat requests also honor OpenRouter-style `models` and
