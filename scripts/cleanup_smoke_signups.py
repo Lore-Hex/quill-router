@@ -32,8 +32,12 @@ def _gcloud_credentials() -> google.oauth2.credentials.Credentials:
     """Use the active gcloud user's access token instead of ADC, so the
     operator just needs `gcloud auth login` (already required to run
     this), not a separate `gcloud auth application-default login`."""
-    token = subprocess.check_output(  # noqa: S607 - gcloud is on PATH; pinning a full path varies per host (mac/linux/CI) and adds no security here
-        ["gcloud", "auth", "print-access-token"], text=True
+    # gcloud is on PATH; pinning a full path varies per host (mac/linux/CI)
+    # and adds no security since the operator already has gcloud installed
+    # to run this script at all.
+    token = subprocess.check_output(
+        ["gcloud", "auth", "print-access-token"],  # noqa: S607
+        text=True,
     ).strip()
     return google.oauth2.credentials.Credentials(token=token)
 
