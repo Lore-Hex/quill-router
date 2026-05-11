@@ -1,33 +1,37 @@
 """Parasail — human-only provider config.
 
-Parasail's pricing lives behind a dashboard login at
-saas.parasail.io/info/pricing — Jina-markdown can't see it,
-and the api.parasail.io API key doesn't unlock any pricing
-endpoint (every /v1/* path TR tried returns "No static resource").
+**Special case**: Parasail's dashboard pricing lives behind a SaaS
+login (saas.parasail.io/info/pricing) that we can't scrape, and
+api.parasail.io's /v1/models endpoint doesn't include a pricing
+block. Rather than hand-maintain a static price table (high
+maintenance, easy to drift) OR ship without Parasail routes,
+**we pull pricing from OpenRouter's snapshot as a fallback** for
+any model Parasail's /v1/models reports as live.
 
-**No guessed prices.** Until pricing is reachable by the scraper,
-this adapter returns ZERO prices, which means the refresh.py
-merge logic drops every Parasail endpoint from the snapshot.
-Parasail provider is registered in catalog.PROVIDERS (so the
-slug is recognized in routes) and in
-GATEWAY_PREPAID_PROVIDER_SLUGS (so the gateway WOULD authorize),
-but with no priced endpoints in the snapshot, no route resolves
-to Parasail. Restore by populating _PRICES with operator-pasted
-data from the dashboard.
+Trade-off:
+  - OR's headline price is "lowest provider on OR's list," not
+    Parasail's actual rate. For most open-weight models Parasail
+    hosts (Llama, Gemma, Qwen, DeepSeek) the OR baseline is
+    representative of the open-market floor that Parasail also
+    targets, so the over/under is usually small.
+  - Worst case: TR over-bills or under-bills customers on Parasail
+    routes by tens of percent. That's accepted while Parasail is a
+    secondary route; the auto-router will still pick the cheapest
+    provider per request, so over-billing pushes traffic AWAY from
+    Parasail organically.
 
-Two paths to restoring routes:
-  (a) Operator pastes the dashboard rates into _PRICES below.
-      Mark the source with the date pasted and a note about who
-      verified them. Pricing is per-OR-canonical-id; the API id
-      mapping is in _NATIVE_TO_OR_ID.
-  (b) Parasail ships a public/machine-readable pricing feed.
-      Replace the static table with a JSON fetch (Lightning /
-      GMI / DeepInfra do this — see those adapters for the
-      pattern).
+Once Parasail publishes a real machine-readable price feed, swap
+this scraper to the API-direct pattern used by lightning.py / gmi.py
+/ deepinfra.py — those parse pricing from each model's response
+entry. Until then, the OR-fallback path lives here and is the only
+adapter in TR that does this.
 """
 from __future__ import annotations
 
 import os
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -47,29 +51,12 @@ EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
 ]
 
-# Operator-pasted price table for Parasail-keyed models. Microdollars
-# per million tokens, lowest tier. EMPTY by default — every row in
-# here MUST be sourced from Parasail's authenticated dashboard at
-# saas.parasail.io/info/pricing (or an email rate-sheet), not guessed.
-#
-# Format: OR-canonical-id → (prompt_micro_per_m, completion_micro_per_m).
-# When you add a row, include the date and where you got the price in
-# the trailing comment so the next person to audit knows what to
-# distrust.
-#
-# While this table is empty, Parasail endpoints are dropped from the
-# snapshot at merge time — refresh.py:_merge_snapshot uses the
-# (model_id, provider_slug) → ModelPrice map and skips endpoints
-# without a price.
-_PRICES: dict[str, tuple[int, int]] = {
-    # Example shape — replace with real numbers from the dashboard:
-    # "google/gemma-4-31b-it": (140_000, 400_000),  # $0.14/M in, $0.40/M out (dashboard 2026-05-11, jp)
-}
 
-# Parasail-native model id → OR-canonical. The /v1/models endpoint
-# returns both forms (e.g. both `parasail-gemma-4-31b-it` and
-# `google/gemma-4-31B-it`). We map both to the canonical OR id
-# so route lookup works regardless of which alias is referenced.
+# Parasail-native id → OR-canonical id. The /v1/models endpoint
+# returns both forms for many models (e.g. both
+# `parasail-gemma-4-31b-it` and `google/gemma-4-31B-it`); we map
+# both to the same OR-canonical entry so route lookup works
+# whichever alias a customer references.
 _NATIVE_TO_OR_ID = {
     "parasail-gemma-4-31b-it": "google/gemma-4-31b-it",
     "google/gemma-4-31B-it": "google/gemma-4-31b-it",
@@ -85,15 +72,56 @@ _NATIVE_TO_OR_ID = {
 }
 
 
+def _or_pricing_to_model_price(pricing: dict[str, Any] | None) -> ModelPrice | None:
+    """Convert OR's headline pricing block (USD/token strings) to a
+    ModelPrice in microdollars per million. Returns None on missing
+    or unparseable rates."""
+    if not isinstance(pricing, dict):
+        return None
+    try:
+        prompt = Decimal(str(pricing.get("prompt") or "0"))
+        completion = Decimal(str(pricing.get("completion") or "0"))
+    except Exception:  # noqa: BLE001
+        return None
+    if prompt <= 0 or completion <= 0:
+        return None
+    # 1 USD/token = 1e12 micro/M
+    factor = Decimal(1_000_000_000_000)
+    return ModelPrice(
+        prompt_micro_per_m=int((prompt * factor).to_integral_value()),
+        completion_micro_per_m=int((completion * factor).to_integral_value()),
+    )
+
+
+def _build_or_pricing_index() -> dict[str, dict[str, Any]]:
+    """Build OR's id → pricing-block dict by calling the OR ingest's
+    `build_snapshot` function. Imported lazily so a unit test that
+    mocks Parasail doesn't transitively need the OR HTTP fetch.
+    """
+    # sys.path is set up by refresh.py at orchestrator load time,
+    # which is the only context this provider runs in. Importing
+    # here (inside fetch()) keeps the module-load-time path quiet
+    # for tests that import without sys.path tweaks.
+    from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapshot
+
+    snapshot = build_openrouter_snapshot()
+    return {
+        m["id"]: (m.get("pricing") or {})
+        for m in snapshot.get("models", [])
+        if isinstance(m, dict) and isinstance(m.get("id"), str)
+    }
+
+
 def fetch() -> ProviderPricingResult:
-    """Hit /v1/models for liveness, then return the static price table
-    intersected with the models actually exposed."""
+    """Hit /v1/models to discover what Parasail actually serves, then
+    look up each served OR-canonical id's pricing in OpenRouter's
+    headline snapshot. Returns only models present in BOTH sets."""
     api_key = os.environ.get("PARASAIL_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    live_native: set[str] = set()
     notes: list[str] = []
+    live_native: set[str] = set()
     try:
         transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
         with httpx.Client(
@@ -105,24 +133,40 @@ def fetch() -> ProviderPricingResult:
             response.raise_for_status()
             payload = response.json()
         rows = payload.get("data") or []
-        live_native = {str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")}
+        live_native = {
+            str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")
+        }
     except Exception as exc:  # noqa: BLE001
-        notes.append(f"/v1/models fetch failed ({exc}); falling back to full static table")
+        notes.append(f"/v1/models fetch failed ({exc}); treating all known natives as live")
         live_native = set(_NATIVE_TO_OR_ID.keys())
 
-    # Only include OR-canonical ids that BOTH (a) have a static
-    # price in _PRICES and (b) are actually served by Parasail right
-    # now per /v1/models. The intersection prevents stale entries
-    # surfacing as routable when Parasail rotates their catalog.
     or_ids_live = {_NATIVE_TO_OR_ID[n] for n in live_native if n in _NATIVE_TO_OR_ID}
-    prices: dict[str, ModelPrice] = {}
-    for or_id, (prompt, completion) in _PRICES.items():
-        if or_id not in or_ids_live:
-            continue
-        prices[or_id] = ModelPrice(
-            prompt_micro_per_m=prompt,
-            completion_micro_per_m=completion,
+    if not or_ids_live:
+        notes.append("no Parasail-native IDs mapped to OR-canonical IDs — extend _NATIVE_TO_OR_ID")
+        return ProviderPricingResult(
+            slug=SLUG, prices={}, source="api", fetched_url=URL, notes=notes,
         )
+
+    try:
+        or_pricing_by_id = _build_or_pricing_index()
+    except Exception as exc:  # noqa: BLE001
+        # OR fetch failures shouldn't kill Parasail; surface as a note
+        # and return empty. The refresh.py orchestrator already runs
+        # its own OR fetch, so the network condition will be visible
+        # there too.
+        notes.append(f"OR snapshot fetch failed ({exc}); Parasail returns empty")
+        return ProviderPricingResult(
+            slug=SLUG, prices={}, source="api", fetched_url=URL, notes=notes,
+        )
+
+    prices: dict[str, ModelPrice] = {}
+    for or_id in sorted(or_ids_live):
+        or_price_block = or_pricing_by_id.get(or_id)
+        mp = _or_pricing_to_model_price(or_price_block)
+        if mp is None:
+            notes.append(f"OR has no pricing for {or_id}; Parasail endpoint dropped")
+            continue
+        prices[or_id] = mp
 
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
