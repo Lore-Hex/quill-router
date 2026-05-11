@@ -58,14 +58,19 @@ _NATIVE_TO_OR_ID = {
 }
 
 
-def _extract_lowest_tier(pricing: object) -> tuple[float, float] | None:
+def _extract_lowest_tier(pricing: object) -> tuple[float, float, float | None] | None:
     """GMI returns `pricing` as either a dict (flat) or a list of
-    tier rows. Return (prompt_per_token, completion_per_token) for
-    the lowest tier (or the flat case), in USD/token. None on any
-    structural mismatch or zero/negative rates."""
+    tier rows. Return (prompt_per_token, completion_per_token,
+    cached_input_per_token) for the lowest tier (or the flat case),
+    in USD/token. cached is None when GMI doesn't publish a cache-read
+    discount for that model (returns "0" in the API; we map to None
+    so refresh.py doesn't store a literal $0/M cached rate). Returns
+    None overall on any structural mismatch or zero/negative
+    prompt/completion."""
     if isinstance(pricing, dict):
         prompt = pricing.get("prompt")
         completion = pricing.get("completion")
+        cached = pricing.get("input_cache_read")
     elif isinstance(pricing, list):
         # Pick the entry with min_context = 0 (the cheapest, smallest-
         # context tier) — that's the headline rate to display.
@@ -82,6 +87,7 @@ def _extract_lowest_tier(pricing: object) -> tuple[float, float] | None:
             return None
         prompt = candidate.get("prompt")
         completion = candidate.get("completion")
+        cached = candidate.get("input_cache_read")
     else:
         return None
     try:
@@ -91,7 +97,17 @@ def _extract_lowest_tier(pricing: object) -> tuple[float, float] | None:
         return None
     if p <= 0 or c <= 0:
         return None
-    return p, c
+    # Cached rate: GMI returns "0" when no discount is offered for
+    # that model. Treat zero as absent (None) so downstream pricing
+    # doesn't accidentally make cache reads free.
+    cached_val: float | None = None
+    try:
+        cached_f = float(cached or 0)
+    except (TypeError, ValueError):
+        cached_f = 0.0
+    if cached_f > 0:
+        cached_val = cached_f
+    return p, c, cached_val
 
 
 def fetch() -> ProviderPricingResult:
@@ -122,10 +138,15 @@ def fetch() -> ProviderPricingResult:
         rates = _extract_lowest_tier(row.get("pricing"))
         if rates is None:
             continue
-        prompt_per_token, completion_per_token = rates
+        prompt_per_token, completion_per_token, cached_per_token = rates
         prices[or_id] = ModelPrice(
             prompt_micro_per_m=int(round(prompt_per_token * 1_000_000_000_000)),
             completion_micro_per_m=int(round(completion_per_token * 1_000_000_000_000)),
+            prompt_cached_micro_per_m=(
+                int(round(cached_per_token * 1_000_000_000_000))
+                if cached_per_token is not None
+                else None
+            ),
         )
 
     notes: list[str] = []

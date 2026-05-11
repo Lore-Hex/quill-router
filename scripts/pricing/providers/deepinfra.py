@@ -11,6 +11,13 @@ dollars-per-million rather than USD/token).
 API-direct, no HTML scraping, no LLM self-heal. Auth: Bearer token in
 `DEEPINFRA_API_KEY`. Without it the fetch 401s and DeepInfra counts as
 one failure under MAX_TOLERATED_FAILURES.
+
+Cached-input rate: DeepInfra's metadata.pricing block exposes only
+`input_tokens` + `output_tokens` (no cache-read discount). If they
+add one — e.g. a `cached_input_tokens` sibling — extend the loop
+to read it into `ModelPrice.prompt_cached_micro_per_m`. Today we
+leave it unset, which TR's gateway treats as "upstream charges
+full rate on cache hits."
 """
 from __future__ import annotations
 

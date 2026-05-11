@@ -12,6 +12,14 @@ other provider still refreshes normally.
 OR-canonical model id mapping is small today (just gemma-4 +
 llama-3.3 to start). Extend `_NATIVE_TO_OR_ID` when we add more
 Lightning-keyed models to the catalog.
+
+Cached-input rate: Lightning's /v1/models response does NOT include
+a cache-read discount field (only `input_cost_per_token` +
+`output_cost_per_token`). If they add one — e.g. a
+`cached_input_cost_per_token` sibling — extend the loop to read it
+into `ModelPrice.prompt_cached_micro_per_m`. Today we leave it
+unset, which TR's gateway treats as "upstream charges full rate on
+cache hits."
 """
 from __future__ import annotations
 
