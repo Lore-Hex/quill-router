@@ -133,10 +133,16 @@ def probe_one(api_key: str, region_name: str, base_url: str, provider: str, mode
                     err = ""
                     try:
                         err = response.read().decode("utf-8")[:200]
-                    except (httpx.HTTPError, UnicodeDecodeError):
+                    except (httpx.HTTPError, UnicodeDecodeError, RuntimeError):
                         # Best-effort error-body capture; if decode or
                         # the trailing read fails the smoke still returns
                         # a useful Result with status_code + ttfb.
+                        # RuntimeError catches httpx.StreamConsumed (which
+                        # inherits from RuntimeError, NOT HTTPError) — it
+                        # fires here because iter_bytes() already consumed
+                        # the body even on non-200 responses, so the
+                        # follow-up response.read() blows up unless we
+                        # explicitly catch it.
                         pass
                     return Result(
                         provider=provider,
