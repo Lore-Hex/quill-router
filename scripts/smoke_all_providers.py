@@ -27,7 +27,10 @@ import httpx
 # provider that should always be available on the keyed credential.
 PROBES: list[tuple[str, str]] = [
     ("anthropic",   "anthropic/claude-haiku-4.5"),
-    ("openai",      "openai/gpt-5.4-mini"),
+    # gpt-5.4-mini was deprecated by OpenAI upstream sometime in 2026-05
+    # (returns 400 globally now). 4.1-mini is the current low-end probe
+    # — same OpenAI auth path, same TTFB envelope, still routable.
+    ("openai",      "openai/gpt-4.1-mini"),
     ("gemini",      "google/gemini-2.5-flash"),
     ("cerebras",    "meta-llama/llama-3.1-8b-instruct"),
     ("deepseek",    "deepseek/deepseek-v4-flash"),
