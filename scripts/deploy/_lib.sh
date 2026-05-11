@@ -24,6 +24,18 @@ TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # attested enclave MIG; the APAC + LATAM additions stay cold so they
 # show on the homepage map without paying for always-on Cloud Run.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
+# Cloud Run memory limit. 2Gi as of 2026-05-10 — 1Gi was OOM-killing
+# under steady-state load (Cloud Run repeatedly logged
+# "container instance was found to be using too much memory and was
+# terminated" on us-central1 / europe-west4). The resident set settles
+# around 600-900 MiB once Spanner + Bigtable gRPC channels are warmed
+# and concurrency=4 requests are in flight; 2Gi gives 2x headroom.
+# Real bloat investigation is open — the snapshot is 290KB on disk
+# but in-memory uses ~600MB+ before any traffic, suggesting either
+# Python import overhead (fastapi + httpx + google-cloud SDKs) or
+# unbounded dicts in storage.py (auth sessions, broadcast jobs,
+# email blocks live in per-process dicts that grow indefinitely).
+TR_CLOUD_RUN_MEMORY="${TR_CLOUD_RUN_MEMORY:-2Gi}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:$(git rev-parse --short HEAD 2>/dev/null || echo local)}"

@@ -27,7 +27,12 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/deploy.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      hotfix:
+        description: "Skip synthetic-watchdog gating (ship aggressively when prod is sick)"
+        type: boolean
+        default: false
 
 # Only one deploy at a time. Two pushes within seconds of each other
 # serialize instead of racing to be the running revision.
@@ -105,6 +110,22 @@ jobs:
       # europe-west4 if us-central1 stays up. A bad change reaches at
       # most one region. Final 10-min watch catches issues that
       # surface after both regions are converged.
+      #
+      # Hotfix mode (workflow_dispatch input `hotfix: true`): the
+      # watchdogs skip baseline + use --skip-baseline so a sick prod
+      # doesn't block the fix that's intended to heal it. The staged
+      # 10/50/100 traffic shift still applies — we just don't gate on
+      # synthetics that are already failing.
+
+      - name: Compute watchdog args (hotfix vs normal)
+        id: wd_args
+        run: |
+          if [ "${{ inputs.hotfix }}" = "true" ]; then
+            echo "extra=--skip-baseline --rollback-after 99 --baseline-grace-sec 0" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOTFIX MODE — watchdog gating disabled. Synthetic 'down' will not block this deploy."
+          else
+            echo "extra=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Capture pre-deploy revisions (for rollback)
         id: prev
@@ -148,7 +169,7 @@ jobs:
         # received the new image yet, so the bad change is contained.
         id: canary_us
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
@@ -189,7 +210,7 @@ jobs:
       - name: Canary gate — watch europe-west4 only (3 min)
         id: canary_eu
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions europe-west4 --duration-min 3 --rollback-after 2
+        run: python3 scripts/deploy/watchdog.py --regions europe-west4 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback europe-west4 + abort (canary tripped)
         if: ${{ steps.canary_eu.outcome == 'failure' && steps.canary_eu.outputs.rollback_regions != '' }}
@@ -228,7 +249,7 @@ jobs:
         # focused on warm regions.
         id: watchdog
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3
+        run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3 ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback (per-region, only failing ones)
         if: ${{ steps.watchdog.outcome == 'failure' && steps.watchdog.outputs.rollback_regions != '' }}

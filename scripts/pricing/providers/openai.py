@@ -11,6 +11,16 @@ We point at `platform.openai.com/docs/pricing` rather than the marketing
 `/api/pricing/` because the docs page has the comprehensive table —
 GPT-5.5 / 5.4 family with full Short / Long context tier breakdowns
 and Standard / Batch / Flex / Priority processing tiers.
+
+About the gpt-5.x 400s seen 2026-05-10
+======================================
+For a while it looked like the catalog had fictional gpt-5.4 routes
+that OpenAI's API had quietly deprecated. Turns out gpt-5.x is real
+and served — the 400s came from request-schema drift: the 5.x family
+rejects `max_tokens` and requires `max_completion_tokens` instead.
+That's a translation issue at the dispatch layer, not a catalog
+issue. The catalog stays as-is; see request_transform.py for the
+per-model parameter rename.
 """
 from __future__ import annotations
 
