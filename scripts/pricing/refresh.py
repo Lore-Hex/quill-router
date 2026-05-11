@@ -102,6 +102,34 @@ def _import_provider(slug: str):
     return importlib.import_module(f"scripts.pricing.providers.{slug}")
 
 
+def _upstream_id_map_for(slug: str) -> dict[str, str]:
+    """Read an optional `UPSTREAM_ID_MAP` from a provider's human-only
+    config module.
+
+    Some providers (Venice today) use a different model-id namespace
+    than OpenRouter's canonical form. The enclave puts the snapshot
+    endpoint's `model_id` verbatim into the upstream request body, so
+    a mismatch produces 404 "model not found" from the provider. When
+    the provider config defines `UPSTREAM_ID_MAP: dict[str, str]`
+    (OR-id -> provider-native-id), `_merge_snapshot` overrides the
+    endpoint's `model_id` with the native id at merge time.
+
+    Returns `{}` for providers that don't need a translation, which
+    means the merger leaves OR's `model_id` untouched. Putting the map
+    in `providers/<slug>.py` (human-only) means the LLM self-heal
+    cannot rewrite it — only humans can change authoritative routing
+    config.
+    """
+    try:
+        module = _import_provider(slug)
+    except Exception:
+        return {}
+    raw = getattr(module, "UPSTREAM_ID_MAP", None)
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if isinstance(k, str) and isinstance(v, str)}
+
+
 def _fetch_one(slug: str) -> tuple[str, ProviderPricingResult | None, str | None]:
     """Fetch one provider. Returns (slug, result, error_message)."""
     try:
@@ -362,6 +390,15 @@ def _merge_snapshot(
         for m in or_snapshot.get("models", [])
         if isinstance(m, dict) and isinstance(m.get("id"), str)
     }
+    # Per-slug OR-id -> provider-native-id map. Used at endpoint merge
+    # time to override `model_id` for providers whose upstream API
+    # rejects the OR canonical id (Venice today). Loaded once from each
+    # provider's human-only config module. Iterates PROVIDER_SLUGS (the
+    # 14 known providers), NOT provider_index whose keys are model ids,
+    # not slugs.
+    upstream_id_maps: dict[str, dict[str, str]] = {
+        slug: _upstream_id_map_for(slug) for slug in PROVIDER_SLUGS
+    }
     merged_models: list[dict[str, Any]] = []
     for model_id, by_slug in provider_index.items():
         or_model = or_by_id.get(model_id)
@@ -407,6 +444,16 @@ def _merge_snapshot(
                 if ep_slug in healed_slugs
                 else "provider_direct"
             )
+            # If this provider's config module exports an
+            # UPSTREAM_ID_MAP, override the endpoint's model_id with
+            # the provider-native id so the enclave sends what the
+            # upstream API actually accepts. OR's `model_id` is the
+            # canonical cross-provider id, not necessarily what any
+            # single provider's API understands.
+            slug_map = upstream_id_maps.get(ep_slug) or {}
+            native_id = slug_map.get(model_id)
+            if native_id:
+                new_ep["model_id"] = native_id
             new_endpoints.append(new_ep)
             seen_slugs.add(ep_slug)
         # Synthesize endpoints for keyed providers OR doesn't list. This
@@ -417,9 +464,11 @@ def _merge_snapshot(
         for missing_slug, missing_price in by_slug.items():
             if missing_slug in seen_slugs:
                 continue
+            synth_slug_map = upstream_id_maps.get(missing_slug) or {}
+            synth_model_id = synth_slug_map.get(model_id, model_id)
             synth_ep: dict[str, Any] = {
                 "name": f"{missing_slug} | {model_id}",
-                "model_id": model_id,
+                "model_id": synth_model_id,
                 "model_name": str(new_model.get("name") or model_id),
                 "provider_name": missing_slug,
                 "tag": missing_slug,
