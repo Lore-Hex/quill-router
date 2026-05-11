@@ -1,13 +1,15 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses docs.x.ai/docs/models (Jina-rendered markdown). The page has
-# a single chat-models table:
+# Parses docs.x.ai/developers/pricing (Jina-rendered markdown). The page
+# has a single chat-models table:
 #
-#   | grok-4.3 | 1M | $1.25 | $2.50 |  |
-#   | grok-4.20-multi-agent-0309 | 2M | $1.25 | $2.50 |  |
+#   | [grok-4.3](https://docs.x.ai/developers/models/grok-4.3) | 1M | $1.25 | $0.20 | $2.50 |
+#   | [grok-4.20-multi-agent-0309](...) | 2M | $1.25 | $0.20 | $2.50 |
 #
-# Columns are: model_id | context | input | output | (cached/empty).
-# Image / video / TTS rows have a different shape and are skipped.
+# Columns are: Model | Context | Input | Cached | Output. The model
+# cell is a markdown link — strip the [text](url) wrapper to extract
+# the slug. Image / video / TTS rows have only 3 cells and are skipped
+# because they don't have the Input + Output columns we need for cost.
 """xAI Grok pricing parser (Jina-rendered markdown)."""
 from __future__ import annotations
 
@@ -23,6 +25,15 @@ _NAME_TO_OR_ID = {
 }
 
 _DOLLAR_RE = re.compile(r"\$([\d.]+)")
+# Markdown link wrapper [name](url) — extract just the name. Also tolerate
+# `**name**` or bare names so the parser keeps working if the page sheds
+# its link decoration in a future redesign.
+_MD_LINK_RE = re.compile(r"^\s*\**\s*\[([^\]]+)\]\([^)]+\)\s*\**\s*$")
+
+
+def _strip_link(cell: str) -> str:
+    match = _MD_LINK_RE.match(cell)
+    return match.group(1).strip() if match else cell.strip().strip("*").strip()
 
 
 def _to_micro(text: str) -> int | None:
@@ -43,20 +54,33 @@ def parse(md: str) -> dict:
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
+        # New layout has 5 cells: Model | Context | Input | Cached | Output.
+        # Pricing-only rows (image/video) have 2 cells and skip the check
+        # below. Old layout was 5 cells with cached last, so we detect the
+        # layout heuristically: if cells[3] looks like the output price
+        # (always > cached when both present) we treat it as old layout.
         if len(cells) < 5:
             continue
-        name = cells[0]
+        name = _strip_link(cells[0])
         or_id = _NAME_TO_OR_ID.get(name)
         if or_id is None:
             continue
         if or_id in out:
             continue
-        # Skip rows that don't have $-amounts in the input/output cells
-        # (image/video/TTS rows have a different shape).
         prompt = _to_micro(cells[2])
-        completion = _to_micro(cells[3])
-        if prompt is None or completion is None:
+        # New page: cells[3] is cached input, cells[4] is output.
+        # Old page: cells[3] was output, cells[4] was cached input.
+        # Pick the LARGER of cells[3] and cells[4] as completion — output
+        # is always strictly greater than the cached-input rate for the
+        # chat models in this table (cached rate is by definition a
+        # discount). Falls through correctly whichever column ordering
+        # the page is currently in.
+        cell3 = _to_micro(cells[3])
+        cell4 = _to_micro(cells[4]) if len(cells) >= 5 else None
+        candidates = [c for c in (cell3, cell4) if c is not None]
+        if prompt is None or not candidates:
             continue
+        completion = max(candidates)
         out[or_id] = {
             "prompt_micro_per_m": prompt,
             "completion_micro_per_m": completion,
