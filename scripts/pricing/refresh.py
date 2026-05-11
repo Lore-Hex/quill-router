@@ -77,6 +77,14 @@ PROVIDER_SLUGS = [
     "siliconflow",
     "tinfoil",
     "venice",
+    # 2026-05-11 batch — three new providers that all serve
+    # google/gemma-4-31b-it. Lightning + GMI publish per-model
+    # pricing in /v1/models (API-direct, no parser file needed).
+    # Parasail's pricing is hand-maintained in providers/parasail.py
+    # because their public page is paywalled.
+    "parasail",
+    "lightning",
+    "gmi",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

@@ -288,6 +288,22 @@ PROVIDERS: dict[str, Provider] = {
     # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
     # positioning. OpenAI-compatible at api.venice.ai/api/v1.
     "venice": Provider(slug="venice", name="Venice", supports_prepaid=True, stores_content=False),
+    # Parasail — serverless inference platform. Hosts Llama, Qwen,
+    # Gemma 4 family, plus their own quantized variants
+    # (parasail-* aliases). OpenAI-compatible at api.parasail.io/v1.
+    # No public pricing API — pricing scraper falls back to a static
+    # table per family until they expose machine-readable rates.
+    "parasail": Provider(slug="parasail", name="Parasail", supports_prepaid=True),
+    # Lightning AI — Lightning's hosted inference. OpenAI-compatible at
+    # lightning.ai/api/v1. Pricing is published per-model in their
+    # /v1/models response (input_cost_per_token + output_cost_per_token),
+    # which the scraper consumes directly without scraping HTML.
+    "lightning": Provider(slug="lightning", name="Lightning AI", supports_prepaid=True),
+    # GMI Cloud — confidential-GPU inference hosted on H100/H200.
+    # OpenAI-compatible at api.gmi-serving.com/v1. Pricing is in the
+    # /v1/models response under each model's `pricing` block (per-token
+    # rates as strings).
+    "gmi": Provider(slug="gmi", name="GMI Cloud", supports_prepaid=True),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -327,6 +343,14 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "siliconflow",
         "tinfoil",
         "venice",
+        # 2026-05-11 batch (all OpenAI-compatible chat completions).
+        # All three host google/gemma-4 family which gives TR three
+        # independent prepaid routes for the same open-weight model
+        # — useful for both price arbitrage in the auto-router and
+        # availability isolation when one provider is degraded.
+        "parasail",
+        "lightning",
+        "gmi",
     }
 )
 
