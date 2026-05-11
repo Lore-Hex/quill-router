@@ -121,7 +121,8 @@ jobs:
           set -euo pipefail
           for pair in PARASAIL_API_KEY:trustedrouter-parasail-api-key \
                       LIGHTNING_API_KEY:trustedrouter-lightning-api-key \
-                      GMI_API_KEY:trustedrouter-gmi-api-key; do
+                      GMI_API_KEY:trustedrouter-gmi-api-key \
+                      DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)

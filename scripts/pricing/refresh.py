@@ -85,6 +85,7 @@ PROVIDER_SLUGS = [
     "parasail",
     "lightning",
     "gmi",
+    "deepinfra",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

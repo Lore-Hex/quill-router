@@ -304,6 +304,11 @@ PROVIDERS: dict[str, Provider] = {
     # /v1/models response under each model's `pricing` block (per-token
     # rates as strings).
     "gmi": Provider(slug="gmi", name="GMI Cloud", supports_prepaid=True),
+    # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
+    # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
+    # Pricing in the /v1/openai/models response under
+    # metadata.pricing.{input_tokens,output_tokens} as USD per million.
+    "deepinfra": Provider(slug="deepinfra", name="DeepInfra", supports_prepaid=True),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -351,6 +356,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "parasail",
         "lightning",
         "gmi",
+        "deepinfra",
     }
 )
 

@@ -1,25 +1,29 @@
 """Parasail — human-only provider config.
 
-Parasail's public pricing page is gated behind their SaaS login
-(saas.parasail.io) so the standard Jina-markdown scrape path
-returns an empty page. Their API `/v1/models` only exposes
-`{id, object, owned_by}` — no pricing block.
+Parasail's pricing lives behind a dashboard login at
+saas.parasail.io/info/pricing — Jina-markdown can't see it,
+and the api.parasail.io API key doesn't unlock any pricing
+endpoint (every /v1/* path TR tried returns "No static resource").
 
-Until Parasail publishes a machine-readable price feed, we hand-
-maintain a STATIC table of OR-canonical-id → ModelPrice for the
-models TR routes through Parasail. The table is small (just the
-gemma-4 family today plus the headline llama / qwen / deepseek
-sizes Parasail serves) and updates by hand once or twice a year
-when their pricing notes shift.
+**No guessed prices.** Until pricing is reachable by the scraper,
+this adapter returns ZERO prices, which means the refresh.py
+merge logic drops every Parasail endpoint from the snapshot.
+Parasail provider is registered in catalog.PROVIDERS (so the
+slug is recognized in routes) and in
+GATEWAY_PREPAID_PROVIDER_SLUGS (so the gateway WOULD authorize),
+but with no priced endpoints in the snapshot, no route resolves
+to Parasail. Restore by populating _PRICES with operator-pasted
+data from the dashboard.
 
-The rates below were taken from Parasail's published rate-sheet
-on 2026-05-11 (provided to TR by Parasail). Adjust by hand when
-they email a new rate sheet.
-
-When this table goes stale, the rates will be wrong but the route
-keeps serving. Worst case: TR over-bills or under-bills customers
-on Parasail-routed traffic, but never blocks a request. That's an
-acceptable failure mode for a small auxiliary provider.
+Two paths to restoring routes:
+  (a) Operator pastes the dashboard rates into _PRICES below.
+      Mark the source with the date pasted and a note about who
+      verified them. Pricing is per-OR-canonical-id; the API id
+      mapping is in _NATIVE_TO_OR_ID.
+  (b) Parasail ships a public/machine-readable pricing feed.
+      Replace the static table with a JSON fetch (Lightning /
+      GMI / DeepInfra do this — see those adapters for the
+      pattern).
 """
 from __future__ import annotations
 
@@ -43,17 +47,23 @@ EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
 ]
 
-# Hand-maintained price table for Parasail-keyed models. Microdollars
-# per million tokens, on the lowest available tier. Source: Parasail
-# rate sheet, last refreshed 2026-05-11. Add models when we extend
-# TR's Parasail routing.
+# Operator-pasted price table for Parasail-keyed models. Microdollars
+# per million tokens, lowest tier. EMPTY by default — every row in
+# here MUST be sourced from Parasail's authenticated dashboard at
+# saas.parasail.io/info/pricing (or an email rate-sheet), not guessed.
+#
+# Format: OR-canonical-id → (prompt_micro_per_m, completion_micro_per_m).
+# When you add a row, include the date and where you got the price in
+# the trailing comment so the next person to audit knows what to
+# distrust.
+#
+# While this table is empty, Parasail endpoints are dropped from the
+# snapshot at merge time — refresh.py:_merge_snapshot uses the
+# (model_id, provider_slug) → ModelPrice map and skips endpoints
+# without a price.
 _PRICES: dict[str, tuple[int, int]] = {
-    # (prompt_micro_per_m, completion_micro_per_m)
-    "google/gemma-4-31b-it":      (140_000, 400_000),    # $0.14/M in, $0.40/M out
-    "google/gemma-4-26b-a4b-it":  (130_000, 400_000),    # $0.13/M in, $0.40/M out
-    "google/gemma-3-27b-it":      (100_000, 200_000),    # $0.10/M in, $0.20/M out
-    "meta-llama/llama-3.3-70b-instruct": (270_000, 500_000),
-    "qwen/qwen2.5-vl-72b-instruct":      (450_000, 900_000),
+    # Example shape — replace with real numbers from the dashboard:
+    # "google/gemma-4-31b-it": (140_000, 400_000),  # $0.14/M in, $0.40/M out (dashboard 2026-05-11, jp)
 }
 
 # Parasail-native model id → OR-canonical. The /v1/models endpoint
