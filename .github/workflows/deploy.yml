@@ -208,10 +208,24 @@ jobs:
           echo "us-central1 keeps the new release."
           exit 1
 
+      - name: Deploy cold regions (no canary, parallel, scale-to-zero)
+        # Stage 3.5 cold regions: asia-northeast1, asia-southeast1,
+        # southamerica-east1. min-instances=0 means ~$0/mo idle plus
+        # a ~5-10s cold-start tax on the first request from those
+        # geographies. No canary because (a) they're lowest-volume by
+        # construction and (b) the warm regions already validated the
+        # image. rollout.sh handles min-instances=0 automatically when
+        # a region is in TR_REGIONS but not TR_WARM_REGIONS.
+        env:
+          TR_DEPLOY_TARGET_REGIONS: asia-northeast1,asia-southeast1,southamerica-east1
+        run: bash scripts/deploy/rollout.sh
+
       - name: Final watchdog — both regions (10 min)
         # Catches issues that surface after both regions are
         # converged but before the deploy is "done." Per-region:
-        # only the failing region(s) get rolled back.
+        # only the failing region(s) get rolled back. Cold regions
+        # don't have synthetics on them yet, so the watchdog stays
+        # focused on warm regions.
         id: watchdog
         continue-on-error: true
         run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3

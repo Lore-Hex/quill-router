@@ -148,6 +148,21 @@ prune_failed_revisions() {
   done
 }
 
+is_warm_region() {
+  # Returns 0 if $1 is in TR_WARM_REGIONS, 1 otherwise. Cold regions
+  # (in TR_REGIONS but not TR_WARM_REGIONS) deploy with --min-instances=0
+  # so they don't pay for always-on capacity at idle. Stage 3.5 of the
+  # multi-region expansion plan added asia-northeast1, asia-southeast1,
+  # and southamerica-east1 this way — they appear on the homepage map
+  # and serve local users with a ~5-10s cold-start tax on the first
+  # request, but ~$0/mo when idle.
+  local r="$1"
+  case ",${TR_WARM_REGIONS}," in
+    *",${r},"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 deploy_one_region() {
   local target="$1"
   local logfile="${2:-/dev/null}"
@@ -165,6 +180,18 @@ deploy_one_region() {
     log "deploying Cloud Run service ${SERVICE} to ${target}"
   fi
   prune_failed_revisions "$target" >>"$logfile" 2>&1 || true
+  # Cold regions (not in TR_WARM_REGIONS) scale to zero. The first request
+  # pays a ~5-10s cold-start tax; subsequent requests within the
+  # keep-warm window are fast. Explicit override via
+  # TR_CLOUD_RUN_MIN_INSTANCES wins for either kind.
+  local min_instances="${TR_CLOUD_RUN_MIN_INSTANCES:-}"
+  if [ -z "$min_instances" ]; then
+    if is_warm_region "$target"; then
+      min_instances=1
+    else
+      min_instances=0
+    fi
+  fi
   if gc run deploy "$SERVICE" \
       --region "$target" \
       --image "$IMAGE" \
@@ -172,7 +199,7 @@ deploy_one_region() {
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
       --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-4}" \
-      --min-instances "${TR_CLOUD_RUN_MIN_INSTANCES:-1}" \
+      --min-instances "$min_instances" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-60}" \
       --set-env-vars "$SET_ENV_VARS" \
       --update-secrets "$UPDATE_SECRETS" \
@@ -207,6 +234,22 @@ done
 if [ "${TR_DEPLOY_ALL_REGIONS:-1}" != "1" ]; then
   TARGETS=("$REGION")
 fi
+
+# Full set of regions that SHOULD be in the LB (independent of what
+# this deploy run targets). The detach-stale-NEG step below compares
+# attached regions against this — NOT against TARGETS — so a
+# narrow-target deploy (e.g. TR_DEPLOY_TARGET_REGIONS=asia-northeast1)
+# doesn't accidentally rip warm regions out of the LB.
+#
+# Lost ~30s of trustedrouter.com 504s on 2026-05-10 from exactly this:
+# a cold-region-only deploy detached all three warm-region NEGs from
+# trusted-router-control-backend because the original loop compared
+# against TARGETS (the cold subset) instead of the full TR_REGIONS.
+IFS=',' read -ra _ALL_REGION_LIST <<<"$TR_REGIONS"
+ALL_REGIONS=()
+for r in "${_ALL_REGION_LIST[@]}"; do
+  [ -n "$r" ] && ALL_REGIONS+=("$r")
+done
 
 REGION_PIDS=()
 REGION_LOGS=()
@@ -283,7 +326,12 @@ attach_region_to_lb() {
 
 if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/null 2>&1; then
   log "wiring Serverless NEGs to ${LB_BACKEND_SERVICE}"
-  for fanout_region in "${TARGETS[@]}"; do
+  # Attach every region in TR_REGIONS, not just this deploy's TARGETS,
+  # so the LB always reflects the full intended region set. Idempotent:
+  # attach_region_to_lb no-ops on regions that are already attached.
+  # Without this, a narrow-target deploy could leave the LB in a state
+  # where a region exists as Cloud Run but isn't in the LB rotation.
+  for fanout_region in "${ALL_REGIONS[@]}"; do
     attach_region_to_lb "$fanout_region" || log "WARN: NEG attach failed for ${fanout_region}"
   done
   existing_backend_regions="$(gc compute backend-services describe "$LB_BACKEND_SERVICE" \
@@ -292,9 +340,14 @@ if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/nul
     | sed -n 's#.*regions/\([^/]*\)/networkEndpointGroups/.*#\1#p' \
     | sort -u)"
   for attached_region in $existing_backend_regions; do
+    # Compare against ALL_REGIONS (= TR_REGIONS), not TARGETS. TARGETS
+    # is just this deploy run's subset; detaching anything outside of
+    # it would rip warm regions out of the LB when running a
+    # cold-only or narrow-target deploy. We only want to detach
+    # regions that fell out of TR_REGIONS entirely.
     keep_region=0
-    for target_region in "${TARGETS[@]}"; do
-      if [ "$attached_region" = "$target_region" ]; then
+    for full_region in "${ALL_REGIONS[@]}"; do
+      if [ "$attached_region" = "$full_region" ]; then
         keep_region=1
         break
       fi
