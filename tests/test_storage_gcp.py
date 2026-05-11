@@ -110,7 +110,9 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
         def instance(self, _instance_id: str) -> FakeSpannerClient:
             return self
 
-        def database(self, _database_id: str) -> object:
+        def database(self, _database_id: str, **_kwargs: Any) -> object:
+            # `pool=FixedSizePool(size=N)` is passed in production to
+            # bound resident memory; accept-and-ignore here.
             return object()
 
     class FakeBigtableClient:
@@ -134,7 +136,17 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
         generation_table="generations",
     )
 
-    assert spanner_calls == [{"project": "project", "disable_builtin_metrics": True}]
+    # credentials=None is the GCP-default ADC path (Cloud Run / GCE);
+    # AWS deploys pass an explicit service_account.Credentials via
+    # GCP_SERVICE_ACCOUNT_KEY_JSON. Both keep disable_builtin_metrics
+    # set so we don't pull OpenTelemetry runtime metrics.
+    assert spanner_calls == [
+        {
+            "project": "project",
+            "credentials": None,
+            "disable_builtin_metrics": True,
+        }
+    ]
 
 
 def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:

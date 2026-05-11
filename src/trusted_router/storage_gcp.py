@@ -102,7 +102,7 @@ class SpannerBigtableStore:
             raise ValueError("Spanner and Bigtable IDs are required")
         try:
             from google.cloud import bigtable, spanner
-            from google.cloud.spanner_v1 import param_types
+            from google.cloud.spanner_v1 import FixedSizePool, param_types
         except ImportError as exc:  # pragma: no cover - exercised in prod image.
             raise RuntimeError(
                 "Install google-cloud-spanner and google-cloud-bigtable for "
@@ -137,6 +137,16 @@ class SpannerBigtableStore:
 
         self._spanner = spanner
         self._param_types = param_types
+        # Bounded session pool. The SDK default is FixedSizePool(size=10),
+        # which preallocates ten gRPC sessions on first use — ~5-8 MB each
+        # = 50-80 MB of resident memory per Cloud Run instance. Our
+        # workload is single-shot reads/writes per HTTP request with
+        # `--concurrency=2` (rollout.sh), so we'll never need more than
+        # 2-3 sessions in flight; size=4 gives a 2x headroom over the
+        # in-flight ceiling. Saves ~30 MB per instance.
+        pool_size = int(
+            os.environ.get("TR_SPANNER_POOL_SIZE", "4")
+        )
         self._database = (
             spanner.Client(
                 project=project_id,
@@ -144,7 +154,10 @@ class SpannerBigtableStore:
                 disable_builtin_metrics=True,
             )
             .instance(spanner_instance_id)
-            .database(spanner_database_id)
+            .database(
+                spanner_database_id,
+                pool=FixedSizePool(size=pool_size),
+            )
         )
         # Bigtable app-profile selection. Empty string = use the
         # instance's implicit default profile (current behavior; single-

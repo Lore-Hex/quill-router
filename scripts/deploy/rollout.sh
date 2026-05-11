@@ -198,7 +198,7 @@ deploy_one_region() {
       --allow-unauthenticated \
       --port 8080 \
       --memory "${TR_CLOUD_RUN_MEMORY:-1Gi}" \
-      --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-4}" \
+      --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-2}" \
       --min-instances "$min_instances" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-60}" \
       --set-env-vars "$SET_ENV_VARS" \

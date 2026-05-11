@@ -24,17 +24,32 @@ TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # attested enclave MIG; the APAC + LATAM additions stay cold so they
 # show on the homepage map without paying for always-on Cloud Run.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
-# Cloud Run memory limit. 2Gi as of 2026-05-10 — 1Gi was OOM-killing
-# under steady-state load (Cloud Run repeatedly logged
-# "container instance was found to be using too much memory and was
-# terminated" on us-central1 / europe-west4). The resident set settles
-# around 600-900 MiB once Spanner + Bigtable gRPC channels are warmed
-# and concurrency=4 requests are in flight; 2Gi gives 2x headroom.
-# Real bloat investigation is open — the snapshot is 290KB on disk
-# but in-memory uses ~600MB+ before any traffic, suggesting either
-# Python import overhead (fastapi + httpx + google-cloud SDKs) or
-# unbounded dicts in storage.py (auth sessions, broadcast jobs,
-# email blocks live in per-process dicts that grow indefinitely).
+# Cloud Run memory limit. 2Gi as of 2026-05-10.
+#
+# History of the bloat profile (RSS at idle, then under load):
+#   pre-fix:   ~600-900 MB at concurrency=4 → OOM at 1Gi
+#   post-fix:  ~150-250 MB at concurrency=2 → comfortable at 1Gi
+#
+# Where the bytes go (measured 2026-05-10 with tr_mem_profile2.py):
+#   ~85 MB    google-cloud SDK imports (Spanner gRPC stubs, Bigtable,
+#             KMS, protobuf descriptors) — unavoidable floor
+#   ~50 MB    Spanner FixedSizePool(size=10) (SDK default) at first
+#             use, ~5 MB per gRPC session × 10 sessions; reduced to
+#             FixedSizePool(size=4) in storage_gcp.py → ~30 MB saved
+#   ~20 MB    FastAPI + Pydantic + Starlette + uvicorn
+#   ~25 MB    create_app() route registration (244 routes worth of
+#             Pydantic dataclass shape metadata + dependency graphs)
+#   ~50-200 MB peak per in-flight request × concurrency
+#             (httpx connection pool + JSON parsing + gRPC streams).
+#             Halved by `--concurrency=2` in rollout.sh.
+#   ~10 MB    Sentry SDK breadcrumb + transport buffers
+#
+# Lazy-imported only when their first route is hit (not in startup):
+#   eth_account (~13 MB)  — wallet OAuth route
+#   boto3 (~3 MB)         — SES email send
+#
+# 2Gi is kept (not lowered to 1Gi) because the per-request peak under
+# spiky bursts can still pin a single instance; the surplus is cheap.
 TR_CLOUD_RUN_MEMORY="${TR_CLOUD_RUN_MEMORY:-2Gi}"
 SERVICE="${SERVICE:-trusted-router}"
 REPO="${REPO:-trusted-router}"
