@@ -334,16 +334,20 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # by switching base URL + auth header.
         "grok",
         "novita",
-        # 2026-05-12: Phala re-enabled. Live probe of
-        # https://api.red-pill.ai/v1/models confirms the rotated key
-        # works against their full catalog (80 models). Original
-        # 401s on 2026-05-11 were the key-rotation incident, NOT a
-        # native-id mismatch as initially hypothesized — but Phala
-        # DOES expect the full author-prefixed canonical id on the
-        # wire (`openai/gpt-5.5`, not bare `gpt-5.5`) so the enclave
-        # now ships with a `phalaModelMap` (byok.go) that retains
-        # the prefix. See commit history for the audit chain.
-        "phala",
+        # 2026-05-12 phala STILL disabled. The rotated key works
+        # for GET /v1/models (returns 80 models OK) but EVERY POST
+        # to /v1/chat/completions returns:
+        #   {"error":{"message":"Invalid API key provided","type":"error"}}
+        # confirmed both via the enclave logs after deploy AND a
+        # direct curl from a workstation with the same key. So
+        # Phala's rotated key is read-only-scoped (or chat-completions
+        # auth lags /v1/models auth). Email out to Yan at Phala —
+        # once chat starts returning 200 with the same key,
+        # uncomment and redeploy. The companion enclave change
+        # already shipped a phalaModelMap (byok.go) so when phala
+        # comes back, it'll route correctly without further work
+        # on the dispatch side.
+        # "phala",
         "siliconflow",
         "tinfoil",
         "venice",
