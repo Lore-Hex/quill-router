@@ -334,17 +334,16 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # by switching base URL + auth header.
         "grok",
         "novita",
-        # phala: temporarily removed 2026-05-11. Their issued key
-        # started returning 401 "Invalid API key" mid-day; they
-        # disclosed a security incident and the rotation hasn't
-        # produced a new working key yet. We've emailed; once a
-        # fresh key lands and the sync to AWS Secrets Manager runs,
-        # add this slug back. While removed, gateway routes that
-        # request `provider.only=["phala"]` fail with 400
-        # PROVIDER_NOT_SUPPORTED instead of 502 upstream-401 —
-        # cleaner error semantics + the synthetic monitor stops
-        # counting phala as a chronic provider-degraded failure.
-        # "phala",
+        # 2026-05-12: Phala re-enabled. Live probe of
+        # https://api.red-pill.ai/v1/models confirms the rotated key
+        # works against their full catalog (80 models). Original
+        # 401s on 2026-05-11 were the key-rotation incident, NOT a
+        # native-id mismatch as initially hypothesized — but Phala
+        # DOES expect the full author-prefixed canonical id on the
+        # wire (`openai/gpt-5.5`, not bare `gpt-5.5`) so the enclave
+        # now ships with a `phalaModelMap` (byok.go) that retains
+        # the prefix. See commit history for the audit chain.
+        "phala",
         "siliconflow",
         "tinfoil",
         "venice",

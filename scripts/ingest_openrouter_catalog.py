@@ -74,6 +74,25 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     # Venice — privacy-focused LLM gateway.
     "Venice": "venice",
     "Venice.AI": "venice",
+    # DeepInfra — open-weight serverless (OpenAI-compatible).
+    "DeepInfra": "deepinfra",
+    "Deep Infra": "deepinfra",
+    # Parasail — open-weight serverless. OR uses `Parasail` as the
+    # provider_name; their /v1/models exposes both `parasail-X` and
+    # the upstream-author form as aliases (handled in
+    # scripts/pricing/providers/parasail.py + the enclave's
+    # `parasailModelMap`).
+    "Parasail": "parasail",
+    # Lightning AI — OR may not list it as a provider for every
+    # model; the pricing scraper at lightning.py synthesizes
+    # endpoints via refresh.py when OR's feed lags. The mapping is
+    # here for the cases OR does list.
+    "Lightning AI": "lightning",
+    "Lightning": "lightning",
+    # GMI Cloud — same shape as Lightning: scraper synthesizes
+    # missing endpoints, but if OR adds them we pick them up.
+    "GMI": "gmi",
+    "GMI Cloud": "gmi",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to
