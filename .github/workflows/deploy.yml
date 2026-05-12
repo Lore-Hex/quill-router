@@ -130,7 +130,7 @@ jobs:
       - name: Capture pre-deploy revisions (for rollback)
         id: prev
         run: |
-          for region in us-central1 europe-west4; do
+          for region in us-central1 europe-west4 us-east4; do
             rev=$(gcloud run services describe "${SERVICE}" \
               --region="$region" --project="${PROJECT_ID}" \
               --format='value(status.traffic[0].revisionName)' \
@@ -226,7 +226,55 @@ jobs:
           gcloud run services update-traffic "${SERVICE}" \
             --region=europe-west4 --project="${PROJECT_ID}" \
             --to-revisions="${PREV_EU}=100" --quiet
-          echo "us-central1 keeps the new release."
+          echo "us-central1 keeps the new release; us-east4 has NOT received the bad image."
+          exit 1
+
+      - name: Deploy us-east4 (no-traffic)
+        env:
+          IMAGE_TAG: ${{ env.SHA }}
+          TR_DEPLOY_TARGET_REGIONS: us-east4
+          TR_DEPLOY_NO_TRAFFIC: "1"
+        run: bash scripts/deploy/rollout.sh
+
+      - name: Resolve us-east4 new revision
+        id: new_us_east4
+        run: |
+          rev=$(gcloud run services describe "${SERVICE}" \
+            --region=us-east4 --project="${PROJECT_ID}" \
+            --format='value(status.latestCreatedRevisionName)')
+          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
+          echo "  new us-east4 revision: ${rev}"
+
+      - name: Stage traffic 10/50/100 (us-east4)
+        run: bash scripts/deploy/staged_traffic.sh us-east4 "${{ steps.new_us_east4.outputs.revision }}" "${{ steps.prev.outputs.us_east4_revision }}"
+
+      - name: Canary gate — watch us-east4 only (3 min)
+        # Single-region 3-min canary. us-east4 is a warm region
+        # (TR_WARM_REGIONS includes it) so it gets the same gating
+        # treatment as us-central1 + europe-west4. If the synthetic
+        # monitor hasn't been deployed for us-east4 yet, the watchdog
+        # will read 'unknown' and won't trigger a rollback — the
+        # staged_traffic.sh 10/50/100 step still ran its own
+        # synthetic checks between traffic stages.
+        id: canary_us_east4
+        continue-on-error: true
+        run: python3 scripts/deploy/watchdog.py --regions us-east4 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
+
+      - name: Rollback us-east4 + abort (canary tripped)
+        if: ${{ steps.canary_us_east4.outcome == 'failure' && steps.canary_us_east4.outputs.rollback_regions != '' }}
+        env:
+          PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREV_US_EAST4}" ]; then
+            echo "no prior us-east4 revision recorded; cannot rollback"
+            exit 1
+          fi
+          echo "us-east4 canary failed; rolling traffic back to ${PREV_US_EAST4}"
+          gcloud run services update-traffic "${SERVICE}" \
+            --region=us-east4 --project="${PROJECT_ID}" \
+            --to-revisions="${PREV_US_EAST4}=100" --quiet
+          echo "us-central1 + europe-west4 keep the new release; cold regions have NOT received it."
           exit 1
 
       - name: Deploy cold regions (no canary, parallel, scale-to-zero)
@@ -241,42 +289,23 @@ jobs:
           TR_DEPLOY_TARGET_REGIONS: asia-northeast1,asia-southeast1,southamerica-east1
         run: bash scripts/deploy/rollout.sh
 
-      - name: Final watchdog — both regions (10 min)
-        # Catches issues that surface after both regions are
-        # converged but before the deploy is "done." Per-region:
-        # only the failing region(s) get rolled back. Cold regions
-        # don't have synthetics on them yet, so the watchdog stays
-        # focused on warm regions.
-        id: watchdog
-        continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --duration-min 10 --rollback-after 3 ${{ steps.wd_args.outputs.extra }}
-
-      - name: Rollback (per-region, only failing ones)
-        if: ${{ steps.watchdog.outcome == 'failure' && steps.watchdog.outputs.rollback_regions != '' }}
-        env:
-          ROLLBACK_REGIONS: ${{ steps.watchdog.outputs.rollback_regions }}
-          PREV_US: ${{ steps.prev.outputs.us_central1_revision }}
-          PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
-        run: |
-          set -euo pipefail
-          IFS=',' read -ra REGIONS <<< "${ROLLBACK_REGIONS}"
-          for region in "${REGIONS[@]}"; do
-            case "$region" in
-              us-central1) prev="${PREV_US}" ;;
-              europe-west4) prev="${PREV_EU}" ;;
-              *) echo "  ${region}: no rollback handle; skipping"; continue ;;
-            esac
-            if [ -z "$prev" ]; then
-              echo "  ${region}: no prior revision recorded; skipping"
-              continue
-            fi
-            echo "  ${region}: rolling traffic back to ${prev}"
-            gcloud run services update-traffic "${SERVICE}" \
-              --region="$region" --project="${PROJECT_ID}" \
-              --to-revisions="${prev}=100" --quiet
-          done
-          echo "rollback complete for: ${ROLLBACK_REGIONS}; failing job so the bad release shows red in GHA"
-          exit 1
+      # No cross-region "final watchdog" step. Each region's health is
+      # gated by its own per-region canary above (us-central1, then
+      # europe-west4, then us-east4, each with its own 3-min watchdog
+      # AFTER the staged_traffic 10/50/100 ramp). The prior cross-
+      # region watchdog at this point caused recurring spurious
+      # rollbacks: by the time it ran, earlier regions had finished
+      # converging but the just-deployed region was still settling,
+      # so the watchdog window structurally overlapped one region's
+      # settle phase and would auto-rollback it even when the deploy
+      # was functionally clean. Same anti-pattern fixed in
+      # quill-cloud-proxy commit 7b735e8.
+      #
+      # Cold regions (asia-northeast1, asia-southeast1,
+      # southamerica-east1) deploy in parallel after all warm-region
+      # canaries pass. They have no per-region canary by design —
+      # warm regions already validated the image, and cold regions
+      # are lowest-volume by construction.
 
       - name: Smoke test prod
         run: |
