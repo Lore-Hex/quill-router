@@ -61,6 +61,14 @@ ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" 
 ensure_secret_from_env_file "GROK_API_KEY" "trustedrouter-grok-api-key" "XAI_API_KEY"
 ensure_secret_from_env_file "NOVITA_API_KEY" "trustedrouter-novita-api-key"
 ensure_secret_from_env_file "PHALA_API_KEY" "trustedrouter-phala-api-key" "REDPILL_API_KEY"
+# Phala's GPU-TEE-attested confidential AI tier (issued from
+# cloud.phala.com dashboard). This is what the enclave actually
+# routes against now via the `phala/<bare>` model id form per
+# docs.phala.com/phala-cloud/confidential-ai. The plain
+# trustedrouter-phala-api-key above is the upstream-pass-through
+# redpill key (kept around for completeness; the enclave's
+# QUILL_PHALA_SECRET default now points at the confidential one).
+ensure_secret_from_env_file "PHALA_CONFIDENTIAL_API_KEY" "trustedrouter-phala-confidential-api-key"
 ensure_secret_from_env_file "SILICON_FLOW_API_KEY" "trustedrouter-siliconflow-api-key" "SILICONFLOW_API_KEY"
 ensure_secret_from_env_file "TINFOIL_API_KEY" "trustedrouter-tinfoil-api-key"
 ensure_secret_from_env_file "VENICE_API_KEY" "trustedrouter-venice-api-key"

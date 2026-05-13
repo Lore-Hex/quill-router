@@ -334,20 +334,21 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # by switching base URL + auth header.
         "grok",
         "novita",
-        # 2026-05-12 phala STILL disabled. The rotated key works
-        # for GET /v1/models (returns 80 models OK) but EVERY POST
-        # to /v1/chat/completions returns:
-        #   {"error":{"message":"Invalid API key provided","type":"error"}}
-        # confirmed both via the enclave logs after deploy AND a
-        # direct curl from a workstation with the same key. So
-        # Phala's rotated key is read-only-scoped (or chat-completions
-        # auth lags /v1/models auth). Email out to Yan at Phala —
-        # once chat starts returning 200 with the same key,
-        # uncomment and redeploy. The companion enclave change
-        # already shipped a phalaModelMap (byok.go) so when phala
-        # comes back, it'll route correctly without further work
-        # on the dispatch side.
-        # "phala",
+        # 2026-05-13: Phala re-enabled with the CORRECT confidential-
+        # AI key. The 2026-05-12 attempt failed because we were
+        # routing via the "redpill" upstream pass-through tier
+        # (key 401s on chat completions even though /v1/models 200s)
+        # — that key works for catalog browsing but isn't entitled
+        # to chat. The fix: cloud.phala.com dashboard issues a
+        # separate key for the GPU-TEE-attested confidential-AI
+        # tier, stored as PHALA_CONFIDENTIAL_API_KEY → Secret
+        # Manager `trustedrouter-phala-confidential-api-key`. The
+        # enclave's QUILL_PHALA_SECRET default + AWS bootstrap_server
+        # now point at the confidential secret; model ids ship as
+        # `phala/<bare>` (per docs.phala.com/phala-cloud/confidential-ai)
+        # via phalaModelMap in byok.go. Verified working live with
+        # phala/gpt-oss-120b and phala/deepseek-v3.2 returning 200.
+        "phala",
         "siliconflow",
         "tinfoil",
         "venice",
