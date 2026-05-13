@@ -109,7 +109,7 @@ jobs:
           echo "::add-mask::${KEY}"
           echo "TOGETHER_API_KEY=${KEY}" >> "$GITHUB_ENV"
 
-      - name: Pull PARASAIL_API_KEY / LIGHTNING_API_KEY / GMI_API_KEY
+      - name: Pull PARASAIL_API_KEY / LIGHTNING_API_KEY / GMI_API_KEY / PHALA_CONFIDENTIAL_API_KEY
         # Same /v1/models-Bearer-auth pattern as Together. Each
         # provider's /v1/models call needs the right key; without
         # them the respective adapter returns 401 and the new
@@ -117,12 +117,17 @@ jobs:
         # tolerates a missing key (counts as one failure under
         # MAX_TOLERATED_FAILURES), but the hourly bot should always
         # have them — same per-secret IAM pattern.
+        # PHALA_CONFIDENTIAL_API_KEY hits Phala's GPU-TEE-attested
+        # confidential tier (cloud.phala.com dashboard issues this
+        # key, distinct from the upstream redpill key); the scraper
+        # at phala.py reads /v1/models from api.redpill.ai with it.
         run: |
           set -euo pipefail
           for pair in PARASAIL_API_KEY:trustedrouter-parasail-api-key \
                       LIGHTNING_API_KEY:trustedrouter-lightning-api-key \
                       GMI_API_KEY:trustedrouter-gmi-api-key \
-                      DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key; do
+                      DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
+                      PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)
