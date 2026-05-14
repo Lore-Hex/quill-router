@@ -7,6 +7,13 @@
   <meta name="description" content="{{ description }}">
   <link rel="canonical" href="{{ site_url }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
+  {% if json_ld_blob %}
+  {# Page-specific structured data (e.g. Product/Offer schema on the
+     per-model detail pages). Rendered as already-serialized JSON to
+     keep escaping simple; the producer in dashboard.py is the source
+     of truth for the schema. #}
+  <script type="application/ld+json">{{ json_ld_blob|safe }}</script>
+  {% endif %}
 </head>
 <body>
   <header class="top">

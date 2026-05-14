@@ -180,13 +180,22 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     model = MODELS.get(model_id)
     if model is None or model.id in META_MODEL_IDS:
         return None
+    site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     return _env().get_template("public/model_detail.html").render(
         api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/models/{model_id}",
+        site_url=site_url,
         title=f"{model.name} - TrustedRouter",
         heading=model.name,
         description=f"All providers serving {model.name} via TrustedRouter.",
         model=_model_detail_view(model),
+        # Product/Offer JSON-LD. Google auto-classifies the model detail
+        # pages as Merchant Listings because of the visible per-million-
+        # token prices; without an authoritative schema block Search
+        # Console warns about missing image / invalid brand /
+        # missing hasMerchantReturnPolicy / missing shippingDetails.
+        # Emitting Product schema with the 4 fields turns the warning
+        # off + opens up the shopping-carousel surface.
+        json_ld_blob=_model_json_ld(settings, model, site_url),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -284,6 +293,138 @@ def _model_detail_view(model: Model) -> dict[str, object]:
         "prepaid": model.prepaid_available,
         "byok": model.byok_available,
     }
+
+
+_BRAND_DISPLAY_NAMES: dict[str, str] = {
+    "anthropic": "Anthropic",
+    "openai": "OpenAI",
+    "google": "Google",
+    "meta-llama": "Meta",
+    "mistralai": "Mistral AI",
+    "moonshotai": "Moonshot AI",
+    "z-ai": "Z.AI",
+    "deepseek": "DeepSeek",
+    "qwen": "Qwen",
+    "x-ai": "xAI",
+    "minimax": "MiniMax",
+    "thedrummer": "TheDrummer",
+    "arcee-ai": "Arcee AI",
+    "stepfun": "StepFun",
+    "bytedance": "ByteDance",
+    "xiaomi": "Xiaomi",
+    "nousresearch": "Nous Research",
+    "phala": "Phala",
+}
+
+
+def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
+    """Build the Product/Offer JSON-LD blob for the model detail page.
+
+    Returns a JSON string ready to be injected into a
+    `<script type="application/ld+json">` tag.
+
+    Fields populated to satisfy Search Console's Merchant Listings
+    schema checks:
+      - `image`               — required (critical)
+      - `brand`               — Brand object (not a string)
+      - `offers.hasMerchantReturnPolicy` — non-returnable digital service
+      - `offers.shippingDetails`         — zero-cost zero-time delivery
+
+    Price: cheapest prompt rate across this model's endpoints, expressed
+    as USD per million tokens (the unit the page itself displays). The
+    `description` field calls out the unit so a shopping-carousel viewer
+    isn't surprised by the float.
+    """
+    endpoints = endpoints_for_model(model.id)
+    prompt_prices = [
+        ep.prompt_price_microdollars_per_million_tokens
+        for ep in endpoints
+        if ep.prompt_price_microdollars_per_million_tokens > 0
+    ]
+    if not prompt_prices:
+        # Edge case: catalog has the model but no priced endpoint.
+        # Fall back to the model-level price (often the cheapest seen
+        # historically).
+        cheapest_micro_per_m = model.prompt_price_microdollars_per_million_tokens
+    else:
+        cheapest_micro_per_m = min(prompt_prices)
+    # microdollars-per-million-tokens → dollars-per-million-tokens.
+    cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
+
+    brand_slug = model.provider
+    brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
+
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": model.name,
+        "description": (
+            f"{model.name} via TrustedRouter. Pay-per-token API; pricing "
+            f"shown is USD per million prompt tokens (cheapest provider). "
+            f"Output tokens billed separately at the endpoint's published rate."
+        ),
+        "url": site_url,
+        "image": f"https://{settings.trusted_domain}/og.png",
+        "brand": {
+            "@type": "Brand",
+            "name": brand_name,
+        },
+        "offers": {
+            "@type": "Offer",
+            "price": f"{cheapest_usd_per_m:.6f}",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+            "url": site_url,
+            "priceSpecification": {
+                "@type": "UnitPriceSpecification",
+                "price": f"{cheapest_usd_per_m:.6f}",
+                "priceCurrency": "USD",
+                "unitCode": "E37",  # UN/CEFACT code for "kilo" — closest
+                "unitText": "per million prompt tokens",
+            },
+            # Tokens aren't returnable, so a no-returns policy is the
+            # honest answer. MerchantReturnNotPermitted is the
+            # schema.org enum for "we don't accept returns".
+            "hasMerchantReturnPolicy": {
+                "@type": "MerchantReturnPolicy",
+                "applicableCountry": "US",
+                "returnPolicyCategory": (
+                    "https://schema.org/MerchantReturnNotPermitted"
+                ),
+            },
+            # Digital delivery: no shipping cost, no transit time.
+            # Google requires both shippingRate and deliveryTime to be
+            # present even when zero.
+            "shippingDetails": {
+                "@type": "OfferShippingDetails",
+                "shippingRate": {
+                    "@type": "MonetaryAmount",
+                    "value": "0",
+                    "currency": "USD",
+                },
+                "shippingDestination": {
+                    "@type": "DefinedRegion",
+                    "addressCountry": "US",
+                },
+                "deliveryTime": {
+                    "@type": "ShippingDeliveryTime",
+                    "handlingTime": {
+                        "@type": "QuantitativeValue",
+                        "minValue": 0,
+                        "maxValue": 0,
+                        "unitCode": "DAY",
+                    },
+                    "transitTime": {
+                        "@type": "QuantitativeValue",
+                        "minValue": 0,
+                        "maxValue": 0,
+                        "unitCode": "DAY",
+                    },
+                },
+            },
+        },
+    }
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
