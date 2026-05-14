@@ -354,7 +354,52 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 ---
 
-## Useful one-liners
+## <a id="aws-control-plane"></a>Standing up the AWS control plane (Stage 4d)
+
+A global GCP outage takes down trustedrouter.com (homepage / signup /
+console / status) even though `api.quillrouter.com` failovers to AWS
+via the Cloudflare LB. Stage 4d closes this gap by running the same
+FastAPI image on AWS Fargate behind an ALB, with cross-cloud reads to
+Spanner + Bigtable via the existing
+`quill/trustedrouter-aws-cross-cloud-sa-key` secret.
+
+Script: `quill-cloud-proxy/tools/deploy-aws-control-plane.sh`
+(11 phases: ECR → image mirror → IAM → SG → ACM cert → ALB → log
+group → ECS cluster → task def → ECS service → Cloudflare DNS hint).
+
+Apply:
+```bash
+cd /Users/jperla/claude/quill-cloud-proxy
+bash tools/deploy-aws-control-plane.sh                   # dry-run all phases
+bash tools/deploy-aws-control-plane.sh --apply           # commit it
+```
+
+Idempotent — every resource creation is check-then-create. Safe to
+re-run.
+
+After apply:
+1. Wait for ECS service `trustedrouter-control` to land healthy (1
+   running task, target group health = 2/2).
+2. The script's final phase prints `AWS ALB DNS: <hostname>`. Add
+   that hostname as a second origin pool to the Cloudflare LB
+   currently fronting trustedrouter.com (mirror the api.quillrouter.com
+   pattern: GCP primary at weight 99, AWS secondary at weight 1 so the
+   AWS path stays warm under 1% real traffic).
+3. Smoke: `curl -sSI https://<alb-dns>/v1/healthz` should 200. The
+   page should render at `https://<alb-dns>/` (it'll 421 on the cert
+   until DNS is wired, but the underlying server-cert TLS handshake
+   works since the script provisions an ACM cert for trustedrouter.com).
+
+Cost: ~$35-40/mo (0.5 vCPU + 1GB Fargate task + ALB + CloudWatch logs).
+
+If the task task crash-loops on boot, the most likely cause is a
+secrets-fetch failure (missing AWS Secrets Manager entry). Check
+the CloudWatch log group `/ecs/trustedrouter-control` for the
+first 30 seconds of container output.
+
+---
+
+## <a id="useful-one-liners"></a>Useful one-liners
 
 Live phala model list:
 ```bash
