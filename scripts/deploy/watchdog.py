@@ -7,9 +7,12 @@ of regions-to-rollback to `$GITHUB_OUTPUT` (key `rollback_regions`,
 comma-separated) so the workflow's rollback step can target only the
 failing regions.
 
-Per-region status: take the WORST `effective_status` among
-`data.current.checks[]` whose `target_region` matches. Same logic the
-status page uses for overall_status, applied per region.
+Per-region status: prefer the requested SLO class from
+`data.slo_classes.{class}.current_by_region`, falling back to the older
+`data.current.checks[]` shape when the status endpoint has not rolled
+forward yet. The default SLO class is router_core so deploy rollback is
+gated by attested reachability, auth/authorize, fallback, and settlement
+rather than provider-only outages.
 
 Logic:
   - Poll once per minute for `--duration-min` minutes (default 10).
@@ -46,7 +49,24 @@ SEVERITY = {"up": 0, "degraded": 1, "down": 2}
 INVERSE_SEVERITY = {0: "up", 1: "degraded", 2: "down"}
 
 
-def fetch_per_region(url: str, regions: Iterable[str], timeout: int = 10) -> dict[str, str]:
+def normalize_watchdog_status(status: object) -> str:
+    text = str(status or "").lower()
+    if text == "up":
+        return "up"
+    if text == "down":
+        return "down"
+    if text in {"degraded", "routing_degraded", "trust_degraded"}:
+        return "degraded"
+    return "unknown"
+
+
+def fetch_per_region(
+    url: str,
+    regions: Iterable[str],
+    timeout: int = 10,
+    *,
+    slo_class: str = "router_core",
+) -> dict[str, str]:
     """Return {region: 'up'|'degraded'|'down'|'unknown'} for each requested region.
 
     A region maps to `unknown` when status.json had no checks targeting
@@ -56,17 +76,31 @@ def fetch_per_region(url: str, regions: Iterable[str], timeout: int = 10) -> dic
     try:
         with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - deploy script uses operator-provided HTTPS status URL.
             payload = json.load(response)
-        checks = payload.get("data", {}).get("current", {}).get("checks", []) or []
+        data = payload.get("data", {})
+        slo_region_status = (
+            data.get("slo_classes", {}).get(slo_class, {}).get("current_by_region", {})
+        )
+        checks = data.get("current", {}).get("checks", []) or []
     except Exception as exc:
         print(f"  watchdog: status fetch error: {exc}", flush=True)
         # Fetch error -> unknown for every region (doesn't increment
         # the down counter; deploys aren't the suspect for an LB blip).
         return {region: "unknown" for region in regions}
 
+    if isinstance(slo_region_status, dict) and slo_region_status:
+        out: dict[str, str] = {}
+        for region in regions:
+            row = slo_region_status.get(region)
+            status = (row or {}).get("status") if isinstance(row, dict) else None
+            out[region] = normalize_watchdog_status(status)
+        return out
+
     worst: dict[str, int] = {}
     for check in checks:
         target = (check or {}).get("target_region")
-        status = (check or {}).get("effective_status") or (check or {}).get("status")
+        status = normalize_watchdog_status(
+            (check or {}).get("effective_status") or (check or {}).get("status")
+        )
         if not target or not status:
             continue
         if target not in regions:
@@ -76,13 +110,13 @@ def fetch_per_region(url: str, regions: Iterable[str], timeout: int = 10) -> dic
             continue
         if sev > worst.get(target, -1):
             worst[target] = sev
-    out: dict[str, str] = {}
+    fallback_out: dict[str, str] = {}
     for region in regions:
         if region in worst:
-            out[region] = INVERSE_SEVERITY[worst[region]]
+            fallback_out[region] = INVERSE_SEVERITY[worst[region]]
         else:
-            out[region] = "unknown"
-    return out
+            fallback_out[region] = "unknown"
+    return fallback_out
 
 
 def write_output(key: str, value: str) -> None:
@@ -104,12 +138,20 @@ def main() -> int:
     parser.add_argument("--rollback-after", type=int, default=3)
     parser.add_argument(
         "--regions",
-        default="us-central1,europe-west4",
+        default="us-central1,us-east4,europe-west4",
         help="Comma-separated list of target regions to monitor.",
     )
     parser.add_argument(
         "--status-url",
         default="https://trustedrouter.com/status.json",
+    )
+    parser.add_argument(
+        "--slo-class",
+        default="router_core",
+        help=(
+            "SLO class to evaluate for rollback. Default router_core; "
+            "use provider_effective only when intentionally gating on upstream responses."
+        ),
     )
     parser.add_argument(
         "--baseline-grace-sec",
@@ -155,7 +197,11 @@ def main() -> int:
     if not args.skip_baseline:
         if args.baseline_grace_sec > 0:
             time.sleep(args.baseline_grace_sec)
-        baseline_snapshot = fetch_per_region(args.status_url, regions)
+        baseline_snapshot = fetch_per_region(
+            args.status_url,
+            regions,
+            slo_class=args.slo_class,
+        )
         baseline_down = {r for r, s in baseline_snapshot.items() if s == "down"}
         if baseline_down:
             print(
@@ -166,13 +212,13 @@ def main() -> int:
 
     print(
         f"watchdog: polling {args.status_url} every 60s for {args.duration_min} min; "
-        f"per-region rollback if 'down' for {args.rollback_after} consecutive minutes "
+        f"per-region {args.slo_class} rollback if 'down' for {args.rollback_after} consecutive minutes "
         f"AND not already 'down' before the deploy; regions={regions}",
         flush=True,
     )
     for minute in range(1, args.duration_min + 1):
         time.sleep(60)
-        per_region = fetch_per_region(args.status_url, regions)
+        per_region = fetch_per_region(args.status_url, regions, slo_class=args.slo_class)
         line = f"  minute {minute}:"
         for region in regions:
             status = per_region.get(region, "unknown")

@@ -10,6 +10,7 @@ public methods become thin one-line delegations.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Any
 
@@ -334,7 +335,18 @@ class SpannerApiKeys:
         region: str | None = None,
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
+        idempotency_key: str | None = None,
+        idempotency_fingerprint: str | None = None,
     ) -> GatewayAuthorization:
+        existing = (
+            self.get_gateway_authorization_by_idempotency_key(
+                workspace_id, key_hash, idempotency_key
+            )
+            if idempotency_key is not None
+            else None
+        )
+        if existing is not None:
+            return existing
         auth = GatewayAuthorization(
             id=f"gwa-{uuid.uuid4().hex}",
             workspace_id=workspace_id,
@@ -349,8 +361,22 @@ class SpannerApiKeys:
             region=region,
             endpoint_id=endpoint_id,
             candidate_endpoint_ids=list(candidate_endpoint_ids or []),
+            idempotency_key=idempotency_key,
+            idempotency_fingerprint=idempotency_fingerprint,
         )
-        self._io.write_entity("gateway_authorization", auth.id, auth)
+        if idempotency_key is None:
+            self._io.write_entity("gateway_authorization", auth.id, auth)
+            return auth
+        with self._io.database.batch() as batch:
+            self._io.write_entity_batch(batch, "gateway_authorization", auth.id, auth)
+            self._io.write_entity_batch(
+                batch,
+                "gateway_authorization_idempotency",
+                _gateway_authorization_idempotency_index_id(
+                    workspace_id, key_hash, idempotency_key
+                ),
+                {"authorization_id": auth.id},
+            )
         return auth
 
     def get_gateway_authorization(
@@ -360,9 +386,30 @@ class SpannerApiKeys:
             "gateway_authorization", authorization_id, GatewayAuthorization
         )
 
+    def get_gateway_authorization_by_idempotency_key(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None:
+        ref = self._io.read_entity(
+            "gateway_authorization_idempotency",
+            _gateway_authorization_idempotency_index_id(
+                workspace_id, key_hash, idempotency_key
+            ),
+            dict,
+        )
+        if not ref:
+            return None
+        return self.get_gateway_authorization(str(ref["authorization_id"]))
+
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
         authorization = self.get_gateway_authorization(authorization_id)
         if authorization is None:
             return
         authorization.settled = True
         self._io.write_entity("gateway_authorization", authorization_id, authorization)
+
+
+def _gateway_authorization_idempotency_index_id(
+    workspace_id: str, key_hash: str, idempotency_key: str
+) -> str:
+    digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+    return f"{workspace_id}#{key_hash}#{digest}"

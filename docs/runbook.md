@@ -5,6 +5,9 @@ monitor pages, find the matching section and follow the steps. Every entry
 came from a real incident; the linked commits are the receipts.
 
 Index:
+- [Router-core 5 9s page fires](#router-core-page)
+- [Drain or disable one gateway region](#region-drain)
+- [Spanner or Bigtable is degraded](#storage-degraded)
 - [Provider returns 502 "provider error" via the gateway](#provider-502)
 - [Provider returns sustained 429 "rate limit exceeded"](#provider-429)
 - [Provider returns 401 "Invalid API key" via the gateway](#provider-401)
@@ -19,6 +22,85 @@ Index:
 - [Adding a model to an existing provider](#new-model)
 - [Rotating a provider API key](#rotate-key)
 - [Spinning up Phala / RedPill again after a key issue](#phala-revive)
+
+---
+
+## <a id="router-core-page"></a>Router-core 5 9s page fires
+
+Scope first: router-core means attested TLS reachability, API key validation,
+gateway authorization, route-candidate fallback, and durable settle/refund. It
+does not include marketing pages, dashboard UX, docs, trust page, or a single
+upstream provider outage when fallback remains available.
+
+Immediate triage:
+1. Open `https://status.trustedrouter.com/status.json` and inspect
+   `data.slo_classes.router_core`. Do not use `overall_status` from an old
+   cached page if the JSON is fresher.
+2. Identify whether the bad class is `tls_health`, `attestation_nonce`,
+   `gateway_authorize_settle`, or `provider_fallback`.
+3. Smoke the regional host directly:
+   ```bash
+   TR_SMOKE_BASE_URL=https://api-<region>.quillrouter.com/v1 \
+     uv run python scripts/smoke_e2e.py
+   ```
+4. If only one region fails, drain it and let SDK/global failover carry
+   traffic. If every region fails, treat it as a global prompt-path incident.
+5. Never route prompt traffic to a non-attested fallback. A hard 503 is better
+   than silently dropping the trust guarantee.
+
+Paging thresholds:
+- 5m or 1h router-core burn rate >= 14.4x: page immediately.
+- 6h burn rate >= 6x: page during waking hours unless customer impact is
+  visible.
+- 24h burn rate >= 3x: create an incident review item.
+
+## <a id="region-drain"></a>Drain or disable one gateway region
+
+Use this when a region-specific enclave deploy, regional provider key, or local
+network path is failing while at least two other attested regions are healthy.
+
+1. Confirm the region is failing with direct regional smoke.
+2. Remove or downweight the region in Cloudflare DNS-only load balancing. Do
+   not enable orange-cloud proxying for the prompt path.
+3. Keep the regional hostname published for debugging, but stop sending
+   convenience/global traffic to it.
+4. Verify SDK failover by forcing a request to fail against the bad region and
+   observing retry to a healthy region.
+5. Roll back or redeploy the bad regional revision only after the other regions
+   are stable.
+
+Provider emergency disable:
+1. Disable the provider route in the catalog or provider capability config.
+2. Confirm `trustedrouter/auto`, `trustedrouter/cheap`, and
+   `trustedrouter/monitor` still have at least three independent candidates if
+   they are advertised as high availability.
+3. Watch `provider_effective`, not `router_core`, for the remaining provider
+   impact.
+
+## <a id="storage-degraded"></a>Spanner or Bigtable is degraded
+
+Spanner remains the source of truth for billing and settlement. Bigtable
+activity/status rows are repairable metadata.
+
+Spanner degraded:
+1. Check whether regional quota leases can continue authorizing bounded spend.
+2. If leases cannot be refreshed and holds cannot be made safely, fail closed
+   for prepaid requests rather than granting unlimited credit.
+3. BYOK requests may continue only if they do not require prepaid credit holds
+   and key-limit enforcement is still local/leased.
+4. After recovery, reconcile reservations and stuck authorizations.
+
+Bigtable degraded:
+1. Keep inference alive if Spanner settlement succeeds.
+2. Expect missing activity/status rows.
+3. Run:
+   ```bash
+   curl -X POST https://trustedrouter.com/v1/internal/reconcile/generation-activity \
+     -H "Authorization: Bearer $TR_INTERNAL_GATEWAY_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"workspace_id":"<workspace_id>","limit":10000}'
+   ```
+4. Verify `/activity`, `/generation`, and provider benchmark rollups recover.
 
 ---
 

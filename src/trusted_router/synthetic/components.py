@@ -5,6 +5,41 @@ from typing import Any
 from trusted_router.storage_models import SyntheticProbeSample
 
 API_PROBES = {"tls_health", "attestation_nonce", "openai_sdk_pong", "responses_pong"}
+ROUTER_CORE_PROBES = {
+    "tls_health",
+    "attestation_nonce",
+    "gateway_authorize_settle",
+    "provider_fallback",
+}
+PROVIDER_EFFECTIVE_PROBES = {"openai_sdk_pong", "responses_pong"}
+CONTROL_PLANE_PROBES = {"control_plane_health"}
+
+SLO_PROBES: dict[str, set[str]] = {
+    "router_core": ROUTER_CORE_PROBES,
+    "provider_effective": PROVIDER_EFFECTIVE_PROBES,
+    "control_plane": CONTROL_PLANE_PROBES,
+}
+
+SLO_DEFINITIONS: tuple[dict[str, str], ...] = (
+    {
+        "id": "router_core",
+        "name": "Router Core",
+        "description": (
+            "Attested TLS, authorization, route candidates, provider fallback, "
+            "and settlement/refund durability."
+        ),
+    },
+    {
+        "id": "provider_effective",
+        "name": "Provider Effective",
+        "description": "Successful model responses after fallback has selected a provider.",
+    },
+    {
+        "id": "control_plane",
+        "name": "Control Plane",
+        "description": "Dashboard, billing, key management, docs, and public status surfaces.",
+    },
+)
 
 COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
@@ -50,6 +85,16 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
     return ids
 
 
+def sample_slo_class_ids(sample: SyntheticProbeSample) -> list[str]:
+    return [
+        slo_id for slo_id, probe_types in SLO_PROBES.items() if sample.probe_type in probe_types
+    ]
+
+
+def slo_probe_types(slo_id: str) -> set[str]:
+    return set(SLO_PROBES.get(slo_id, set()))
+
+
 def component_name(component_id: str) -> str:
     for definition in COMPONENT_DEFINITIONS:
         if definition["id"] == component_id:
@@ -59,3 +104,7 @@ def component_name(component_id: str) -> str:
 
 def public_component_definitions() -> tuple[dict[str, Any], ...]:
     return COMPONENT_DEFINITIONS
+
+
+def public_slo_definitions() -> tuple[dict[str, Any], ...]:
+    return SLO_DEFINITIONS

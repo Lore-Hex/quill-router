@@ -94,14 +94,25 @@ def test_monitor_alias_is_marked_internal_only() -> None:
 
 
 def test_status_json_is_public_metadata_only(client: TestClient) -> None:
-    sample = _sample(
-        id="syn_1",
-        probe_type="openai_sdk_pong",
-        status="up",
-        model=MONITOR_MODEL_ID,
-        output_match=True,
+    samples = [
+        _sample(
+            id="syn_router_core_1",
+            probe_type="tls_health",
+            status="up",
+            latency_milliseconds=25,
+        ),
+        _sample(
+            id="syn_1",
+            probe_type="openai_sdk_pong",
+            status="up",
+            model=MONITOR_MODEL_ID,
+            output_match=True,
+        ),
+    ]
+    resp = client.post(
+        "/v1/internal/synthetic/samples",
+        json={"samples": [sample.public_dict() for sample in samples]},
     )
-    resp = client.post("/v1/internal/synthetic/samples", json=sample.public_dict())
     assert resp.status_code == 200, resp.text
 
     status = client.get("/status.json")
@@ -121,8 +132,10 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert "reply exactly PONG" not in text
     assert "sk-tr-" not in text
     payload = status.json()["data"]
-    assert payload["samples"][0]["probe_type"] == "openai_sdk_pong"
-    assert payload["samples"][0]["output_match"] is True
+    provider_sample = next(
+        sample for sample in payload["samples"] if sample["probe_type"] == "openai_sdk_pong"
+    )
+    assert provider_sample["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
     assert len(payload["components"][0]["history"]) == 48
 
@@ -178,7 +191,9 @@ def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:
         status="up",
         latency_milliseconds=88,
     )
-    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    assert (
+        client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    )
 
     history = client.get("/status/history?window=monthly")
 
@@ -198,14 +213,18 @@ def test_status_history_browser_requests_render_48h_visual_page(client: TestClie
         status="up",
         latency_milliseconds=33,
     )
-    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    assert (
+        client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    )
 
     history = client.get("/status/history?window=48h", headers={"accept": "text/html"})
 
     assert history.status_code == 200
     assert history.headers["content-type"].startswith("text/html")
     assert "48-hour status history" in history.text
-    assert "Latency is broken out by target, probe, monitor region, and target region" in history.text
+    assert (
+        "Latency is broken out by target, probe, monitor region, and target region" in history.text
+    )
     assert "48-hour component timeline" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
@@ -219,7 +238,9 @@ def test_status_history_browser_requests_render_monthly_visual_page(client: Test
         status="up",
         latency_milliseconds=77,
     )
-    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    assert (
+        client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    )
 
     history = client.get("/status/history?window=monthly", headers={"accept": "text/html"})
 
@@ -241,7 +262,9 @@ def test_status_history_format_json_overrides_browser_accept(client: TestClient)
         status="up",
         latency_milliseconds=42,
     )
-    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    assert (
+        client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
+    )
 
     history = client.get(
         "/status/history?window=48h&format=json",
@@ -253,7 +276,9 @@ def test_status_history_format_json_overrides_browser_accept(client: TestClient)
     assert history.json()["data"]["window"] == "48h"
 
 
-def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import trusted_router.routes.public as public_routes
 
     now = utcnow()
@@ -304,14 +329,28 @@ def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(monke
 
 
 def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
-    sample = _sample(
-        id="syn_status_host",
-        probe_type="openai_sdk_pong",
-        status="up",
-        model=MONITOR_MODEL_ID,
-        output_match=True,
+    samples = [
+        _sample(
+            id="syn_status_host_router_core",
+            probe_type="tls_health",
+            status="up",
+            latency_milliseconds=30,
+        ),
+        _sample(
+            id="syn_status_host",
+            probe_type="openai_sdk_pong",
+            status="up",
+            model=MONITOR_MODEL_ID,
+            output_match=True,
+        ),
+    ]
+    assert (
+        client.post(
+            "/v1/internal/synthetic/samples",
+            json={"samples": [sample.public_dict() for sample in samples]},
+        ).status_code
+        == 200
     )
-    assert client.post("/v1/internal/synthetic/samples", json=sample.public_dict()).status_code == 200
 
     page = client.get("/", headers={"host": "status.trustedrouter.com"})
 
@@ -327,7 +366,9 @@ def test_chat_monitor_model_requires_configured_monitor_key() -> None:
         init_observability=False,
     )
     local_client = TestClient(app)
-    normal = local_client.post("/v1/keys", headers={"x-trustedrouter-user": "alice@example.com"}, json={"name": "normal"})
+    normal = local_client.post(
+        "/v1/keys", headers={"x-trustedrouter-user": "alice@example.com"}, json={"name": "normal"}
+    )
     assert normal.status_code == 201, normal.text
     normal_key = normal.json()["key"]
     monitor_user = STORE.ensure_user("monitor", email="monitor@trustedrouter.local")
@@ -388,7 +429,9 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
             id="syn_down_2",
             probe_type="openai_sdk_pong",
             status="down",
-            created_at=(now - dt.timedelta(minutes=2, seconds=10)).isoformat().replace("+00:00", "Z"),
+            created_at=(now - dt.timedelta(minutes=2, seconds=10))
+            .isoformat()
+            .replace("+00:00", "Z"),
             latency_milliseconds=510,
         ),
         _sample(
@@ -403,20 +446,106 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     snapshot = status_snapshot(samples, now=now)
 
     assert snapshot["current"]["checks"]
-    assert snapshot["overall_status"] == "down"
+    assert snapshot["overall_status"] == "up"
+    assert snapshot["slo_classes"]["router_core"]["status"] == "up"
+    assert snapshot["slo_classes"]["provider_effective"]["status"] == "down"
     assert snapshot["windows"]["5m"]["sample_count"] == 3
     assert snapshot["windows"]["24h"]["sample_count"] == 4
     assert snapshot["windows"]["48h"]["sample_count"] == 4
     assert sum(row["sample_count"] for row in snapshot["daily"]) == 4
     assert snapshot["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 25
     assert snapshot["headline_metrics"]["gateway_overhead_scope"] == "in_region"
-    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    canonical = next(
+        component for component in snapshot["components"] if component["id"] == "canonical_api"
+    )
     assert canonical["status"] == "down"
     assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
     assert canonical["p50_latency_milliseconds"] == 25
     assert canonical["end_to_end_p50_latency_milliseconds"] == 120
     assert len(canonical["history"]) == 48
     assert snapshot["recent_events"][0]["component"] == "Canonical API"
+
+
+def test_status_slo_classes_do_not_blend_provider_failures_into_router_core() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_tls_ok",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=22,
+        ),
+        _sample(
+            id="syn_auth_ok",
+            target="control-plane",
+            target_region=None,
+            probe_type="gateway_authorize_settle",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_fallback_ok",
+            target="control-plane",
+            target_region=None,
+            probe_type="provider_fallback",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=12)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_chat_provider_down",
+            probe_type="openai_sdk_pong",
+            status="down",
+            created_at=(now - dt.timedelta(seconds=13)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_responses_provider_down",
+            probe_type="responses_pong",
+            status="down",
+            created_at=(now - dt.timedelta(seconds=14)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples, now=now)
+
+    assert snapshot["overall_status"] == "up"
+    assert snapshot["summary"]["headline"] == "All Systems Operational"
+    assert snapshot["slo_classes"]["router_core"]["status"] == "up"
+    assert snapshot["slo_classes"]["provider_effective"]["status"] == "down"
+    assert snapshot["slo_classes"]["router_core"]["windows"]["5m"]["bad_count"] == 0
+    assert snapshot["slo_classes"]["provider_effective"]["windows"]["5m"]["bad_count"] == 2
+
+
+def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_tls_down",
+            probe_type="tls_health",
+            status="down",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_settle_down",
+            target="control-plane",
+            target_region=None,
+            probe_type="gateway_authorize_settle",
+            status="down",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples, now=now)
+
+    assert snapshot["slo_classes"]["router_core"]["status"] == "down"
+    alert = next(
+        item
+        for item in snapshot["burn_rate_alerts"]
+        if item["slo_class"] == "router_core" and item["window"] == "5m"
+    )
+    assert alert["level"] == "critical"
+    assert alert["burn_rate"] >= 100_000
+    assert alert["bad_count"] == 2
 
 
 def test_status_headline_prefers_in_region_gateway_overhead() -> None:
@@ -531,7 +660,12 @@ def test_monthly_history_carries_per_region_latency_breakdown() -> None:
     groups = payload["data"][0]["groups"]
     assert len(groups) == 2
     assert {
-        (group["component_name"], group["monitor_region"], group["target_region"], group["p50_latency_milliseconds"])
+        (
+            group["component_name"],
+            group["monitor_region"],
+            group["target_region"],
+            group["p50_latency_milliseconds"],
+        )
         for group in groups
     } == {
         ("Canonical API", "us-central1", "us-central1", 31),
@@ -561,7 +695,9 @@ def test_status_uses_hourly_rollups_for_48h_history_when_raw_samples_are_recent_
 
     assert snapshot["windows"]["24h"]["sample_count"] == 1
     assert snapshot["windows"]["48h"]["sample_count"] == 2
-    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    canonical = next(
+        component for component in snapshot["components"] if component["id"] == "canonical_api"
+    )
     assert canonical["sample_count_24h"] == 1
     assert sum(bucket["sample_count"] for bucket in canonical["history"]) == 2
 
@@ -588,7 +724,9 @@ def test_status_history_fills_missing_rollup_hours_from_raw_samples() -> None:
 
     assert snapshot["windows"]["24h"]["sample_count"] == 1
     assert snapshot["windows"]["48h"]["sample_count"] == 2
-    canonical = next(component for component in snapshot["components"] if component["id"] == "canonical_api")
+    canonical = next(
+        component for component in snapshot["components"] if component["id"] == "canonical_api"
+    )
     non_empty_buckets = [bucket for bucket in canonical["history"] if bucket["sample_count"]]
     assert len(non_empty_buckets) == 2
     assert {bucket["p50_latency_milliseconds"] for bucket in non_empty_buckets} == {25, 55}
@@ -656,7 +794,9 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
             target_region="europe-west4",
             probe_type="openai_sdk_pong",
             status="down",
-            created_at=(now - dt.timedelta(minutes=2, seconds=10)).isoformat().replace("+00:00", "Z"),
+            created_at=(now - dt.timedelta(minutes=2, seconds=10))
+            .isoformat()
+            .replace("+00:00", "Z"),
         ),
         _sample(
             id="syn_latest_up",
@@ -669,7 +809,9 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
     ]
 
     snapshot = status_snapshot(samples)
-    eu = next(component for component in snapshot["components"] if component["id"] == "eu_regional_api")
+    eu = next(
+        component for component in snapshot["components"] if component["id"] == "eu_regional_api"
+    )
 
     assert eu["status"] == "up"
     assert eu["uptime_24h_percent"] == pytest.approx(33.3333)
@@ -697,9 +839,15 @@ def test_gcp_synthetic_index_uses_privacy_safe_recency_keys() -> None:
         f"synthetic_day_recent#2026-05-05#{reverse}#syn_1".encode(),
     ]
     assert table.committed[:6] == raw_keys
-    assert any(key.startswith(b"synthetic_rollup#hour#2026-05-05T12:00:00Z#") for key in table.committed)
-    assert any(key.startswith(b"synthetic_rollup#day#2026-05-05T00:00:00Z#") for key in table.committed)
-    assert any(key.startswith(b"synthetic_rollup#month#2026-05-01T00:00:00Z#") for key in table.committed)
+    assert any(
+        key.startswith(b"synthetic_rollup#hour#2026-05-05T12:00:00Z#") for key in table.committed
+    )
+    assert any(
+        key.startswith(b"synthetic_rollup#day#2026-05-05T00:00:00Z#") for key in table.committed
+    )
+    assert any(
+        key.startswith(b"synthetic_rollup#month#2026-05-01T00:00:00Z#") for key in table.committed
+    )
     assert b"sk-tr" not in b"".join(table.committed)
     assert b"prompt" not in b"".join(table.committed)
 
@@ -911,6 +1059,26 @@ def test_synthetic_gateway_settlement_does_not_pollute_provider_benchmarks(
     assert STORE.provider_benchmark_samples() == []
 
 
+def test_internal_generation_activity_reconciliation_endpoint_is_guarded_and_callable(
+    client: TestClient,
+) -> None:
+    user = STORE.ensure_user("ops", email="ops@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+
+    response = client.post(
+        "/v1/internal/reconcile/generation-activity",
+        json={"workspace_id": workspace.id, "limit": 10},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == {
+        "workspace_id": workspace.id,
+        "date": None,
+        "limit": 10,
+        "rewritten": 0,
+    }
+
+
 def test_gateway_monitor_model_requires_configured_monitor_key() -> None:
     monitor_key = "sk-tr-monitor-gateway"  # noqa: S105 - test key.
     app = create_app(
@@ -918,7 +1086,9 @@ def test_gateway_monitor_model_requires_configured_monitor_key() -> None:
         init_observability=False,
     )
     local_client = TestClient(app)
-    normal = local_client.post("/v1/keys", headers={"x-trustedrouter-user": "alice@example.com"}, json={"name": "normal"})
+    normal = local_client.post(
+        "/v1/keys", headers={"x-trustedrouter-user": "alice@example.com"}, json={"name": "normal"}
+    )
     assert normal.status_code == 201, normal.text
     normal_key = normal.json()["key"]
     monitor_user = STORE.ensure_user("monitor", email="monitor@trustedrouter.local")
@@ -1046,9 +1216,7 @@ class _FakeBigtable:
     def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int) -> list[_FakeReadRow]:
         self.reads.append((start_key, end_key, limit))
         keyed_rows = [
-            row
-            for key, row in sorted(self.rows_by_key.items())
-            if start_key <= key < end_key
+            row for key, row in sorted(self.rows_by_key.items()) if start_key <= key < end_key
         ]
         return (keyed_rows + self.rows)[:limit]
 

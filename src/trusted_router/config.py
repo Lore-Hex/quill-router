@@ -129,7 +129,7 @@ class Settings(BaseSettings):
     # regions where we've actually deployed a VM. Adding a region here
     # without an actual VM in that region is dishonest — the cert SAN
     # mismatch breaks TLS and the attestation page lies.
-    regions: str = "us-central1,europe-west4"
+    regions: str = "us-central1,us-east4,europe-west4"
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
     synthetic_monitor_region: str | None = None

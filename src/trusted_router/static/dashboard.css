@@ -236,6 +236,23 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .status-banner.status-down { border-color:#f1c1bb; background:#fff1f0; }
 .status-banner.status-down > span, .status-banner.status-down .status-banner-metrics span { color:var(--red); }
 .status-banner.status-unknown { background:#fbfcfd; }
+.slo-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+.slo-card { display:grid; gap:12px; border:1px solid var(--line); border-radius:8px; padding:16px; background:#fff; min-width:0; }
+.slo-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.slo-card h3 { margin:0 0 4px; font-size:15px; letter-spacing:0; }
+.slo-card p { margin:0; color:var(--muted); font-size:13px; line-height:1.45; }
+.slo-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; color:var(--muted); font-size:12px; }
+.slo-metrics span { border:1px solid var(--line2); border-radius:6px; padding:8px; background:#fbfcfd; min-width:0; }
+.slo-metrics strong { display:block; margin-top:2px; color:var(--ink); font-size:14px; overflow-wrap:anywhere; }
+.burn-list { display:grid; gap:8px; padding:14px 18px 18px; }
+.burn-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid var(--line2); border-radius:8px; padding:10px 12px; color:var(--muted); font-size:13px; background:#fbfcfd; }
+.burn-row strong { color:var(--ink); min-width:72px; }
+.burn-row span { min-width:0; overflow-wrap:anywhere; }
+.burn-row small { white-space:nowrap; }
+.burn-critical { border-color:#f1c1bb; background:#fff1f0; }
+.burn-critical strong { color:var(--red); }
+.burn-warning, .burn-watch { border-color:#ead49b; background:#fff8e4; }
+.burn-warning strong, .burn-watch strong { color:var(--amber); }
 .status-section { background:#fff; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 .status-section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 18px; border-bottom:1px solid var(--line2); }
 .status-section-head h2 { margin:0 0 4px; font-size:16px; letter-spacing:0; }
@@ -384,7 +401,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   .matrix-head > *:first-child { background:#101820; }
   .limitation-band { grid-template-columns:1fr; }
   .console-title { align-items:flex-start; flex-direction:column; }
-  .status-hero, .status-banner, .status-section-head, .component-main { align-items:flex-start; flex-direction:column; }
+  .status-hero, .status-banner, .status-section-head, .component-main, .slo-card-head, .burn-row { align-items:flex-start; flex-direction:column; }
   .status-updated { text-align:left; min-width:0; }
   .status-legend { justify-content:flex-start; }
   .history-strip { gap:1px; }

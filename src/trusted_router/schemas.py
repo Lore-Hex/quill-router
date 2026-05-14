@@ -132,6 +132,7 @@ class BroadcastDestinationPatchRequest(_Strict):
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
     model: str = Field(min_length=1)
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
@@ -180,6 +181,12 @@ class GatewayValidateRequest(_Lenient):
         if not self.api_key_hash and not self.api_key_lookup_hash:
             raise ValueError("api_key_hash or api_key_lookup_hash is required")
         return self
+
+
+class ReconcileGenerationActivityRequest(_Strict):
+    workspace_id: str = Field(min_length=1)
+    date: str | None = None
+    limit: int = Field(default=1000, ge=1, le=10_000)
 
 
 class GatewaySettleRequest(_Lenient):

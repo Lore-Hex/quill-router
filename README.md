@@ -141,6 +141,18 @@ read compact rollups exposed at `/status`, `/status.json`, and
 `TrustedRouter Synthetic` app label and are excluded from public provider
 benchmark/ranking samples so uptime probes do not pollute customer analytics.
 
+Status separates three SLO classes instead of blending them:
+
+- `router_core`: attested API reachable, key authorization works, route
+  candidates/fallback are available, and settle/refund is durable.
+- `provider_effective`: a full model response succeeds after provider fallback.
+- `control_plane`: dashboard, billing UI, keys, credits, docs, trust, and
+  status surfaces.
+
+Deploy watchdogs and internal burn-rate alerts default to `router_core`.
+Provider-only failures should degrade `provider_effective` without consuming
+the router-core error budget when fallback remains available.
+
 ## Public Positioning
 
 - Pricing: prepaid and BYOK usage is tracked as integer microdollars, not
@@ -236,16 +248,19 @@ gateway replicas before public traffic is allowed to ramp.
 Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
-- Run independent attested gateway pools in at least `us-central1`,
-  `europe-west4`, `us-east4`, and one Asia region. `europe-west4` is the first
-  EU region in the default control-plane routing metadata.
+- Run independent warm attested gateway pools in at least `us-central1`,
+  `us-east4`, and `europe-west4`. Add one exercised non-GCP pool next
+  (initially AWS Nitro with a tiny real-traffic trickle), then Asia once the
+  first three regions are boring.
 - Keep TLS private keys inside each regional Confidential Space workload.
 - Move ACME from TLS-ALPN-01 to DNS-01 or another challenge flow that works
   with multiple regional endpoints for the same hostname. The current
   TLS-ALPN-01 flow is fine for one region, but a global DNS record can route
   challenges to the wrong replica.
-- Use regional hostnames such as `us.api.quillrouter.com` and
-  `eu.api.quillrouter.com` for deterministic attestation and debugging.
+- Keep regional hostnames such as `api-us-central1.quillrouter.com`,
+  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and the
+  future `api-aws-us-west-2.quillrouter.com` for deterministic attestation,
+  smoke tests, and SDK failover.
 - Put `api.quillrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
@@ -259,6 +274,38 @@ done carefully:
 The key design rule: a regional outage can fail closed or route to another
 attested region, but it must never silently degrade to a non-attested prompt
 handler.
+
+## Router-Core 5 9s Roadmap
+
+The first target is an internal SLO, not a public contractual SLA. 99.999%
+allows about 5 minutes 15 seconds of downtime per year, so the public product
+copy should stay at 99.9% until at least 30-60 days of measured 99.99%+
+router-core uptime exists.
+
+Router-core availability means:
+
+- attested TLS is reachable;
+- API-key validation and gateway authorization work;
+- route candidates are returned and fallback can choose a healthy provider;
+- settlement/refund is durable or safely repairable;
+- no prompt request ever falls back to a non-attested path.
+
+The code paths that support this roadmap today are:
+
+- `/status.json` exports `slo_classes.router_core`,
+  `slo_classes.provider_effective`, `slo_classes.control_plane`, and burn-rate
+  alerts for 5m, 1h, 6h, and 24h windows.
+- The deploy watchdog reads `router_core` by default, so provider-only outages
+  do not automatically roll back a control-plane deploy.
+- SDKs are expected to retry connection failures and 502/503/504 across
+  regional attested endpoints before surfacing failure.
+- Bigtable activity writes are repairable from Spanner generation records via
+  `/v1/internal/reconcile/generation-activity`.
+
+Before making a public 5 9s claim, require three warm GCP attested regions, one
+exercised non-GCP failover pool, tested paging, router-core chaos tests, staged
+regional deploys with rollback gates, and 30 days of measured router-core
+uptime at or above 99.99%.
 
 ## Internal Gateway Contract
 

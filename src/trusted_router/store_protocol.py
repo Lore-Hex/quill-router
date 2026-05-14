@@ -321,9 +321,14 @@ class Store(Protocol):
         region: str | None = ...,
         endpoint_id: str | None = ...,
         candidate_endpoint_ids: list[str] | None = ...,
+        idempotency_key: str | None = ...,
+        idempotency_fingerprint: str | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(
         self, authorization_id: str
+    ) -> GatewayAuthorization | None: ...
+    def get_gateway_authorization_by_idempotency_key(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None: ...
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None: ...
     def finalize_gateway_authorization(
@@ -366,6 +371,13 @@ class Store(Protocol):
         include_histograms: bool = ...,
         limit: int = ...,
     ) -> list[SyntheticRollup]: ...
+    def reconcile_generation_activity(
+        self,
+        workspace_id: str,
+        *,
+        date: str | None = ...,
+        limit: int = ...,
+    ) -> int: ...
     def get_generation(self, generation_id: str) -> Generation | None: ...
     def activity(
         self,

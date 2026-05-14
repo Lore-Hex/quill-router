@@ -296,6 +296,70 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     assert repeat.json()["data"]["already_settled"] is True
 
 
+def test_internal_gateway_authorize_replays_same_idempotency_key_once(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "gateway"}).json()
+    key_hash = created["data"]["hash"]
+    workspace_id = created["data"]["workspace_id"]
+    body = {
+        "api_key_hash": key_hash,
+        "model": "anthropic/claude-opus-4.7",
+        "estimated_input_tokens": 20,
+        "max_output_tokens": 4,
+    }
+
+    first = client.post(
+        "/v1/internal/gateway/authorize",
+        headers={"idempotency-key": "idem-gateway-1"},
+        json=body,
+    )
+    assert first.status_code == 200, first.text
+    first_data = first.json()["data"]
+    first_reserved = STORE.credits[workspace_id].reserved_microdollars
+
+    repeat = client.post(
+        "/v1/internal/gateway/authorize",
+        headers={"idempotency-key": "idem-gateway-1"},
+        json=body,
+    )
+    assert repeat.status_code == 200, repeat.text
+    repeat_data = repeat.json()["data"]
+    assert repeat_data["authorization_id"] == first_data["authorization_id"]
+    assert repeat_data["credit_reservation_id"] == first_data["credit_reservation_id"]
+    assert repeat_data["idempotent_replay"] is True
+    assert STORE.credits[workspace_id].reserved_microdollars == first_reserved
+
+
+def test_internal_gateway_authorize_rejects_idempotency_key_body_mismatch(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "gateway"}).json()
+    key_hash = created["data"]["hash"]
+    body = {
+        "api_key_hash": key_hash,
+        "model": "anthropic/claude-opus-4.7",
+        "estimated_input_tokens": 20,
+        "max_output_tokens": 4,
+    }
+    first = client.post(
+        "/v1/internal/gateway/authorize",
+        headers={"idempotency-key": "idem-gateway-conflict"},
+        json=body,
+    )
+    assert first.status_code == 200, first.text
+
+    conflict = client.post(
+        "/v1/internal/gateway/authorize",
+        headers={"idempotency-key": "idem-gateway-conflict"},
+        json={**body, "max_output_tokens": 8},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["type"] == "conflict"
+
+
 def test_internal_gateway_byok_uses_configured_secret_ref_and_refunds_key_limit(
     user_headers: dict[str, str],
     client,

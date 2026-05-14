@@ -10,6 +10,8 @@ returns already_settled=True without double-charging.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -118,16 +120,57 @@ def register(router: APIRouter) -> None:
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
         reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
-        # Per-request idempotency key. Generated here at the top of the
-        # handler so EVERY downstream write within this single authorize
-        # call carries the same key. Required for safe dual-write across
-        # two Spanner instances (Stage 5a) — when the application
-        # mirrors writes from primary nam6 to secondary eur3, identical
-        # idempotency keys on both sides ensure that a retried mirror
-        # attempt is a no-op rather than a double-debit. Today (with
-        # only one Spanner instance), this is foundational plumbing
-        # with no observable behavior change.
-        request_idempotency_key = str(uuid.uuid4())
+        request_idempotency_key = _gateway_idempotency_key(request, body) or str(
+            uuid.uuid4()
+        )
+        request_fingerprint = _gateway_authorize_fingerprint(
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            body=body_dict,
+        )
+        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
+            workspace.id, api_key.hash, request_idempotency_key
+        )
+        if existing_authorization is not None:
+            if existing_authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            existing_candidates = _authorization_endpoint_candidates(
+                existing_authorization, endpoint_candidates
+            )
+            existing_model, existing_endpoint = existing_candidates[0]
+            existing_usage_type = UsageType.for_endpoint(existing_endpoint)
+            byok_config = (
+                STORE.get_byok_provider(workspace.id, existing_endpoint.provider)
+                if existing_usage_type.is_byok()
+                else None
+            )
+            broadcast_destinations = [
+                payload
+                for destination in STORE.list_broadcast_destinations(workspace.id)
+                if (payload := gateway_destination_payload(destination)) is not None
+            ]
+            return _gateway_authorize_response(
+                authorization=existing_authorization,
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                model=existing_model,
+                endpoint=existing_endpoint,
+                requested_model_id=requested_model_id,
+                model_usage_type=existing_usage_type,
+                limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
+                estimate=existing_authorization.estimated_microdollars,
+                credit_reservation_id=existing_authorization.credit_reservation_id,
+                byok_config=byok_config,
+                region=existing_authorization.region or region,
+                settings=settings,
+                broadcast_destinations=broadcast_destinations,
+                endpoint_candidates=existing_candidates,
+                idempotent_replay=True,
+            )
         credit_reservation_id: str | None = None
         try:
             STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
@@ -169,6 +212,8 @@ def register(router: APIRouter) -> None:
                 candidate_endpoint.id
                 for _candidate_model, candidate_endpoint in endpoint_candidates
             ],
+            idempotency_key=request_idempotency_key,
+            idempotency_fingerprint=request_fingerprint,
         )
         byok_config = (
             STORE.get_byok_provider(workspace.id, endpoint.provider)
@@ -180,34 +225,24 @@ def register(router: APIRouter) -> None:
             for destination in STORE.list_broadcast_destinations(workspace.id)
             if (payload := gateway_destination_payload(destination)) is not None
         ]
-        return {
-            "data": {
-                "authorization_id": authorization.id,
-                "workspace_id": workspace.id,
-                "api_key_hash": api_key.hash,
-                "model": model.id,
-                "upstream_model": endpoint.upstream_id or model.id,
-                "endpoint_id": endpoint.id,
-                "provider": endpoint.provider,
-                "provider_name": PROVIDERS[endpoint.provider].name,
-                "requested_model": requested_model_id,
-                "usage_type": model_usage_type.value,
-                "limit_usage_type": reservation_usage_type.value,
-                **money_pair("estimated_cost", estimate),
-                "credit_reservation_id": credit_reservation_id,
-                **_gateway_byok_payload(byok_config, workspace.id, endpoint.provider),
-                "content_storage_enabled": False,
-                "region": region,
-                "regions": region_payload(settings),
-                "broadcast_destinations": broadcast_destinations,
-                "route_candidates": [
-                    _gateway_candidate_payload(
-                        candidate_model, candidate_endpoint, workspace.id, region
-                    )
-                    for candidate_model, candidate_endpoint in endpoint_candidates
-                ],
-            }
-        }
+        return _gateway_authorize_response(
+            authorization=authorization,
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            model=model,
+            endpoint=endpoint,
+            requested_model_id=requested_model_id,
+            model_usage_type=model_usage_type,
+            limit_usage_type=reservation_usage_type,
+            estimate=estimate,
+            credit_reservation_id=credit_reservation_id,
+            byok_config=byok_config,
+            region=region,
+            settings=settings,
+            broadcast_destinations=broadcast_destinations,
+            endpoint_candidates=endpoint_candidates,
+            idempotent_replay=False,
+        )
 
     @router.post("/internal/gateway/settle")
     async def gateway_settle(
@@ -245,6 +280,112 @@ def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | N
         api_key_hash=body.api_key_hash,
         api_key_lookup_hash=body.api_key_lookup_hash,
     )
+
+
+def _gateway_idempotency_key(
+    request: Request, body: GatewayAuthorizeRequest
+) -> str | None:
+    raw = body.idempotency_key or request.headers.get("idempotency-key")
+    if raw is None:
+        return None
+    key = raw.strip()
+    if not key:
+        return None
+    if len(key) > 256:
+        raise api_error(400, "idempotency-key is too long", ErrorType.BAD_REQUEST)
+    return key
+
+
+def _gateway_authorize_fingerprint(
+    *, workspace_id: str, key_hash: str, body: dict[str, Any]
+) -> str:
+    # Standard idempotency semantics: the key can replay the same logical
+    # request, but a caller cannot reuse it for a different request body.
+    # Keep dynamic catalog/routing output out of this fingerprint so a replay
+    # across a deploy can still recover the original authorization record.
+    material = {
+        key: value
+        for key, value in body.items()
+        if key
+        not in {
+            "api_key_hash",
+            "api_key_lookup_hash",
+            "idempotency_key",
+        }
+    }
+    material["workspace_id"] = workspace_id
+    material["key_hash"] = key_hash
+    encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _authorization_endpoint_candidates(
+    authorization: Any,
+    fallback: list[tuple[Model, ModelEndpoint]],
+) -> list[tuple[Model, ModelEndpoint]]:
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    endpoint_ids = authorization.candidate_endpoint_ids or []
+    if not endpoint_ids and authorization.endpoint_id:
+        endpoint_ids = [authorization.endpoint_id]
+    for endpoint_id in endpoint_ids:
+        endpoint = endpoint_for_id(endpoint_id)
+        if endpoint is None:
+            continue
+        model = MODELS.get(endpoint.model_id)
+        if model is None:
+            continue
+        candidates.append((model, endpoint))
+    return candidates or fallback
+
+
+def _gateway_authorize_response(
+    *,
+    authorization: Any,
+    workspace_id: str,
+    key_hash: str,
+    model: Model,
+    endpoint: ModelEndpoint,
+    requested_model_id: str,
+    model_usage_type: UsageType,
+    limit_usage_type: UsageType,
+    estimate: int,
+    credit_reservation_id: str | None,
+    byok_config: Any | None,
+    region: str,
+    settings: Settings,
+    broadcast_destinations: list[dict[str, Any]],
+    endpoint_candidates: list[tuple[Model, ModelEndpoint]],
+    idempotent_replay: bool,
+) -> dict[str, Any]:
+    return {
+        "data": {
+            "authorization_id": authorization.id,
+            "workspace_id": workspace_id,
+            "api_key_hash": key_hash,
+            "model": model.id,
+            "upstream_model": endpoint.upstream_id or model.id,
+            "endpoint_id": endpoint.id,
+            "provider": endpoint.provider,
+            "provider_name": PROVIDERS[endpoint.provider].name,
+            "requested_model": requested_model_id,
+            "usage_type": model_usage_type.value,
+            "limit_usage_type": limit_usage_type.value,
+            **money_pair("estimated_cost", estimate),
+            "credit_reservation_id": credit_reservation_id,
+            **_gateway_byok_payload(byok_config, workspace_id, endpoint.provider),
+            "content_storage_enabled": False,
+            "region": region,
+            "regions": region_payload(settings),
+            "broadcast_destinations": broadcast_destinations,
+            "idempotent_replay": idempotent_replay,
+            "route_candidates": [
+                _gateway_candidate_payload(
+                    candidate_model, candidate_endpoint, workspace_id, region
+                )
+                for candidate_model, candidate_endpoint in endpoint_candidates
+            ],
+        }
+    }
 
 
 def _api_key_for_gateway_lookup(

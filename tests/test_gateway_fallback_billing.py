@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import MODELS
+from trusted_router.catalog import MODELS, endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.money import token_cost_microdollars
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.storage import STORE
 
@@ -44,10 +45,9 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     auth_data = authorize.json()["data"]
     assert auth_data["model"] == "anthropic/claude-opus-4.7"
     assert auth_data["limit_usage_type"] == "Credits"
-    assert [item["model"] for item in auth_data["route_candidates"]][:2] == [
-        "anthropic/claude-opus-4.7",
-        "mistralai/mistral-small-2603",
-    ]
+    route_models = [item["model"] for item in auth_data["route_candidates"]]
+    assert route_models[0] == "anthropic/claude-opus-4.7"
+    assert "mistralai/mistral-small-2603" in route_models
     mistral_byok = next(
         item
         for item in auth_data["route_candidates"]
@@ -219,16 +219,22 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
     assert auth_data["usage_type"] == "Credits"
     assert auth_data["limit_usage_type"] == "Credits"
     assert auth_data["credit_reservation_id"]
-    assert [item["model"] for item in auth_data["route_candidates"]] == [
-        "mistralai/mistral-small-2603",
-        "anthropic/claude-opus-4.7",
-    ]
+    route_models = [item["model"] for item in auth_data["route_candidates"]]
+    assert route_models[0] == "mistralai/mistral-small-2603"
+    assert "anthropic/claude-opus-4.7" in route_models
+    selected_endpoint_id = next(
+        item["endpoint_id"]
+        for item in auth_data["route_candidates"]
+        if item["model"] == "anthropic/claude-opus-4.7"
+        and item["usage_type"] == "Credits"
+    )
 
     settle = client.post(
         "/v1/internal/gateway/settle",
         json={
             "authorization_id": auth_data["authorization_id"],
             "selected_model": "anthropic/claude-opus-4.7",
+            "selected_endpoint": selected_endpoint_id,
             "actual_input_tokens": 1_000,
             "actual_output_tokens": 1_000,
             "request_id": "gw-fallback-credit",
@@ -237,7 +243,13 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
 
     assert settle.status_code == 200, settle.text
     data = settle.json()["data"]
-    expected_cost = cost_microdollars(MODELS["anthropic/claude-opus-4.7"], 1_000, 1_000)
+    selected_endpoint = endpoint_for_id(selected_endpoint_id)
+    assert selected_endpoint is not None
+    expected_cost = token_cost_microdollars(
+        1_000, selected_endpoint.prompt_price_microdollars_per_million_tokens
+    ) + token_cost_microdollars(
+        1_000, selected_endpoint.completion_price_microdollars_per_million_tokens
+    )
     assert data["model"] == "anthropic/claude-opus-4.7"
     assert data["usage_type"] == "Credits"
     assert data["cost_microdollars"] == expected_cost

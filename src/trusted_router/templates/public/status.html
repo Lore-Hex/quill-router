@@ -31,6 +31,46 @@
     </div>
   </div>
 
+  <section class="slo-grid" aria-label="SLO classes">
+    {% for slo_id, slo in snapshot.slo_classes.items() %}
+    <article class="slo-card">
+      <div class="slo-card-head">
+        <div>
+          <h3>{{ slo.name }}</h3>
+          <p>{{ slo.description }}</p>
+        </div>
+        <span class="component-status status-{{ slo.status_class }}">{{ slo.status_label }}</span>
+      </div>
+      <div class="slo-metrics">
+        <span>Target <strong>{{ slo.target_uptime_percent }}%</strong></span>
+        <span>5m uptime <strong>{{ slo.windows["5m"].uptime_percent | uptime_pct(4) }}</strong></span>
+        <span>24h uptime <strong>{{ slo.windows["24h"].uptime_percent | uptime_pct(4) }}</strong></span>
+        <span>5m burn <strong>{% if slo.windows["5m"].burn_rate is not none %}{{ slo.windows["5m"].burn_rate }}x{% else %}n/a{% endif %}</strong></span>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+
+  {% if snapshot.burn_rate_alerts %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Burn-Rate Alerts</h2>
+        <p>Internal SLO burn-rate signals. Router-core alerts are the paging path; provider-effective alerts are tracked separately.</p>
+      </div>
+    </div>
+    <div class="burn-list">
+      {% for alert in snapshot.burn_rate_alerts %}
+      <div class="burn-row burn-{{ alert.level }}">
+        <strong>{{ alert.level|title }}</strong>
+        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn</span>
+        <small>{{ alert.bad_count }} bad / {{ alert.sample_count }} samples</small>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="status-section">
     <div class="status-section-head">
       <div>

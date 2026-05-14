@@ -9,8 +9,11 @@ from typing import Any
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, iso_now, utcnow
 from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
+    SLO_DEFINITIONS,
     component_name,
     sample_component_ids,
+    sample_slo_class_ids,
+    slo_probe_types,
 )
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
@@ -29,7 +32,17 @@ STATUS_ORDER = {
     "down": 3,
     "unknown": 4,
 }
-WINDOW_SECONDS = {"5m": 5 * 60, "24h": 24 * 60 * 60, "48h": 48 * 60 * 60}
+WINDOW_SECONDS = {
+    "5m": 5 * 60,
+    "1h": 60 * 60,
+    "6h": 6 * 60 * 60,
+    "24h": 24 * 60 * 60,
+    "48h": 48 * 60 * 60,
+}
+ROUTER_CORE_SLO_ID = "router_core"
+SLO_TARGET_UPTIME_PERCENT = 99.999
+SLO_ERROR_BUDGET_FRACTION = 1.0 - (SLO_TARGET_UPTIME_PERCENT / 100.0)
+SLO_BURN_WINDOWS = ("5m", "1h", "6h", "24h")
 
 
 def status_snapshot(
@@ -64,7 +77,9 @@ def status_snapshot(
     daily = _rollup_history(precomputed_rollups, period="day") or _daily_rollups(ordered)
     monthly = _rollup_history(precomputed_rollups, period="month")
     components = _components(ordered, now=now, rollups=precomputed_rollups)
-    overall_status = _aggregate_component_statuses([component["status"] for component in components])
+    slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
+    router_core_status = str(slo_classes.get(ROUTER_CORE_SLO_ID, {}).get("status") or "unknown")
+    overall_status = router_core_status
     return {
         "generated_at": iso_now(),
         "overall_status": overall_status,
@@ -73,6 +88,8 @@ def status_snapshot(
         "summary": _summary(overall_status),
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
+        "slo_classes": slo_classes,
+        "burn_rate_alerts": _burn_rate_alerts(slo_classes),
         "components": components,
         "recent_events": _recent_events(ordered, now=now),
         "windows": {
@@ -172,7 +189,9 @@ def _current_status(
         row["effective_status"] = status
         row["effective_status_label"] = _status_label(status)
         rows.append(row)
-    rows.sort(key=lambda row: (str(row["target"]), str(row["probe_type"]), str(row["monitor_region"])))
+    rows.sort(
+        key=lambda row: (str(row["target"]), str(row["probe_type"]), str(row["monitor_region"]))
+    )
     return {
         "overall_status": overall if rows else "unknown",
         "checks": rows,
@@ -195,7 +214,11 @@ def _daily_rollups(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
     for sample in samples:
         by_day[sample.created_at[:10]].append(sample)
     return [
-        {"date": day, **_rollup(rows), "groups": _sample_group_breakdown(rows, include_component=True)}
+        {
+            "date": day,
+            **_rollup(rows),
+            "groups": _sample_group_breakdown(rows, include_component=True),
+        }
         for day, rows in sorted(by_day.items(), reverse=True)
     ]
 
@@ -297,8 +320,7 @@ def _hour_rollups_in_window(
     return [
         rollup
         for rollup in rollups
-        if rollup.period == "hour"
-        and cutoff <= _parse_time(rollup.period_start) <= now
+        if rollup.period == "hour" and cutoff <= _parse_time(rollup.period_start) <= now
     ]
 
 
@@ -333,6 +355,182 @@ def _rollup(samples: list[SyntheticProbeSample]) -> dict[str, Any]:
     }
 
 
+def _slo_classes(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for definition in SLO_DEFINITIONS:
+        slo_id = str(definition["id"])
+        slo_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
+        slo_rollups = [rollup for rollup in rollups if rollup.probe_type in slo_probe_types(slo_id)]
+        current = _slo_current(slo_samples, now=now)
+        windows = {
+            name: _slo_window(slo_samples, slo_rollups, now=now, seconds=seconds)
+            for name, seconds in WINDOW_SECONDS.items()
+            if name in SLO_BURN_WINDOWS
+        }
+        rows[slo_id] = {
+            **definition,
+            "target_uptime_percent": SLO_TARGET_UPTIME_PERCENT,
+            "status": current["status"],
+            "status_label": _status_label(str(current["status"])),
+            "status_class": _status_class(str(current["status"])),
+            "current_by_region": current["by_region"],
+            "sample_count": current["sample_count"],
+            "windows": windows,
+        }
+    return rows
+
+
+def _slo_current(
+    samples: list[SyntheticProbeSample],
+    *,
+    now: dt.datetime,
+) -> dict[str, Any]:
+    latest: dict[tuple[str, str, str], SyntheticProbeSample] = {}
+    for sample in samples:
+        key = (sample.monitor_region, sample.target, sample.probe_type)
+        if key not in latest:
+            latest[key] = sample
+
+    overall = "unknown"
+    by_region: dict[str, dict[str, Any]] = {}
+    sample_count = 0
+    for sample in latest.values():
+        age = max((now - _parse_time(sample.created_at)).total_seconds(), 0)
+        status = "unknown" if age > CURRENT_SAMPLE_TTL_SECONDS else sample.status
+        overall = _worse_status(overall, status)
+        sample_count += 1
+        for region in _sample_region_keys(sample):
+            region_row = by_region.setdefault(
+                region,
+                {
+                    "status": "unknown",
+                    "status_label": "Unknown",
+                    "status_class": "unknown",
+                    "sample_count": 0,
+                    "last_checked_at": None,
+                },
+            )
+            region_row["status"] = _worse_status(str(region_row["status"]), status)
+            region_row["status_label"] = _status_label(str(region_row["status"]))
+            region_row["status_class"] = _status_class(str(region_row["status"]))
+            region_row["sample_count"] = int(region_row["sample_count"]) + 1
+            last_checked_at = region_row["last_checked_at"]
+            if last_checked_at is None or sample.created_at > str(last_checked_at):
+                region_row["last_checked_at"] = sample.created_at
+
+    return {
+        "status": overall if sample_count else "unknown",
+        "by_region": by_region,
+        "sample_count": sample_count,
+    }
+
+
+def _sample_region_keys(sample: SyntheticProbeSample) -> list[str]:
+    if sample.target_region:
+        return [sample.target_region]
+    if sample.target in {"canonical", "control-plane"}:
+        return ["global"]
+    return [sample.target]
+
+
+def _slo_window(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+    seconds: int,
+) -> dict[str, Any]:
+    cutoff = now - dt.timedelta(seconds=seconds)
+    raw_rows = [sample for sample in samples if _parse_time(sample.created_at) >= cutoff]
+    raw_hour_keys = {sample.created_at[:13] for sample in raw_rows}
+    backfill_rollups = [
+        rollup
+        for rollup in _hour_rollups_in_window(rollups, now=now, seconds=seconds)
+        if rollup.period_start[:13] not in raw_hour_keys
+    ]
+    counts: dict[str, int] = defaultdict(int)
+    for sample in raw_rows:
+        counts[sample.status] += 1
+    for rollup in backfill_rollups:
+        for status, count in _rollup_status_counts(rollup).items():
+            counts[status] += count
+    status_counts = dict(counts)
+    sample_count = sum(status_counts.values())
+    bad_count = max(sample_count - status_counts.get("up", 0), 0)
+    uptime_percent = _uptime_percent_counts(status_counts) if sample_count else None
+    bad_fraction = bad_count / sample_count if sample_count else None
+    burn_rate = (
+        round(bad_fraction / SLO_ERROR_BUDGET_FRACTION, 2)
+        if bad_fraction is not None and SLO_ERROR_BUDGET_FRACTION > 0
+        else None
+    )
+    return {
+        "overall_status": _aggregate_status_counts(status_counts) if sample_count else "unknown",
+        "uptime_percent": uptime_percent,
+        "sample_count": sample_count,
+        "up_count": status_counts.get("up", 0),
+        "bad_count": bad_count,
+        "burn_rate": burn_rate,
+        "status_counts": status_counts,
+    }
+
+
+def _rollup_status_counts(rollup: SyntheticRollup) -> dict[str, int]:
+    return {
+        "up": rollup.up_count,
+        "down": rollup.down_count,
+        "degraded": rollup.degraded_count,
+        "routing_degraded": rollup.routing_degraded_count,
+        "trust_degraded": rollup.trust_degraded_count,
+        "unknown": rollup.unknown_count,
+    }
+
+
+def _burn_rate_alerts(slo_classes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for slo_id, slo in slo_classes.items():
+        windows = slo.get("windows")
+        if not isinstance(windows, dict):
+            continue
+        for window, row in windows.items():
+            if not isinstance(row, dict):
+                continue
+            burn_rate = row.get("burn_rate")
+            if burn_rate is None:
+                continue
+            level = _burn_alert_level(slo_id, str(window), float(burn_rate))
+            if level is None:
+                continue
+            alerts.append(
+                {
+                    "level": level,
+                    "slo_class": slo_id,
+                    "slo_name": slo.get("name", slo_id),
+                    "window": str(window),
+                    "burn_rate": burn_rate,
+                    "uptime_percent": row.get("uptime_percent"),
+                    "bad_count": row.get("bad_count", 0),
+                    "sample_count": row.get("sample_count", 0),
+                }
+            )
+    return alerts
+
+
+def _burn_alert_level(slo_id: str, window: str, burn_rate: float) -> str | None:
+    if slo_id == ROUTER_CORE_SLO_ID and window in {"5m", "1h"} and burn_rate >= 14.4:
+        return "critical"
+    if window == "6h" and burn_rate >= 6.0:
+        return "warning"
+    if window == "24h" and burn_rate >= 3.0:
+        return "watch"
+    return None
+
+
 def _components(
     samples: list[SyntheticProbeSample],
     *,
@@ -349,9 +547,7 @@ def _components(
         component_rollups = [
             rollup for rollup in precomputed_rollups if rollup.component == component_id
         ]
-        component_hour_rollups = [
-            rollup for rollup in component_rollups if rollup.period == "hour"
-        ]
+        component_hour_rollups = [rollup for rollup in component_rollups if rollup.period == "hour"]
         day_rollups = _hour_rollups_in_window(
             component_rollups, now=now, seconds=WINDOW_SECONDS["24h"]
         )
@@ -364,7 +560,9 @@ def _components(
             sample for sample in component_samples if _parse_time(sample.created_at) >= day_cutoff
         ]
         five_minute_samples = [
-            sample for sample in component_samples if _parse_time(sample.created_at) >= five_minute_cutoff
+            sample
+            for sample in component_samples
+            if _parse_time(sample.created_at) >= five_minute_cutoff
         ]
         status = _aggregate_status([sample.status for sample in current_samples])
         if not current_samples and component_samples:
@@ -406,8 +604,14 @@ def _components(
                 "status_class": _status_class(status),
                 "uptime_24h_percent": _uptime_percent_counts(day_status_counts)
                 if day_rollup
-                else (_uptime_percent([sample.status for sample in day_samples]) if day_samples else None),
-                "sample_count_24h": int(day_rollup["sample_count"]) if day_rollup else len(day_samples),
+                else (
+                    _uptime_percent([sample.status for sample in day_samples])
+                    if day_samples
+                    else None
+                ),
+                "sample_count_24h": int(day_rollup["sample_count"])
+                if day_rollup
+                else len(day_samples),
                 "p50_latency_milliseconds": _percentile(primary_gateway_latencies, 50),
                 "p95_latency_milliseconds": _percentile(primary_gateway_latencies, 95),
                 "in_region_p50_latency_milliseconds": _percentile(in_region_gateway_latencies, 50),
@@ -570,14 +774,12 @@ def _latest_recent_component_samples(
         if key not in latest:
             latest[key] = sample
     cutoff = now - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS)
-    return [
-        sample
-        for sample in latest.values()
-        if _parse_time(sample.created_at) >= cutoff
-    ]
+    return [sample for sample in latest.values() if _parse_time(sample.created_at) >= cutoff]
 
 
-def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> list[dict[str, Any]]:
+def _component_history(
+    samples: list[SyntheticProbeSample], *, now: dt.datetime
+) -> list[dict[str, Any]]:
     """Build hourly bars for the past `STATUS_HISTORY_HOURS` hours.
 
     Per-bucket status uses an uptime-percent threshold rather than a
@@ -621,7 +823,9 @@ def _component_history(samples: list[SyntheticProbeSample], *, now: dt.datetime)
 
         statuses = [sample.status for sample in rows]
         uptime = _uptime_percent(statuses)
-        status = _history_status(uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses))
+        status = _history_status(
+            uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses)
+        )
 
         latencies = [
             sample.latency_milliseconds
@@ -709,12 +913,12 @@ def _sample_history_bucket(
 ) -> dict[str, Any]:
     statuses = [sample.status for sample in rows]
     uptime = _uptime_percent(statuses)
-    status = _history_status(uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses))
+    status = _history_status(
+        uptime, has_trust_degraded=any(s == "trust_degraded" for s in statuses)
+    )
 
     latencies = [
-        sample.latency_milliseconds
-        for sample in rows
-        if sample.latency_milliseconds is not None
+        sample.latency_milliseconds for sample in rows if sample.latency_milliseconds is not None
     ]
     error_types = [sample.error_type for sample in rows if sample.error_type]
     top_error: str | None = None
@@ -776,7 +980,9 @@ def _history_status(uptime: float, *, has_trust_degraded: bool) -> str:
     return "trust_degraded" if has_trust_degraded else "down"
 
 
-def _recent_events(samples: list[SyntheticProbeSample], *, now: dt.datetime) -> list[dict[str, Any]]:
+def _recent_events(
+    samples: list[SyntheticProbeSample], *, now: dt.datetime
+) -> list[dict[str, Any]]:
     cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["24h"])
     events = []
     for sample in samples:
@@ -877,12 +1083,12 @@ def _summary(status: str) -> dict[str, str]:
     if status == "up":
         return {
             "headline": "All Systems Operational",
-            "detail": "Synthetic checks are passing for the public API, attestation, billing, and provider fallback.",
+            "detail": "Router-core synthetic checks are passing for attested reachability, authorization, fallback, and settlement.",
         }
     if status == "down":
         return {
-            "headline": "Major System Outage",
-            "detail": "One or more critical synthetic checks are failing.",
+            "headline": "Router Core Outage",
+            "detail": "One or more router-core synthetic checks are failing.",
         }
     if status == "trust_degraded":
         return {
@@ -891,8 +1097,8 @@ def _summary(status: str) -> dict[str, str]:
         }
     if status in {"degraded", "routing_degraded"}:
         return {
-            "headline": "Degraded Performance",
-            "detail": "One or more routing, provider, or regional checks are degraded.",
+            "headline": "Router Core Degraded",
+            "detail": "One or more authorization, fallback, or regional router-core checks are degraded.",
         }
     return {
         "headline": "Status Unknown",
@@ -913,7 +1119,12 @@ def _history_title_hourly(
     label = bucket_start.strftime("%Y-%m-%d %H:00 UTC")
     if uptime is None:
         return f"{label} — no data"
-    parts = [f"{label}", f"{_status_label(status)}", f"{uptime:.2f}% uptime", f"{sample_count} samples"]
+    parts = [
+        f"{label}",
+        f"{_status_label(status)}",
+        f"{uptime:.2f}% uptime",
+        f"{sample_count} samples",
+    ]
     if top_error:
         parts.append(f"top error: {top_error}")
     return " · ".join(parts)

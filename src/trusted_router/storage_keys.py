@@ -66,6 +66,7 @@ class InMemoryApiKeys:
         # (Stage 5a) and safe change-stream replay (Stage 1 ZDM).
         self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
+        self.gateway_authorization_id_by_idempotency_key: dict[str, str] = {}
 
     def reset(self) -> None:
         # Caller holds the parent lock during the global reset, so we
@@ -75,6 +76,7 @@ class InMemoryApiKeys:
         self.reservations.clear()
         self.reservation_id_by_idempotency_key.clear()
         self.gateway_authorizations.clear()
+        self.gateway_authorization_id_by_idempotency_key.clear()
 
     # ── API key CRUD ────────────────────────────────────────────────────
     def create(
@@ -316,8 +318,18 @@ class InMemoryApiKeys:
         region: str | None = None,
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
+        idempotency_key: str | None = None,
+        idempotency_fingerprint: str | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
+            if idempotency_key is not None:
+                existing_id = self.gateway_authorization_id_by_idempotency_key.get(
+                    self._gateway_authorization_idempotency_index_key(
+                        workspace_id, key_hash, idempotency_key
+                    )
+                )
+                if existing_id is not None:
+                    return self.gateway_authorizations[existing_id]
             authorization = GatewayAuthorization(
                 id=f"gwa-{uuid.uuid4().hex}",
                 workspace_id=workspace_id,
@@ -332,15 +344,42 @@ class InMemoryApiKeys:
                 region=region,
                 endpoint_id=endpoint_id,
                 candidate_endpoint_ids=list(candidate_endpoint_ids or []),
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
             )
             self.gateway_authorizations[authorization.id] = authorization
+            if idempotency_key is not None:
+                self.gateway_authorization_id_by_idempotency_key[
+                    self._gateway_authorization_idempotency_index_key(
+                        workspace_id, key_hash, idempotency_key
+                    )
+                ] = authorization.id
             return authorization
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         with self._lock:
             return self.gateway_authorizations.get(authorization_id)
 
+    def get_gateway_authorization_by_idempotency_key(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None:
+        with self._lock:
+            authorization_id = self.gateway_authorization_id_by_idempotency_key.get(
+                self._gateway_authorization_idempotency_index_key(
+                    workspace_id, key_hash, idempotency_key
+                )
+            )
+            if authorization_id is None:
+                return None
+            return self.gateway_authorizations.get(authorization_id)
+
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
         with self._lock:
             authorization = self.gateway_authorizations[authorization_id]
             authorization.settled = True
+
+    @staticmethod
+    def _gateway_authorization_idempotency_index_key(
+        workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> str:
+        return f"{workspace_id}\0{key_hash}\0{idempotency_key}"

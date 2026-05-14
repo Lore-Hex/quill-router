@@ -211,6 +211,8 @@ class GatewayAuthorization:
     region: str | None = None
     endpoint_id: str | None = None
     candidate_endpoint_ids: list[str] = field(default_factory=list)
+    idempotency_key: str | None = None
+    idempotency_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field

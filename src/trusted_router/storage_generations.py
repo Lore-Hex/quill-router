@@ -114,3 +114,13 @@ class InMemoryGenerations:
                 date=date,
             )
         return generation_events(rows, limit=limit)
+
+    def reconcile_activity(
+        self,
+        workspace_id: str,
+        *,
+        date: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        _ = (workspace_id, date, limit)
+        return 0

@@ -630,6 +630,8 @@ class InMemoryStore:
         region: str | None = None,
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
+        idempotency_key: str | None = None,
+        idempotency_fingerprint: str | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -644,10 +646,19 @@ class InMemoryStore:
             region=region,
             endpoint_id=endpoint_id,
             candidate_endpoint_ids=candidate_endpoint_ids,
+            idempotency_key=idempotency_key,
+            idempotency_fingerprint=idempotency_fingerprint,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         return self.api_keys.get_gateway_authorization(authorization_id)
+
+    def get_gateway_authorization_by_idempotency_key(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None:
+        return self.api_keys.get_gateway_authorization_by_idempotency_key(
+            workspace_id, key_hash, idempotency_key
+        )
 
     def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
         self.api_keys.mark_gateway_authorization_settled(authorization_id)
@@ -780,6 +791,19 @@ class InMemoryStore:
     ) -> list[dict[str, Any]]:
         return self.generation_store.activity_events(
             workspace_id, api_key_hash=api_key_hash, date=date, limit=limit
+        )
+
+    def reconcile_generation_activity(
+        self,
+        workspace_id: str,
+        *,
+        date: str | None = None,
+        limit: int = 1000,
+    ) -> int:
+        return self.generation_store.reconcile_activity(
+            workspace_id,
+            date=date,
+            limit=limit,
         )
 
     def hit_rate_limit(
