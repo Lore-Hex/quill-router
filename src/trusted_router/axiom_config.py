@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from typing import Any
 
 from trusted_router.config import Settings
@@ -75,7 +76,9 @@ def init_axiom(settings: Settings) -> None:
         log.warning("axiom.disabled reason=client_init_failed err=%s", exc)
         return
 
-    handler: logging.Handler = AxiomHandler(client, dataset)
+    raw_handler: logging.Handler = AxiomHandler(client, dataset)
+    raw_handler.setLevel(logging.NOTSET)
+    handler: logging.Handler = _SafeAxiomHandler(raw_handler)
     handler.setLevel(_resolve_level(settings.axiom_log_level))
     # Attach a filter that scrubs PII before the handler ships the
     # record. Reuses sentry_config's `_scrub` so the rules are defined
@@ -102,7 +105,7 @@ def _handler_already_installed() -> bool:
     process (e.g. tests that re-create the FastAPI app)."""
     root = logging.getLogger()
     return any(
-        type(handler).__name__ == "AxiomHandler" for handler in root.handlers
+        type(handler).__name__ in {"AxiomHandler", "_SafeAxiomHandler"} for handler in root.handlers
     )
 
 
@@ -147,3 +150,28 @@ class _AxiomScrubFilter(logging.Filter):
             if scrubbed is not value:
                 record.__dict__[key] = scrubbed
         return True
+
+
+class _SafeAxiomHandler(logging.Handler):
+    """Axiom is observability, not request serving infrastructure.
+
+    The upstream Axiom handler can raise during `emit()` when the token,
+    org, dataset type, or ingestion endpoint is wrong. Logging handlers run
+    inline with application code, so an uncaught Axiom exception can turn a
+    normal 4xx path into a 500. Drop failed Axiom emits and write a throttled
+    stderr breadcrumb instead of raising.
+    """
+
+    def __init__(self, inner: logging.Handler) -> None:
+        super().__init__()
+        self.inner = inner
+        self._last_error_log_at = 0.0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.inner.handle(record)
+        except Exception as exc:  # noqa: BLE001 - logging must never break requests.
+            now = time.monotonic()
+            if now - self._last_error_log_at > 60:
+                self._last_error_log_at = now
+                sys.stderr.write(f"axiom.emit_failed dropped=true err={exc!r}\n")

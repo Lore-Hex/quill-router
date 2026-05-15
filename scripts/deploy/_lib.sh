@@ -15,7 +15,7 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4,us-east4,asia-northeast1,asia-southeast1,southamerica-east1}"
+TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Comma-separated subset of TR_REGIONS that should run with min_scale=1
 # (always-on warm capacity). Anything in TR_REGIONS but NOT in
@@ -66,6 +66,7 @@ KMS_KEYRING_ID="${TR_KMS_KEYRING_ID:-trusted-router}"
 BYOK_KMS_KEY_ID="${TR_BYOK_KMS_KEY_ID:-byok-envelope}"
 BYOK_KMS_KEY_NAME="${TR_BYOK_KMS_KEY_NAME:-projects/${PROJECT_ID}/locations/${REGION}/keyRings/${KMS_KEYRING_ID}/cryptoKeys/${BYOK_KMS_KEY_ID}}"
 TRUST_FILE="${TRUST_FILE:-/Users/jperla/claude/quill-cloud-proxy/trust-page/gcp-release.json}"
+TRUST_FILE_URL="${TRUST_FILE_URL:-https://trust.trustedrouter.com/trust/gcp-release.json}"
 
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
 gc() { gcloud --project "$PROJECT_ID" "$@"; }

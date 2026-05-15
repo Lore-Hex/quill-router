@@ -11,25 +11,16 @@ source "${SCRIPT_DIR}/_lib.sh"
 TRUST_SOURCE_COMMIT=""
 TRUST_IMAGE_REFERENCE=""
 TRUST_IMAGE_DIGEST=""
+TRUST_JSON=""
 if [ -f "$TRUST_FILE" ]; then
-  TRUST_SOURCE_COMMIT="$(python3 - "$TRUST_FILE" <<'PY'
-import json, sys
-data=json.load(open(sys.argv[1]))
-print(data.get("source_commit", ""))
-PY
-)"
-  TRUST_IMAGE_REFERENCE="$(python3 - "$TRUST_FILE" <<'PY'
-import json, sys
-data=json.load(open(sys.argv[1]))
-print(data.get("image_reference", ""))
-PY
-)"
-  TRUST_IMAGE_DIGEST="$(python3 - "$TRUST_FILE" <<'PY'
-import json, sys
-data=json.load(open(sys.argv[1]))
-print(data.get("image_digest", ""))
-PY
-)"
+  TRUST_JSON="$(cat "$TRUST_FILE")"
+elif [ -n "${TRUST_FILE_URL:-}" ]; then
+  TRUST_JSON="$(curl -fsSL --max-time 10 "$TRUST_FILE_URL" 2>/dev/null || true)"
+fi
+if [ -n "$TRUST_JSON" ]; then
+  TRUST_SOURCE_COMMIT="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_commit", ""))' <<<"$TRUST_JSON")"
+  TRUST_IMAGE_REFERENCE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_reference", ""))' <<<"$TRUST_JSON")"
+  TRUST_IMAGE_DIGEST="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("image_digest", ""))' <<<"$TRUST_JSON")"
 fi
 
 SECRET_ENVS=(
