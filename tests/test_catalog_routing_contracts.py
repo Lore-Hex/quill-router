@@ -68,6 +68,33 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
     } <= credits_providers
 
 
+def test_novita_native_catalog_preserves_all_live_model_ids() -> None:
+    """Novita's live `/models` feed is ahead of OpenRouter's endpoint
+    feed. The provider-native supplement should publish those routes
+    with the exact upstream ID Novita expects, including case."""
+    novita_endpoints = [
+        endpoint
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "novita"
+    ]
+    novita_model_ids = {endpoint.model_id for endpoint in novita_endpoints}
+
+    assert len(novita_model_ids) >= 100
+    for model_id in [
+        "moonshotai/kimi-k2.6",
+        "deepseek/deepseek-ocr-2",
+        "xiaomimimo/mimo-v2.5-pro",
+        "zai-org/glm-5.1",
+        "Sao10K/L3-8B-Stheno-v3.2",
+    ]:
+        assert f"{model_id}@novita/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@novita/byok" in MODEL_ENDPOINTS
+        assert MODEL_ENDPOINTS[f"{model_id}@novita/prepaid"].upstream_id == model_id
+        assert MODEL_ENDPOINTS[f"{model_id}@novita/byok"].upstream_id == model_id
+    assert "deepseek/deepseek-ocr-2@deepseek/prepaid" not in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-ocr-2@deepseek/byok" not in MODEL_ENDPOINTS
+
+
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
     """Under the uniform pricing formula (cost+10%, $0.01/M floor), TR no
     longer carries a separate 1¢/M discount. `prompt_price_*` and

@@ -484,6 +484,7 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
 # wheel so production reads from disk; refreshed by
 # `scripts/ingest_openrouter_catalog.py` and committed via PR.
 _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
+_PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
 
 # OpenRouter publishes models as `{author}/{slug}` where author maps onto
 # one of TR's keyed providers. This drops the `Model.provider` (publisher)
@@ -665,15 +666,134 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
     return models, endpoints
 
 
+def _as_positive_int(value: object) -> int:
+    if not isinstance(value, int | str | float | bytes | bytearray):
+        return 0
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)
+
+
+def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
+    """Read provider-native model manifests for providers whose live API
+    lists more routes than OpenRouter's endpoint feed. These manifests
+    preserve exact upstream model IDs and provider-direct prices, so the
+    control plane can authorize routes the attested gateway can actually
+    call and bill.
+
+    Today this is only Novita: its `/models` endpoint exposes several
+    working serverless models before they appear in OpenRouter's public
+    endpoint catalog.
+    """
+    models: dict[str, Model] = {}
+    endpoints: dict[str, ModelEndpoint] = {}
+    for provider_slug in ("novita",):
+        path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+        if not path.exists() or provider_slug not in PROVIDERS:
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw_models = raw.get("models")
+        if not isinstance(raw_models, list):
+            continue
+        provider = PROVIDERS[provider_slug]
+        for raw_model in raw_models:
+            if not isinstance(raw_model, dict):
+                continue
+            model_id = raw_model.get("id")
+            if not isinstance(model_id, str) or not model_id:
+                continue
+            if raw_model.get("model_type") not in (None, "chat"):
+                continue
+            if "chat/completions" not in {
+                str(item) for item in (raw_model.get("endpoints") or [])
+            }:
+                continue
+
+            prompt_cost = _as_positive_int(raw_model.get("input_token_price_per_m"))
+            completion_cost = _as_positive_int(raw_model.get("output_token_price_per_m"))
+            prompt_price = _customer_price(prompt_cost)
+            completion_price = _customer_price(completion_cost)
+            tiers = _flat_tier(prompt_price, completion_price)
+            publisher = _author_provider(
+                model_id, [{"tr_provider_slug": provider_slug}]
+            ) or provider_slug
+            context_length = _as_positive_int(raw_model.get("context_length"))
+            name = str(
+                raw_model.get("display_name")
+                or raw_model.get("title")
+                or model_id
+            )
+
+            models[model_id] = Model(
+                id=model_id,
+                name=name,
+                provider=publisher,
+                context_length=context_length,
+                upstream_id=model_id,
+                supports_chat=True,
+                supports_messages=False,
+                # Availability comes from the explicit provider-native
+                # endpoints below. Do not let _build_endpoints synthesize
+                # publisher-direct routes for supplemental-only models
+                # such as deepseek/deepseek-ocr-2@deepseek.
+                prepaid_available=False,
+                byok_available=False,
+                prompt_price_microdollars_per_million_tokens=prompt_price,
+                completion_price_microdollars_per_million_tokens=completion_price,
+                published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                published_completion_price_microdollars_per_million_tokens=completion_price,
+                price_tiers=tiers,
+                published_price_tiers=tiers,
+            )
+
+            if provider_slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
+                credits_id = f"{model_id}@{provider_slug}/prepaid"
+                endpoints[credits_id] = ModelEndpoint(
+                    id=credits_id,
+                    model_id=model_id,
+                    provider=provider_slug,
+                    usage_type="Credits",
+                    upstream_id=model_id,
+                    prompt_price_microdollars_per_million_tokens=prompt_price,
+                    completion_price_microdollars_per_million_tokens=completion_price,
+                    published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                    published_completion_price_microdollars_per_million_tokens=completion_price,
+                    price_tiers=tiers,
+                    published_price_tiers=tiers,
+                )
+            if provider.supports_byok:
+                byok_id = f"{model_id}@{provider_slug}/byok"
+                endpoints[byok_id] = ModelEndpoint(
+                    id=byok_id,
+                    model_id=model_id,
+                    provider=provider_slug,
+                    usage_type="BYOK",
+                    upstream_id=model_id,
+                    prompt_price_microdollars_per_million_tokens=prompt_price,
+                    completion_price_microdollars_per_million_tokens=completion_price,
+                    published_prompt_price_microdollars_per_million_tokens=prompt_price,
+                    published_completion_price_microdollars_per_million_tokens=completion_price,
+                    price_tiers=tiers,
+                    published_price_tiers=tiers,
+                )
+    return models, endpoints
+
+
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
-# The ingest snapshot IS the catalog — there's no hand-coded subset to
-# protect. AUTO_MODEL_ID is the only seed; everything else comes from
-# `data/openrouter_snapshot.json`. Pricing across the whole catalog goes
+_SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints()
+# The OpenRouter ingest snapshot is the primary catalog. Provider-native
+# supplements add exact routes from providers whose live model API is
+# ahead of OpenRouter's endpoint feed. Pricing across both paths goes
 # through the same `cost × 1.10, $0.01/M floor` formula.
 MODELS.update(_INGESTED_MODELS)
+for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
+    MODELS.setdefault(_model_id, _model)
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
+MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
