@@ -436,6 +436,75 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 ---
 
+## <a id="dns-vendor-split"></a>DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)
+
+Cloudflare and Google Cloud DNS are both authoritative for
+trustedrouter.com (Stage 4f multi-vendor design). When their record
+sets drift, real-user impact looks like:
+
+- Trust page intermittently broken (some users see the right page,
+  others see a 404 / wrong content)
+- Google Search Console domain verification fails
+- Cloudflare emails "trustedrouter.com no longer using our nameservers"
+- Some endpoints intermittently NXDOMAIN
+
+**Diagnose**:
+
+```bash
+# Compare both vendors side by side:
+for ns in ns-cloud-b1.googledomains.com dom.ns.cloudflare.com; do
+  echo "=== $ns ==="
+  for record in trustedrouter.com trust.trustedrouter.com www.trustedrouter.com; do
+    cn=$(dig +short CNAME $record @$ns)
+    a=$(dig +short A $record @$ns)
+    echo "  $record: A=$a CNAME=$cn"
+  done
+  echo "  apex TXT: $(dig +short TXT trustedrouter.com @$ns | head -1)"
+  echo "  apex NS:  $(dig +short NS trustedrouter.com @$ns | wc -l) records"
+done
+
+# Which public resolvers cache which vendor:
+for r in 1.1.1.1 8.8.8.8 9.9.9.9; do
+  echo "  $r → trust = $(dig +short trust.trustedrouter.com @$r | head -1)"
+done
+```
+
+Both vendors should return identical answers for every record;
+each vendor's apex NS should list all 6 NS (4 Google + 2 Cloudflare).
+Public resolvers should all agree on every name.
+
+**Fix**:
+
+The fast one-shot path that brings Cloud DNS into sync with
+Cloudflare:
+
+```bash
+cd /Users/jperla/claude/quill-cloud-proxy
+gcloud config set account josephjavierperla@tt.live  # needs DNS admin
+bash tools/fix-trustedrouter-dns.sh
+```
+
+The durable pin (do this once after the one-shot):
+
+```bash
+cd /Users/jperla/claude/quill-cloud-proxy/tools/dns
+# Follow README.md to set up env vars + import existing records.
+terraform plan      # should be "No changes" once imports are clean
+```
+
+After that, all DNS changes go through `terraform apply` and both
+vendors stay in sync atomically.
+
+**Don't fix it by**:
+- Removing Cloud DNS NS from the registrar (loses Stage 4f vendor
+  redundancy — Cloudflare-only means Cloudflare-outage = TR-outage)
+- Hand-editing one vendor and not the other (caused this in the
+  first place; Terraform pin prevents recurrence)
+- Setting different TTLs across vendors (cache lifetime divergence
+  multiplies resolver-state randomness)
+
+---
+
 ## <a id="aws-control-plane"></a>Standing up the AWS control plane (Stage 4d)
 
 A global GCP outage takes down trustedrouter.com (homepage / signup /
