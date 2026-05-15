@@ -93,6 +93,15 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     # missing endpoints, but if OR adds them we pick them up.
     "GMI": "gmi",
     "GMI Cloud": "gmi",
+    # Nebius Token Factory + MiniMax first-party endpoints. TR also
+    # carries provider-native manifests for both, but keep OR ingest
+    # aware so any future OpenRouter endpoint feed rows merge cleanly.
+    "Nebius": "nebius",
+    "Nebius AI": "nebius",
+    "Nebius Token Factory": "nebius",
+    "MiniMax": "minimax",
+    "Minimax": "minimax",
+    "MiniMax AI": "minimax",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

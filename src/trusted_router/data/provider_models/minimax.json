@@ -1,0 +1,190 @@
+{
+  "provider": "minimax",
+  "source": "https://api.minimax.io/v1/models",
+  "generated_at": "2026-05-15T09:14:49Z",
+  "model_count": 7,
+  "models": [
+    {
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "MiniMax-M2.7",
+      "display_name": "MiniMax M2.7",
+      "title": "MiniMax-M2.7",
+      "created": 1773799200,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2.7-highspeed",
+      "upstream_id": "MiniMax-M2.7-highspeed",
+      "display_name": "MiniMax M2.7 highspeed",
+      "title": "MiniMax-M2.7-highspeed",
+      "created": 1773799200,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "MiniMax-M2.5",
+      "display_name": "MiniMax M2.5",
+      "title": "MiniMax-M2.5",
+      "created": 1770948000,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2.5-highspeed",
+      "upstream_id": "MiniMax-M2.5-highspeed",
+      "display_name": "MiniMax M2.5 highspeed",
+      "title": "MiniMax-M2.5-highspeed",
+      "created": 1770948000,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2.1",
+      "upstream_id": "MiniMax-M2.1",
+      "display_name": "MiniMax M2.1",
+      "title": "MiniMax-M2.1",
+      "created": 1766455200,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2.1-highspeed",
+      "upstream_id": "MiniMax-M2.1-highspeed",
+      "display_name": "MiniMax M2.1 highspeed",
+      "title": "MiniMax-M2.1-highspeed",
+      "created": 1766455200,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "minimax/minimax-m2",
+      "upstream_id": "MiniMax-M2",
+      "display_name": "MiniMax M2",
+      "title": "MiniMax-M2",
+      "created": 1761530400,
+      "context_length": 204800,
+      "max_output_tokens": 204800,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    }
+  ]
+}

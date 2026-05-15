@@ -68,31 +68,70 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
     } <= credits_providers
 
 
-def test_novita_native_catalog_preserves_all_live_model_ids() -> None:
-    """Novita's live `/models` feed is ahead of OpenRouter's endpoint
-    feed. The provider-native supplement should publish those routes
-    with the exact upstream ID Novita expects, including case."""
-    novita_endpoints = [
-        endpoint
-        for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.provider == "novita"
+@pytest.mark.parametrize(
+    ("provider", "min_model_count", "sample_ids"),
+    [
+        (
+            "novita",
+            100,
+            [
+                "moonshotai/kimi-k2.6",
+                "deepseek/deepseek-ocr-2",
+                "xiaomimimo/mimo-v2.5-pro",
+                "zai-org/glm-5.1",
+                "Sao10K/L3-8B-Stheno-v3.2",
+            ],
+        ),
+        (
+            "nebius",
+            30,
+            [
+                "google/gemma-2-2b-it",
+                "Qwen/Qwen3.5-397B-A17B",
+                "deepseek-ai/DeepSeek-V4-Pro",
+                "MiniMaxAI/MiniMax-M2.5",
+            ],
+        ),
+        (
+            "minimax",
+            7,
+            [
+                "minimax/minimax-m2.7",
+                "minimax/minimax-m2.7-highspeed",
+                "minimax/minimax-m2.5",
+            ],
+        ),
+    ],
+)
+def test_native_provider_catalog_preserves_live_model_ids(
+    provider: str,
+    min_model_count: int,
+    sample_ids: list[str],
+) -> None:
+    """Provider-native `/models` feeds can be ahead of OpenRouter's
+    endpoint feed. TR should publish those routes with exact upstream
+    IDs so the enclave can dispatch them without strip-author bugs."""
+    provider_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == provider
     ]
-    novita_model_ids = {endpoint.model_id for endpoint in novita_endpoints}
+    provider_model_ids = {endpoint.model_id for endpoint in provider_endpoints}
 
-    assert len(novita_model_ids) >= 100
-    for model_id in [
-        "moonshotai/kimi-k2.6",
-        "deepseek/deepseek-ocr-2",
-        "xiaomimimo/mimo-v2.5-pro",
-        "zai-org/glm-5.1",
-        "Sao10K/L3-8B-Stheno-v3.2",
-    ]:
-        assert f"{model_id}@novita/prepaid" in MODEL_ENDPOINTS
-        assert f"{model_id}@novita/byok" in MODEL_ENDPOINTS
-        assert MODEL_ENDPOINTS[f"{model_id}@novita/prepaid"].upstream_id == model_id
-        assert MODEL_ENDPOINTS[f"{model_id}@novita/byok"].upstream_id == model_id
+    assert len(provider_model_ids) >= min_model_count
+    for model_id in sample_ids:
+        assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        assert MODEL_ENDPOINTS[f"{model_id}@{provider}/prepaid"].upstream_id
+        assert MODEL_ENDPOINTS[f"{model_id}@{provider}/byok"].upstream_id
     assert "deepseek/deepseek-ocr-2@deepseek/prepaid" not in MODEL_ENDPOINTS
     assert "deepseek/deepseek-ocr-2@deepseek/byok" not in MODEL_ENDPOINTS
+
+
+def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
+    assert MODEL_ENDPOINTS["minimax/minimax-m2.7@minimax/prepaid"].upstream_id == "MiniMax-M2.7"
+    assert (
+        MODEL_ENDPOINTS["minimax/minimax-m2.7-highspeed@minimax/byok"].upstream_id
+        == "MiniMax-M2.7-highspeed"
+    )
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:

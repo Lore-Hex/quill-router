@@ -1,0 +1,788 @@
+{
+  "provider": "nebius",
+  "source": "https://api.tokenfactory.nebius.com/v1/models",
+  "generated_at": "2026-05-15T09:14:49Z",
+  "model_count": 31,
+  "models": [
+    {
+      "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "upstream_id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "display_name": "Meta Llama 3.1 8B Instruct",
+      "title": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+      "created": 1778836485,
+      "context_length": 128000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 60000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+      "upstream_id": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+      "display_name": "Llama 3_1 Nemotron Ultra 253B v1",
+      "title": "nvidia/Llama-3_1-Nemotron-Ultra-253B-v1",
+      "created": 1778836484,
+      "context_length": 128000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 1800000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "google/gemma-2-2b-it",
+      "upstream_id": "google/gemma-2-2b-it",
+      "display_name": "gemma 2 2b it",
+      "title": "google/gemma-2-2b-it",
+      "created": 1778836484,
+      "context_length": 8192,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 20000,
+      "output_token_price_per_m": 60000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "meta-llama/Llama-3.3-70B-Instruct",
+      "upstream_id": "meta-llama/Llama-3.3-70B-Instruct",
+      "display_name": "Llama 3.3 70B Instruct",
+      "title": "meta-llama/Llama-3.3-70B-Instruct",
+      "created": 1778836484,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 400000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "display_name": "Qwen3 235B A22B Instruct 2507",
+      "title": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "created": 1778836484,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-32B",
+      "upstream_id": "Qwen/Qwen3-32B",
+      "display_name": "Qwen3 32B",
+      "title": "Qwen/Qwen3-32B",
+      "created": 1778836483,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "google/gemma-3-27b-it",
+      "upstream_id": "google/gemma-3-27b-it",
+      "display_name": "gemma 3 27b it",
+      "title": "google/gemma-3-27b-it",
+      "created": 1778836486,
+      "context_length": 98304,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 119000,
+      "output_token_price_per_m": 200000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen2.5-VL-72B-Instruct",
+      "upstream_id": "Qwen/Qwen2.5-VL-72B-Instruct",
+      "display_name": "Qwen2.5 VL 72B Instruct",
+      "title": "Qwen/Qwen2.5-VL-72B-Instruct",
+      "created": 1778836484,
+      "context_length": 32768,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 700000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "display_name": "gpt oss 120b",
+      "title": "openai/gpt-oss-120b",
+      "created": 1778836485,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "upstream_id": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "display_name": "Qwen3 30B A3B Instruct 2507",
+      "title": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "created": 1778836486,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "NousResearch/Hermes-4-70B",
+      "upstream_id": "NousResearch/Hermes-4-70B",
+      "display_name": "Hermes 4 70B",
+      "title": "NousResearch/Hermes-4-70B",
+      "created": 1778836486,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 130000,
+      "output_token_price_per_m": 400000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "NousResearch/Hermes-4-405B",
+      "upstream_id": "NousResearch/Hermes-4-405B",
+      "display_name": "Hermes 4 405B",
+      "title": "NousResearch/Hermes-4-405B",
+      "created": 1778836485,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+      "upstream_id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+      "display_name": "Qwen3 Next 80B A3B Thinking",
+      "title": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+      "created": 1778836484,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "PrimeIntellect/INTELLECT-3",
+      "upstream_id": "PrimeIntellect/INTELLECT-3",
+      "display_name": "INTELLECT 3",
+      "title": "PrimeIntellect/INTELLECT-3",
+      "created": 1778836482,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+      "display_name": "NVIDIA Nemotron 3 Nano 30B A3B",
+      "title": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
+      "created": 1778836486,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/Nemotron-3-Nano-Omni",
+      "upstream_id": "nvidia/Nemotron-3-Nano-Omni",
+      "display_name": "Nemotron 3 Nano Omni",
+      "title": "nvidia/Nemotron-3-Nano-Omni",
+      "created": 1778836484,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 450000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "zai-org/GLM-5.1",
+      "upstream_id": "zai-org/GLM-5.1",
+      "display_name": "GLM 5.1",
+      "title": "zai-org/GLM-5.1",
+      "created": 1778836486,
+      "context_length": 204800,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V3.2-fast",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.2-fast",
+      "display_name": "DeepSeek V3.2 fast",
+      "title": "deepseek-ai/DeepSeek-V3.2-fast",
+      "created": 1778836486,
+      "context_length": 163840,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 2250000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "openai/gpt-oss-120b-fast",
+      "upstream_id": "openai/gpt-oss-120b-fast",
+      "display_name": "gpt oss 120b fast",
+      "title": "openai/gpt-oss-120b-fast",
+      "created": 1778836486,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.5-fast",
+      "upstream_id": "MiniMaxAI/MiniMax-M2.5-fast",
+      "display_name": "MiniMax M2.5 fast",
+      "title": "MiniMaxAI/MiniMax-M2.5-fast",
+      "created": 1778836483,
+      "context_length": 204800,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B-Thinking-2507-fast",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-fast",
+      "display_name": "Qwen3 235B A22B Thinking 2507 fast",
+      "title": "Qwen/Qwen3-235B-A22B-Thinking-2507-fast",
+      "created": 1778836483,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3.5-397B-A17B-fast",
+      "upstream_id": "Qwen/Qwen3.5-397B-A17B-fast",
+      "display_name": "Qwen3.5 397B A17B fast",
+      "title": "Qwen/Qwen3.5-397B-A17B-fast",
+      "created": 1778836486,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3600000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3-Next-80B-A3B-Thinking-fast",
+      "upstream_id": "Qwen/Qwen3-Next-80B-A3B-Thinking-fast",
+      "display_name": "Qwen3 Next 80B A3B Thinking fast",
+      "title": "Qwen/Qwen3-Next-80B-A3B-Thinking-fast",
+      "created": 1778836483,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/Kimi-K2.5-fast",
+      "upstream_id": "moonshotai/Kimi-K2.5-fast",
+      "display_name": "Kimi K2.5 fast",
+      "title": "moonshotai/Kimi-K2.5-fast",
+      "created": 1778836482,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4800000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V3.2",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.2",
+      "display_name": "DeepSeek V3.2",
+      "title": "deepseek-ai/DeepSeek-V3.2",
+      "created": 1778836479,
+      "context_length": 163840,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 1500000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/nemotron-3-super-120b-a12b",
+      "upstream_id": "nvidia/nemotron-3-super-120b-a12b",
+      "display_name": "nemotron 3 super 120b a12b",
+      "title": "nvidia/nemotron-3-super-120b-a12b",
+      "created": 1778836480,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 1800000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "zai-org/GLM-5",
+      "upstream_id": "zai-org/GLM-5",
+      "display_name": "GLM 5",
+      "title": "zai-org/GLM-5",
+      "created": 1778836479,
+      "context_length": 202800,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3200000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "Qwen/Qwen3.5-397B-A17B",
+      "upstream_id": "Qwen/Qwen3.5-397B-A17B",
+      "display_name": "Qwen3.5 397B A17B",
+      "title": "Qwen/Qwen3.5-397B-A17B",
+      "created": 1778836479,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3600000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/Kimi-K2.5",
+      "upstream_id": "moonshotai/Kimi-K2.5",
+      "display_name": "Kimi K2.5",
+      "title": "moonshotai/Kimi-K2.5",
+      "created": 1778836479,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.5",
+      "upstream_id": "MiniMaxAI/MiniMax-M2.5",
+      "display_name": "MiniMax M2.5",
+      "title": "MiniMaxAI/MiniMax-M2.5",
+      "created": 1778836479,
+      "context_length": 204800,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Pro",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
+      "display_name": "DeepSeek V4 Pro",
+      "title": "deepseek-ai/DeepSeek-V4-Pro",
+      "created": 1778836477,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1690000,
+      "output_token_price_per_m": 3380000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    }
+  ]
+}

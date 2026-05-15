@@ -111,9 +111,7 @@ class ModelEndpoint:
         return self.usage_type.lower() == "byok"
 
 
-def select_price_tier(
-    tiers: tuple[PriceTier, ...], prompt_tokens: int
-) -> PriceTier:
+def select_price_tier(tiers: tuple[PriceTier, ...], prompt_tokens: int) -> PriceTier:
     """Pick the tier that applies to a request with `prompt_tokens` of
     input. Walks the tiers in order; returns the first one whose
     threshold accommodates the prompt size. The last tier always has
@@ -177,16 +175,12 @@ def _customer_price_from_dollars_per_token(price_per_token: str) -> tuple[int, i
         # Malformed snapshot rows are pinned to the price floor — better
         # to advertise $0.01/M than to crash module import or expose $0.
         return _PRICE_FLOOR_MICRODOLLARS_PER_M, _PRICE_FLOOR_MICRODOLLARS_PER_M, 0
-    cost = int(
-        (per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value()
-    )
+    cost = int((per_token * MICRODOLLARS_PER_DOLLAR * TOKENS_PER_MILLION).to_integral_value())
     customer = _customer_price(cost)
     return customer, customer, cost
 
 
-def _read_pricing_tiers(
-    pricing: dict[str, Any], dimension: str
-) -> tuple[PriceTier, ...] | None:
+def _read_pricing_tiers(pricing: dict[str, Any], dimension: str) -> tuple[PriceTier, ...] | None:
     """Read `pricing.prompt_tiers` / `pricing.completion_tiers` arrays
     from the snapshot. Returns None if the snapshot has only flat
     pricing for this model — caller should construct a single-tier
@@ -217,18 +211,14 @@ def _read_pricing_tiers(
             return None
         prompt_per_token = str(prompt_tier.get("prompt") or "")
         completion_per_token = str(completion_tier.get("completion") or "")
-        prompt_micro, _pub, _cost = _customer_price_from_dollars_per_token(
-            prompt_per_token
-        )
+        prompt_micro, _pub, _cost = _customer_price_from_dollars_per_token(prompt_per_token)
         completion_micro, _pub2, _cost2 = _customer_price_from_dollars_per_token(
             completion_per_token
         )
         cached_micro: int | None = None
         cache_read = prompt_tier.get("input_cache_read")
         if cache_read:
-            cached_micro, _pub3, _cost3 = _customer_price_from_dollars_per_token(
-                str(cache_read)
-            )
+            cached_micro, _pub3, _cost3 = _customer_price_from_dollars_per_token(str(cache_read))
         tiers.append(
             PriceTier(
                 max_prompt_tokens=threshold,
@@ -253,9 +243,15 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=True,
     ),
-    "anthropic": Provider(slug="anthropic", name="Anthropic", supports_messages=True, supports_prepaid=True),
-    "openai": Provider(slug="openai", name="OpenAI", supports_embeddings=True, supports_prepaid=True),
-    "gemini": Provider(slug="gemini", name="Gemini", supports_embeddings=True, supports_prepaid=True),
+    "anthropic": Provider(
+        slug="anthropic", name="Anthropic", supports_messages=True, supports_prepaid=True
+    ),
+    "openai": Provider(
+        slug="openai", name="OpenAI", supports_embeddings=True, supports_prepaid=True
+    ),
+    "gemini": Provider(
+        slug="gemini", name="Gemini", supports_embeddings=True, supports_prepaid=True
+    ),
     "cerebras": Provider(slug="cerebras", name="Cerebras", supports_prepaid=True),
     "deepseek": Provider(slug="deepseek", name="DeepSeek", supports_prepaid=True),
     "mistral": Provider(slug="mistral", name="Mistral", supports_prepaid=True),
@@ -265,7 +261,9 @@ PROVIDERS: dict[str, Provider] = {
     # incl. DeepSeek-OCR, Qwen, Mixtral) plus image gen (FLUX) and
     # embeddings — categories TR didn't otherwise cover. OpenAI-
     # compatible chat completions at api.together.xyz/v1.
-    "together": Provider(slug="together", name="Together", supports_embeddings=True, supports_prepaid=True),
+    "together": Provider(
+        slug="together", name="Together", supports_embeddings=True, supports_prepaid=True
+    ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
     # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
     "grok": Provider(slug="grok", name="xAI Grok", supports_prepaid=True),
@@ -284,7 +282,9 @@ PROVIDERS: dict[str, Provider] = {
     # Tinfoil — TEE-attested confidential inference. Verified-no-logs
     # via remote attestation. **Also on-brand for TR's trust story.**
     # OpenAI-compatible at inference.tinfoil.sh/v1.
-    "tinfoil": Provider(slug="tinfoil", name="Tinfoil", supports_prepaid=True, stores_content=False),
+    "tinfoil": Provider(
+        slug="tinfoil", name="Tinfoil", supports_prepaid=True, stores_content=False
+    ),
     # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
     # positioning. OpenAI-compatible at api.venice.ai/api/v1.
     "venice": Provider(slug="venice", name="Venice", supports_prepaid=True, stores_content=False),
@@ -309,6 +309,15 @@ PROVIDERS: dict[str, Provider] = {
     # Pricing in the /v1/openai/models response under
     # metadata.pricing.{input_tokens,output_tokens} as USD per million.
     "deepinfra": Provider(slug="deepinfra", name="DeepInfra", supports_prepaid=True),
+    # Nebius Token Factory — OpenAI-compatible shared inference for
+    # open-weight models. The /v1/models feed publishes exact upstream
+    # model IDs with mixed-case authors, so TR carries a provider-native
+    # supplement and passes upstream_id through unchanged.
+    "nebius": Provider(slug="nebius", name="Nebius Token Factory", supports_prepaid=True),
+    # MiniMax first-party API. OpenAI-compatible at api.minimax.io/v1;
+    # public TR IDs use the OpenRouter-style minimax/<slug> form while
+    # endpoint.upstream_id preserves MiniMax's exact mixed-case ID.
+    "minimax": Provider(slug="minimax", name="MiniMax", supports_prepaid=True),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -361,6 +370,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "lightning",
         "gmi",
         "deepinfra",
+        "nebius",
+        "minimax",
     }
 )
 
@@ -541,18 +552,14 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         model_id = raw_model.get("id")
         if not isinstance(model_id, str) or not model_id:
             continue
-        raw_endpoints = [
-            e for e in (raw_model.get("endpoints") or []) if isinstance(e, dict)
-        ]
+        raw_endpoints = [e for e in (raw_model.get("endpoints") or []) if isinstance(e, dict)]
         if not raw_endpoints:
             continue
         publisher = _author_provider(model_id, raw_endpoints)
         if publisher is None:
             continue
 
-        per_endpoint_prices: list[
-            tuple[int, int, tuple[PriceTier, ...], str, dict[str, Any]]
-        ] = []
+        per_endpoint_prices: list[tuple[int, int, tuple[PriceTier, ...], str, dict[str, Any]]] = []
         for raw_ep in raw_endpoints:
             slug = raw_ep.get("tr_provider_slug")
             if not isinstance(slug, str) or slug not in PROVIDERS:
@@ -570,17 +577,13 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             cached_price: int | None = None
             cache_read = pricing.get("input_cache_read")
             if cache_read:
-                cached_price, _, _ = _customer_price_from_dollars_per_token(
-                    str(cache_read)
-                )
+                cached_price, _, _ = _customer_price_from_dollars_per_token(str(cache_read))
             # Tier-aware pricing: read multi-tier from snapshot if present;
             # otherwise synthesize a single-tier list from the headline rate.
             tiers = _read_pricing_tiers(pricing, "prompt") or _flat_tier(
                 prompt_price, completion_price, prompt_cached=cached_price
             )
-            per_endpoint_prices.append(
-                (prompt_price, completion_price, tiers, slug, raw_ep)
-            )
+            per_endpoint_prices.append((prompt_price, completion_price, tiers, slug, raw_ep))
 
         if not per_endpoint_prices:
             continue
@@ -592,11 +595,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         cheapest_completion = min(c for _p, c, _t, _s, _e in per_endpoint_prices)
         # Tier list belongs to the cheapest endpoint (matches the
         # headline rate above).
-        cheapest_tiers = next(
-            t
-            for p, _c, t, _s, _e in per_endpoint_prices
-            if p == cheapest_prompt
-        )
+        cheapest_tiers = next(t for p, _c, t, _s, _e in per_endpoint_prices if p == cheapest_prompt)
 
         ctx_candidates = [
             int(raw_model.get("context_length") or 0),
@@ -610,8 +609,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # the supports_messages flag off the publisher.
         supports_messages = publisher == "anthropic"
         prepaid_available = any(
-            slug in GATEWAY_PREPAID_PROVIDER_SLUGS
-            for _p, _c, _t, slug, _ep in per_endpoint_prices
+            slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, _t, slug, _ep in per_endpoint_prices
         )
         models[model_id] = Model(
             id=model_id,
@@ -676,20 +674,22 @@ def _as_positive_int(value: object) -> int:
     return max(parsed, 0)
 
 
-def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
+def _supplemental_provider_models_and_endpoints() -> tuple[
+    dict[str, Model], dict[str, ModelEndpoint]
+]:
     """Read provider-native model manifests for providers whose live API
     lists more routes than OpenRouter's endpoint feed. These manifests
     preserve exact upstream model IDs and provider-direct prices, so the
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Today this is only Novita: its `/models` endpoint exposes several
-    working serverless models before they appear in OpenRouter's public
-    endpoint catalog.
+    Novita, Nebius, and MiniMax currently use this path because their
+    live `/models` feeds expose working provider-direct routes before
+    OpenRouter's public endpoint catalog catches up.
     """
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
-    for provider_slug in ("novita",):
+    for provider_slug in ("novita", "nebius", "minimax"):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
             continue
@@ -704,11 +704,12 @@ def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dic
             model_id = raw_model.get("id")
             if not isinstance(model_id, str) or not model_id:
                 continue
+            upstream_id = raw_model.get("upstream_id")
+            if not isinstance(upstream_id, str) or not upstream_id:
+                upstream_id = model_id
             if raw_model.get("model_type") not in (None, "chat"):
                 continue
-            if "chat/completions" not in {
-                str(item) for item in (raw_model.get("endpoints") or [])
-            }:
+            if "chat/completions" not in {str(item) for item in (raw_model.get("endpoints") or [])}:
                 continue
 
             prompt_cost = _as_positive_int(raw_model.get("input_token_price_per_m"))
@@ -716,22 +717,18 @@ def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dic
             prompt_price = _customer_price(prompt_cost)
             completion_price = _customer_price(completion_cost)
             tiers = _flat_tier(prompt_price, completion_price)
-            publisher = _author_provider(
-                model_id, [{"tr_provider_slug": provider_slug}]
-            ) or provider_slug
-            context_length = _as_positive_int(raw_model.get("context_length"))
-            name = str(
-                raw_model.get("display_name")
-                or raw_model.get("title")
-                or model_id
+            publisher = (
+                _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )
+            context_length = _as_positive_int(raw_model.get("context_length"))
+            name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
 
             models[model_id] = Model(
                 id=model_id,
                 name=name,
                 provider=publisher,
                 context_length=context_length,
-                upstream_id=model_id,
+                upstream_id=upstream_id,
                 supports_chat=True,
                 supports_messages=False,
                 # Availability comes from the explicit provider-native
@@ -755,7 +752,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dic
                     model_id=model_id,
                     provider=provider_slug,
                     usage_type="Credits",
-                    upstream_id=model_id,
+                    upstream_id=upstream_id,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -770,7 +767,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[dict[str, Model], dic
                     model_id=model_id,
                     provider=provider_slug,
                     usage_type="BYOK",
-                    upstream_id=model_id,
+                    upstream_id=upstream_id,
                     prompt_price_microdollars_per_million_tokens=prompt_price,
                     completion_price_microdollars_per_million_tokens=completion_price,
                     published_prompt_price_microdollars_per_million_tokens=prompt_price,
@@ -927,11 +924,7 @@ def _meta_price_range(
     the request lands on whatever model the router picks — so we
     surface the range so /v1/models doesn't show a misleading $0."""
     candidates = meta_candidate_models(model_id)
-    values = [
-        getattr(c, attr)
-        for c in candidates
-        if getattr(c, attr, 0) > 0
-    ]
+    values = [getattr(c, attr) for c in candidates if getattr(c, attr, 0) > 0]
     if not values:
         return (0, 0)
     return (min(values), max(values))
@@ -941,7 +934,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
-    prepaid_available = any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
+    prepaid_available = (
+        any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
+    )
     byok_available = any(endpoint.usage_type == "BYOK" for endpoint in endpoints) or (
         model.byok_available and PROVIDERS[model.provider].supports_byok
     )
@@ -964,20 +959,16 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     pub_completion_max = pub_completion_min
     if is_meta:
         prompt_min, prompt_max = _meta_price_range(
-            model.id,
-            "prompt_price_microdollars_per_million_tokens"
+            model.id, "prompt_price_microdollars_per_million_tokens"
         )
         completion_min, completion_max = _meta_price_range(
-            model.id,
-            "completion_price_microdollars_per_million_tokens"
+            model.id, "completion_price_microdollars_per_million_tokens"
         )
         pub_prompt_min, pub_prompt_max = _meta_price_range(
-            model.id,
-            "published_prompt_price_microdollars_per_million_tokens"
+            model.id, "published_prompt_price_microdollars_per_million_tokens"
         )
         pub_completion_min, pub_completion_max = _meta_price_range(
-            model.id,
-            "published_completion_price_microdollars_per_million_tokens"
+            model.id, "published_completion_price_microdollars_per_million_tokens"
         )
 
     pricing: dict[str, str] = {
@@ -986,9 +977,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     }
     if is_meta and (prompt_max != prompt_min or completion_max != completion_min):
         pricing["prompt_max"] = microdollars_per_million_tokens_to_token_decimal(prompt_max)
-        pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(
-            completion_max
-        )
+        pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(completion_max)
 
     tr_block: dict[str, object] = {
         "provider": model.provider,
