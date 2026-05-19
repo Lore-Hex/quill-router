@@ -103,7 +103,7 @@ def test_models_array_rolls_over_and_provider_filters_apply(
         headers=inference_headers,
         json={
             "model": "deepseek/deepseek-v4-flash",
-            "models": ["mistralai/mistral-small-2603", "openai/gpt-4o-mini"],
+            "models": ["mistralai/mistral-small-2603", "openai/gpt-5.4-nano"],
             "provider": {"ignore": ["openai"]},
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -142,7 +142,7 @@ def test_provider_order_sort_and_no_fallbacks_shape_candidate_list(
         headers=inference_headers,
         json={
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "deepseek/deepseek-v4-flash",
             ],
@@ -175,7 +175,7 @@ def test_provider_failure_records_benchmark_without_generation(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -186,7 +186,7 @@ def test_provider_failure_records_benchmark_without_generation(
     assert len(samples) == 1
     sample = samples[0]
     assert sample.status == "error"
-    assert sample.model == "openai/gpt-4o-mini"
+    assert sample.model == "openai/gpt-5.4-nano"
     assert sample.provider == "openai"
     assert sample.error_status == 429
     assert sample.error_type == "provider_rate_limited"
@@ -310,7 +310,7 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": created["data"]["hash"],
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "models": ["mistralai/mistral-small-2603", "deepseek/deepseek-v4-flash"],
             "provider": {"order": ["mistral"], "ignore": ["openai"], "usage": "byok"},
             "estimated_input_tokens": 10,

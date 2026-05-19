@@ -44,7 +44,7 @@ def _generation(generation_id: str, workspace_id: str, created_at: str) -> Gener
         request_id=f"req-{generation_id}",
         workspace_id=workspace_id,
         key_hash="key_1",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider_name="OpenAI",
         app="test",
         tokens_prompt=10,
@@ -423,7 +423,7 @@ def test_gcp_generation_write_indexes_recent_and_daily_bigtable_rows() -> None:
 def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
     sample = ProviderBenchmarkSample(
         id="bench_1",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -441,12 +441,12 @@ def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
     _bt_write_provider_benchmark(table, "m", sample)
 
     assert table.committed == [
-        f"benchmark#2026-05-02#openai#openai/gpt-4o-mini#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
+        f"benchmark#2026-05-02#openai#openai/gpt-5.4-nano#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_day_recent#2026-05-02#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_provider_day#2026-05-02#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_recent#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
         f"benchmark_provider_recent#openai#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
-        f"benchmark_model_recent#openai#openai/gpt-4o-mini#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
+        f"benchmark_model_recent#openai#openai/gpt-5.4-nano#{_reverse_time_key(sample.created_at)}#bench_1".encode(),
     ]
     assert b"ws_" not in b"".join(table.committed)
     assert b"key_" not in b"".join(table.committed)
@@ -455,7 +455,7 @@ def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
 def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
     openai = ProviderBenchmarkSample(
         id="bench_openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -492,7 +492,7 @@ def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
 def test_gcp_provider_benchmark_date_only_uses_daily_recent_index() -> None:
     older_openai = ProviderBenchmarkSample(
         id="bench_openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -525,7 +525,7 @@ def test_gcp_provider_benchmark_date_only_uses_daily_recent_index() -> None:
 def test_gcp_provider_benchmark_date_only_falls_back_to_legacy_overread() -> None:
     openai = ProviderBenchmarkSample(
         id="bench_openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -549,7 +549,7 @@ def test_gcp_provider_benchmark_date_only_falls_back_to_legacy_overread() -> Non
 def test_gcp_provider_benchmark_read_uses_recent_provider_index_without_date() -> None:
     openai = ProviderBenchmarkSample(
         id="bench_openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -572,7 +572,7 @@ def test_gcp_provider_benchmark_read_uses_recent_provider_index_without_date() -
 def test_gcp_provider_benchmark_read_uses_recent_model_index_without_date() -> None:
     openai = ProviderBenchmarkSample(
         id="bench_openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider="openai",
         provider_name="OpenAI",
         status="success",
@@ -587,15 +587,15 @@ def test_gcp_provider_benchmark_read_uses_recent_model_index_without_date() -> N
         "m",
         date=None,
         provider="openai",
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         limit=5,
     )
 
     assert [row.id for row in rows] == ["bench_openai"]
     assert table.reads == [
         (
-            b"benchmark_model_recent#openai#openai/gpt-4o-mini#",
-            b"benchmark_model_recent#openai#openai/gpt-4o-mini#~",
+            b"benchmark_model_recent#openai#openai/gpt-5.4-nano#",
+            b"benchmark_model_recent#openai#openai/gpt-5.4-nano#~",
             5,
         )
     ]

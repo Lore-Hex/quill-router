@@ -40,7 +40,7 @@ async def test_live_provider_missing_secret_fails_before_http(tmp_path, monkeypa
 
     with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
         await client.chat(
-            MODELS["openai/gpt-4o-mini"],
+            MODELS["openai/gpt-5.4-nano"],
             {"messages": [{"role": "user", "content": "hello"}]},
         )
 
@@ -79,7 +79,7 @@ async def test_live_provider_uses_custom_base_url_from_key_file(tmp_path, monkey
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["openai/gpt-4o-mini"],
+        MODELS["openai/gpt-5.4-nano"],
         {"messages": [{"role": "user", "content": "hello"}]},
     )
 

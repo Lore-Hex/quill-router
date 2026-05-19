@@ -925,18 +925,21 @@ def test_raw_synthetic_samples_expire_before_rollups() -> None:
 
 
 def test_gcp_synthetic_reads_daily_probe_target_index() -> None:
+    now = utcnow()
+    created_at = now.isoformat().replace("+00:00", "Z")
+    date = created_at[:10]
     sample = _sample(
         id="syn_1",
         probe_type="tls_health",
         status="up",
-        created_at="2026-05-05T12:00:00Z",
+        created_at=created_at,
     )
     table = _FakeBigtable([_FakeReadRow(sample)])
 
     rows = _bt_synthetic_probe_samples(
         table,
         "m",
-        date="2026-05-05",
+        date=date,
         target="canonical",
         probe_type="tls_health",
         monitor_region=None,
@@ -946,8 +949,8 @@ def test_gcp_synthetic_reads_daily_probe_target_index() -> None:
     assert [row.id for row in rows] == ["syn_1"]
     assert table.reads == [
         (
-            b"synthetic_day#2026-05-05#canonical#tls_health#",
-            b"synthetic_day#2026-05-05#canonical#tls_health#~",
+            f"synthetic_day#{date}#canonical#tls_health#".encode(),
+            f"synthetic_day#{date}#canonical#tls_health#~".encode(),
             5,
         )
     ]

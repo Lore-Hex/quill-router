@@ -29,26 +29,26 @@ def _settings() -> Settings:
 
 def test_chat_route_candidates_explicit_model_yields_one_candidate() -> None:
     candidates = chat_route_candidates(
-        {"model": "openai/gpt-4o-mini"},
+        {"model": "openai/gpt-5.4-nano"},
         _settings(),
     )
-    assert [c.id for c in candidates] == ["openai/gpt-4o-mini"]
+    assert [c.id for c in candidates] == ["openai/gpt-5.4-nano"]
 
 
 def test_chat_route_candidates_models_array_dedupes_and_preserves_order() -> None:
     candidates = chat_route_candidates(
         {
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "models": [
-                "openai/gpt-4o-mini",  # dup with primary, must be dropped
+                "openai/gpt-5.4-nano",  # dup with primary, must be dropped
                 "mistralai/mistral-small-2603",
-                "openai/gpt-4o-mini",  # second dup
+                "openai/gpt-5.4-nano",  # second dup
             ],
         },
         _settings(),
     )
     assert [c.id for c in candidates] == [
-        "openai/gpt-4o-mini",
+        "openai/gpt-5.4-nano",
         "mistralai/mistral-small-2603",
     ]
 
@@ -64,7 +64,7 @@ def test_chat_route_candidates_provider_only_filter_keeps_matching_only() -> Non
     candidates = chat_route_candidates(
         {
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
@@ -80,7 +80,7 @@ def test_chat_route_candidates_provider_ignore_filter_drops_matching() -> None:
     candidates = chat_route_candidates(
         {
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
@@ -97,7 +97,7 @@ def test_chat_route_candidates_only_and_ignore_combine() -> None:
     candidates = chat_route_candidates(
         {
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
@@ -112,7 +112,7 @@ def test_chat_route_candidates_filter_eliminates_all_raises() -> None:
     with pytest.raises(HTTPException) as ctx:
         chat_route_candidates(
             {
-                "models": ["openai/gpt-4o-mini"],
+                "models": ["openai/gpt-5.4-nano"],
                 "provider": {"only": ["mistral"]},
             },
             _settings(),
@@ -125,7 +125,7 @@ def test_chat_route_candidates_provider_order_reorders() -> None:
     candidates = chat_route_candidates(
         {
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
@@ -140,7 +140,7 @@ def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None
     candidates = chat_route_candidates(
         {
             "models": [
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "mistralai/mistral-small-2603",
                 "anthropic/claude-sonnet-4.6",
             ],
@@ -160,7 +160,7 @@ def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
         {
             "models": [
                 "anthropic/claude-sonnet-4.6",
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "meta-llama/llama-3.1-8b-instruct",
                 "deepseek/deepseek-v4-flash",
             ],
@@ -179,7 +179,7 @@ def test_chat_route_candidates_sort_by_price_orders_cheapest_first() -> None:
         {
             "models": [
                 "anthropic/claude-sonnet-4.6",
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {"sort": "price"},

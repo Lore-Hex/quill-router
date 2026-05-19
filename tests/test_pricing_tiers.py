@@ -242,7 +242,7 @@ def test_cost_microdollars_clamps_cached_to_input_total() -> None:
 def test_cost_microdollars_no_cached_rate_billing_falls_back() -> None:
     """When the tier has no cached rate (None), cached input tokens
     bill at the full rate. This matches today's billing for providers
-    that don't expose a cache discount (e.g., legacy gpt-4o-mini)."""
+    that don't expose a cache discount (e.g., legacy gpt-5.4-nano)."""
     model = Model(
         id="test/model",
         name="Test",

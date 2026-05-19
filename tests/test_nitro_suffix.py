@@ -114,7 +114,7 @@ def test_nitro_suffix_in_models_array_is_also_applied() -> None:
     _ids, prefs = _routing_for_body(
         {
             "model": "anthropic/claude-sonnet-4.6",
-            "models": ["openai/gpt-4o-mini:nitro"],
+            "models": ["openai/gpt-5.4-nano:nitro"],
         },
         Settings(environment="test"),
     )

@@ -24,7 +24,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
     for model_id, provider in [
         ("anthropic/claude-sonnet-4.6", "anthropic"),
-        ("openai/gpt-4o-mini", "openai"),
+        ("openai/gpt-5.4-nano", "openai"),
         ("google/gemini-2.5-flash", "gemini"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
@@ -178,10 +178,10 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
 def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     candidates = chat_route_candidates(
         {
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "models": [
                 "mistralai/mistral-small-2603",
-                "openai/gpt-4o-mini",
+                "openai/gpt-5.4-nano",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {
@@ -194,15 +194,12 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     )
 
     # provider.order=["deepseek"] pins deepseek first. The remaining two
-    # tie on price under the uniform formula (gpt-4o-mini and
-    # mistral-small-2603 both net out to $0.165/M prompt + $0.66/M
-    # completion), so original-index breaks the tie: openai was the
-    # body's `model` field (index 0), mistral was the first `models`
-    # entry (index 1).
+    # are price-sorted: mistral-small-2603 is cheaper than the current
+    # OpenAI low-end probe.
     assert [model.id for model in candidates] == [
         "deepseek/deepseek-v4-flash",
-        "openai/gpt-4o-mini",
         "mistralai/mistral-small-2603",
+        "openai/gpt-5.4-nano",
     ]
 
 
@@ -210,7 +207,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     ("model_id", "provider"),
     [
         ("moonshotai/kimi-k2.6", "kimi"),
-        ("openai/gpt-4o-mini", "openai"),
+        ("openai/gpt-5.4-nano", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("meta-llama/llama-3.1-8b-instruct", "cerebras"),
@@ -240,13 +237,13 @@ def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provi
 @pytest.mark.parametrize(
     "body,message",
     [
-        ({"model": "openai/gpt-4o-mini", "models": "not-a-list"}, "models must be an array"),
+        ({"model": "openai/gpt-5.4-nano", "models": "not-a-list"}, "models must be an array"),
         (
-            {"model": "openai/gpt-4o-mini", "provider": {"allow_fallbacks": "yes"}},
+            {"model": "openai/gpt-5.4-nano", "provider": {"allow_fallbacks": "yes"}},
             "allow_fallbacks",
         ),
         (
-            {"model": "openai/gpt-4o-mini", "provider": {"sort": "random"}},
+            {"model": "openai/gpt-5.4-nano", "provider": {"sort": "random"}},
             "provider.sort",
         ),
     ],

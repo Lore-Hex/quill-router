@@ -14,7 +14,7 @@ def test_generation_lookup_is_workspace_scoped(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": prompt}],
         },
     )
@@ -65,7 +65,7 @@ def test_responses_api_validation_and_metadata_privacy(
     missing_input = client.post(
         "/v1/responses",
         headers=inference_headers,
-        json={"model": "openai/gpt-4o-mini"},
+        json={"model": "openai/gpt-5.4-nano"},
     )
     assert missing_input.status_code == 400
     assert missing_input.json()["error"]["type"] == "bad_request"
@@ -75,7 +75,7 @@ def test_responses_api_validation_and_metadata_privacy(
         "/v1/responses",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "instructions": "reply tersely",
             "input": [{"type": "message", "role": "user", "content": prompt}],
         },
@@ -104,8 +104,8 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
-            "models": ["mistralai/mistral-small-2603", "openai/gpt-4o-mini"],
+            "model": "openai/gpt-5.4-nano",
+            "models": ["mistralai/mistral-small-2603", "openai/gpt-5.4-nano"],
             "messages": [{"role": "user", "content": prompt}],
             "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
             "tool_choice": "auto",
@@ -125,10 +125,10 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["object"] == "chat.completion"
-    assert payload["trustedrouter"]["requested_model"] == "openai/gpt-4o-mini"
+    assert payload["trustedrouter"]["requested_model"] == "openai/gpt-5.4-nano"
     assert payload["trustedrouter"]["selected_model"] in {
         "mistralai/mistral-small-2603",
-        "openai/gpt-4o-mini",
+        "openai/gpt-5.4-nano",
     }
     assert prompt not in response.text
     assert metadata_marker not in response.text
@@ -141,12 +141,12 @@ def test_embeddings_stub_accepts_any_input_shape_without_generation_rows(
     scalar = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-4o-mini", "input": "hello"},
+        json={"model": "openai/gpt-5.4-nano", "input": "hello"},
     )
     array = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-4o-mini", "input": ["hello", "world"]},
+        json={"model": "openai/gpt-5.4-nano", "input": ["hello", "world"]},
     )
 
     assert scalar.status_code == 501, scalar.text

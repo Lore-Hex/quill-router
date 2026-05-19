@@ -527,7 +527,7 @@ def test_internal_gateway_authorizes_by_lookup_hash_without_raw_key(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_lookup_hash": lookup_hash_api_key(raw_key),
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,
         },
@@ -548,7 +548,7 @@ def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], cli
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key_hash,
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "estimated_input_tokens": 1,
             "max_output_tokens": 1,
         },

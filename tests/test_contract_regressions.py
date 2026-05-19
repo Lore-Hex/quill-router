@@ -158,7 +158,7 @@ def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token
     prompt = prod_client.post(
         "/v1/chat/completions",
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": "must not hit control plane"}],
         },
     )
@@ -166,12 +166,12 @@ def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token
 
     no_token = prod_client.post(
         "/v1/internal/gateway/authorize",
-        json={"api_key_hash": "key_missing", "model": "openai/gpt-4o-mini"},
+        json={"api_key_hash": "key_missing", "model": "openai/gpt-5.4-nano"},
     )
     wrong_token = prod_client.post(
         "/v1/internal/gateway/authorize",
         headers={"x-trustedrouter-internal-token": "wrong"},
-        json={"api_key_hash": "key_missing", "model": "openai/gpt-4o-mini"},
+        json={"api_key_hash": "key_missing", "model": "openai/gpt-5.4-nano"},
     )
     assert no_token.status_code == 401
     assert wrong_token.status_code == 401

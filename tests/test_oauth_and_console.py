@@ -754,7 +754,7 @@ def test_console_activity_displays_microdollar_costs(
             request_id="req-tiny-cost",
             workspace_id=workspace_id,
             key_hash="key_missing",
-            model="openai/gpt-4o-mini",
+            model="openai/gpt-5.4-nano",
             provider_name="OpenAI",
             app="tiny-cost-test",
             tokens_prompt=1,
@@ -772,7 +772,7 @@ def test_console_activity_displays_microdollar_costs(
 
     assert page.status_code == 200
     assert "$0.000001" in page.text
-    assert "openai/gpt-4o-mini" in page.text
+    assert "openai/gpt-5.4-nano" in page.text
 
 
 def test_console_routing_credits_settings_and_preferences_show_operational_controls(

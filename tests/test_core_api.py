@@ -116,7 +116,7 @@ def test_streaming_chat_uses_sse(client: TestClient, inference_headers: dict[str
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -162,7 +162,7 @@ def test_streaming_chat_uses_provider_stream_without_materializing(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -197,7 +197,7 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "owner", "content": "hello"}],
         },
     )
@@ -207,7 +207,7 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
     missing_content = client.post(
         "/v1/chat/completions",
         headers=inference_headers,
-        json={"model": "openai/gpt-4o-mini", "messages": [{"role": "user"}]},
+        json={"model": "openai/gpt-5.4-nano", "messages": [{"role": "user"}]},
     )
     assert missing_content.status_code == 400
     assert missing_content.json()["error"]["type"] == "bad_request"
@@ -216,7 +216,7 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "max_tokens": "a lot",
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -281,7 +281,7 @@ def test_provider_errors_do_not_echo_prompt_or_create_generation(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": prompt}],
         },
     )
@@ -376,7 +376,7 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
     embeddings = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-4o-mini", "input": ["a", "b"]},
+        json={"model": "openai/gpt-5.4-nano", "input": ["a", "b"]},
     )
     assert embeddings.status_code == 501
     assert embeddings.json()["error"]["type"] == "endpoint_not_supported"
@@ -403,12 +403,15 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
     ]
     assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
 
-    openai = client.get("/v1/models/openai/gpt-4o-mini/endpoints")
+    openai = client.get("/v1/models/openai/gpt-5.4-nano/endpoints")
     assert openai.status_code == 200
-    assert [item["trustedrouter"]["usage_type"] for item in openai.json()["data"]] == [
-        "Credits",
-        "BYOK",
-    ]
+    openai_endpoints = openai.json()["data"]
+    assert {item["provider"] for item in openai_endpoints} >= {"openai", "gmi"}
+    assert [
+        item["trustedrouter"]["usage_type"]
+        for item in openai_endpoints
+        if item["provider"] == "openai"
+    ] == ["Credits", "BYOK"]
 
     missing = client.get("/v1/models/nope/missing/endpoints")
     assert missing.status_code == 200
@@ -425,7 +428,7 @@ def test_responses_api_is_real_and_does_not_store_content(
         "/v1/responses",
         headers=inference_headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "instructions": "be terse",
             "input": prompt,
         },
@@ -528,7 +531,7 @@ def test_disabled_deleted_and_expired_keys_reject(
         "/v1/chat/completions",
         headers=headers,
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -543,7 +546,7 @@ def test_disabled_deleted_and_expired_keys_reject(
         "/v1/chat/completions",
         headers={"authorization": f"Bearer {expired['key']}"},
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -556,7 +559,7 @@ def test_disabled_deleted_and_expired_keys_reject(
         "/v1/chat/completions",
         headers={"authorization": f"Bearer {active['key']}"},
         json={
-            "model": "openai/gpt-4o-mini",
+            "model": "openai/gpt-5.4-nano",
             "messages": [{"role": "user", "content": "hello"}],
         },
     )
@@ -572,7 +575,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.
     assert {
         "anthropic/claude-opus-4.7",
-        "openai/gpt-4o-mini",
+        "openai/gpt-5.4-nano",
         "google/gemini-2.5-flash",
         "deepseek/deepseek-v4-flash",
         "moonshotai/kimi-k2.6",

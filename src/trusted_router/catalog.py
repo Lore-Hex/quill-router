@@ -387,7 +387,7 @@ META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITO
 # snapshot — OR-only models can no longer reach the catalog (see
 # scripts/pricing/refresh.py:_merge_snapshot).
 #
-# 2026-05 update: replaced openai/gpt-4o-mini with openai/gpt-5.4-mini.
+# 2026-05 update: replaced openai/gpt-4o-mini with openai/gpt-5.4-nano.
 # OpenAI's current pricing page only lists GPT-5.5/5.4 family + pro
 # variants; the older 4o family is still served but absent from the
 # canonical pricing surface, so we route auto callers to the current
@@ -395,7 +395,7 @@ META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITO
 DEFAULT_AUTO_MODEL_ORDER = [
     "anthropic/claude-opus-4.7",
     "anthropic/claude-sonnet-4.6",
-    "openai/gpt-5.4-mini",
+    "openai/gpt-5.4-nano",
     "google/gemini-2.5-flash",
     "deepseek/deepseek-v4-flash",
     "moonshotai/kimi-k2.6",

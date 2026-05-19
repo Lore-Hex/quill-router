@@ -31,7 +31,7 @@ async def test_stream_openai_chunks_are_valid_sse_json_and_reconstruct_text() ->
     chunks = [
         item async for item in stream_openai_chunks(
             request_id="req_1",
-            model_id="openai/gpt-4o-mini",
+            model_id="openai/gpt-5.4-nano",
             text="hello trusted router",
             finish_reason="stop",
         )
@@ -81,7 +81,7 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS["openai/gpt-4o-mini"],
+        MODELS["openai/gpt-5.4-nano"],
         {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5},
     )
 
@@ -94,7 +94,7 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
             "url": "https://api.openai.com/v1/chat/completions",
             "headers": {"authorization": "Bearer openai-value"},
             "json": {
-                "model": "gpt-4o-mini",
+                "model": "gpt-5.4-nano",
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": False,
                 "max_tokens": 5,
@@ -108,11 +108,11 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
     ("provider_model", "env_key", "env_value", "expected_url", "expected_model"),
     [
         (
-            "openai/gpt-4o-mini",
+            "openai/gpt-5.4-nano",
             "OPENAI_API_KEY",
             "openai-value",
             "https://api.openai.com/v1/chat/completions",
-            "gpt-4o-mini",
+            "gpt-5.4-nano",
         ),
         (
             "meta-llama/llama-3.1-8b-instruct",
@@ -369,7 +369,7 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
     request = {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5}
-    model = MODELS["openai/gpt-4o-mini"]
+    model = MODELS["openai/gpt-5.4-nano"]
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
@@ -389,7 +389,7 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp
             "url": "https://api.openai.com/v1/chat/completions",
             "headers": {"authorization": "Bearer openai-value"},
             "json": {
-                "model": "gpt-4o-mini",
+                "model": "gpt-5.4-nano",
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": True,
                 "stream_options": {"include_usage": True},
@@ -447,7 +447,7 @@ async def test_openai_compatible_stream_tolerates_malformed_sse_and_estimates_mi
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
     request = {"messages": [{"role": "user", "content": "hello"}]}
-    model = MODELS["openai/gpt-4o-mini"]
+    model = MODELS["openai/gpt-5.4-nano"]
     state = client.new_stream_state(model, request)
 
     chunks = [chunk async for chunk in client.stream_chat(model, request, state)]

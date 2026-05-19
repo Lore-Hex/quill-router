@@ -306,18 +306,18 @@ def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
     auth = store.create_gateway_authorization(
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model_id="openai/gpt-4o-mini",
+        model_id="openai/gpt-5.4-nano",
         provider="openai",
         usage_type="Credits",
         estimated_microdollars=1_000,
         credit_reservation_id=None,
         requested_model_id="trustedrouter/auto",
-        candidate_model_ids=["openai/gpt-4o-mini", "mistralai/mistral-small-2603"],
+        candidate_model_ids=["openai/gpt-5.4-nano", "mistralai/mistral-small-2603"],
         region="us-central1",
     )
     assert auth.id.startswith("gwa-")
     assert auth.region == "us-central1"
-    assert auth.candidate_model_ids == ["openai/gpt-4o-mini", "mistralai/mistral-small-2603"]
+    assert auth.candidate_model_ids == ["openai/gpt-5.4-nano", "mistralai/mistral-small-2603"]
 
     fetched = store.get_gateway_authorization(auth.id)
     assert fetched is not None
@@ -400,7 +400,7 @@ def test_gcp_finalize_gateway_authorization_refunds_on_failure() -> None:
     auth = store.create_gateway_authorization(
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model_id="openai/gpt-4o-mini",
+        model_id="openai/gpt-5.4-nano",
         provider="openai",
         usage_type="Credits",
         estimated_microdollars=1_000_000,
@@ -431,7 +431,7 @@ def test_gcp_finalize_gateway_authorization_is_one_shot() -> None:
     auth = store.create_gateway_authorization(
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model_id="openai/gpt-4o-mini",
+        model_id="openai/gpt-5.4-nano",
         provider="openai",
         usage_type="BYOK",
         estimated_microdollars=0,
@@ -462,7 +462,7 @@ def test_gcp_add_generation_rolls_cost_into_per_key_counters() -> None:
         request_id="req-prepaid-1",
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider_name="OpenAI",
         app="counter-test",
         tokens_prompt=10,

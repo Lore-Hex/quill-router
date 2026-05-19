@@ -52,7 +52,7 @@ async def test_openai_stream_stops_at_first_done_and_ignores_late_bytes(tmp_path
 
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
-    model = MODELS["openai/gpt-4o-mini"]
+    model = MODELS["openai/gpt-5.4-nano"]
     state = client.new_stream_state(model, {"messages": [{"role": "user", "content": "hello"}]})
 
     body = b"".join(
@@ -108,7 +108,7 @@ async def test_openai_stream_preserves_partial_state_when_provider_disconnects(t
 
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
-    model = MODELS["openai/gpt-4o-mini"]
+    model = MODELS["openai/gpt-5.4-nano"]
     state = client.new_stream_state(model, {"messages": [{"role": "user", "content": "hello"}]})
 
     with pytest.raises(httpx.ReadError, match="provider socket closed"):
@@ -207,7 +207,7 @@ def test_route_stream_failure_refunds_reserved_quota(
             "/v1/chat/completions",
             headers=inference_headers,
             json={
-                "model": "openai/gpt-4o-mini",
+                "model": "openai/gpt-5.4-nano",
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
@@ -228,7 +228,7 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
 ) -> None:
     def route_stream(self, model, body, state):
         async def iterator():
-            if model.id == "openai/gpt-4o-mini":
+            if model.id == "openai/gpt-5.4-nano":
                 if False:
                     yield b""
                 return
@@ -255,7 +255,7 @@ def test_empty_first_provider_stream_rolls_over_without_charge_or_generation(
         "/v1/chat/completions",
         headers=inference_headers,
         json={
-            "models": ["openai/gpt-4o-mini", "meta-llama/llama-3.1-8b-instruct"],
+            "models": ["openai/gpt-5.4-nano", "meta-llama/llama-3.1-8b-instruct"],
             "stream": True,
             "messages": [{"role": "user", "content": "hello"}],
         },

@@ -144,7 +144,7 @@ def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
     assert "anthropic/claude-opus-4.7" in candidates
-    assert "openai/gpt-5.4-mini" in candidates
+    assert "openai/gpt-5.4-nano" in candidates
     assert "google/gemini-2.5-flash" in candidates
     assert "deepseek/deepseek-v4-flash" in candidates
     assert "moonshotai/kimi-k2.6" in candidates
@@ -478,7 +478,7 @@ def test_internal_gateway_routes_require_internal_token(client: httpx.Client) ->
     real auth-denial code, not a 200/204."""
     routes = [
         ("POST", "/internal/gateway/authorize", {
-            "api_key_hash": "smoke-test", "model": "openai/gpt-4o-mini",
+            "api_key_hash": "smoke-test", "model": "openai/gpt-5.4-nano",
             "estimated_input_tokens": 1, "max_output_tokens": 1,
         }),
         ("POST", "/internal/gateway/settle", {"authorization_id": "smoke-nonexistent"}),

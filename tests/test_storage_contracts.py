@@ -195,7 +195,7 @@ def _generation(
         request_id=f"req_{generation_id}",
         workspace_id=workspace_id,
         key_hash=key_hash,
-        model="openai/gpt-4o-mini",
+        model="openai/gpt-5.4-nano",
         provider_name="OpenAI",
         app="test",
         tokens_prompt=10,
