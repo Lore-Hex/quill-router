@@ -178,6 +178,8 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "Stripe Crypto" not in dashboard.text
     assert "multi-region" in dashboard.text  # pill copy or section header
     assert "regions-map-svg" in dashboard.text  # the new world map renders
+    assert "Global footprint: 7 regions" in dashboard.text
+    assert "aws-us-west-2" in dashboard.text
     assert "https://quill.lorehex.co" in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert "api.quillrouter.com" in dashboard.text

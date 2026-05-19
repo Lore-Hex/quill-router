@@ -26,7 +26,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
-from trusted_router.regions import region_map_payload
+from trusted_router.regions import configured_regions, region_map_payload
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -127,6 +127,7 @@ def dashboard_html(settings: Settings) -> str:
         "githubEnabled": settings.github_oauth_enabled,
     }
     map_regions = region_map_payload(settings)
+    api_region_count = len(configured_regions(settings))
     return _env().get_template("dashboard.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{domain}/",
@@ -140,6 +141,7 @@ def dashboard_html(settings: Settings) -> str:
         github_enabled=settings.github_oauth_enabled,
         paypal_enabled=settings.paypal_enabled,
         map_regions=map_regions,
+        api_region_count=api_region_count,
         primary_region=settings.primary_region,
         static_version=_static_version(settings),
     )

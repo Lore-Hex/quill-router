@@ -132,33 +132,34 @@ resp = client.chat.completions.create(
       <div class="panel">
         <div class="panel-head"><h2>Production</h2><span class="pill good">multi-region</span></div>
         <div class="panel-body">
-          <p>The attested gateway runs in {{ map_regions|length }} GCP regions with 99.9% router availability. Pick one explicitly via the <span class="mono">region</span> header or let the router pick the closest active one for you.</p>
+          <p>The live attested API is serving in {{ api_region_count }} verified regions, with a {{ map_regions|length }}-region global footprint for routing, monitoring, and cold expansion. Pick one explicitly via the <span class="mono">region</span> header or let the router choose.</p>
         </div>
       </div>
     </section>
 
     <section class="regions-map">
       <div class="regions-map-head">
-        <h2>Inference, attested, in {{ map_regions|length }} regions</h2>
-        <p>Decentralized low-latency routing. 99.9% router availability, higher than individual LLM endpoints.</p>
+        <h2>Global footprint: {{ map_regions|length }} regions</h2>
+        <p>Verified live gateways plus cold regional expansion points for lower latency and faster failover. 99.9% router availability, higher than individual LLM endpoints.</p>
       </div>
       <div class="regions-map-stage" data-regions-stage>
         <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
           <image href="/static/world-map.svg" x="0" y="0" width="1000" height="500"/>
           {% for region in map_regions %}
-          <g class="region-marker {{ 'is-primary' if region.primary else '' }}" data-region-id="{{ region.id }}">
+          <g class="region-marker {{ 'is-primary' if region.primary else '' }} {{ 'is-serving' if region.serving else 'is-edge' }}" data-region-id="{{ region.id }}">
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '20' if region.primary else '18' }}" class="region-pulse"/>
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '10' if region.primary else '9' }}" class="region-dot"/>
-            <title>{{ region.id }} — {{ region.city }}{% if region.primary %} (primary){% endif %}</title>
+            <title>{{ region.id }} — {{ region.city }} ({{ region.status_label }}){% if region.primary %} (primary){% endif %}</title>
           </g>
           {% endfor %}
         </svg>
         <ul class="region-list">
           {% for region in map_regions %}
-          <li class="{{ 'is-primary' if region.primary else '' }}" data-region-id="{{ region.id }}" tabindex="0" role="button" aria-label="Highlight region {{ region.id }}, {{ region.city }}">
+          <li class="{{ 'is-primary' if region.primary else '' }} {{ 'is-serving' if region.serving else 'is-edge' }}" data-region-id="{{ region.id }}" tabindex="0" role="button" aria-label="Highlight region {{ region.id }}, {{ region.city }}">
             <span class="region-list-id">{{ region.id }}</span>
             <span class="region-list-city">{{ region.city }}</span>
             {% if region.primary %}<span class="pill good">primary</span>{% endif %}
+            {% if not region.primary %}<span class="pill {{ 'good' if region.serving else '' }}">{{ region.status_label }}</span>{% endif %}
           </li>
           {% endfor %}
         </ul>

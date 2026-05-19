@@ -78,6 +78,18 @@ def configured_regions(settings: Settings) -> list[str]:
     regions = [item.strip() for item in settings.regions.split(",") if item.strip()]
     if settings.primary_region not in regions:
         regions.insert(0, settings.primary_region)
+    return _unique_regions(regions)
+
+
+def configured_marketing_regions(settings: Settings) -> list[str]:
+    configured = [item.strip() for item in settings.marketing_regions.split(",") if item.strip()]
+    regions = configured or configured_regions(settings)
+    if settings.primary_region not in regions:
+        regions.insert(0, settings.primary_region)
+    return _unique_regions(regions)
+
+
+def _unique_regions(regions: list[str]) -> list[str]:
     seen: set[str] = set()
     unique: list[str] = []
     for region in regions:
@@ -148,16 +160,18 @@ def _cloud_run_direct_url(settings: Settings, region: str) -> str:
 
 
 def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
-    """Project each configured region's lat/long onto a 1000×500 SVG
+    """Project each marketing region's lat/long onto a 1000×500 SVG
     using equirectangular (Plate Carrée). Marketing page renders the
     result as <circle> elements over a world outline; the projection is
     intentionally trivial so unit tests can re-derive it."""
     primary = choose_region(settings)
+    serving_regions = set(configured_regions(settings))
     out: list[dict[str, Any]] = []
-    for region in configured_regions(settings):
+    for region in configured_marketing_regions(settings):
         geo = _lookup_region_geo(region)
         if geo is None:
             continue
+        serving = geo.id in serving_regions
         out.append(
             {
                 "id": geo.id,
@@ -168,6 +182,8 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
                 "y": _project_y(geo.lat),
                 "primary": geo.id == primary,
                 "cloud": geo.cloud,
+                "serving": serving,
+                "status_label": "live" if serving else "edge",
             }
         )
     return out
