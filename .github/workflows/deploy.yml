@@ -310,17 +310,43 @@ jobs:
       - name: Smoke test prod
         run: |
           set -e
-          # Homepage is unauthenticated — always test it.
-          code=$(curl -s -o /dev/null -w "%{http_code}" https://trustedrouter.com/)
-          [[ "$code" == "200" ]] || { echo "homepage returned $code"; exit 1; }
-          # /v1/models requires an API key; only run that check when a
-          # SMOKE_TEST_API_KEY secret is configured. Missing secret =>
-          # smoke test passes on homepage alone.
-          if [ -n "${{ secrets.SMOKE_TEST_API_KEY }}" ]; then
-            count=$(curl -sH "authorization: Bearer ${{ secrets.SMOKE_TEST_API_KEY }}" \
-              https://trustedrouter.com/v1/models | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
-            [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
-            echo "smoke ok: homepage 200, $count models in catalog"
-          else
-            echo "smoke ok: homepage 200 (skipped /v1/models — SMOKE_TEST_API_KEY not configured)"
-          fi
+          check_url() {
+            local name="$1"
+            local url="$2"
+            local code
+            code=$(curl -fsS --max-time 15 -o "/tmp/${name}.body" -w "%{http_code}" "$url") || {
+              echo "${name} failed to fetch: ${url}"
+              cat "/tmp/${name}.body" 2>/dev/null || true
+              exit 1
+            }
+            [[ "$code" == "200" ]] || {
+              echo "${name} returned ${code}: ${url}"
+              cat "/tmp/${name}.body" 2>/dev/null || true
+              exit 1
+            }
+          }
+
+          check_url homepage https://trustedrouter.com/
+          check_url health https://trustedrouter.com/health
+          check_url regions https://trustedrouter.com/v1/regions
+          check_url status_json https://trustedrouter.com/status.json
+          check_url status_host https://status.trustedrouter.com/status.json
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          regions = json.loads(Path("/tmp/regions.body").read_text())["data"]
+          status = json.loads(Path("/tmp/status_json.body").read_text())["data"]
+          status_host = json.loads(Path("/tmp/status_host.body").read_text())["data"]
+
+          assert any(item["id"] == "us-central1" for item in regions), regions
+          assert any(item["id"] == "europe-west4" for item in regions), regions
+          assert "components" in status, status.keys()
+          assert status_host.get("current", {}).get("overall_status") or status_host.get("overall_status"), status_host.keys()
+          PY
+
+          count=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/models \
+            | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
+          [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
+          echo "smoke ok: homepage, health, regions, status, and $count catalog models"

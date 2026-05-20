@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 PROD_BASE_URL = os.environ.get("TR_PROD_BASE_URL", "https://trustedrouter.com")
+PROD_STATUS_URL = os.environ.get("TR_PROD_STATUS_URL", "https://status.trustedrouter.com")
 PROD_TRUST_URL = os.environ.get("TR_PROD_TRUST_URL", "https://trust.trustedrouter.com")
 PROD_API_BASE_URL = os.environ.get("TR_PROD_API_BASE_URL", "https://api.quillrouter.com/v1")
 ENABLED = os.environ.get("TR_PROD_SMOKE") == "1"
@@ -34,6 +35,11 @@ def client() -> httpx.Client:
 @pytest.fixture(scope="module")
 def api_client() -> httpx.Client:
     return httpx.Client(base_url=PROD_API_BASE_URL, timeout=10.0, follow_redirects=False)
+
+
+@pytest.fixture(scope="module")
+def status_client() -> httpx.Client:
+    return httpx.Client(base_url=PROD_STATUS_URL, timeout=10.0, follow_redirects=False)
 
 
 @pytest.fixture(scope="module")
@@ -118,6 +124,35 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
         "zai",
     }.issubset({item["id"] for item in providers.json()["data"]})
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
+
+
+def test_status_pages_are_publicly_reachable(
+    client: httpx.Client,
+    status_client: httpx.Client,
+) -> None:
+    """The public status page is a rollout gate, not a best-effort
+    dashboard. This catches missing Bigtable/IAM permissions and broken
+    status JSON rendering before a rollout is considered healthy."""
+    status_page = client.get("/status")
+    status_json = client.get("/status.json")
+    status_host_page = status_client.get("/")
+    status_host_json = status_client.get("/status.json")
+
+    for label, response in {
+        "trustedrouter.com/status": status_page,
+        "trustedrouter.com/status.json": status_json,
+        "status.trustedrouter.com/": status_host_page,
+        "status.trustedrouter.com/status.json": status_host_json,
+    }.items():
+        assert response.status_code == 200, f"{label}: {response.status_code} {response.text[:200]}"
+
+    assert "Status - TrustedRouter" in status_page.text
+    status_payload = status_json.json()["data"]
+    status_host_payload = status_host_json.json()["data"]
+    for payload in [status_payload, status_host_payload]:
+        assert "components" in payload
+        assert "current" in payload
+        assert "overall_status" in payload
 
 
 def test_attested_gateway_rejects_unauthenticated_chat(api_client: httpx.Client) -> None:
