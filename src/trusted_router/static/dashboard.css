@@ -236,6 +236,8 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .status-banner.status-down { border-color:#f1c1bb; background:#fff1f0; }
 .status-banner.status-down > span, .status-banner.status-down .status-banner-metrics span { color:var(--red); }
 .status-banner.status-unknown { background:#fbfcfd; }
+.status-note { border:1px solid var(--line2); border-radius:8px; padding:11px 13px; font-size:13px; line-height:1.45; color:var(--muted); background:#fff; }
+.status-note-warning { border-color:#ead49b; background:#fff8e4; color:#6f5a18; }
 .slo-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
 .slo-card { display:grid; gap:12px; border:1px solid var(--line); border-radius:8px; padding:16px; background:#fff; min-width:0; }
 .slo-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }

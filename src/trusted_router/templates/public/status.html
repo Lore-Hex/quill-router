@@ -28,8 +28,16 @@
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
       <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
+      {% if snapshot.monitor_freshness.latest_sample_at %}
+      <small>Latest synthetic sample {{ snapshot.monitor_freshness.latest_sample_at }}</small>
+      {% endif %}
     </div>
   </div>
+  {% if snapshot.monitor_freshness.is_stale %}
+  <div class="status-note status-note-warning">
+    Synthetic monitor data is stale. The uptime rollups below are historical; current 5-minute status will recover after US/EU monitor jobs resume.
+  </div>
+  {% endif %}
 
   <section class="slo-grid" aria-label="SLO classes">
     {% for slo_id, slo in snapshot.slo_classes.items() %}
@@ -55,15 +63,15 @@
   <section class="status-section">
     <div class="status-section-head">
       <div>
-        <h2>Burn-Rate Alerts</h2>
-        <p>Internal SLO burn-rate signals. Router-core alerts are the paging path; provider-effective alerts are tracked separately.</p>
+        <h2>Error-Budget Burn</h2>
+        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal; Provider Effective is an upstream/provider quality watch and is not counted as router-core downtime.</p>
       </div>
     </div>
     <div class="burn-list">
       {% for alert in snapshot.burn_rate_alerts %}
       <div class="burn-row burn-{{ alert.level }}">
         <strong>{{ alert.level|title }}</strong>
-        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn</span>
+        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn{% if alert.slo_class != "router_core" %} · provider watch{% endif %}</span>
         <small>{{ alert.bad_count }} bad / {{ alert.sample_count }} samples</small>
       </div>
       {% endfor %}

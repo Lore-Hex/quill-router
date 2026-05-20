@@ -64,8 +64,10 @@ if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
 fi
 
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/run.developer"
+ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
 
-IFS=',' read -ra _REGION_LIST <<<"$TR_REGIONS"
+SYNTHETIC_MONITOR_REGIONS="${TR_SYNTHETIC_MONITOR_REGIONS:-us-central1,europe-west4}"
+IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
@@ -79,6 +81,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     --image "$IMAGE" \
     --command="/app/.venv/bin/python" \
     --args="-m,trusted_router.synthetic.cli" \
+    --service-account "$RUN_SERVICE_ACCOUNT" \
     --set-env-vars "$set_env_vars" \
     --update-secrets "$UPDATE_SECRETS" \
     --max-retries 0 \

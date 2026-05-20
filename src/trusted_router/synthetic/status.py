@@ -60,6 +60,7 @@ def status_snapshot(
         now = utcnow()
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
+    freshness = _monitor_freshness(ordered, now=now)
     current = _current_status(ordered, now=now)
     five_minute = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["5m"])
     twenty_four_hour = _window_rollup_with_rollup_backfill(
@@ -85,7 +86,8 @@ def status_snapshot(
         "overall_status": overall_status,
         "overall_status_label": _status_label(overall_status),
         "overall_status_class": _status_class(overall_status),
-        "summary": _summary(overall_status),
+        "summary": _summary(overall_status, freshness=freshness),
+        "monitor_freshness": freshness,
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
         "slo_classes": slo_classes,
@@ -100,6 +102,28 @@ def status_snapshot(
         "daily": daily,
         "monthly": monthly,
         "samples": [sample.public_dict() for sample in ordered[:100]],
+    }
+
+
+def _monitor_freshness(
+    samples: list[SyntheticProbeSample],
+    *,
+    now: dt.datetime,
+) -> dict[str, Any]:
+    if not samples:
+        return {
+            "latest_sample_at": None,
+            "latest_sample_age_seconds": None,
+            "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
+            "is_stale": True,
+        }
+    latest = max(samples, key=lambda sample: _parse_time(sample.created_at))
+    age = max((now - _parse_time(latest.created_at)).total_seconds(), 0)
+    return {
+        "latest_sample_at": latest.created_at,
+        "latest_sample_age_seconds": int(age),
+        "stale_after_seconds": CURRENT_SAMPLE_TTL_SECONDS,
+        "is_stale": age > CURRENT_SAMPLE_TTL_SECONDS,
     }
 
 
@@ -1079,7 +1103,18 @@ def _status_class(status: str) -> str:
     return status.replace("_", "-")
 
 
-def _summary(status: str) -> dict[str, str]:
+def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[str, str]:
+    if status == "unknown" and freshness and freshness.get("is_stale"):
+        latest = freshness.get("latest_sample_at")
+        if latest:
+            return {
+                "headline": "Monitor Data Stale",
+                "detail": f"Synthetic checks stopped reporting after {latest}. Router-core history remains visible below.",
+            }
+        return {
+            "headline": "Monitor Data Missing",
+            "detail": "Synthetic checks have not reported data yet.",
+        }
     if status == "up":
         return {
             "headline": "All Systems Operational",

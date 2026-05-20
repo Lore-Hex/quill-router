@@ -15,7 +15,7 @@ REGION="${REGION:-us-central1}"
 # /v1/regions which the SDK's region= shortcut resolves against. Adding
 # a region without a backing gateway VM gives callers a TLS-broken
 # `api-<region>.quillrouter.com` and weakens the trust story.
-TR_REGIONS="${TR_REGIONS:-us-central1,europe-west4}"
+TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Comma-separated subset of TR_REGIONS that should run with min_scale=1
 # (always-on warm capacity). Anything in TR_REGIONS but NOT in

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
+
 from trusted_router.storage_gcp_codec import json_body
 from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup, utcnow
 from trusted_router.synthetic.rollups import (
@@ -41,7 +43,12 @@ def synthetic_rollups(
     prefix = f"synthetic_rollup#{period}#" if period else "synthetic_rollup#"
     start_key = f"{prefix}{since or ''}".encode()
     end_suffix = f"{until}~" if until else "~"
-    rows = table.read_rows(start_key=start_key, end_key=f"{prefix}{end_suffix}".encode(), limit=limit)
+    rows = _read_latest_rows(
+        table,
+        start_key=start_key,
+        end_key=f"{prefix}{end_suffix}".encode(),
+        limit=limit,
+    )
     rollups = _rollups_from_rows(rows, family, include_histograms=include_histograms)
     filtered = [
         rollup
@@ -74,7 +81,7 @@ def _seen_key(rollup: SyntheticRollup, sample_id: str) -> bytes:
 
 
 def _row_exists(table: Any, family: str, key: bytes) -> bool:
-    rows = table.read_rows(start_key=key, end_key=key + b"\x00", limit=1)
+    rows = _read_latest_rows(table, start_key=key, end_key=key + b"\x00", limit=1)
     for row in rows:
         cells = row.cells.get(family, {}).get(b"body", [])
         if cells:
@@ -83,9 +90,18 @@ def _row_exists(table: Any, family: str, key: bytes) -> bool:
 
 
 def _read_rollup(table: Any, family: str, key: bytes) -> SyntheticRollup | None:
-    rows = table.read_rows(start_key=key, end_key=key + b"\x00", limit=1)
+    rows = _read_latest_rows(table, start_key=key, end_key=key + b"\x00", limit=1)
     rollups = _rollups_from_rows(rows, family, include_histograms=True)
     return rollups[0] if rollups else None
+
+
+def _read_latest_rows(table: Any, *, start_key: bytes, end_key: bytes, limit: int) -> Any:
+    return table.read_rows(
+        start_key=start_key,
+        end_key=end_key,
+        limit=limit,
+        filter_=CellsColumnLimitFilter(1),
+    )
 
 
 def _rollups_from_rows(

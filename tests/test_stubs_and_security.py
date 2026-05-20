@@ -181,6 +181,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "Global footprint: 7 regions" in dashboard.text
     assert "aws-us-west-2" in dashboard.text
     assert "https://quill.lorehex.co" in dashboard.text
+    assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert "api.quillrouter.com" in dashboard.text
     # The model catalog mentions the providers we serve.

@@ -127,6 +127,7 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
     assert "In-region gateway overhead p50" in page.text
+    assert "Error-Budget Burn" not in page.text
     assert "last-48-hour uptime history" in page.text
     text = status.text
     assert "reply exactly PONG" not in text
@@ -138,6 +139,27 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert provider_sample["output_match"] is True
     assert payload["components"][0]["name"] == "Canonical API"
     assert len(payload["components"][0]["history"]) == 48
+    assert payload["monitor_freshness"]["is_stale"] is False
+
+
+def test_status_snapshot_calls_out_stale_monitor_data() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_stale_tls",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(minutes=12)).isoformat().replace("+00:00", "Z"),
+            latency_milliseconds=25,
+        )
+    ]
+
+    snapshot = status_snapshot(samples, now=now)
+
+    assert snapshot["overall_status"] == "unknown"
+    assert snapshot["summary"]["headline"] == "Monitor Data Stale"
+    assert snapshot["monitor_freshness"]["is_stale"] is True
+    assert snapshot["monitor_freshness"]["latest_sample_age_seconds"] >= 12 * 60
 
 
 def test_public_status_response_cache_reuses_rendered_body() -> None:
@@ -905,6 +927,7 @@ def test_gcp_synthetic_rollups_use_period_start_range() -> None:
         b"synthetic_rollup#hour#~",
         20,
     )
+    assert table.read_filters[-1] == "CellsColumnLimitFilter"
 
 
 def test_raw_synthetic_samples_expire_before_rollups() -> None:
@@ -1214,10 +1237,19 @@ class _FakeBigtable:
         self.rows = rows or []
         self.rows_by_key: dict[bytes, _FakeReadRow] = {}
         self.reads: list[tuple[bytes, bytes, int]] = []
+        self.read_filters: list[str | None] = []
         self.committed: list[bytes] = []
 
-    def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int) -> list[_FakeReadRow]:
+    def read_rows(
+        self,
+        *,
+        start_key: bytes,
+        end_key: bytes,
+        limit: int,
+        filter_: Any | None = None,
+    ) -> list[_FakeReadRow]:
         self.reads.append((start_key, end_key, limit))
+        self.read_filters.append(filter_.__class__.__name__ if filter_ is not None else None)
         keyed_rows = [
             row for key, row in sorted(self.rows_by_key.items()) if start_key <= key < end_key
         ]
