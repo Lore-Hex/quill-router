@@ -647,3 +647,156 @@ def test_stripe_webhook_handles_stripe_object_from_construct_event(
     # that real Stripe payments grant credit again.
     after = STORE.credits[workspace_id].total_credits_microdollars
     assert after - before == 100 * 10000, f"expected +$1.00 in microdollars, got {after-before}"
+
+
+def test_list_workspace_payments_returns_empty_without_stripe_key() -> None:
+    """If the deployment has no Stripe secret configured (local/test
+    environments), the credits page must still render — return [] and
+    let the template show the 'no payments yet' fallback."""
+    from trusted_router.config import Settings
+    from trusted_router.services.stripe_billing import list_workspace_payments
+
+    result = list_workspace_payments(
+        workspace_id="ws-test",
+        settings=Settings(environment="local"),
+    )
+    assert result == []
+
+
+def test_list_workspace_payments_swallows_stripe_errors(monkeypatch) -> None:
+    """Stripe API failures must not block the credits page from rendering.
+    A 5xx from Stripe, a network blip, or a search-query quota hit all
+    collapse to an empty list — the rest of the page (balance, payment
+    methods, auto-refill) still renders. We deliberately don't surface
+    the Stripe error to the user; this is a read-only display panel and
+    they can refresh."""
+    from trusted_router.config import Settings
+    from trusted_router.services import stripe_billing
+
+    # `local` env has no fail-closed validator; setting stripe_secret_key
+    # is what makes list_workspace_payments take the Stripe-API code
+    # path rather than returning [] early.
+    settings = Settings(
+        environment="local",
+        stripe_secret_key="sk_test_dummy",  # noqa: S106
+    )
+
+    def explode(**_: Any) -> None:
+        raise RuntimeError("simulated Stripe outage")
+
+    monkeypatch.setattr(stripe_billing.stripe.PaymentIntent, "search", explode)
+    result = stripe_billing.list_workspace_payments(
+        workspace_id="ws-anything",
+        settings=settings,
+    )
+    assert result == []
+
+
+def _console_client_for_test() -> tuple[TestClient, str]:
+    """Build a TestClient with a real active console session cookie.
+
+    The default `client` fixture in conftest authenticates via API-key
+    Bearer headers, which the /console/* routes reject — they require
+    the SESSION COOKIE that OAuth sign-in mints. This helper stands up
+    a parallel client with a session cookie set, so server-rendered
+    console pages render their authenticated body instead of bouncing
+    to /?reason=signin."""
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+
+    settings = Settings(environment="local")
+    app = create_app(settings, init_observability=False)
+    client = TestClient(app)
+    user = STORE.ensure_user("billing-test@example.com")
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="billing-test@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+    return client, raw_token
+
+
+def test_credits_page_renders_payment_history_section(monkeypatch) -> None:
+    """The credits page must include a 'Payment history' section, even
+    when there are no payments yet. The 2026-05-24 user feedback was
+    'shouldn't the credits show a list of every payment I've made?' —
+    just showing a balance number isn't enough. Empty-state copy guides
+    them rather than silently omitting the section."""
+    from trusted_router.routes.console import credits as credits_module
+
+    monkeypatch.setattr(
+        credits_module,
+        "list_workspace_payments",
+        lambda **_: [],
+    )
+    client, _ = _console_client_for_test()
+    resp = client.get("/console/credits")
+    assert resp.status_code == 200, resp.text[:300]
+    assert "Payment history" in resp.text
+    assert "No payments yet" in resp.text
+
+
+def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
+    """When Stripe returns past payments, the credits page renders one
+    row per payment with date, amount, card brand+last4, status, and a
+    receipt link. This is what the user asked for after the $1 test —
+    'shouldn't the credits show a list of every payment I've made?'"""
+    # Patch on the credits route module (which imported the function at
+    # module load) — patching the services module is too late since the
+    # route already has its own reference.
+    from trusted_router.routes.console import credits as credits_module
+
+    fake_payments = [
+        {
+            "payment_intent": "pi_3TaPnB",
+            "created_at": 1779582083,  # 2026-05-24 01:01 UTC
+            "amount_cents": 100,
+            "currency": "usd",
+            "status": "succeeded",
+            "payment_status": "paid",
+            "receipt_url": "https://pay.stripe.com/receipts/test-receipt",
+            "card_brand": "visa",
+            "card_last4": "4242",
+        },
+        {
+            "payment_intent": "pi_5dollar",
+            "created_at": 1779561182,  # 2026-05-23 19:13 UTC
+            "amount_cents": 500,
+            "currency": "usd",
+            "status": "succeeded",
+            "payment_status": "paid",
+            "receipt_url": "https://pay.stripe.com/receipts/older-receipt",
+            "card_brand": "mastercard",
+            "card_last4": "8888",
+        },
+    ]
+    monkeypatch.setattr(
+        credits_module,
+        "list_workspace_payments",
+        lambda **_: fake_payments,
+    )
+
+    client, _ = _console_client_for_test()
+    resp = client.get("/console/credits")
+    assert resp.status_code == 200, resp.text[:300]
+    assert "Payment history" in resp.text
+    # Amount formatted as dollars
+    assert "$1.00" in resp.text
+    assert "$5.00" in resp.text
+    # Card brand + last4 displayed
+    assert "visa" in resp.text.lower()
+    assert "4242" in resp.text
+    assert "mastercard" in resp.text.lower()
+    assert "8888" in resp.text
+    # Receipt links rendered
+    assert "https://pay.stripe.com/receipts/test-receipt" in resp.text
+    # `paid` status pill
+    assert ">paid<" in resp.text or 'pill good">paid' in resp.text
+    # Date formatted (UTC)
+    assert "2026-05-24" in resp.text
+    assert "2026-05-23" in resp.text
+    # Empty-state copy NOT shown when payments exist
+    assert "No payments yet" not in resp.text

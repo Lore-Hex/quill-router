@@ -95,4 +95,71 @@
     {% endif %}
   </div>
 </section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Payment history</h2>
+    <span class="pill">{{ payments|length }} recent</span>
+  </div>
+  <div class="panel-body">
+    {% if payments %}
+    <table class="data-table" style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="text-align:left;border-bottom:1px solid var(--border)">
+          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Date</th>
+          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Amount</th>
+          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Payment</th>
+          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Status</th>
+          <th style="padding:8px 6px;font-weight:600;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em">Receipt</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:10px 6px;color:var(--muted);font-variant-numeric:tabular-nums">
+            {{ p.created_at | datetime_iso if p.created_at else '—' }}
+          </td>
+          <td style="padding:10px 6px;font-variant-numeric:tabular-nums">
+            ${{ '%.2f'|format((p.amount_cents or 0) / 100) }}
+            <span style="color:var(--muted);font-size:11px">{{ (p.currency or 'usd')|upper }}</span>
+          </td>
+          <td style="padding:10px 6px">
+            {% if p.card_brand and p.card_last4 %}
+              <span style="text-transform:capitalize">{{ p.card_brand }}</span> ····{{ p.card_last4 }}
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+          <td style="padding:10px 6px">
+            {% if p.payment_status == 'paid' %}
+              <span class="pill good">paid</span>
+            {% elif p.payment_status == 'unpaid' %}
+              <span class="pill warn">unpaid</span>
+            {% elif p.status == 'expired' %}
+              <span class="pill">expired</span>
+            {% else %}
+              <span class="pill">{{ p.payment_status or p.status or '—' }}</span>
+            {% endif %}
+          </td>
+          <td style="padding:10px 6px">
+            {% if p.receipt_url %}
+              <a href="{{ p.receipt_url }}" target="_blank" rel="noopener">Receipt ↗</a>
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p style="color:var(--muted);font-size:12px;margin-top:12px">
+      Source: Stripe. Showing up to the 20 most recent checkout sessions tagged with this workspace. Hosted receipts open in Stripe.
+    </p>
+    {% else %}
+    <p style="color:var(--muted);font-size:14px;margin:0">
+      No payments yet. Your purchases will show up here within a few seconds of Stripe completing the charge.
+    </p>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}
