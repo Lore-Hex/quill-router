@@ -12,6 +12,12 @@ from trusted_router.storage import STORE, ApiKey, AuthSession, User, Workspace
 from trusted_router.types import ErrorType
 
 SESSION_COOKIE_NAME = "tr_session"
+# Companion non-HttpOnly hint cookie that marketing-chrome JS reads to swap
+# the "Sign in" button for "Open console" when a user is logged in. Carries
+# no auth power — the real session is in HttpOnly `tr_session`. See
+# set_session_cookie below for the rationale; this constant just gives the
+# JS in static/dashboard.js a single source of truth for the name.
+SIGNED_IN_HINT_COOKIE_NAME = "tr_signed_in"
 # Cookie lifetime must match auth_session_ttl_seconds (30 days) — otherwise
 # users get "signed out" the day after sign-in even though the server-side
 # session is still valid for 30 days. Originally the cookie was 24h while
@@ -278,7 +284,18 @@ def is_api_key_expired(expires_at: str | None) -> bool:
 
 def set_session_cookie(response: Response, raw_token: str, settings: Settings) -> None:
     """Attach the active session cookie to a response. HttpOnly + SameSite=Lax;
-    Secure is enabled in production so cookies are never sent over plain HTTP."""
+    Secure is enabled in production so cookies are never sent over plain HTTP.
+
+    We ALSO set a companion non-HttpOnly hint cookie `tr_signed_in=1` with the
+    same TTL. The marketing-chrome JS (static/dashboard.js) reads this via
+    `document.cookie` to swap the prominent "Sign in" button for an
+    "Open console" link on every public page. Without this hint, a logged-in
+    user who clicks a marketing-chrome link (e.g. /models) sees the Sign-in
+    button still up there and concludes they were signed out — which is what
+    Gabriella reported on 2026-05-23. The hint carries no auth power (the
+    real session is in HttpOnly `tr_session`); it's a pure UI bit, so leaking
+    it via document.cookie is fine.
+    """
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=raw_token,
@@ -288,11 +305,27 @@ def set_session_cookie(response: Response, raw_token: str, settings: Settings) -
         samesite="lax",
         path="/",
     )
+    response.set_cookie(
+        key=SIGNED_IN_HINT_COOKIE_NAME,
+        value="1",
+        max_age=SESSION_COOKIE_MAX_AGE,
+        httponly=False,  # JS reads this on marketing pages — that's the point
+        secure=settings.environment.lower() == "production",
+        samesite="lax",
+        path="/",
+    )
 
 
 def clear_session_cookie(response: Response, settings: Settings) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=settings.environment.lower() == "production",
+        samesite="lax",
+    )
+    # Clear the hint too so the next marketing-page load reverts to "Sign in"
+    response.delete_cookie(
+        key=SIGNED_IN_HINT_COOKIE_NAME,
         path="/",
         secure=settings.environment.lower() == "production",
         samesite="lax",

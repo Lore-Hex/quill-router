@@ -163,3 +163,76 @@ def test_session_cookie_drops_secure_in_local() -> None:
     cookie = cookies.get("tr_session")
     assert cookie is not None
     assert cookie.get("secure") is False or cookie.get("secure") is None
+
+
+def test_set_session_cookie_also_sets_signed_in_hint_for_marketing_js() -> None:
+    """When a session is established, the marketing chrome (which renders
+    on cacheable public pages and can't branch on server-side auth) needs
+    a non-HttpOnly hint to know the user is signed in. Without this,
+    /models, /security, /compare/* etc. show 'Sign in' to logged-in users
+    and they think they were signed out — the 2026-05-23 Gabriella bug.
+    The hint must be readable from JS (httponly=False) and have the same
+    TTL as the session cookie."""
+    from fastapi.responses import Response
+
+    from trusted_router.auth import (
+        SESSION_COOKIE_MAX_AGE,
+        SIGNED_IN_HINT_COOKIE_NAME,
+        set_session_cookie,
+    )
+
+    settings = Settings(
+        environment="production",
+        internal_gateway_token="t",  # noqa: S106 - test fixture.
+        stripe_webhook_secret="w",  # noqa: S106 - test fixture.
+        stripe_secret_key="s",  # noqa: S106 - test fixture.
+        sentry_dsn="https://example@example.ingest.sentry.io/1",
+        storage_backend="spanner-bigtable",
+        spanner_instance_id="i",
+        spanner_database_id="d",
+        bigtable_instance_id="b",
+        byok_kms_key_name=TEST_BYOK_KMS_KEY_NAME,
+    )
+    response = Response()
+    set_session_cookie(response, "trsess-v1-test-secret-token", settings)  # noqa: S106 - test fixture.
+    # MutableHeaders.get returns only the FIRST Set-Cookie; we need ALL of
+    # them since this function sets two cookies and the hint is second.
+    joined = ", ".join(response.headers.getlist("set-cookie"))
+    cookies = _parse_cookies(joined)
+    hint = cookies.get(SIGNED_IN_HINT_COOKIE_NAME)
+    assert hint is not None, (
+        f"expected '{SIGNED_IN_HINT_COOKIE_NAME}' alongside the session cookie "
+        f"so marketing-page JS can detect signed-in state; got cookies {list(cookies)}"
+    )
+    assert hint["value"] == "1"
+    # MUST be JS-readable — that's the entire point.
+    assert hint.get("httponly") is not True
+    # Same TTL as the session cookie so they expire together.
+    assert hint.get("max-age") == str(SESSION_COOKIE_MAX_AGE)
+    # Secure flag must match the session cookie in production.
+    assert hint.get("secure") is True
+    assert hint.get("samesite", "").lower() == "lax"
+    assert hint.get("path") == "/"
+
+
+def test_clear_session_cookie_also_clears_signed_in_hint() -> None:
+    """Logout must clear both cookies so the next marketing-page load
+    reverts to 'Sign in'. If only `tr_session` is cleared and `tr_signed_in=1`
+    remains, the JS swap renders 'Open console' on marketing pages but
+    clicking it bounces through /?reason=signin (since the real session
+    is gone) — a worse UX than just showing 'Sign in'."""
+    from fastapi.responses import Response
+
+    from trusted_router.auth import (
+        SESSION_COOKIE_NAME,
+        SIGNED_IN_HINT_COOKIE_NAME,
+        clear_session_cookie,
+    )
+
+    response = Response()
+    clear_session_cookie(response, Settings(environment="local"))
+    # Same getlist trick: two cookies are being cleared on this response.
+    joined = ", ".join(response.headers.getlist("set-cookie"))
+    # delete_cookie sets the cookie with Max-Age=0 (or expired Expires)
+    assert SESSION_COOKIE_NAME in joined
+    assert SIGNED_IN_HINT_COOKIE_NAME in joined
