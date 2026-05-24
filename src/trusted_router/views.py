@@ -8,6 +8,7 @@ dropping a `.html` under templates/ — no per-module Jinja boilerplate.
 
 from __future__ import annotations
 
+import datetime as dt
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,26 @@ def _format_uptime(value: float | None, decimals: int = 4) -> str:
     return f"{value:.{decimals}f}%"
 
 
+def _format_datetime_iso(value: int | float | str | None) -> str:
+    """Render a Unix timestamp (or ISO string passthrough) as a compact
+    human-readable date. Used by the credits-page payment-history table
+    so a row like `created=1779582083` displays as `2026-05-24 01:01 UTC`.
+
+    Pass-through behavior for strings means we can wire this to anything
+    that's already iso-formatted server-side (e.g. last_auto_refill_at)
+    without converting first.
+    """
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, str):
+        return value  # already iso-formatted
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    return dt.datetime.fromtimestamp(ts, tz=dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
 @lru_cache(maxsize=1)
 def _env() -> Environment:
     env = Environment(
@@ -42,6 +63,7 @@ def _env() -> Environment:
         keep_trailing_newline=True,
     )
     env.filters["uptime_pct"] = _format_uptime
+    env.filters["datetime_iso"] = _format_datetime_iso
     return env
 
 
