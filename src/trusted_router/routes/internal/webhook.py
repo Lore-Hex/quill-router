@@ -57,9 +57,33 @@ def register(router: APIRouter) -> None:
         sig = request.headers.get("stripe-signature")
         if settings.stripe_webhook_secret:
             try:
-                event = stripe.Webhook.construct_event(raw, sig, settings.stripe_webhook_secret)
+                constructed = stripe.Webhook.construct_event(
+                    raw, sig, settings.stripe_webhook_secret
+                )
             except Exception as exc:
                 raise api_error(400, "Invalid Stripe webhook", ErrorType.BAD_REQUEST) from exc
+            # `construct_event` returns a `stripe.Event` (a `StripeObject`
+            # subclass), NOT a dict. Newer Stripe SDK versions no longer
+            # expose `.get()` on StripeObject — attribute lookup raises
+            # AttributeError instead. This entire handler is written
+            # against dict semantics (.get with defaults, nested dicts),
+            # so convert to a plain dict ONCE here and use that everywhere
+            # downstream. This was the 2026-05-23 production bug behind
+            # Gabriella's $5+$2 not crediting AND the post-rotation $1
+            # synthetic chain-test failing — handler 500'd on the FIRST
+            # `event.get("id")` call, never even reached credit_workspace_once.
+            # The leading-underscore method name is unfortunate but
+            # `_to_dict_recursive()` is the only walk-nested-StripeObjects
+            # converter the SDK exposes; the public `to_dict()` is
+            # shallow-only and would leave `data.object` as a StripeObject.
+            #
+            # Some unit tests monkeypatch construct_event to return a plain
+            # dict directly — accept that shape too so the conversion only
+            # runs when needed.
+            if isinstance(constructed, dict):
+                event: dict[str, Any] = constructed
+            else:
+                event = constructed._to_dict_recursive()  # type: ignore[attr-defined]  # noqa: SLF001
         else:
             event = await json_body(request)
         event_id = str(event.get("id") or uuid.uuid4())
