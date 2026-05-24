@@ -12,7 +12,21 @@ from trusted_router.storage import STORE, ApiKey, AuthSession, User, Workspace
 from trusted_router.types import ErrorType
 
 SESSION_COOKIE_NAME = "tr_session"
-SESSION_COOKIE_MAX_AGE = 86400  # 24h
+# Cookie lifetime must match auth_session_ttl_seconds (30 days) — otherwise
+# users get "signed out" the day after sign-in even though the server-side
+# session is still valid for 30 days. Originally the cookie was 24h while
+# the session TTL was 30 days; that mismatch was the 2026-05-23 bug where
+# Gabriella reported "got signed out" the day after signup. The cookie
+# itself is the source of truth for the browser; if it expires, the user
+# loses access regardless of how long the DB session record is alive.
+#
+# 30 days is the session-record TTL set on every new session in
+# storage_auth_sessions.create_auth_session, driven by
+# settings.auth_session_ttl_seconds. Keeping these two numbers in lockstep
+# is the right operational discipline; we hard-code the cookie max_age to
+# the same constant so a future change has to touch both. If you ever
+# extend the session TTL further (e.g. to 90 days), bump this in lockstep.
+SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30d — matches auth_session_ttl_seconds default
 
 # Bearer-token prefix dispatch. The two shapes are minted with distinct
 # prefixes (security.py:new_api_key default = "sk-tr-v1";

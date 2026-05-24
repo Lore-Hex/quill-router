@@ -38,6 +38,19 @@ OAUTH_STATE_COOKIE = "tr_oauth_state"
 OAUTH_NEXT_COOKIE = "tr_oauth_next"
 OAUTH_STATE_COOKIE_MAX_AGE = 600  # 10 minutes
 
+# Short-lived one-shot cookie that carries the raw API key from the OAuth
+# signup callback to the /console/welcome reveal page. Without this the
+# `result.raw_key` minted in STORE.signup() falls out of scope between
+# the OAuth callback and the welcome render, and the welcome page shows
+# the "this key has already been displayed" fallback — which is what
+# Gabriella saw on 2026-05-23. 5-minute TTL bounds the window where the
+# key is in any HTTP header; HttpOnly prevents JS read; SameSite=Lax so
+# the cookie survives the OAuth 302; Secure in prod so it's never sent
+# over plain HTTP. Path is /console/welcome so the cookie isn't echoed
+# on any other request (limits log-exposure surface).
+PENDING_REVEAL_COOKIE = "tr_pending_reveal"
+PENDING_REVEAL_COOKIE_MAX_AGE = 300  # 5 minutes — bounded reveal window
+
 
 def register_oauth_routes(app: FastAPI, router: APIRouter) -> None:
     for provider in OAUTH_PROVIDERS.values():
@@ -127,6 +140,11 @@ async def _handle_callback(
 
     existing_user = STORE.find_user_by_email(info.email)
     first_time = existing_user is None
+    # `pending_reveal_raw_key` is the raw API key minted during signup; it
+    # must survive the 302 to /console/welcome so the user can copy it.
+    # Without this hand-off, the welcome page shows "key already been
+    # displayed" on every first login. See PENDING_REVEAL_COOKIE above.
+    pending_reveal_raw_key: str | None = None
     if existing_user is None:
         # signup() returns None only on a TOCTOU race; fall back to a
         # fresh lookup, surface a real 500 if even that fails so we
@@ -134,6 +152,7 @@ async def _handle_callback(
         result = STORE.signup(email=info.email)
         if result is not None:
             user_id = result.user.id
+            pending_reveal_raw_key = result.raw_key
         else:
             concurrent = STORE.find_user_by_email(info.email)
             if concurrent is None:
@@ -161,6 +180,19 @@ async def _handle_callback(
     response = RedirectResponse(url=target, status_code=302)
     set_session_cookie(response, raw_token, settings)
     _clear_state_and_next_cookies(response, settings)
+    if pending_reveal_raw_key is not None and first_time:
+        # One-shot hand-off to /console/welcome. Scoped to that path so
+        # this cookie is never sent on any other request, which keeps
+        # the raw key out of every other access log line.
+        response.set_cookie(
+            key=PENDING_REVEAL_COOKIE,
+            value=pending_reveal_raw_key,
+            max_age=PENDING_REVEAL_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=settings.environment.lower() == "production",
+            samesite="lax",
+            path="/console/welcome",
+        )
     return response
 
 

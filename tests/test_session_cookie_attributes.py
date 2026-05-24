@@ -104,8 +104,10 @@ def test_oauth_state_cookie_is_httponly_secure_lax_in_production(
 
 def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
     """The session cookie carries the active auth — same hard requirements
-    as the state cookie, plus a 24h max-age so abandoned tabs eventually
-    expire."""
+    as the state cookie, plus a 30-day max-age that matches the server-side
+    session TTL (auth_session_ttl_seconds). The earlier 24h cookie max-age
+    mismatched the 30d session TTL and produced the 2026-05-23 'got signed
+    out the next day even though the session was still valid' bug."""
     from fastapi.responses import Response
 
     from trusted_router.auth import (
@@ -137,6 +139,15 @@ def test_session_cookie_is_httponly_secure_lax_in_production() -> None:
     assert cookie.get("samesite", "").lower() == "lax"
     assert cookie.get("path") == "/"
     assert cookie.get("max-age") == str(SESSION_COOKIE_MAX_AGE)
+    # Hard-pin: the cookie max-age must match auth_session_ttl_seconds so
+    # the cookie and the DB session expire together. If you change one,
+    # change the other. Without this assertion the silent drift that
+    # triggered Gabriella's "got signed out" report could happen again.
+    assert SESSION_COOKIE_MAX_AGE == settings.auth_session_ttl_seconds, (
+        f"SESSION_COOKIE_MAX_AGE ({SESSION_COOKIE_MAX_AGE}) must match "
+        f"settings.auth_session_ttl_seconds ({settings.auth_session_ttl_seconds}) "
+        f"or users will be 'signed out' before their session record expires."
+    )
 
 
 def test_session_cookie_drops_secure_in_local() -> None:
