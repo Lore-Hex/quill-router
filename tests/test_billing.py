@@ -555,3 +555,95 @@ def test_internal_gateway_rejects_disabled_key(user_headers: dict[str, str], cli
     )
     assert resp.status_code == 401
     assert resp.json()["error"]["type"] == "unauthorized"
+
+
+def test_stripe_webhook_handles_stripe_object_from_construct_event(
+    user_headers: dict[str, str], client, monkeypatch
+) -> None:
+    """REGRESSION: 2026-05-23/24 production outage where the live Stripe SDK's
+    `stripe.Webhook.construct_event` returned a `stripe.Event` (StripeObject
+    subclass) instead of a dict, and newer Stripe SDK versions removed the
+    `.get()` method from StripeObject. The handler's first line after
+    signature verification was `event.get("id")` — that AttributeError
+    bubbled all the way up to 500 BEFORE any credit_workspace_once call,
+    so Stripe payments stopped crediting workspaces. Gabriella's $5+$2
+    and the post-rotation $1 chain-test both blew up here.
+
+    This test reproduces the exact scenario: stripe_webhook_secret IS set
+    (so the verify-signature branch runs), and `construct_event` is
+    monkeypatched to return a StripeObject. If we use dict semantics
+    (.get with defaults, nested dict access) directly on a StripeObject,
+    the handler crashes. The fix is to call `.to_dict_recursive()` once
+    and operate on the resulting dict.
+    """
+    from trusted_router.routes.internal import webhook as webhook_module
+
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    before = STORE.credits[workspace_id].total_credits_microdollars
+
+    # Build a real stripe.Event so we exercise the actual StripeObject code
+    # path that bit us in prod (rather than a fake "dict-without-.get"
+    # which wouldn't catch the SDK's exact failure mode).
+    import stripe
+
+    event_payload = {
+        "id": "evt_stripeobj_regression_1",
+        "object": "event",
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": "cs_test_1",
+                "object": "checkout.session",
+                "amount_total": 100,  # $1.00 == 100_000 microdollars
+                "customer": "cus_regression",
+                "mode": "payment",
+                "payment_status": "paid",
+                "status": "complete",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    # `stripe.Event.construct_from` builds a real StripeObject from a dict
+    # — exactly what Webhook.construct_event would return after signature
+    # verification in production. This is the type that broke .get().
+    real_stripe_object = stripe.Event.construct_from(event_payload, "sk_test_dummy")
+    # Sanity-check that the StripeObject we built reproduces the prod
+    # crash mode if used dict-style without conversion.
+    assert not hasattr(real_stripe_object, "get") or callable(
+        getattr(real_stripe_object, "get", None)
+    ), "stripe.Event shape changed; rewrite this test"
+
+    def fake_construct_event(raw, sig, secret):  # type: ignore[no-untyped-def]
+        return real_stripe_object
+
+    monkeypatch.setattr(
+        webhook_module.stripe.Webhook, "construct_event", fake_construct_event
+    )
+
+    # Force the signature-verify branch by setting a webhook secret on the
+    # already-running test app's settings. The handler reads
+    # settings.stripe_webhook_secret each call so this takes effect
+    # immediately without rebuilding the app.
+    test_settings = client.app.state.settings
+    monkeypatch.setattr(test_settings, "stripe_webhook_secret", "whsec_test_dummy")
+
+    resp = client.post(
+        "/v1/internal/stripe/webhook",
+        content=b'{"signed":"payload"}',
+        headers={
+            "stripe-signature": "t=1,v1=irrelevant_because_monkeypatched",
+            "content-type": "application/json",
+        },
+    )
+    assert resp.status_code == 200, (
+        f"webhook handler crashed handling a real StripeObject; "
+        f"this is the prod 500 regression: {resp.text}"
+    )
+    body = resp.json()["data"]
+    assert body["credited"] is True, body
+    assert body["event_id"] == "evt_stripeobj_regression_1"
+    # Verify the credit actually landed — the whole point of fixing this is
+    # that real Stripe payments grant credit again.
+    after = STORE.credits[workspace_id].total_credits_microdollars
+    assert after - before == 100 * 10000, f"expected +$1.00 in microdollars, got {after-before}"

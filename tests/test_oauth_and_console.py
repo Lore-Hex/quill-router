@@ -174,10 +174,61 @@ async def test_google_callback_creates_session_for_new_user(google_client: TestC
         )
     assert resp.status_code == 302
     assert resp.headers["location"] == "/console/welcome?first=1"
-    assert "tr_session=" in resp.headers.get("set-cookie", "")
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "tr_session=" in set_cookie
+    # Regression: the OAuth callback must hand off the freshly-minted raw
+    # API key to the welcome page via the `tr_pending_reveal` cookie.
+    # Without this, /console/welcome shows the "this key has already been
+    # displayed" fallback on every first-login — which is exactly the
+    # 2026-05-23 Gabriella bug.
+    assert "tr_pending_reveal=sk-tr-" in set_cookie, (
+        f"expected tr_pending_reveal=sk-tr-... in Set-Cookie for first login; got {set_cookie!r}"
+    )
+    # Path scope: cookie must only echo on /console/welcome so the raw
+    # key isn't sent on every console-page request (limits log exposure).
+    assert "Path=/console/welcome" in set_cookie or "path=/console/welcome" in set_cookie
     user = STORE.find_user_by_email("alice@example.com")
     assert user is not None
     assert user.email_verified is True
+
+
+@pytest.mark.asyncio
+async def test_google_callback_for_returning_user_sets_no_pending_reveal(
+    google_client: TestClient,
+) -> None:
+    """Returning users (existing_user is not None) skipped the signup path,
+    so `result.raw_key` is None and we MUST NOT set a pending-reveal cookie
+    pointing at a stale value. A returning user already has API keys; the
+    welcome page's one-shot reveal is meaningless for them and the cookie
+    would only widen the log-exposure surface."""
+    google_client.cookies.set("tr_oauth_state", "matching-state")
+
+    # Seed an existing user so first_time=False
+    seeded = STORE.signup(email="bob@example.com")
+    assert seeded is not None
+
+    async def fake_exchange(**_: Any) -> str:
+        return "access-token"  # noqa: S105
+
+    async def fake_fetch_user(**_: Any) -> Any:
+        from trusted_router.oauth_provider import OAuthUserInfo
+
+        return OAuthUserInfo(
+            sub="google-bob",
+            email="bob@example.com",
+            email_verified=True,
+            display_name="Bob",
+        )
+
+    with patch("trusted_router.routes.oauth.exchange_code", fake_exchange), \
+         patch("trusted_router.routes.oauth.fetch_user", fake_fetch_user):
+        resp = google_client.get(
+            "/google_oauth_callback?code=c&state=matching-state",
+            follow_redirects=False,
+        )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/console/api-keys"  # not welcome
+    assert "tr_pending_reveal=" not in resp.headers.get("set-cookie", "")
 
 
 @pytest.mark.asyncio
@@ -590,6 +641,65 @@ def test_console_root_redirects_to_api_keys(console_session: tuple[TestClient, s
     resp = client.get("/console", follow_redirects=False)
     assert resp.status_code == 302
     assert resp.headers["location"] == "/console/api-keys"
+
+
+def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
+    console_session: tuple[TestClient, str],
+) -> None:
+    """The /console/welcome reveal flow MUST honor the `tr_pending_reveal`
+    cookie when `first=1` is in the URL. Without this assertion the
+    template's "this key has already been displayed" fallback ships every
+    first login — that was the 2026-05-23 Gabriella bug.
+
+    Also asserts the cookie is cleared on read so a refresh of the same
+    URL falls through to the static fallback (one-shot reveal semantics)."""
+    client, _ = console_session
+    fake_raw_key = "sk-tr-v1-test-reveal-secret-abc123"  # noqa: S105 - test fixture
+    client.cookies.set("tr_pending_reveal", fake_raw_key)
+
+    resp = client.get("/console/welcome?first=1", follow_redirects=False)
+    assert resp.status_code == 200
+    assert fake_raw_key in resp.text, (
+        "expected the raw API key from tr_pending_reveal to be rendered "
+        "in the welcome page; instead got the 'already displayed' fallback"
+    )
+    assert "already been displayed" not in resp.text
+    # One-shot: cookie must be cleared on the response so a refresh
+    # doesn't re-reveal the key.
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "tr_pending_reveal=" in set_cookie
+    # delete_cookie sets value to "" with Max-Age=0 (or expired Expires)
+    assert (
+        'tr_pending_reveal=""' in set_cookie
+        or "tr_pending_reveal=;" in set_cookie
+        or "Max-Age=0" in set_cookie
+        or "max-age=0" in set_cookie
+    ), f"expected tr_pending_reveal cookie to be cleared; got {set_cookie!r}"
+
+
+def test_console_welcome_without_first_query_does_not_read_pending_reveal(
+    console_session: tuple[TestClient, str],
+) -> None:
+    """If the user re-visits /console/welcome without `?first=1` (e.g.
+    bookmark, browser back), the reveal cookie MUST NOT be consumed.
+    This protects the one-shot invariant for the case where the user
+    arrived at the welcome page out-of-order."""
+    client, _ = console_session
+    fake_raw_key = "sk-tr-v1-test-noconsume-xyz"  # noqa: S105 - test fixture
+    client.cookies.set("tr_pending_reveal", fake_raw_key)
+
+    resp = client.get("/console/welcome", follow_redirects=False)
+    assert resp.status_code == 200
+    # The page renders the fallback message; the cookie is left for a
+    # later legitimate `?first=1` request to consume.
+    assert fake_raw_key not in resp.text
+    assert "already been displayed" in resp.text
+    # Cookie not cleared — the response should NOT include a delete-cookie
+    # header for tr_pending_reveal.
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "tr_pending_reveal" not in set_cookie or (
+        "tr_pending_reveal=" + fake_raw_key in set_cookie  # tolerated no-op
+    )
 
 
 def test_console_create_api_key_form_shows_raw_key_once(
