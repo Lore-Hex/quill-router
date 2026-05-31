@@ -214,6 +214,19 @@
     color: var(--chat-text);
 }
 
+/* Active-state pill: used on the Sys button when a custom system
+ * prompt is set, so the user sees at a glance that the chat carries
+ * extra instructions. Subtle tint of the primary accent. */
+.chat-header-btn.is-active {
+    background: color-mix(in srgb, var(--chat-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--chat-primary) 40%, var(--chat-border));
+    color: var(--chat-primary);
+}
+
+.chat-header-btn.is-active:hover {
+    background: color-mix(in srgb, var(--chat-primary) 18%, transparent);
+}
+
 /* Icon-only header buttons (e.g. Share). Centers the SVG and keeps
  * the hit target square so it matches glyph-buttons next to it. */
 .chat-header-btn-icon {
@@ -1407,6 +1420,56 @@
     padding: 4px 0;
 }
 
+.chat-picker-filter-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--chat-muted);
+    margin-left: 2px;
+    font-size: 10px;
+}
+
+.chat-picker-filter.is-on .chat-picker-filter-count {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.chat-model-picker-footer {
+    border-top: 1px solid var(--chat-border);
+    padding: 8px 16px;
+    display: flex;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--chat-muted);
+    background: var(--chat-sidebar-bg);
+}
+
+.chat-model-picker-footer kbd {
+    background: #ffffff;
+    border: 1px solid var(--chat-border);
+    border-bottom-width: 2px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: var(--chat-mono);
+    font-size: 10px;
+    color: var(--chat-text);
+    margin-right: 4px;
+}
+
+.chat-model-picker-empty {
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--chat-muted);
+}
+
+.chat-model-picker-empty-title {
+    font-size: 14px;
+    color: var(--chat-text);
+    font-weight: 500;
+    margin-bottom: 6px;
+}
+
+.chat-model-picker-empty-hint {
+    font-size: 12px;
+}
+
 .chat-model-row {
     width: 100%;
     text-align: left;
@@ -1840,6 +1903,159 @@
 .chat-toast.is-visible {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+.chat-toast.is-danger {
+    background: var(--chat-error);
+}
+
+/* ── Prompt / confirm modal (replaces window.prompt/confirm) ───── */
+
+.chat-prompt-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 250;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 80px;
+    font-family: var(--chat-font);
+}
+
+.chat-prompt-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(9, 9, 17, 0.55);
+}
+
+.chat-prompt-panel {
+    position: relative;
+    width: 440px;
+    max-width: 92vw;
+    background: #ffffff;
+    border: 1px solid var(--chat-border);
+    border-radius: var(--chat-radius-lg);
+    box-shadow: var(--chat-shadow-popup);
+    overflow: hidden;
+    animation: chat-fade-in 180ms ease-out;
+}
+
+.chat-prompt-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--chat-border);
+}
+
+.chat-prompt-head h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--chat-text);
+}
+
+.chat-prompt-close {
+    background: none;
+    border: none;
+    color: var(--chat-muted);
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+    padding: 0;
+}
+
+.chat-prompt-body {
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chat-prompt-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--chat-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.chat-prompt-input {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: var(--chat-text);
+    background: #ffffff;
+    border: 1px solid var(--chat-border);
+    border-radius: var(--chat-radius);
+    outline: none;
+    font-family: inherit;
+    transition: border-color 120ms;
+}
+
+.chat-prompt-input:focus {
+    border-color: var(--chat-primary);
+}
+
+.chat-prompt-helper {
+    font-size: 11px;
+    color: var(--chat-muted);
+}
+
+.chat-prompt-message {
+    margin: 0;
+    font-size: 13px;
+    color: var(--chat-text);
+    line-height: 1.45;
+}
+
+.chat-prompt-foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px 16px;
+}
+
+.chat-prompt-cancel,
+.chat-prompt-confirm {
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--chat-radius);
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid var(--chat-border);
+    transition: background 120ms, color 120ms, border-color 120ms;
+}
+
+.chat-prompt-cancel {
+    background: #ffffff;
+    color: var(--chat-muted);
+}
+
+.chat-prompt-cancel:hover {
+    color: var(--chat-text);
+    background: var(--chat-hover);
+}
+
+.chat-prompt-confirm {
+    background: var(--chat-primary);
+    color: #fff;
+    border-color: var(--chat-primary);
+}
+
+.chat-prompt-confirm:hover {
+    background: var(--chat-primary-hover);
+}
+
+.chat-prompt-confirm.is-danger {
+    background: var(--chat-error);
+    border-color: var(--chat-error);
+}
+
+.chat-prompt-confirm.is-danger:hover {
+    background: #991b1b;
+    border-color: #991b1b;
 }
 
 /* ── Routing select in per-model dropdown ─────────────────────── */

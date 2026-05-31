@@ -65,7 +65,6 @@ test("toggling Enter-to-send persists", async ({ page }) => {
 });
 
 test("Clear All wipes chats + preferences after confirm", async ({ page }) => {
-    page.on("dialog", (d) => d.accept());
     await page.goto("/chat");
     await setLocalStorageState(
         page,
@@ -74,7 +73,9 @@ test("Clear All wipes chats + preferences after confirm", async ({ page }) => {
     await page.reload();
     await openSettings(page);
     await page.locator(".chat-settings-danger[data-wipe]").click();
-    // Overlay should close + an empty chat replaces the old data
+    // Modal confirm replaces native confirm()
+    await page.locator(".chat-prompt-confirm.is-danger").click();
+    // Overlay closes + empty chat replaces the old data
     await expect(page.locator(".chat-settings-overlay")).toHaveCount(0);
     const state = await getLocalStorageState(page);
     // After wipe, ensureActiveChat() creates one new empty chat

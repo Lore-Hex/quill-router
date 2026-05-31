@@ -92,15 +92,17 @@ test("Dragging the temperature slider persists params.temperature", async ({
 });
 
 test("Saving a preset stores it in preferences", async ({ page }) => {
-    page.on("dialog", async (d) => {
-        await d.accept("my-preset");
-    });
     await seed(page);
     await page
         .locator('[data-action="toggle-model-dropdown"]')
         .first()
         .click();
     await page.locator('[data-action="save-preset"]').first().click();
+    // Inline modal replaces native prompt()
+    const input = page.locator(".chat-prompt-input");
+    await expect(input).toBeVisible();
+    await input.fill("my-preset");
+    await input.press("Enter");
     await page.waitForTimeout(150);
     const state = await getLocalStorageState(page);
     const names = (state.preferences.presets || []).map((p: any) => p.name);

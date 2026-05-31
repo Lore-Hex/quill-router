@@ -84,6 +84,35 @@
         return out;
     }
 
+    // ── Cost formatting ───────────────────────────────────────────────
+    // Cost is stored as microdollars (1 USD = 1_000_000 μ$). At the
+    // small per-message scale we routinely show $0.0000 which reads as
+    // "free" even when it's not. Adapt the unit:
+    //   * exactly 0                  → "$0"
+    //   * (0, 1000μ$]   <0.1¢        → "<0.1¢"
+    //   * (1000, 10⁶μ$] in cents     → "X.XX¢"
+    //   * ≥ 10⁶μ$ ($1)  in dollars   → "$X.XX" / "$XX.XX"
+    function formatCost(microdollars, opts) {
+        const o = opts || {};
+        const prefix = o.estimate ? "≈" : "";
+        if (microdollars == null || microdollars === 0) {
+            return prefix + "$0";
+        }
+        if (microdollars < 0) microdollars = 0;
+        // Sub-tenth-cent territory — too small to show usefully.
+        if (microdollars < 1000) return prefix + "<0.1¢";
+        // Cents range: 0.1¢ – 99.9¢
+        if (microdollars < 1_000_000) {
+            const cents = microdollars / 10_000;
+            const digits = cents < 1 ? 2 : cents < 10 ? 2 : 1;
+            return prefix + cents.toFixed(digits) + "¢";
+        }
+        // Dollars
+        const dollars = microdollars / 1_000_000;
+        const digits = dollars < 10 ? 2 : dollars < 100 ? 2 : 0;
+        return prefix + "$" + dollars.toFixed(digits);
+    }
+
     // ── State ─────────────────────────────────────────────────────────
     /** @type {{chats: Object, activeChatId: string|null, preferences: Object}} */
     let STATE = loadState();
@@ -434,7 +463,14 @@
             del.textContent = "×";
             del.addEventListener("click", (e) => {
                 e.stopPropagation();
-                if (confirm("Delete this chat?")) deleteChat(chat.id);
+                confirmModal({
+                    title: "Delete this chat?",
+                    message: "This chat and all its messages will be removed from this browser.",
+                    confirmText: "Delete",
+                    danger: true,
+                }).then((ok) => {
+                    if (ok) deleteChat(chat.id);
+                });
             });
             item.appendChild(title);
             item.appendChild(pin);
@@ -477,27 +513,28 @@
         if (titleEl) {
             titleEl.textContent = (chat && chat.title) || "";
         }
+        updateTabTitle();
         if (costEl) {
             if (!chat) {
                 costEl.textContent = "";
                 return;
             }
-            let totalCents = 0;
+            let totalMicro = 0;
             let totalIn = 0;
             let totalOut = 0;
             for (const m of chat.messages || []) {
                 if (m.role !== "assistant") continue;
                 for (const r of m.responses || []) {
-                    totalCents += (r.cost_microdollars || 0) / 10_000;
+                    totalMicro += r.cost_microdollars || 0;
                     totalIn += r.tokens_in || 0;
                     totalOut += r.tokens_out || 0;
                 }
             }
-            if (totalCents === 0 && totalIn === 0 && totalOut === 0) {
+            if (totalMicro === 0 && totalIn === 0 && totalOut === 0) {
                 costEl.textContent = "";
             } else {
                 costEl.textContent =
-                    "$" + (totalCents / 100).toFixed(4) +
+                    formatCost(totalMicro) +
                     "  ·  " + totalIn + " in / " + totalOut + " out";
             }
         }
@@ -682,6 +719,7 @@
                             : val.toFixed(target.step < 0.1 ? 2 : 1);
             } else if (action === "override-sys") {
                 targetSlot.system_prompt = target.value;
+                updateSysButtonState();
             } else if (action === "rename-model") {
                 targetSlot.label = target.value;
                 renderModelsBar();
@@ -781,7 +819,48 @@
             chat.shared_system_prompt = ta.value;
             chat.updated_at = isoNow();
             saveState();
+            updateSysButtonState();
         };
+        updateSysButtonState();
+    }
+
+    // Sync the browser tab title with the active chat. Drives the
+    // window title bar / tab label so Cmd-Tab + tab dropdowns surface
+    // "Roundtrip-Test-Chat · TrustedRouter" instead of a generic
+    // page title. Falls back to "Chat · TrustedRouter" when no chat
+    // is active or the title is empty.
+    const BASE_TAB_TITLE = "TrustedRouter chat";
+    function updateTabTitle() {
+        const chat = getActiveChat();
+        const title = chat && (chat.title || "").trim();
+        if (title && title !== "New chat" && title !== "Untitled") {
+            document.title = title + " · TrustedRouter";
+        } else {
+            document.title = BASE_TAB_TITLE;
+        }
+    }
+
+    // Toggle .is-active on the Sys header button when the chat has a
+    // non-empty shared system prompt OR any per-model override. Lets
+    // the user see at a glance "this chat has custom instructions"
+    // without opening the panel.
+    function updateSysButtonState() {
+        const btn = document.querySelector(
+            '[data-action="toggle-system-prompt"]',
+        );
+        if (!btn) return;
+        const chat = getActiveChat();
+        const hasShared =
+            chat && (chat.shared_system_prompt || "").trim().length > 0;
+        const hasOverride =
+            chat &&
+            (chat.models || []).some(
+                (m) => (m.system_prompt || "").trim().length > 0,
+            );
+        btn.classList.toggle("is-active", !!(hasShared || hasOverride));
+        btn.title = hasShared || hasOverride
+            ? "System prompt (custom)"
+            : "System prompt";
     }
 
     // ── Render: message thread ────────────────────────────────────────
@@ -1095,13 +1174,12 @@
                 meta.className = "chat-msg-meta";
                 const finalMicro = resp.cost_microdollars || 0;
                 const estMicro = resp.cost_microdollars_est || 0;
-                const cents = (finalMicro || estMicro) / 10_000;
                 const costStr =
                     finalMicro > 0
-                        ? "$" + (cents / 100).toFixed(4)
+                        ? formatCost(finalMicro)
                         : estMicro > 0
-                            ? "~$" + (cents / 100).toFixed(4)
-                            : "$0.0000";
+                            ? formatCost(estMicro, { estimate: true })
+                            : formatCost(0);
                 const tps = resp.tokens_per_sec
                     ? "  ·  " + resp.tokens_per_sec + " t/s"
                     : "";
@@ -1255,7 +1333,7 @@
     // Tiny toast notification system. Used for "Copied" feedback, etc.
     // Fades in for 200ms, holds 1.6s, fades out for 200ms, removes.
     let _toastTimer = null;
-    function showToast(text) {
+    function showToast(text, opts) {
         let toast = document.querySelector(".chat-toast");
         if (!toast) {
             toast = document.createElement("div");
@@ -1263,11 +1341,144 @@
             document.body.appendChild(toast);
         }
         toast.textContent = text;
-        toast.classList.add("is-visible");
+        toast.className = "chat-toast is-visible" +
+            (opts && opts.danger ? " is-danger" : "");
         if (_toastTimer) clearTimeout(_toastTimer);
         _toastTimer = setTimeout(() => {
             toast.classList.remove("is-visible");
-        }, 1800);
+        }, (opts && opts.holdMs) || 1800);
+    }
+
+    // Promise-based inline modal that replaces window.prompt(). Returns
+    // the entered value on confirm, null on cancel. Esc cancels; Enter
+    // confirms; click outside cancels. Opaque panel + tokens at :root
+    // so it reads as part of the page chrome rather than a system
+    // dialog.
+    function promptModal(opts) {
+        return new Promise((resolve) => {
+            const o = opts || {};
+            const overlay = document.createElement("div");
+            overlay.className = "chat-prompt-overlay";
+            overlay.innerHTML =
+                '<div class="chat-prompt-backdrop" data-cancel></div>' +
+                '<form class="chat-prompt-panel">' +
+                '<div class="chat-prompt-head">' +
+                '<h3>' + escapeHtml(o.title || "") + "</h3>" +
+                '<button type="button" class="chat-prompt-close" ' +
+                'data-cancel aria-label="Close">×</button>' +
+                "</div>" +
+                '<div class="chat-prompt-body">' +
+                (o.label
+                    ? '<label class="chat-prompt-label">' +
+                      escapeHtml(o.label) +
+                      "</label>"
+                    : "") +
+                '<input type="text" class="chat-prompt-input" value="' +
+                escapeHtml(o.value || "") +
+                '" placeholder="' +
+                escapeHtml(o.placeholder || "") +
+                '">' +
+                (o.helper
+                    ? '<span class="chat-prompt-helper">' +
+                      escapeHtml(o.helper) +
+                      "</span>"
+                    : "") +
+                "</div>" +
+                '<div class="chat-prompt-foot">' +
+                '<button type="button" class="chat-prompt-cancel" data-cancel>Cancel</button>' +
+                '<button type="submit" class="chat-prompt-confirm">' +
+                escapeHtml(o.confirmText || "OK") +
+                "</button>" +
+                "</div>" +
+                "</form>";
+            document.body.appendChild(overlay);
+            const input = overlay.querySelector(".chat-prompt-input");
+            const cleanup = (result) => {
+                overlay.remove();
+                resolve(result);
+            };
+            overlay.addEventListener("click", (e) => {
+                if (e.target.dataset && e.target.dataset.cancel != null) {
+                    cleanup(null);
+                }
+            });
+            overlay.querySelector("form").addEventListener("submit", (e) => {
+                e.preventDefault();
+                cleanup(input.value);
+            });
+            overlay.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    cleanup(null);
+                }
+            });
+            // Focus + select existing value so the user can immediately
+            // overtype or edit.
+            setTimeout(() => {
+                input.focus();
+                input.select();
+            }, 0);
+        });
+    }
+
+    // Promise-based confirm() replacement. Resolves true on confirm,
+    // false on cancel. Use `danger: true` for irreversible actions —
+    // the confirm button picks up the error color.
+    function confirmModal(opts) {
+        return new Promise((resolve) => {
+            const o = opts || {};
+            const overlay = document.createElement("div");
+            overlay.className = "chat-prompt-overlay";
+            overlay.innerHTML =
+                '<div class="chat-prompt-backdrop" data-cancel></div>' +
+                '<div class="chat-prompt-panel">' +
+                '<div class="chat-prompt-head">' +
+                '<h3>' + escapeHtml(o.title || "Are you sure?") + "</h3>" +
+                '<button type="button" class="chat-prompt-close" ' +
+                'data-cancel aria-label="Close">×</button>' +
+                "</div>" +
+                (o.message
+                    ? '<div class="chat-prompt-body">' +
+                      '<p class="chat-prompt-message">' +
+                      escapeHtml(o.message) +
+                      "</p></div>"
+                    : "") +
+                '<div class="chat-prompt-foot">' +
+                '<button type="button" class="chat-prompt-cancel" data-cancel>Cancel</button>' +
+                '<button type="button" class="chat-prompt-confirm' +
+                (o.danger ? " is-danger" : "") +
+                '" data-confirm>' +
+                escapeHtml(o.confirmText || "Confirm") +
+                "</button>" +
+                "</div>" +
+                "</div>";
+            document.body.appendChild(overlay);
+            const cleanup = (result) => {
+                overlay.remove();
+                resolve(result);
+            };
+            overlay.addEventListener("click", (e) => {
+                if (e.target.dataset && e.target.dataset.cancel != null) {
+                    cleanup(false);
+                } else if (e.target.dataset && e.target.dataset.confirm != null) {
+                    cleanup(true);
+                }
+            });
+            overlay.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") {
+                    e.preventDefault();
+                    cleanup(false);
+                } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    cleanup(true);
+                }
+            });
+            // Focus the confirm button so Enter confirms.
+            setTimeout(() => {
+                const btn = overlay.querySelector('[data-confirm]');
+                if (btn) btn.focus();
+            }, 0);
+        });
     }
 
     function deleteMessage(chat, msg) {
@@ -1478,6 +1689,28 @@
                 return false;
             return true;
         }).slice(0, 200);
+        // Filter chip counts — total count per capability across the
+        // QUERY-filtered set (ignoring chip filters themselves), so
+        // toggling Free shows "Free (n)" against the same backdrop.
+        const queryMatched = MODELS.filter((m) => {
+            if (!q) return true;
+            const idMatch = m.id.toLowerCase().includes(q);
+            const nameMatch = (m.name || "").toLowerCase().includes(q);
+            return idMatch || nameMatch;
+        });
+        const counts = { free: 0, vision: 0, tools: 0 };
+        for (const m of queryMatched) {
+            const caps = m.capabilities || [];
+            if (m.free) counts.free++;
+            if (caps.includes("vision")) counts.vision++;
+            if (caps.includes("tools") || caps.includes("tool_use")) counts.tools++;
+        }
+        if (pickerEl) {
+            for (const k of ["free", "vision", "tools"]) {
+                const el = pickerEl.querySelector('[data-count="' + k + '"]');
+                if (el) el.textContent = counts[k] > 0 ? "(" + counts[k] + ")" : "";
+            }
+        }
         // Active model ids in this chat — let the picker rows visually
         // tag the currently-selected models so the user sees "I'm
         // already using this one" instead of accidentally picking the
@@ -1566,6 +1799,24 @@
             for (const m of grouped.get(provider)) {
                 list.appendChild(makePickerRow(m, activeIds));
             }
+        }
+        // Empty-state — search returned nothing, OR all chip filters
+        // are on and no model matches. Tell the user how to recover.
+        if (list.childElementCount === 0) {
+            const empty = document.createElement("div");
+            empty.className = "chat-model-picker-empty";
+            if (q) {
+                empty.innerHTML =
+                    '<div class="chat-model-picker-empty-title">No models match "' +
+                    escapeHtml(q) +
+                    '"</div>' +
+                    '<div class="chat-model-picker-empty-hint">Try a shorter query or clear the chip filters.</div>';
+            } else {
+                empty.innerHTML =
+                    '<div class="chat-model-picker-empty-title">No models match the active filters</div>' +
+                    '<div class="chat-model-picker-empty-hint">Click a chip again to disable it.</div>';
+            }
+            list.appendChild(empty);
         }
     }
 
@@ -1765,11 +2016,16 @@
             <div class="chat-model-picker-panel">
                 <input type="text" class="chat-model-picker-search" placeholder="Search models..." autofocus>
                 <div class="chat-model-picker-filters">
-                    <button type="button" class="chat-picker-filter" data-filter="free">Free</button>
-                    <button type="button" class="chat-picker-filter" data-filter="vision">Vision</button>
-                    <button type="button" class="chat-picker-filter" data-filter="tools">Tools</button>
+                    <button type="button" class="chat-picker-filter" data-filter="free">Free <span class="chat-picker-filter-count" data-count="free"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="vision">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="tools">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
                 </div>
                 <div class="chat-model-picker-list"></div>
+                <div class="chat-model-picker-footer">
+                    <span><kbd>↑↓</kbd> navigate</span>
+                    <span><kbd>↵</kbd> select</span>
+                    <span><kbd>esc</kbd> close</span>
+                </div>
             </div>
         `;
         document.body.appendChild(pickerEl);
@@ -2284,10 +2540,12 @@
                 const m = findModel(slot.model_id);
                 return sum + (m && m.input_per_m ? m.input_per_m : 0);
             }, 0);
-            const estCents = (tokens * totalRate) / 1_000_000 * 100;
+            // tokens × $/M-tokens → dollars; convert to microdollars
+            // so formatCost picks the right magnitude bucket.
+            const estMicro = (tokens * totalRate);
             if (tokens > 0 && totalRate > 0) {
                 cCounter.textContent =
-                    "~$" + (estCents / 100).toFixed(4) +
+                    formatCost(estMicro, { estimate: true }) +
                     (enabled.length > 1 ? " × " + enabled.length + " models" : "");
             } else {
                 cCounter.textContent = "";
@@ -2395,11 +2653,9 @@
                     lines.push("");
                     lines.push(r.content || "");
                     if (r.cost_microdollars || r.tokens_out) {
-                        const cents = (r.cost_microdollars || 0) / 10_000;
                         lines.push("");
                         lines.push(
-                            "_$" +
-                                (cents / 100).toFixed(4) +
+                            "_" + formatCost(r.cost_microdollars || 0) +
                                 " · " +
                                 (r.tokens_in || 0) +
                                 " in / " +
@@ -2438,16 +2694,25 @@
         const url = location.origin + "/chat#share=" + encoded;
         // URL > 8KB risks browser truncation
         if (url.length > 8000) {
-            alert(
-                "This chat is too large to share via URL (" +
-                    url.length +
-                    " chars). Use Export to JSON instead.",
+            showToast(
+                "Chat too large to share via URL — export to JSON instead",
+                { danger: true, holdMs: 3500 },
             );
             return null;
         }
         navigator.clipboard.writeText(url).then(
-            () => alert("Share link copied to clipboard."),
-            () => prompt("Copy this share link:", url),
+            () => showToast("Share link copied"),
+            () => {
+                // Clipboard write blocked (insecure context, permissions).
+                // Fall back to a copy-link modal so the user can grab the
+                // URL manually.
+                promptModal({
+                    title: "Share link",
+                    label: "Copy this URL — your chat travels in the fragment, not on TR's servers.",
+                    value: url,
+                    confirmText: "Done",
+                });
+            },
         );
         return url;
     }
@@ -2497,12 +2762,20 @@
     function renameChatPrompt(chatId) {
         const chat = STATE.chats[chatId];
         if (!chat) return;
-        const next = prompt("Rename chat:", chat.title || "");
-        if (next == null) return;
-        chat.title = next.trim() || chat.title || "Untitled";
-        chat.updated_at = isoNow();
-        saveState();
-        renderSidebar();
+        promptModal({
+            title: "Rename chat",
+            label: "Chat name",
+            value: chat.title || "",
+            placeholder: "Untitled",
+            confirmText: "Rename",
+        }).then((next) => {
+            if (next == null) return;
+            chat.title = next.trim() || chat.title || "Untitled";
+            chat.updated_at = isoNow();
+            saveState();
+            renderSidebar();
+            updateTabTitle();
+        });
     }
 
     // ── Voice input (Web Speech API) ──────────────────────────────────
@@ -2511,7 +2784,9 @@
         const SR =
             window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SR) {
-            alert("Voice input isn't supported in this browser.");
+            showToast("Voice input isn't supported in this browser", {
+                danger: true,
+            });
             return;
         }
         const rec = new SR();
@@ -2552,7 +2827,7 @@
     async function attachFileToInput(file) {
         if (!file) return;
         if (!file.type.startsWith("image/")) {
-            alert("Only image files are supported in V1.");
+            showToast("Only image files are supported", { danger: true });
             return;
         }
         const dataUrl = await new Promise((resolve, reject) => {
@@ -2831,7 +3106,13 @@
                 return;
             }
             if (target && target.dataset && target.dataset.wipe != null) {
-                if (confirm("Clear ALL chats and preferences? This can't be undone.")) {
+                confirmModal({
+                    title: "Clear all chats and preferences?",
+                    message: "Every chat and preference on this device will be removed. This can't be undone.",
+                    confirmText: "Clear everything",
+                    danger: true,
+                }).then((ok) => {
+                    if (!ok) return;
                     STATE = { chats: {}, activeChatId: null, preferences: {} };
                     saveState();
                     overlay.remove();
@@ -2840,7 +3121,8 @@
                     renderModelsBar();
                     renderSystemPrompt();
                     renderThread();
-                }
+                    showToast("Cleared");
+                });
             }
         });
         overlay.addEventListener("change", (e) => {
@@ -3044,15 +3326,22 @@
             }
             const saveP = target.closest('[data-action="save-preset"]');
             if (saveP) {
-                const name = prompt("Name this preset:");
-                if (name && name.trim()) {
+                const slotIdx = parseInt(saveP.dataset.slotIdx, 10);
+                promptModal({
+                    title: "Save preset",
+                    label: "Preset name",
+                    placeholder: "e.g. Creative, Strict, Long output",
+                    confirmText: "Save",
+                }).then((name) => {
+                    if (!name || !name.trim()) return;
                     const chat = ensureActiveChat();
-                    const slot = chat.models[parseInt(saveP.dataset.slotIdx, 10)];
+                    const slot = chat.models[slotIdx];
                     if (slot) {
                         savePreset(name.trim(), slot);
                         renderModelsBar();
+                        showToast("Preset saved");
                     }
-                }
+                });
                 return;
             }
             const newChatBtn = target.closest('[data-action="new-chat"]');
