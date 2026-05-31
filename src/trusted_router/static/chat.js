@@ -37,6 +37,24 @@
         "/internal/chat/issue-browser-key";
     const DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
+
+    // Curated "Popular" list surfaced at the top of the picker when the
+    // user hasn't typed anything yet. Mirrors DEFAULT_AUTO_MODEL_ORDER
+    // in catalog.py plus the community-favourite OSS models so first
+    // open isn't an empty search box. Order is intentional: best
+    // headline pick first, then variety across providers + price tiers.
+    const POPULAR_MODEL_IDS = [
+        "anthropic/claude-sonnet-4.6",
+        "openai/gpt-5.4-nano",
+        "moonshotai/kimi-k2.6",
+        "deepseek/deepseek-v4-flash",
+        "google/gemini-2.5-flash",
+        "google/gemma-4-31b-it",
+        "z-ai/glm-4.6",
+        "anthropic/claude-opus-4.7",
+        "mistralai/mistral-small-2603",
+        "meta-llama/llama-3.3-70b-instruct",
+    ];
     // Full param set OpenRouter exposes. Per-model overrides; passed
     // through to /v1/chat/completions as-is. Providers that don't
     // recognize a param (e.g. OpenAI doesn't have top_k) simply
@@ -1472,6 +1490,7 @@
         // Only render when not searching (search results should be
         // categorical, not order-by-history).
         const recentIds = STATE.preferences.recentModelIds || [];
+        const renderedIds = new Set();
         if (!q && recentIds.length > 0) {
             const recentModels = recentIds
                 .map((id) => findModel(id))
@@ -1484,6 +1503,48 @@
                 list.appendChild(h);
                 for (const m of recentModels) {
                     list.appendChild(makePickerRow(m, activeIds));
+                    renderedIds.add(m.id);
+                }
+            }
+        }
+        // Popular section: surface the curated POPULAR_MODEL_IDS at
+        // the top whenever the user hasn't typed a query. This is what
+        // makes an empty search box useful — the user lands on
+        // Sonnet / GPT-5 / Kimi K2.6 / DeepSeek / Gemma 4 instead of
+        // an empty pane. Skips ids already shown under Recent.
+        if (!q) {
+            const popularRows = [];
+            for (const id of POPULAR_MODEL_IDS) {
+                if (renderedIds.has(id)) continue;
+                const real = findModel(id);
+                if (real) {
+                    if (filtered.includes(real)) popularRows.push(real);
+                } else if (
+                    !PICKER_FILTERS.free &&
+                    !PICKER_FILTERS.vision &&
+                    !PICKER_FILTERS.tools
+                ) {
+                    // Catalog hasn't loaded (or doesn't include this id
+                    // yet). Synthesize a stub so the user still sees
+                    // the model name + can click to add it; clicking
+                    // wires up the id and selectModel handles the rest.
+                    popularRows.push({
+                        id,
+                        name: prettifyModelId(id),
+                        capabilities: [],
+                        free: false,
+                        _stub: true,
+                    });
+                }
+            }
+            if (popularRows.length > 0) {
+                const h = document.createElement("div");
+                h.className = "chat-model-picker-group";
+                h.textContent = "Popular";
+                list.appendChild(h);
+                for (const m of popularRows) {
+                    list.appendChild(makePickerRow(m, activeIds));
+                    renderedIds.add(m.id);
                 }
             }
         }
@@ -1491,6 +1552,7 @@
         // google sections instead of a flat alphabetical jumble.
         const grouped = new Map();
         for (const m of filtered) {
+            if (renderedIds.has(m.id)) continue;
             const p = providerFromModelId(m.id);
             if (!grouped.has(p)) grouped.set(p, []);
             grouped.get(p).push(m);
@@ -1505,6 +1567,21 @@
                 list.appendChild(makePickerRow(m, activeIds));
             }
         }
+    }
+
+    // "deepseek/deepseek-v4-flash" → "DeepSeek V4 Flash"
+    // Best-effort prettifier for stub rows when MODELS hasn't loaded
+    // yet (or when the curated POPULAR id isn't in the live catalog).
+    function prettifyModelId(id) {
+        if (!id) return "";
+        const slash = id.indexOf("/");
+        const tail = slash > 0 ? id.slice(slash + 1) : id;
+        return tail
+            .replace(/[-_.]/g, " ")
+            .split(" ")
+            .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ""))
+            .join(" ")
+            .trim();
     }
 
     function makePickerRow(m, activeIds) {
@@ -1714,17 +1791,17 @@
                 renderModelPicker();
             });
         });
-        // Render loading skeleton if the catalog isn't loaded yet,
-        // otherwise show rows.
-        if (MODELS.length === 0 && MODELS_LOADING) {
-            const list = pickerEl.querySelector(".chat-model-picker-list");
-            for (let i = 0; i < 6; i++) {
-                const sk = document.createElement("div");
-                sk.className = "chat-model-skeleton";
-                list.appendChild(sk);
-            }
-        } else {
-            renderModelPicker();
+        // Render immediately — the Popular section surfaces curated
+        // stub rows even when MODELS hasn't loaded yet, so the user
+        // sees something useful instead of an empty pane. When the
+        // catalog finishes loading, loadModels() calls
+        // renderModelPicker() again and stubs swap for real rows.
+        renderModelPicker();
+        // Kick off a catalog load if it hasn't happened yet — opening
+        // the picker is the right time to ensure the live data is on
+        // its way.
+        if (MODELS.length === 0 && !MODELS_LOADING) {
+            loadModels();
         }
         document.addEventListener("keydown", pickerKeyHandler);
     }

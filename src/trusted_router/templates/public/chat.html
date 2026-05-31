@@ -61,7 +61,13 @@
       <div class="chat-header-actions">
         <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
         <button class="btn chat-header-btn" type="button" data-action="export-md" title="Export to Markdown">⤓</button>
-        <button class="btn chat-header-btn" type="button" data-action="share-link" title="Copy share link">↗</button>
+        <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="share-link" title="Copy share link" aria-label="Share">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M8 2 L8 11" />
+            <path d="M5 5 L8 2 L11 5" />
+            <path d="M3 8 L3 14 L13 14 L13 8" />
+          </svg>
+        </button>
         <button class="btn chat-header-btn" type="button" data-action="show-settings" title="Settings">⚙</button>
         <button class="btn chat-header-btn" type="button" data-action="show-shortcuts" title="Keyboard shortcuts">?</button>
       </div>
