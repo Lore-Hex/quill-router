@@ -16,7 +16,11 @@
 
 /* ── Tokens ─────────────────────────────────────────────────────── */
 
-.chat-shell {
+/* Hoisted to :root so overlays appended to document.body (model
+ * picker, settings, help, image lightbox, toasts) resolve them.
+ * When scoped to .chat-shell, those body-level nodes saw empty
+ * var() values and rendered transparent. */
+:root {
     --chat-primary: #6467f2;
     --chat-primary-hover: #5558dd;
     --chat-bg: #ffffff;
@@ -30,6 +34,8 @@
     --chat-error-bg: #fef2f2;
     --chat-radius: 6px;
     --chat-radius-lg: 10px;
+    --chat-shadow-popup: 0 4px 12px rgba(9, 9, 17, 0.08),
+        0 16px 48px rgba(9, 9, 17, 0.16);
     --chat-font:
         "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
         "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
@@ -206,6 +212,21 @@
 .chat-header-btn:hover {
     background: var(--chat-hover);
     color: var(--chat-text);
+}
+
+/* Icon-only header buttons (e.g. Share). Centers the SVG and keeps
+ * the hit target square so it matches glyph-buttons next to it. */
+.chat-header-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 8px;
+    line-height: 0;
+}
+
+.chat-header-btn-icon svg {
+    display: block;
+    color: inherit;
 }
 
 /* ── System prompt panel ───────────────────────────────────────── */
@@ -747,10 +768,10 @@
     z-index: 30;
     width: 320px;
     max-width: 90vw;
-    background: var(--chat-bg);
+    background: #ffffff;
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
+    box-shadow: var(--chat-shadow-popup);
     padding: 12px;
     max-height: 70vh;
     overflow-y: auto;
@@ -1268,7 +1289,7 @@
 .chat-model-picker-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(9, 9, 17, 0.4);
+    background: rgba(9, 9, 17, 0.55);
 }
 
 .chat-model-picker-panel {
@@ -1276,10 +1297,10 @@
     width: 560px;
     max-width: 92vw;
     max-height: 70vh;
-    background: var(--chat-bg);
+    background: #ffffff;
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--chat-shadow-popup);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1535,7 +1556,7 @@
 .chat-settings-backdrop {
     position: absolute;
     inset: 0;
-    background: rgba(9, 9, 17, 0.4);
+    background: rgba(9, 9, 17, 0.55);
 }
 
 .chat-settings-panel {
@@ -1543,10 +1564,10 @@
     width: 540px;
     max-width: 92vw;
     max-height: 80vh;
-    background: var(--chat-bg);
+    background: #ffffff;
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--chat-shadow-popup);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1675,7 +1696,7 @@
 .chat-help-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(9, 9, 17, 0.4);
+    background: rgba(9, 9, 17, 0.55);
     z-index: 200;
     display: flex;
     align-items: center;
@@ -1684,13 +1705,13 @@
 }
 
 .chat-help-panel {
-    background: var(--chat-bg);
+    background: #ffffff;
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     padding: 24px;
     width: 420px;
     max-width: 92vw;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--chat-shadow-popup);
 }
 
 .chat-help-panel h3 {
