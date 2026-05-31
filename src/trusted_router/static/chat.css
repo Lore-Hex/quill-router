@@ -663,6 +663,46 @@
     flex: 0 0 20px;
 }
 
+/* Unified avatar — used in pill, picker rows, column heads. The
+ * sized variants below override dimensions. svg children inherit the
+ * inline color so providerColor()'s fg drives the glyph. */
+.chat-avatar {
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.chat-avatar svg {
+    width: 70%;
+    height: 70%;
+    display: block;
+}
+
+.chat-avatar-pill {
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+    flex: 0 0 20px;
+}
+
+.chat-avatar-row {
+    width: 24px;
+    height: 24px;
+    font-size: 11px;
+    flex: 0 0 24px;
+}
+
+.chat-avatar-col {
+    width: 18px;
+    height: 18px;
+    font-size: 9px;
+    flex: 0 0 18px;
+}
+
 .chat-model-pill:hover {
     background: var(--chat-hover);
 }
@@ -949,6 +989,52 @@
     background: var(--chat-primary);
     color: #fff;
     border-radius: 8px 0 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.chat-msg-user-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.chat-msg-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.chat-msg-attachment-img {
+    max-width: 140px;
+    max-height: 140px;
+    border-radius: var(--chat-radius);
+    object-fit: cover;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.chat-msg-attachment-img:hover {
+    border-color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-image-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 9, 17, 0.85);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    animation: chat-fade-in 180ms ease-out;
+}
+
+.chat-image-overlay img {
+    max-width: 92vw;
+    max-height: 92vh;
+    border-radius: var(--chat-radius);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
 }
 
 .chat-msg-assistant .chat-msg-bubble {
@@ -1561,6 +1647,26 @@
     font-family: var(--chat-mono);
     font-size: 11.5px;
     overflow-x: auto;
+}
+
+.chat-code-lang {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(230, 237, 243, 0.6);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    font-family: var(--chat-font);
+    pointer-events: none;
+}
+
+.chat-msg-md pre {
+    padding-top: 28px;
 }
 
 .chat-code-copy {
