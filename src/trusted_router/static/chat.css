@@ -431,6 +431,24 @@
     border-color: #991b1b;
 }
 
+.chat-send-kbd {
+    margin-left: 8px;
+    background: rgba(255, 255, 255, 0.2);
+    color: rgba(255, 255, 255, 0.85);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-family: var(--chat-mono);
+    font-weight: 400;
+    border: none;
+}
+
+@media (max-width: 780px) {
+    .chat-send-kbd {
+        display: none;
+    }
+}
+
 /* ── Sidebar items ─────────────────────────────────────────────── */
 
 .chat-sidebar-empty {
@@ -886,12 +904,31 @@
 }
 
 .chat-msg-col-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--chat-muted);
+    font-weight: 600;
+    color: var(--chat-text);
     padding: 0 0 6px;
+}
+
+.chat-msg-col-head-avatar {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    flex: 0 0 18px;
+}
+
+.chat-msg-col-head-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .chat-msg-col-actions {
