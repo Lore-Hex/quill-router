@@ -589,6 +589,26 @@
             escapeHtml(slot.system_prompt || "") +
             "</textarea></label>" +
             "</div>" +
+            '<div class="chat-dd-row chat-dd-presets-row">' +
+            '<label class="chat-dd-sys-label">Presets</label>' +
+            '<div class="chat-dd-presets">' +
+            getPresets()
+                .map(
+                    (p) =>
+                        '<button type="button" class="chat-dd-preset" data-action="load-preset" data-slot-idx="' +
+                        idx +
+                        '" data-preset-name="' +
+                        escapeHtml(p.name) +
+                        '">' +
+                        escapeHtml(p.name) +
+                        "</button>",
+                )
+                .join("") +
+            '<button type="button" class="chat-dd-action" data-action="save-preset" data-slot-idx="' +
+            idx +
+            '">+ Save current</button>' +
+            "</div>" +
+            "</div>" +
             '<div class="chat-dd-sliders">' +
             sliderRow("temperature", 0, 2, 0.1, "Temperature") +
             sliderRow("top_p", 0, 1, 0.05, "Top P") +
@@ -1036,23 +1056,109 @@
     }
 
     function editUserMessage(chat, msg) {
-        const input = document.querySelector("[data-chat-input]");
-        if (!input) return;
-        input.value = msg.content || "";
-        // Drop this user message and the assistant message immediately
-        // after it (if any) — pressing Send again will regenerate.
-        const idx = chat.messages.indexOf(msg);
-        if (idx >= 0) {
-            const next = chat.messages[idx + 1];
-            const toRemove = new Set([msg.id]);
-            if (next && next.role === "assistant") toRemove.add(next.id);
-            chat.messages = chat.messages.filter((m) => !toRemove.has(m.id));
+        // Inline edit: replace the bubble with a textarea + Save/Cancel
+        // row. On Save we update the message content AND remove the
+        // next assistant message so a re-Send (also wired) regenerates
+        // from the edited turn. Cancel restores the bubble.
+        const el = document.querySelector(
+            '[data-msg-id="' + msg.id + '"]',
+        );
+        if (!el) return;
+        const bubble = el.querySelector(".chat-msg-bubble");
+        if (!bubble) return;
+        const original = msg.content || "";
+        bubble.innerHTML = "";
+        const ta = document.createElement("textarea");
+        ta.className = "chat-msg-edit";
+        ta.value = original;
+        ta.rows = Math.max(2, Math.min(8, original.split("\n").length + 1));
+        bubble.appendChild(ta);
+        const row = document.createElement("div");
+        row.className = "chat-msg-edit-row";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "btn primary chat-msg-edit-save";
+        save.textContent = "Save & regenerate";
+        save.addEventListener("click", async () => {
+            const newText = (ta.value || "").trim();
+            if (!newText) return;
+            msg.content = newText;
+            const idx = chat.messages.indexOf(msg);
+            // Drop the immediately-following assistant message so the
+            // re-Send produces fresh responses for the edited prompt.
+            if (idx >= 0 && idx + 1 < chat.messages.length) {
+                const next = chat.messages[idx + 1];
+                if (next.role === "assistant") {
+                    chat.messages.splice(idx + 1, 1);
+                }
+            }
             chat.updated_at = isoNow();
             saveState();
             renderThread();
-        }
-        input.focus();
-        autoResize(input);
+            // Trigger a fresh assistant response. Reuse handleSendClick
+            // semantics by setting input to empty + invoking a
+            // synthetic "re-send for the latest user message".
+            // Simpler: just regenerate via a synthetic Send-like path:
+            const input = document.querySelector("[data-chat-input]");
+            if (input) input.value = "";
+            // Synthesize a regen — we already removed the assistant
+            // message above, so the next call to streamCompletion needs
+            // to be a new assistantMsg appended.
+            const newAssistant = {
+                id: newMsgId(),
+                role: "assistant",
+                responses: [],
+                created_at: isoNow(),
+            };
+            chat.messages.push(newAssistant);
+            saveState();
+            renderThread();
+            try {
+                const key = await ensureBrowserKey();
+                const enabled = chat.models.filter((m) => m.enabled);
+                for (const slot of enabled) {
+                    newAssistant.responses.push({
+                        model_id: slot.model_id,
+                        slot_label: slot.label || "",
+                        content: "",
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        cost_microdollars: 0,
+                        error: null,
+                    });
+                }
+                renderThread();
+                await Promise.all(
+                    enabled.map((slot, i) =>
+                        streamCompletion(key, chat, slot, newAssistant, i).catch(
+                            (e) => {
+                                const r = newAssistant.responses[i];
+                                if (r) r.error = String(e && e.message ? e.message : e);
+                                saveState();
+                                renderThread();
+                            },
+                        ),
+                    ),
+                );
+                saveState();
+                renderThread();
+            } catch (e) {
+                console.warn("chat: edit-regenerate failed:", e);
+            }
+        });
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "btn chat-msg-edit-cancel";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", () => {
+            msg.content = original;
+            renderThread();
+        });
+        row.appendChild(save);
+        row.appendChild(cancel);
+        bubble.appendChild(row);
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
     }
 
     async function regenerateResponse(chat, msg, respIdx) {
@@ -2279,6 +2385,27 @@
             const rm = target.closest('[data-action="remove-model"]');
             if (rm) {
                 removeModel(parseInt(rm.dataset.slotIdx, 10));
+                return;
+            }
+            const loadP = target.closest('[data-action="load-preset"]');
+            if (loadP) {
+                loadPreset(
+                    parseInt(loadP.dataset.slotIdx, 10),
+                    loadP.dataset.presetName,
+                );
+                return;
+            }
+            const saveP = target.closest('[data-action="save-preset"]');
+            if (saveP) {
+                const name = prompt("Name this preset:");
+                if (name && name.trim()) {
+                    const chat = ensureActiveChat();
+                    const slot = chat.models[parseInt(saveP.dataset.slotIdx, 10)];
+                    if (slot) {
+                        savePreset(name.trim(), slot);
+                        renderModelsBar();
+                    }
+                }
                 return;
             }
             const newChatBtn = target.closest('[data-action="new-chat"]');
