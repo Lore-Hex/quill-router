@@ -125,6 +125,37 @@
     padding: 8px 16px;
     border-bottom: 1px solid var(--chat-border);
     min-height: 56px;
+    flex-wrap: wrap;
+}
+
+.chat-header-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-width: 240px;
+    line-height: 1.25;
+}
+
+.chat-header-chat-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--chat-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-header-chat-cost {
+    font-size: 11px;
+    color: var(--chat-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 780px) {
+    .chat-header-title {
+        max-width: none;
+        flex: 1;
+    }
 }
 
 .chat-hamburger {
@@ -496,7 +527,7 @@
     gap: 6px;
     border: 1px solid var(--chat-border);
     background: var(--chat-bg);
-    padding: 6px 12px;
+    padding: 4px 10px 4px 6px;
     border-radius: var(--chat-radius);
     font-size: 13px;
     font-weight: 500;
@@ -505,6 +536,18 @@
     white-space: nowrap;
     transition: background 120ms, border-color 120ms;
     font-family: inherit;
+}
+
+.chat-model-pill-avatar {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    flex: 0 0 20px;
 }
 
 .chat-model-pill:hover {
@@ -964,8 +1007,14 @@
     color: var(--chat-text);
 }
 
-.chat-model-row:hover {
+.chat-model-row:hover,
+.chat-model-row.is-keyboard-active {
     background: var(--chat-hover);
+}
+
+.chat-model-row.is-keyboard-active {
+    outline: 2px solid color-mix(in srgb, var(--chat-primary) 30%, transparent);
+    outline-offset: -2px;
 }
 
 .chat-model-row-main {
