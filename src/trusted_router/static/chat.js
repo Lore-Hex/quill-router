@@ -584,6 +584,32 @@
             escapeHtml(slot.system_prompt || "") +
             "</textarea></label>" +
             "</div>" +
+            '<div class="chat-dd-row">' +
+            '<label class="chat-dd-sys-label">Routing</label>' +
+            '<select class="chat-dd-routing-select" data-action="set-routing-sort" data-slot-idx="' +
+            idx +
+            '">' +
+            '<option value="">Auto (TR picks best)</option>' +
+            '<option value="latency"' +
+            (slot.provider_preferences &&
+            slot.provider_preferences.sort_by === "latency"
+                ? " selected"
+                : "") +
+            ">Fastest provider</option>" +
+            '<option value="cost"' +
+            (slot.provider_preferences &&
+            slot.provider_preferences.sort_by === "cost"
+                ? " selected"
+                : "") +
+            ">Cheapest provider</option>" +
+            '<option value="uptime"' +
+            (slot.provider_preferences &&
+            slot.provider_preferences.sort_by === "uptime"
+                ? " selected"
+                : "") +
+            ">Most reliable provider</option>" +
+            "</select>" +
+            "</div>" +
             '<div class="chat-dd-row chat-dd-presets-row">' +
             '<label class="chat-dd-sys-label">Presets</label>' +
             '<div class="chat-dd-presets">' +
@@ -648,14 +674,29 @@
 
         dd.addEventListener("change", (e) => {
             const target = e.target;
-            if (!target || target.dataset.action !== "toggle-enabled") return;
+            if (!target) return;
             const slotIdx = parseInt(target.dataset.slotIdx, 10);
             const targetSlot = chat.models[slotIdx];
             if (!targetSlot) return;
-            targetSlot.enabled = target.checked;
-            chat.updated_at = isoNow();
-            saveState();
-            renderModelsBar();
+            if (target.dataset.action === "toggle-enabled") {
+                targetSlot.enabled = target.checked;
+                chat.updated_at = isoNow();
+                saveState();
+                renderModelsBar();
+                return;
+            }
+            if (target.dataset.action === "set-routing-sort") {
+                if (!targetSlot.provider_preferences) {
+                    targetSlot.provider_preferences = {};
+                }
+                if (target.value) {
+                    targetSlot.provider_preferences.sort_by = target.value;
+                } else {
+                    delete targetSlot.provider_preferences.sort_by;
+                }
+                chat.updated_at = isoNow();
+                saveState();
+            }
         });
 
         return dd;
@@ -921,7 +962,12 @@
             // assistant responses below it).
             const actions = document.createElement("div");
             actions.className = "chat-msg-actions";
-            actions.appendChild(makeAction("Copy", () => navigator.clipboard.writeText(msg.content || "")));
+            actions.appendChild(
+                makeAction("Copy", () => {
+                    navigator.clipboard.writeText(msg.content || "");
+                    showToast("Copied");
+                }),
+            );
             actions.appendChild(makeAction("Edit", () => editUserMessage(chat, msg)));
             actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
             el.appendChild(actions);
@@ -1049,7 +1095,12 @@
             }
             const acts = document.createElement("div");
             acts.className = "chat-msg-actions chat-msg-col-actions";
-            acts.appendChild(makeAction("Copy", () => navigator.clipboard.writeText(resp.content || "")));
+            acts.appendChild(
+                makeAction("Copy", () => {
+                    navigator.clipboard.writeText(resp.content || "");
+                    showToast("Copied");
+                }),
+            );
             acts.appendChild(makeAction("Regenerate", () => regenerateResponse(chat, msg, respIdx)));
             col.appendChild(bubble);
             col.appendChild(acts);
@@ -1174,6 +1225,24 @@
         b.textContent = label;
         b.addEventListener("click", handler);
         return b;
+    }
+
+    // Tiny toast notification system. Used for "Copied" feedback, etc.
+    // Fades in for 200ms, holds 1.6s, fades out for 200ms, removes.
+    let _toastTimer = null;
+    function showToast(text) {
+        let toast = document.querySelector(".chat-toast");
+        if (!toast) {
+            toast = document.createElement("div");
+            toast.className = "chat-toast";
+            document.body.appendChild(toast);
+        }
+        toast.textContent = text;
+        toast.classList.add("is-visible");
+        if (_toastTimer) clearTimeout(_toastTimer);
+        _toastTimer = setTimeout(() => {
+            toast.classList.remove("is-visible");
+        }, 1800);
     }
 
     function deleteMessage(chat, msg) {
@@ -1848,6 +1917,12 @@
             stream: true,
             ...params,
         };
+        if (
+            slot.provider_preferences &&
+            Object.keys(slot.provider_preferences).length > 0
+        ) {
+            body.provider = { ...slot.provider_preferences };
+        }
         const abort = new AbortController();
         // Unique key per (assistantMsg, model) so multi-model parallel
         // sends each get an independently abortable handle.
@@ -2484,6 +2559,25 @@
             exportChatJSON();
             return;
         }
+        // Cmd/Ctrl + J / K — next / prev chat in sidebar (works even
+        // while focused in the input)
+        if (
+            (e.metaKey || e.ctrlKey) &&
+            (e.key.toLowerCase() === "j" || e.key.toLowerCase() === "k")
+        ) {
+            e.preventDefault();
+            const dir = e.key.toLowerCase() === "j" ? 1 : -1;
+            const chats = Object.values(STATE.chats).sort((a, b) => {
+                const pa = a.pinned ? 1 : 0;
+                const pb = b.pinned ? 1 : 0;
+                if (pa !== pb) return pb - pa;
+                return new Date(b.updated_at) - new Date(a.updated_at);
+            });
+            const idx = chats.findIndex((c) => c.id === STATE.activeChatId);
+            const next = Math.max(0, Math.min(chats.length - 1, idx + dir));
+            if (chats[next]) setActiveChat(chats[next].id);
+            return;
+        }
         if (inField) return;
         // / — focus new chat (no modifier)
         if (e.key === "/") {
@@ -2623,9 +2717,10 @@
             "<tr><td><kbd>⌘/Ctrl + Enter</kbd></td><td>Send message</td></tr>" +
             "<tr><td><kbd>⌘/Ctrl + N</kbd></td><td>New chat</td></tr>" +
             "<tr><td><kbd>⌘/Ctrl + E</kbd></td><td>Export to JSON</td></tr>" +
+            "<tr><td><kbd>⌘/Ctrl + J / K</kbd></td><td>Next / previous chat</td></tr>" +
             "<tr><td><kbd>/</kbd></td><td>Focus input</td></tr>" +
             "<tr><td><kbd>K</kbd></td><td>Add model</td></tr>" +
-            "<tr><td><kbd>Esc</kbd></td><td>Close menu</td></tr>" +
+            "<tr><td><kbd>Esc</kbd></td><td>Stop streams / close menu</td></tr>" +
             "<tr><td><kbd>?</kbd></td><td>Show this help</td></tr>" +
             "</table>" +
             "<p>Click outside to close.</p>" +

@@ -1730,6 +1730,51 @@
     color: var(--chat-muted);
 }
 
+/* ── Toast notifications ──────────────────────────────────────── */
+
+.chat-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: var(--chat-text);
+    color: var(--chat-bg);
+    padding: 8px 14px;
+    border-radius: var(--chat-radius);
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms, transform 180ms;
+    z-index: 300;
+    font-family: var(--chat-font);
+}
+
+.chat-toast.is-visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ── Routing select in per-model dropdown ─────────────────────── */
+
+.chat-dd-routing-select {
+    width: 100%;
+    padding: 6px 8px;
+    margin-top: 4px;
+    border: 1px solid var(--chat-border);
+    border-radius: var(--chat-radius);
+    background: var(--chat-bg);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--chat-text);
+}
+
+.chat-dd-routing-select:focus {
+    border-color: var(--chat-primary);
+    outline: none;
+}
+
 /* ── Streaming caret + tool-use display + code-copy button ────── */
 
 .chat-msg-bubble.is-streaming .chat-msg-md::after {
