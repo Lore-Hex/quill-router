@@ -602,6 +602,24 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
     assert "train or improve" in provider_flags["deepseek"]["provider_policy"]
     assert provider_flags["openai"]["provider_zero_data_retention"] is None
+    providers_without_policy_source = [
+        provider["id"] for provider in providers if not provider.get("provider_policy_url")
+    ]
+    assert providers_without_policy_source == []
+    expected_policy_sources = {
+        "tinfoil": "https://tinfoil.sh/security-and-privacy-faq",
+        "venice": "https://docs.venice.ai/overview/privacy",
+        "anthropic": "https://platform.claude.com/docs/en/api/data-retention",
+        "together": "https://docs.together.ai/docs/privacy-and-security",
+        "deepinfra": "https://docs.deepinfra.com/account/data-privacy",
+        "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
+        "deepseek": (
+            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
+            "?locale=en_US"
+        ),
+    }
+    for provider, source in expected_policy_sources.items():
+        assert provider_flags[provider]["provider_policy_url"] == source
     zdr = client.get("/v1/endpoints/zdr").json()["data"]
     assert zdr
     zdr_providers = {item["provider"] for item in zdr}

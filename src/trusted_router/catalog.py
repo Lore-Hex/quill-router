@@ -282,7 +282,7 @@ PROVIDERS: dict[str, Provider] = {
             "agreement is explicitly configured. Treat default direct routing as "
             "non-ZDR for privacy filtering."
         ),
-        provider_policy_url="https://openai.com/policies/row-privacy-policy/",
+        provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
     ),
     "gemini": Provider(
         slug="gemini",
@@ -293,6 +293,7 @@ PROVIDERS: dict[str, Provider] = {
             "Google/Gemini routes are not marked provider-ZDR by default. Use explicit "
             "region/provider policy controls for sensitive workloads."
         ),
+        provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
     ),
     "cerebras": Provider(
         slug="cerebras",
@@ -328,23 +329,70 @@ PROVIDERS: dict[str, Provider] = {
             "No provider-ZDR claim is tracked here. This is separate from any "
             "no-training or enterprise retention commitments Mistral may offer."
         ),
+        provider_policy_url="https://docs.mistral.ai/admin/security-access/privacy",
     ),
-    "kimi": Provider(slug="kimi", name="Kimi", supports_prepaid=True),
-    "zai": Provider(slug="zai", name="Z.AI", supports_prepaid=True),
+    "kimi": Provider(
+        slug="kimi",
+        name="Kimi",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Kimi/Moonshot policy source is linked "
+            "for users who need to review API retention and processing terms."
+        ),
+        provider_policy_url="https://platform.kimi.ai/docs/agreement/userprivacy",
+    ),
+    "zai": Provider(
+        slug="zai",
+        name="Z.AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Z.AI/BigModel policy source is linked "
+            "for users who need to review API retention and processing terms."
+        ),
+        provider_policy_url="https://open.bigmodel.cn/usercenter/agreement/privacy",
+    ),
     # Together AI hosts a broad open-weight catalog (Llama, DeepSeek
     # incl. DeepSeek-OCR, Qwen, Mixtral) plus image gen (FLUX) and
     # embeddings — categories TR didn't otherwise cover. OpenAI-
     # compatible chat completions at api.together.xyz/v1.
     "together": Provider(
-        slug="together", name="Together", supports_embeddings=True, supports_prepaid=True
+        slug="together",
+        name="Together",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        provider_policy=(
+            "Together documents privacy controls, including ZDR as an account/privacy "
+            "setting. TrustedRouter does not mark this route as provider-ZDR unless "
+            "the deployed account setting is separately verified."
+        ),
+        provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
     ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
     # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
-    "grok": Provider(slug="grok", name="xAI Grok", supports_prepaid=True),
+    "grok": Provider(
+        slug="grok",
+        name="xAI Grok",
+        supports_prepaid=True,
+        provider_policy=(
+            "xAI documents no training on API requests and 30-day default audit "
+            "retention, with ZDR as an enterprise feature."
+        ),
+        provider_policy_url="https://docs.x.ai/docs/resources/faq-api/security",
+    ),
     # Novita — multi-model serverless inference. OpenAI-compatible
     # at api.novita.ai/v3/openai. Hosts DeepSeek, Qwen, Llama,
     # GLM, Kimi (and many more) at competitive rates.
-    "novita": Provider(slug="novita", name="Novita AI", supports_prepaid=True),
+    "novita": Provider(
+        slug="novita",
+        name="Novita AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Novita's privacy policy says "
+            "personal information is not used for model training; customer-content "
+            "processing is governed by customer agreements."
+        ),
+        provider_policy_url="https://novita.ai/legal/privacy-policy",
+    ),
     # Phala (RedPill) — confidential AI inference inside Intel TDX
     # / NVIDIA Confidential Compute enclaves. Verified attestation,
     # end-to-end encrypted prompts. **On-brand for TR's trust story.**
@@ -361,10 +409,20 @@ PROVIDERS: dict[str, Provider] = {
             "Tracked as a confidential AI provider with provider-side "
             "attestation and encrypted prompt transport."
         ),
+        provider_policy_url="https://docs.phala.com/confidential-ai-inference/host-llm-in-tee",
     ),
     # SiliconFlow — Chinese serverless inference with 200+ open-weight
     # models. OpenAI-compatible at api.siliconflow.com/v1.
-    "siliconflow": Provider(slug="siliconflow", name="SiliconFlow", supports_prepaid=True),
+    "siliconflow": Provider(
+        slug="siliconflow",
+        name="SiliconFlow",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. SiliconFlow's privacy policy source "
+            "is linked for retention and interaction-data terms."
+        ),
+        provider_policy_url="https://docs.siliconflow.com/en/legals/privacy-policy",
+    ),
     # Tinfoil — TEE-attested confidential inference. Verified-no-logs
     # via remote attestation. **Also on-brand for TR's trust story.**
     # OpenAI-compatible at inference.tinfoil.sh/v1.
@@ -380,6 +438,7 @@ PROVIDERS: dict[str, Provider] = {
             "Tracked as a confidential inference provider with attested "
             "provider compute and no prompt/output logging claims."
         ),
+        provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
     ),
     # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
     # positioning. OpenAI-compatible at api.venice.ai/api/v1.
@@ -395,18 +454,40 @@ PROVIDERS: dict[str, Provider] = {
             "Tracked as a no-logs provider claim. This is not the same as "
             "attested confidential compute."
         ),
+        provider_policy_url="https://docs.venice.ai/overview/privacy",
     ),
     # Parasail — serverless inference platform. Hosts Llama, Qwen,
     # Gemma 4 family, plus their own quantized variants
     # (parasail-* aliases). OpenAI-compatible at api.parasail.io/v1.
     # No public pricing API — pricing scraper falls back to a static
     # table per family until they expose machine-readable rates.
-    "parasail": Provider(slug="parasail", name="Parasail", supports_prepaid=True),
+    "parasail": Provider(
+        slug="parasail",
+        name="Parasail",
+        supports_prepaid=True,
+        provider_policy=(
+            "Parasail documents no input logging/storage for serverless and dedicated "
+            "service paths, with different handling for batch service."
+        ),
+        provider_policy_url=(
+            "https://docs.parasail.io/parasail-docs/security-and-account-management/"
+            "data-privacy-retention"
+        ),
+    ),
     # Lightning AI — Lightning's hosted inference. OpenAI-compatible at
     # lightning.ai/api/v1. Pricing is published per-model in their
     # /v1/models response (input_cost_per_token + output_cost_per_token),
     # which the scraper consumes directly without scraping HTML.
-    "lightning": Provider(slug="lightning", name="Lightning AI", supports_prepaid=True),
+    "lightning": Provider(
+        slug="lightning",
+        name="Lightning AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Lightning's general privacy and "
+            "security documentation is linked for retention review."
+        ),
+        provider_policy_url="https://lightning.ai/legal/privacy",
+    ),
     # GMI Cloud — confidential-GPU inference hosted on H100/H200.
     # OpenAI-compatible at api.gmi-serving.com/v1. Pricing is in the
     # /v1/models response under each model's `pricing` block (per-token
@@ -420,21 +501,50 @@ PROVIDERS: dict[str, Provider] = {
             "Tracked as confidential-GPU provider compute. Zero-retention "
             "and provider-side E2EE are not marked unless separately verified."
         ),
+        provider_policy_url="https://gmicloud.ai/legal/privacy",
     ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
     # metadata.pricing.{input_tokens,output_tokens} as USD per million.
-    "deepinfra": Provider(slug="deepinfra", name="DeepInfra", supports_prepaid=True),
+    "deepinfra": Provider(
+        slug="deepinfra",
+        name="DeepInfra",
+        supports_prepaid=True,
+        provider_policy=(
+            "DeepInfra documents inference data handling and no training on submitted "
+            "API data, with provider-specific exceptions for some upstream model owners."
+        ),
+        provider_policy_url="https://docs.deepinfra.com/account/data-privacy",
+    ),
     # Nebius Token Factory — OpenAI-compatible shared inference for
     # open-weight models. The /v1/models feed publishes exact upstream
     # model IDs with mixed-case authors, so TR carries a provider-native
     # supplement and passes upstream_id through unchanged.
-    "nebius": Provider(slug="nebius", name="Nebius Token Factory", supports_prepaid=True),
+    "nebius": Provider(
+        slug="nebius",
+        name="Nebius Token Factory",
+        supports_prepaid=True,
+        provider_policy=(
+            "Nebius documents no model training on customer data and an optional ZDR "
+            "account setting. TrustedRouter does not mark this route as provider-ZDR "
+            "unless that setting is separately verified."
+        ),
+        provider_policy_url="https://docs.studio.nebius.com/legal/legal-quick-guide",
+    ),
     # MiniMax first-party API. OpenAI-compatible at api.minimax.io/v1;
     # public TR IDs use the OpenRouter-style minimax/<slug> form while
     # endpoint.upstream_id preserves MiniMax's exact mixed-case ID.
-    "minimax": Provider(slug="minimax", name="MiniMax", supports_prepaid=True),
+    "minimax": Provider(
+        slug="minimax",
+        name="MiniMax",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. MiniMax's product privacy overview "
+            "is linked for users who need to review API/open-platform terms."
+        ),
+        provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
+    ),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
