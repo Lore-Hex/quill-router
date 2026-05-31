@@ -266,8 +266,14 @@ async def openai_chat_pong_probe(
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": "reply exactly PONG"}],
-        "max_tokens": 4,
+        "messages": [{"role": "user", "content": "Respond with only the word PONG."}],
+        # Bumped from 4 → 128 so reasoning models (kimi-k2.6, glm-4.6,
+        # deepseek-v4) can finish their thinking phase and still emit
+        # the visible token. At 4 tokens with temperature=0 every
+        # thinking token was consumed BEFORE the model wrote "PONG",
+        # so message.content arrived empty and the matcher flagged
+        # pong_mismatch even though the model behaved correctly.
+        "max_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
@@ -315,8 +321,10 @@ async def responses_pong_probe(
     url = _api_url(target.api_base_url, "/responses")
     body = {
         "model": model,
-        "input": "reply exactly PONG",
-        "max_output_tokens": 4,
+        "input": "Respond with only the word PONG.",
+        # See chat-completions probe — same reason: reasoning models in
+        # the monitor pool need headroom past their thinking phase.
+        "max_output_tokens": 128,
         "temperature": 0,
         "metadata": {"trustedrouter_synthetic": "true"},
     }
@@ -647,23 +655,93 @@ def _pong_matches(text: str) -> bool:
 
 
 def _chat_text(response: httpx.Response) -> str:
+    """Extract assistant-visible text from a /chat/completions reply.
+
+    Handles three shapes the catalog actually returns:
+      * Plain string content (OpenAI canonical)
+      * List-of-parts content (Anthropic, multimodal adapters):
+        [{"type":"text", "text":"…"}, …]
+      * Reasoning-content split (kimi-k2.6, glm-4.6, deepseek-v4):
+        message.content is empty while message.reasoning_content (or
+        message.reasoning) carries the actual answer.
+
+    Concatenates anything we find so the pong matcher sees the full
+    answer regardless of which path the upstream took. Before this
+    was reasoning-aware, the probe flagged `pong_mismatch` on every
+    reasoning model whose visible content arrived empty.
+    """
     if response.status_code != 200:
         return ""
     try:
         choices = response.json().get("choices") or []
-        return str(choices[0].get("message", {}).get("content") or "")
-    except (ValueError, IndexError, AttributeError):
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        parts: list[str] = []
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content") or ""
+                    if isinstance(text, str):
+                        parts.append(text)
+        # Reasoning shapes: some providers expose the thinking trace,
+        # some emit the answer only inside it when max_tokens caps
+        # the visible content. Treat both as fair game for the
+        # output_match check.
+        for key in ("reasoning_content", "reasoning"):
+            value = message.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        text = item.get("text") or ""
+                        if isinstance(text, str):
+                            parts.append(text)
+        return " ".join(p for p in parts if p)
+    except (ValueError, AttributeError):
         return ""
 
 
 def _responses_text(response: httpx.Response) -> str:
+    """Extract text from a /responses reply, walking the full output[].
+
+    OpenAI's Responses API emits an ordered output[] array; for
+    reasoning models the first item is a `reasoning` block and the
+    visible answer is further down in a `message`-type item. The
+    previous extractor read output[0].content[0].text exclusively,
+    so reasoning models showed up as empty → pong_mismatch.
+    """
     if response.status_code != 200:
         return ""
     try:
         output = response.json().get("output") or []
-        content = output[0].get("content") or []
-        return str(content[0].get("text") or "")
-    except (ValueError, IndexError, AttributeError):
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for piece in content:
+                    if isinstance(piece, dict):
+                        text = piece.get("text") or ""
+                        if isinstance(text, str):
+                            parts.append(text)
+            elif isinstance(content, str):
+                parts.append(content)
+            # Reasoning summary blocks
+            summary = item.get("summary")
+            if isinstance(summary, list):
+                for piece in summary:
+                    if isinstance(piece, dict):
+                        text = piece.get("text") or ""
+                        if isinstance(text, str):
+                            parts.append(text)
+        return " ".join(p for p in parts if p)
+    except (ValueError, AttributeError):
         return ""
 
 

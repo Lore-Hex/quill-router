@@ -130,7 +130,9 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert "Error-Budget Burn" not in page.text
     assert "last-48-hour uptime history" in page.text
     text = status.text
+    # Probe prompts must not leak to the public status surface.
     assert "reply exactly PONG" not in text
+    assert "Respond with only the word PONG" not in text
     assert "sk-tr-" not in text
     payload = status.json()["data"]
     provider_sample = next(
@@ -1025,6 +1027,146 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     assert chat.output_match is True
     assert responses.status == "up"
     assert responses.output_match is True
+
+
+@pytest.mark.asyncio
+async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
+    """Reasoning models (kimi-k2.6, glm-4.6, deepseek-v4) sometimes
+    emit the visible answer inside `reasoning_content` while
+    `message.content` arrives empty (or as a list of parts). Before
+    this regression test the probe flagged `pong_mismatch` on every
+    such reply even though the model actually responded with PONG.
+
+    Status-page root cause from 2026-05-31: provider_effective SLO at
+    ~99.0% over 6h, ~99.76% over 24h, driven entirely by
+    pong_mismatch on these models.
+    """
+
+    def chat_handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "",
+                                "reasoning_content": (
+                                    "The user asked for PONG. I'll respond: PONG."
+                                ),
+                            }
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    def chat_list_handler(request: httpx.Request) -> httpx.Response:
+        # Anthropic / multimodal-adapter list-of-parts shape
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "PONG"}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    def responses_handler(request: httpx.Request) -> httpx.Response:
+        # /responses with a reasoning item BEFORE the message item.
+        if request.url.path == "/v1/responses":
+            return httpx.Response(
+                200,
+                json={
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "summary": [
+                                {"text": "Need to reply with PONG."}
+                            ],
+                        },
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "PONG"}],
+                        },
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(chat_handler)) as client:
+        chat = await openai_chat_pong_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            model=MONITOR_MODEL_ID,
+        )
+    assert chat.status == "up", chat.error_type
+    assert chat.output_match is True
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(chat_list_handler)) as client:
+        chat_list = await openai_chat_pong_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            model=MONITOR_MODEL_ID,
+        )
+    assert chat_list.status == "up", chat_list.error_type
+    assert chat_list.output_match is True
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responses_handler)) as client:
+        responses = await responses_pong_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            model=MONITOR_MODEL_ID,
+        )
+    assert responses.status == "up", responses.error_type
+    assert responses.output_match is True
+
+
+@pytest.mark.asyncio
+async def test_pong_probe_still_catches_real_mismatches() -> None:
+    """Belt-and-suspenders: the more-permissive extractor should NOT
+    upgrade a genuinely-wrong reply to pass."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "I'm sorry, I can't help with that."}}
+                    ]
+                },
+            )
+        return httpx.Response(404)
+
+    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = await openai_chat_pong_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            model=MONITOR_MODEL_ID,
+        )
+
+    assert chat.status == "down"
+    assert chat.output_match is False
+    assert chat.error_type == "pong_mismatch"
 
 
 @pytest.mark.asyncio
