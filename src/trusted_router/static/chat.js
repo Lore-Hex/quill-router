@@ -501,14 +501,9 @@
             slot.model_id ||
             "Select a model";
         const provider = providerFromModelId(slot.model_id);
-        const avatarLetter = provider ? provider[0].toUpperCase() : "?";
-        const avatarStyle = providerColor(provider);
+        const avatar = providerAvatar(provider, "chat-avatar-pill");
         pill.innerHTML =
-            '<span class="chat-model-pill-avatar" style="' +
-            avatarStyle +
-            '">' +
-            escapeHtml(avatarLetter) +
-            "</span>" +
+            avatar +
             '<span class="chat-model-pill-name">' +
             escapeHtml(label) +
             "</span>" +
@@ -836,14 +831,28 @@
         renderHeaderMeta();
     }
 
-    // Per-code-block copy button. After marked + DOMPurify rendering,
-    // each <pre> gets a hover-revealed Copy button overlay. The button
-    // copies the *raw* code (not the HTML) so the user gets clean text.
+    // Per-code-block copy button + language label. After marked +
+    // DOMPurify rendering, each <pre> gets:
+    //   * A small language pill in the top-left (read from the
+    //     <code>'s `language-XXX` class added by highlight.js)
+    //   * A hover-revealed Copy button overlay in the top-right
     function injectCodeCopyButtons(root) {
         const pres = root.querySelectorAll(".chat-msg-md pre");
         pres.forEach((pre) => {
             if (pre.querySelector(".chat-code-copy")) return; // already injected
             const code = pre.querySelector("code") || pre;
+            // Language label
+            const langClass = Array.from(code.classList || []).find((c) =>
+                c.startsWith("language-"),
+            );
+            if (langClass) {
+                const lang = langClass.slice("language-".length);
+                const label = document.createElement("div");
+                label.className = "chat-code-lang";
+                label.textContent = lang;
+                pre.appendChild(label);
+            }
+            // Copy button
             const btn = document.createElement("button");
             btn.type = "button";
             btn.className = "chat-code-copy";
@@ -856,10 +865,19 @@
                     setTimeout(() => (btn.textContent = "Copy"), 1200);
                 });
             });
-            // Make sure pre is positioned for the absolute child
             pre.style.position = pre.style.position || "relative";
             pre.appendChild(btn);
         });
+    }
+
+    // Lightweight image overlay for attachment thumbnails. Click a
+    // thumbnail in a sent user message → full-bleed view with backdrop.
+    function openImageOverlay(src) {
+        const overlay = document.createElement("div");
+        overlay.className = "chat-image-overlay";
+        overlay.innerHTML = '<img src="' + escapeHtml(src) + '" alt="">';
+        overlay.addEventListener("click", () => overlay.remove());
+        document.body.appendChild(overlay);
     }
 
     function renderMessage(msg, chat) {
@@ -871,7 +889,31 @@
         if (msg.role === "user") {
             const bubble = document.createElement("div");
             bubble.className = "chat-msg-bubble";
-            bubble.textContent = msg.content || "";
+            // Render attachments above the text — same shape Stripe /
+            // OpenRouter use to surface what was sent alongside the
+            // prompt. Each attachment is shown as a small inline
+            // thumbnail with a click-to-expand.
+            if (msg.attachments && msg.attachments.length > 0) {
+                const att = document.createElement("div");
+                att.className = "chat-msg-attachments";
+                for (const a of msg.attachments) {
+                    if (a.type === "image_url" && a.image_url && a.image_url.url) {
+                        const img = document.createElement("img");
+                        img.className = "chat-msg-attachment-img";
+                        img.src = a.image_url.url;
+                        img.alt = "attachment";
+                        img.addEventListener("click", () => {
+                            openImageOverlay(a.image_url.url);
+                        });
+                        att.appendChild(img);
+                    }
+                }
+                bubble.appendChild(att);
+            }
+            const textNode = document.createElement("div");
+            textNode.className = "chat-msg-user-text";
+            textNode.textContent = msg.content || "";
+            bubble.appendChild(textNode);
             el.appendChild(bubble);
             // User-message actions: Copy + Edit + Delete. Edit pulls
             // the message into the input box for re-send (the user
@@ -902,18 +944,13 @@
                 h.className = "chat-msg-col-head";
                 const model = findModel(resp.model_id);
                 const provider = providerFromModelId(resp.model_id);
-                const avatarStyle = providerColor(provider);
                 const label =
                     resp.slot_label ||
                     (model && model.name) ||
                     resp.model_id ||
                     "";
                 h.innerHTML =
-                    '<span class="chat-msg-col-head-avatar" style="' +
-                    avatarStyle +
-                    '">' +
-                    escapeHtml(provider ? provider[0].toUpperCase() : "?") +
-                    "</span>" +
+                    providerAvatar(provider, "chat-avatar-col") +
                     '<span class="chat-msg-col-head-label">' +
                     escapeHtml(label) +
                     "</span>";
@@ -1348,11 +1385,10 @@
             row.classList.add("is-active-model");
         }
         const provider = providerFromModelId(m.id);
-        const avatarLetter = provider ? provider[0].toUpperCase() : "?";
-        const avatarStyle = providerColor(provider);
+        const avatar = providerAvatar(provider, "chat-avatar-row");
         row.innerHTML = `
             <div class="chat-model-row-main">
-                <span class="chat-model-row-avatar" style="${avatarStyle}">${escapeHtml(avatarLetter)}</span>
+                ${avatar}
                 <div class="chat-model-row-text">
                     <div class="chat-model-row-name">${escapeHtml(m.name || m.id)}</div>
                     <div class="chat-model-row-provider">${escapeHtml(provider || m.id)}</div>
@@ -1392,11 +1428,79 @@
         return slash > 0 ? id.slice(0, slash) : id;
     }
 
+    // Abstract geometric glyphs per provider — distinct enough that
+    // a returning user reads "anthropic" / "openai" / "google" at a
+    // glance, but visually generic so they don't infringe on any
+    // real logo. Falls back to the first letter when a provider
+    // isn't in the map.
+    const _PROVIDER_GLYPHS = {
+        anthropic:
+            '<svg viewBox="0 0 16 16"><path d="M3 13 L6.5 3 H9.5 L13 13 H10.7 L9.9 10.5 H6.1 L5.3 13 Z M6.7 8.7 H9.3 L8 4.8 Z" fill="currentColor"/></svg>',
+        openai:
+            '<svg viewBox="0 0 16 16"><path d="M8 2 L9.6 4.5 L12.5 4.5 L11.0 7 L12.5 9.5 L9.6 9.5 L8 12 L6.4 9.5 L3.5 9.5 L5 7 L3.5 4.5 L6.4 4.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+        google:
+            '<svg viewBox="0 0 16 16"><circle cx="5" cy="5" r="1.5" fill="currentColor"/><circle cx="11" cy="5" r="1.5" fill="currentColor"/><circle cx="5" cy="11" r="1.5" fill="currentColor"/><circle cx="11" cy="11" r="1.5" fill="currentColor"/></svg>',
+        meta:
+            '<svg viewBox="0 0 16 16"><path d="M2 8 C2 5 4 4 5.5 4 C7 4 8 5 9 7 C10 9 11 10 12 10 C13 10 14 9 14 8 C14 7 13 6.5 12 7 C11 7.5 10 8 8 8 C6 8 5 7.5 4 7 C3 6.5 2 7 2 8 Z" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+        mistralai:
+            '<svg viewBox="0 0 16 16"><path d="M2 4 L8 10 L14 4 M2 8 L8 14 L14 8" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>',
+        cohere:
+            '<svg viewBox="0 0 16 16"><path d="M3 13 A6 6 0 0 1 13 7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>',
+        "x-ai":
+            '<svg viewBox="0 0 16 16"><path d="M3 3 L13 13 M13 3 L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+        xai:
+            '<svg viewBox="0 0 16 16"><path d="M3 3 L13 13 M13 3 L3 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+        deepseek:
+            '<svg viewBox="0 0 16 16"><path d="M8 2 L14 8 L8 14 L2 8 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+        groq:
+            '<svg viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="6" width="4" height="4" fill="currentColor"/></svg>',
+        together:
+            '<svg viewBox="0 0 16 16"><path d="M8 2 L14 13 L2 13 Z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+        cerebras:
+            '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="5" r="1" fill="currentColor"/><circle cx="8" cy="11" r="1" fill="currentColor"/><circle cx="5" cy="8" r="1" fill="currentColor"/><circle cx="11" cy="8" r="1" fill="currentColor"/></svg>',
+        perplexity:
+            '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>',
+        moonshotai:
+            '<svg viewBox="0 0 16 16"><path d="M11 8 A5 5 0 1 1 5 4 A4 4 0 1 0 11 8 Z" fill="currentColor"/></svg>',
+        "z-ai":
+            '<svg viewBox="0 0 16 16"><path d="M4 4 L12 4 L4 12 L12 12" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/></svg>',
+        novita:
+            '<svg viewBox="0 0 16 16"><path d="M3 8 L8 3 L13 8 L8 13 Z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>',
+        venice:
+            '<svg viewBox="0 0 16 16"><path d="M3 11 Q5 7 8 11 T13 11" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>',
+        parasail:
+            '<svg viewBox="0 0 16 16"><path d="M8 3 L13 13 L8 11 L3 13 Z" stroke="currentColor" stroke-width="1.4" fill="none"/></svg>',
+    };
+
+    function providerGlyph(provider) {
+        return _PROVIDER_GLYPHS[provider] || null;
+    }
+
+    // Builds an avatar string (HTML span) for a given provider. Prefers
+    // an SVG glyph when we have one, falls back to the provider's
+    // first letter on a tinted background.
+    function providerAvatar(provider, sizeClass) {
+        const cls = sizeClass || "";
+        const glyph = providerGlyph(provider);
+        const style = providerColor(provider);
+        if (glyph) {
+            return (
+                '<span class="chat-avatar ' + cls + '" style="' + style + '">' +
+                glyph +
+                "</span>"
+            );
+        }
+        const letter = provider ? provider[0].toUpperCase() : "?";
+        return (
+            '<span class="chat-avatar ' + cls + '" style="' + style + '">' +
+            escapeHtml(letter) +
+            "</span>"
+        );
+    }
+
     // Deterministic per-provider tint so each row's avatar reads as
-    // "from anthropic" vs "from openai" at a glance — matches the
-    // OpenRouter visual cue of provider-colored circles without
-    // requiring actual logo images. Hash the provider name to one
-    // of N OR-style accent hues.
+    // "from anthropic" vs "from openai" at a glance. Hashes the
+    // provider name to one of N OR-style accent hues.
     const _PROVIDER_PALETTE = [
         ["#6467f2", "#ffffff"], // primary purple — Anthropic/Claude-ish
         ["#10a37f", "#ffffff"], // green — OpenAI vibe
@@ -2422,7 +2526,12 @@
         if (fab) {
             fab.addEventListener("click", () => {
                 const t = document.querySelector("[data-chat-thread]");
-                if (t) t.scrollTop = t.scrollHeight;
+                if (!t) return;
+                if (typeof t.scrollTo === "function") {
+                    t.scrollTo({ top: t.scrollHeight, behavior: "smooth" });
+                } else {
+                    t.scrollTop = t.scrollHeight;
+                }
             });
         }
 
