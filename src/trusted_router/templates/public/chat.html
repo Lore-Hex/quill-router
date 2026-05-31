@@ -34,6 +34,13 @@
   <aside class="chat-sidebar" data-chat-sidebar>
     <div class="chat-sidebar-head">
       <button class="btn primary chat-new" type="button" data-action="new-chat">+ New chat</button>
+      <input
+        type="search"
+        class="chat-sidebar-search"
+        data-chat-sidebar-search
+        placeholder="Search chats…"
+        aria-label="Search chats"
+      >
     </div>
     <div class="chat-sidebar-list" data-chat-list>
       {# Populated client-side from localStorage. #}
