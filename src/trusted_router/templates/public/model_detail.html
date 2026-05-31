@@ -11,7 +11,14 @@
       <tbody>
         <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
-        <tr><th>Providers</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
+        <tr><th>Providers</th><td>
+          <div class="provider-chip-list">
+            {% for provider in model.providers %}
+            <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+            {% endfor %}
+          </div>
+        </td></tr>
+        <tr><th>Endpoints</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
         <tr><th>Modes</th><td>
           {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}

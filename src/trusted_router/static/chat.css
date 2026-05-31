@@ -1818,7 +1818,6 @@
 
 .chat-search-bar {
     position: absolute;
-    bottom: calc(100% + 0px);
     left: 16px;
     right: 16px;
     bottom: auto;
@@ -2515,7 +2514,7 @@
     .chat-header-title {
         display: none; /* save horizontal space; cost still visible in column meta */
     }
-    .chat-header-actions .chat-header-btn:not(:first-child):not(:last-child) {
+    .chat-header-actions .chat-header-btn:not(:first-child, :last-child) {
         display: none; /* keep only Sys + ? on small screens; rest via Settings */
     }
     .chat-sidebar {

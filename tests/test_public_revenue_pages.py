@@ -49,6 +49,19 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert "Public Catalog" in response.text
     assert "trustedrouter/auto" in response.text
     assert "OpenRouter-compatible JSON remains" in response.text
+    assert '<span class="pill" title="kimi">Kimi</span>' in response.text
+    assert '<span class="pill" title="parasail">Parasail</span>' in response.text
+    assert '<span class="pill" title="tinfoil">Tinfoil</span>' in response.text
+
+
+def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
+    response = client.get("/models/moonshotai/kimi-k2.6")
+
+    assert response.status_code == 200
+    assert "Providers serving this model" in response.text
+    assert "Endpoints</th>" in response.text
+    for provider in ["kimi", "parasail", "phala", "together", "tinfoil", "novita"]:
+        assert f'title="{provider}"' in response.text
 
 
 def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClient) -> None:

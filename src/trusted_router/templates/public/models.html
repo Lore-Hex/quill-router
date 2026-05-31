@@ -38,7 +38,13 @@
           </td>
           <td>{{ model.provider }}</td>
           <td>{{ model.context_length }}</td>
-          <td>{{ model.provider_count }}</td>
+          <td>
+            <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">
+              {% for provider in model.providers %}
+              <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+              {% endfor %}
+            </div>
+          </td>
           <td>
             {% if model.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
             {% if model.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}

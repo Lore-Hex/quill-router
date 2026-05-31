@@ -280,7 +280,7 @@ def _model_view(model: Model) -> dict[str, object]:
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
-    distinct_providers = {endpoint.provider for endpoint in endpoints} or {model.provider}
+    providers = _endpoint_provider_views(endpoints, fallback_provider=model.provider)
     return {
         "id": model.id,
         "name": model.name,
@@ -296,9 +296,31 @@ def _model_view(model: Model) -> dict[str, object]:
         "provider_zero_data_retention": provider.provider_zero_data_retention,
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
-        "provider_count": len(distinct_providers),
+        "providers": providers,
+        "provider_count": len(providers),
         "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
     }
+
+
+def _endpoint_provider_views(
+    endpoints: Sequence[ModelEndpoint], *, fallback_provider: str
+) -> list[dict[str, str]]:
+    """Return distinct serving providers in endpoint order.
+
+    A model can have separate Credits and BYOK endpoints on the same
+    provider. The public catalog should list provider companies once,
+    then let the detail table expose individual endpoint rows.
+    """
+    seen: set[str] = set()
+    provider_views: list[dict[str, str]] = []
+    provider_slugs = [endpoint.provider for endpoint in endpoints] or [fallback_provider]
+    for slug in provider_slugs:
+        if slug in seen:
+            continue
+        seen.add(slug)
+        provider = PROVIDERS.get(slug)
+        provider_views.append({"name": provider.name if provider else slug, "slug": slug})
+    return provider_views
 
 
 def _provider_view(provider: Provider) -> dict[str, object]:
@@ -386,6 +408,7 @@ def _model_detail_view(model: Model) -> dict[str, object]:
         "context_length_int": model.context_length,
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
+        "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
