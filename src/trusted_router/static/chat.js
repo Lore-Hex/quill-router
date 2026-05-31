@@ -36,7 +36,35 @@
         (window.__TR_CHAT__ && window.__TR_CHAT__.issueKeyPath) ||
         "/internal/chat/issue-browser-key";
     const DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6";
-    const DEFAULT_PARAMS = { temperature: 1.0, top_p: 1.0, max_tokens: 1024 };
+    const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
+    // Full param set OpenRouter exposes. Per-model overrides; passed
+    // through to /v1/chat/completions as-is. Providers that don't
+    // recognize a param (e.g. OpenAI doesn't have top_k) simply
+    // ignore it.
+    const DEFAULT_PARAMS = {
+        temperature: 1.0,
+        top_p: 1.0,
+        top_k: 0, // 0 = disabled / provider default
+        max_tokens: 1024,
+        frequency_penalty: 0,
+        presence_penalty: 0,
+        repetition_penalty: 1.0,
+        min_p: 0,
+        top_a: 0,
+    };
+    // Which params to include in the API request body. We omit params
+    // that match the provider-neutral default (0/1.0/disabled) so the
+    // wire payload doesn't push every provider into explicit-set mode.
+    function buildParamsForRequest(slot) {
+        const out = {};
+        for (const k of Object.keys(slot.params)) {
+            const v = slot.params[k];
+            const def = DEFAULT_PARAMS[k];
+            if (v === def) continue;
+            out[k] = v;
+        }
+        return out;
+    }
 
     // ── State ─────────────────────────────────────────────────────────
     /** @type {{chats: Object, activeChatId: string|null, preferences: Object}} */
@@ -353,47 +381,231 @@
 
     // ── Render: models bar (chunk 2 = 1 pill; chunk 3 = up to 4) ─────
 
+    // Tracks which slot's settings dropdown (if any) is open.
+    let openDropdownSlotIdx = -1;
+
     function renderModelsBar() {
         const bar = document.querySelector("[data-chat-models-bar]");
         if (!bar) return;
         bar.innerHTML = "";
         const chat = ensureActiveChat();
-        const slot = chat.models[0]; // chunk 2: single slot
-        const model = findModel(slot.model_id);
 
+        chat.models.forEach((slot, idx) => {
+            bar.appendChild(makeModelPill(chat, slot, idx));
+        });
+
+        if (chat.models.length < MAX_MODELS_PER_CHAT) {
+            const addBtn = document.createElement("button");
+            addBtn.type = "button";
+            addBtn.className = "chat-model-add";
+            addBtn.dataset.action = "add-model";
+            addBtn.setAttribute("aria-label", "Add another model to compare");
+            addBtn.textContent = "+ Add model";
+            bar.appendChild(addBtn);
+        }
+    }
+
+    function makeModelPill(chat, slot, idx) {
+        const wrap = document.createElement("div");
+        wrap.className = "chat-model-pill-wrap";
+        if (!slot.enabled) wrap.classList.add("is-disabled");
+        const model = findModel(slot.model_id);
         const pill = document.createElement("button");
         pill.type = "button";
         pill.className = "chat-model-pill";
-        pill.dataset.action = "open-model-picker";
-        pill.textContent =
-            (model && model.name) || slot.model_id || "Select a model";
-        bar.appendChild(pill);
+        pill.dataset.action = "toggle-model-dropdown";
+        pill.dataset.slotIdx = String(idx);
+        const label =
+            slot.label ||
+            (model && model.name) ||
+            slot.model_id ||
+            "Select a model";
+        pill.innerHTML =
+            '<span class="chat-model-pill-name">' +
+            escapeHtml(label) +
+            "</span>" +
+            (chat.models.length > 1
+                ? '<span class="chat-model-pill-num">#' + (idx + 1) + "</span>"
+                : "") +
+            '<span class="chat-model-pill-caret">▾</span>';
+        wrap.appendChild(pill);
+        if (openDropdownSlotIdx === idx) {
+            wrap.appendChild(makeModelDropdown(chat, slot, idx));
+        }
+        return wrap;
+    }
 
-        // Inline parameter strip — chunk 3 expands these into a
-        // dropdown panel with all 9 sliders.
-        const params = document.createElement("div");
-        params.className = "chat-params-strip";
-        params.innerHTML = `
-            <label>Temp <input type="range" min="0" max="2" step="0.1" value="${slot.params.temperature}" data-param="temperature" data-slot="0"><span class="chat-param-value">${slot.params.temperature.toFixed(1)}</span></label>
-            <label>Max <input type="range" min="32" max="8192" step="32" value="${slot.params.max_tokens}" data-param="max_tokens" data-slot="0"><span class="chat-param-value">${slot.params.max_tokens}</span></label>
-        `;
-        params.addEventListener("input", (e) => {
+    function makeModelDropdown(chat, slot, idx) {
+        const dd = document.createElement("div");
+        dd.className = "chat-model-dropdown";
+        const enabledChecked = slot.enabled ? "checked" : "";
+        const sliderRow = (key, min, max, step, label) => {
+            const v = slot.params[key];
+            const display =
+                step >= 1 ? String(v) : Number(v).toFixed(step < 0.1 ? 2 : 1);
+            return (
+                '<label class="chat-dd-slider">' +
+                '<span class="chat-dd-slider-label">' +
+                label +
+                "</span>" +
+                '<input type="range" min="' +
+                min +
+                '" max="' +
+                max +
+                '" step="' +
+                step +
+                '" value="' +
+                v +
+                '" data-param="' +
+                key +
+                '" data-slot-idx="' +
+                idx +
+                '">' +
+                '<span class="chat-dd-slider-value">' +
+                display +
+                "</span>" +
+                "</label>"
+            );
+        };
+        dd.innerHTML =
+            '<div class="chat-dd-row chat-dd-row-flex">' +
+            '<button type="button" class="chat-dd-action" data-action="open-model-picker" data-slot-idx="' +
+            idx +
+            '">Change model</button>' +
+            '<button type="button" class="chat-dd-action" data-action="duplicate-model" data-slot-idx="' +
+            idx +
+            '">Duplicate</button>' +
+            (chat.models.length > 1
+                ? '<button type="button" class="chat-dd-action chat-dd-action-danger" data-action="remove-model" data-slot-idx="' +
+                  idx +
+                  '">Remove</button>'
+                : "") +
+            "</div>" +
+            '<div class="chat-dd-row">' +
+            '<label class="chat-dd-toggle"><input type="checkbox" ' +
+            enabledChecked +
+            ' data-action="toggle-enabled" data-slot-idx="' +
+            idx +
+            '">Enabled</label>' +
+            '<input type="text" class="chat-dd-label-input" placeholder="Rename (optional)" value="' +
+            escapeHtml(slot.label || "") +
+            '" data-action="rename-model" data-slot-idx="' +
+            idx +
+            '">' +
+            "</div>" +
+            '<div class="chat-dd-row chat-dd-sys-row">' +
+            '<label class="chat-dd-sys-label">System prompt override' +
+            '<textarea data-action="override-sys" data-slot-idx="' +
+            idx +
+            '" rows="2" placeholder="Falls back to chat-level if empty.">' +
+            escapeHtml(slot.system_prompt || "") +
+            "</textarea></label>" +
+            "</div>" +
+            '<div class="chat-dd-sliders">' +
+            sliderRow("temperature", 0, 2, 0.1, "Temperature") +
+            sliderRow("top_p", 0, 1, 0.05, "Top P") +
+            sliderRow("top_k", 0, 100, 1, "Top K") +
+            sliderRow("max_tokens", 32, 8192, 32, "Max tokens") +
+            sliderRow("frequency_penalty", -2, 2, 0.1, "Frequency penalty") +
+            sliderRow("presence_penalty", -2, 2, 0.1, "Presence penalty") +
+            sliderRow("repetition_penalty", 0.5, 2, 0.05, "Repetition penalty") +
+            sliderRow("min_p", 0, 1, 0.01, "Min P") +
+            sliderRow("top_a", 0, 1, 0.01, "Top A") +
+            "</div>";
+
+        dd.addEventListener("input", (e) => {
             const target = e.target;
-            if (!target.matches || !target.matches("input[data-param]")) return;
+            if (!target || !target.dataset) return;
+            const slotIdx = parseInt(target.dataset.slotIdx, 10);
             const which = target.dataset.param;
-            const val =
-                which === "max_tokens"
-                    ? parseInt(target.value, 10)
-                    : parseFloat(target.value);
-            slot.params[which] = val;
-            const valSpan = target.nextElementSibling;
-            if (valSpan)
-                valSpan.textContent =
-                    which === "max_tokens" ? String(val) : val.toFixed(1);
+            const action = target.dataset.action;
+            const targetSlot = chat.models[slotIdx];
+            if (!targetSlot) return;
+            if (which) {
+                const val =
+                    target.step && parseFloat(target.step) >= 1
+                        ? parseInt(target.value, 10)
+                        : parseFloat(target.value);
+                targetSlot.params[which] = val;
+                const valSpan = target.nextElementSibling;
+                if (valSpan)
+                    valSpan.textContent =
+                        target.step && parseFloat(target.step) >= 1
+                            ? String(val)
+                            : val.toFixed(target.step < 0.1 ? 2 : 1);
+            } else if (action === "override-sys") {
+                targetSlot.system_prompt = target.value;
+            } else if (action === "rename-model") {
+                targetSlot.label = target.value;
+                renderModelsBar();
+            }
             chat.updated_at = isoNow();
             saveState();
         });
-        bar.appendChild(params);
+
+        dd.addEventListener("change", (e) => {
+            const target = e.target;
+            if (!target || target.dataset.action !== "toggle-enabled") return;
+            const slotIdx = parseInt(target.dataset.slotIdx, 10);
+            const targetSlot = chat.models[slotIdx];
+            if (!targetSlot) return;
+            targetSlot.enabled = target.checked;
+            chat.updated_at = isoNow();
+            saveState();
+            renderModelsBar();
+        });
+
+        return dd;
+    }
+
+    function addModel() {
+        const chat = ensureActiveChat();
+        if (chat.models.length >= MAX_MODELS_PER_CHAT) return;
+        chat.models.push({
+            model_id: STATE.preferences.lastModelId || DEFAULT_MODEL_ID,
+            system_prompt: "",
+            params: { ...DEFAULT_PARAMS },
+            enabled: true,
+            label: "",
+        });
+        chat.updated_at = isoNow();
+        saveState();
+        renderModelsBar();
+        // Auto-open the picker so the user picks a model for the
+        // freshly-added pill.
+        openModelPicker(chat.models.length - 1);
+    }
+
+    function duplicateModel(idx) {
+        const chat = ensureActiveChat();
+        const src = chat.models[idx];
+        if (!src || chat.models.length >= MAX_MODELS_PER_CHAT) return;
+        chat.models.push({
+            model_id: src.model_id,
+            system_prompt: src.system_prompt,
+            params: { ...src.params },
+            enabled: true,
+            label: src.label,
+        });
+        chat.updated_at = isoNow();
+        saveState();
+        renderModelsBar();
+    }
+
+    function removeModel(idx) {
+        const chat = ensureActiveChat();
+        if (chat.models.length <= 1) return;
+        chat.models.splice(idx, 1);
+        openDropdownSlotIdx = -1;
+        chat.updated_at = isoNow();
+        saveState();
+        renderModelsBar();
+        renderThread();
+    }
+
+    function toggleModelDropdown(idx) {
+        openDropdownSlotIdx = openDropdownSlotIdx === idx ? -1 : idx;
+        renderModelsBar();
     }
 
     // ── Render: system prompt panel ───────────────────────────────────
@@ -438,18 +650,48 @@
             "chat-msg chat-msg-" + (msg.role === "user" ? "user" : "assistant");
         el.dataset.msgId = msg.id;
 
-        const bubble = document.createElement("div");
-        bubble.className = "chat-msg-bubble";
         if (msg.role === "user") {
+            const bubble = document.createElement("div");
+            bubble.className = "chat-msg-bubble";
             bubble.textContent = msg.content || "";
-        } else {
-            // Assistant: render only the first response (chunk 2 is
-            // single-model). chunk 3 will iterate responses[] for
-            // side-by-side columns.
-            const resp = (msg.responses && msg.responses[0]) || {
-                model_id: "",
-                content: "",
-            };
+            el.appendChild(bubble);
+            // User-message actions: Copy + Edit + Delete. Edit pulls
+            // the message into the input box for re-send (the user
+            // can revise their prompt and re-send to regenerate all
+            // assistant responses below it).
+            const actions = document.createElement("div");
+            actions.className = "chat-msg-actions";
+            actions.appendChild(makeAction("Copy", () => navigator.clipboard.writeText(msg.content || "")));
+            actions.appendChild(makeAction("Edit", () => editUserMessage(chat, msg)));
+            actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
+            el.appendChild(actions);
+            return el;
+        }
+
+        // Assistant: one column per response, side-by-side on
+        // desktop, stacked on mobile (via .chat-msg-grid-N CSS).
+        const responses = (msg.responses && msg.responses.length > 0)
+            ? msg.responses
+            : [{ model_id: "", content: "" }];
+        const grid = document.createElement("div");
+        grid.className = "chat-msg-grid chat-msg-grid-" + responses.length;
+        responses.forEach((resp, respIdx) => {
+            const col = document.createElement("div");
+            col.className = "chat-msg-col";
+            col.dataset.respIdx = String(respIdx);
+            if (responses.length > 1) {
+                const h = document.createElement("div");
+                h.className = "chat-msg-col-head";
+                const model = findModel(resp.model_id);
+                h.textContent =
+                    resp.slot_label ||
+                    (model && model.name) ||
+                    resp.model_id ||
+                    "";
+                col.appendChild(h);
+            }
+            const bubble = document.createElement("div");
+            bubble.className = "chat-msg-bubble";
             const md = document.createElement("div");
             md.className = "chat-msg-md";
             md.innerHTML = renderMarkdown(resp.content || "");
@@ -471,43 +713,94 @@
                     (resp.tokens_in || 0) +
                     " in / " +
                     (resp.tokens_out || 0) +
-                    " out  ·  " +
-                    (resp.model_id || "");
+                    " out" +
+                    (responses.length === 1
+                        ? "  ·  " + (resp.model_id || "")
+                        : "");
                 bubble.appendChild(meta);
             }
-        }
-        el.appendChild(bubble);
-
-        // Per-message actions (Copy + Delete in chunk 2; Regenerate +
-        // Edit in chunk 3).
-        const actions = document.createElement("div");
-        actions.className = "chat-msg-actions";
-        const copy = document.createElement("button");
-        copy.type = "button";
-        copy.className = "chat-msg-action";
-        copy.textContent = "Copy";
-        copy.addEventListener("click", () => {
-            const text =
-                msg.role === "user"
-                    ? msg.content
-                    : (msg.responses && msg.responses[0] && msg.responses[0].content) ||
-                      "";
-            navigator.clipboard.writeText(text);
+            const acts = document.createElement("div");
+            acts.className = "chat-msg-actions chat-msg-col-actions";
+            acts.appendChild(makeAction("Copy", () => navigator.clipboard.writeText(resp.content || "")));
+            acts.appendChild(makeAction("Regenerate", () => regenerateResponse(chat, msg, respIdx)));
+            col.appendChild(bubble);
+            col.appendChild(acts);
+            grid.appendChild(col);
         });
-        const del = document.createElement("button");
-        del.type = "button";
-        del.className = "chat-msg-action";
-        del.textContent = "Delete";
-        del.addEventListener("click", () => {
-            chat.messages = chat.messages.filter((m) => m.id !== msg.id);
+        el.appendChild(grid);
+
+        // Whole-assistant-message actions
+        const actions = document.createElement("div");
+        actions.className = "chat-msg-actions chat-msg-msg-actions";
+        actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
+        el.appendChild(actions);
+        return el;
+    }
+
+    function makeAction(label, handler) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chat-msg-action";
+        b.textContent = label;
+        b.addEventListener("click", handler);
+        return b;
+    }
+
+    function deleteMessage(chat, msg) {
+        chat.messages = chat.messages.filter((m) => m.id !== msg.id);
+        chat.updated_at = isoNow();
+        saveState();
+        renderThread();
+    }
+
+    function editUserMessage(chat, msg) {
+        const input = document.querySelector("[data-chat-input]");
+        if (!input) return;
+        input.value = msg.content || "";
+        // Drop this user message and the assistant message immediately
+        // after it (if any) — pressing Send again will regenerate.
+        const idx = chat.messages.indexOf(msg);
+        if (idx >= 0) {
+            const next = chat.messages[idx + 1];
+            const toRemove = new Set([msg.id]);
+            if (next && next.role === "assistant") toRemove.add(next.id);
+            chat.messages = chat.messages.filter((m) => !toRemove.has(m.id));
             chat.updated_at = isoNow();
             saveState();
             renderThread();
-        });
-        actions.appendChild(copy);
-        actions.appendChild(del);
-        el.appendChild(actions);
-        return el;
+        }
+        input.focus();
+        autoResize(input);
+    }
+
+    async function regenerateResponse(chat, msg, respIdx) {
+        // Strip just this response, leave others, re-stream into the
+        // emptied slot. For multi-model use, regenerate ONE column
+        // while leaving the others' responses intact.
+        if (!msg.responses || !msg.responses[respIdx]) return;
+        const resp = msg.responses[respIdx];
+        resp.content = "";
+        resp.tokens_in = 0;
+        resp.tokens_out = 0;
+        resp.cost_microdollars = 0;
+        resp.error = null;
+        saveState();
+        renderThread();
+        try {
+            const key = await ensureBrowserKey();
+            // Find the matching slot for this response.
+            const slot =
+                chat.models.find(
+                    (m) =>
+                        m.model_id === resp.model_id &&
+                        (m.label || "") === (resp.slot_label || ""),
+                ) || chat.models[0];
+            await streamCompletion(key, chat, slot, msg, respIdx);
+        } catch (e) {
+            resp.error = String(e && e.message ? e.message : e);
+            saveState();
+            renderThread();
+        }
     }
 
     // ── Markdown rendering (with XSS sanitization) ────────────────────
@@ -590,16 +883,23 @@
         }
     }
 
+    // Which slot the next selectModel() call should write to. Set by
+    // openModelPicker(slotIdx). Defaults to 0 (single-model chunk-2
+    // behavior preserved when no slot is specified).
+    let pickerTargetSlot = 0;
+
     function selectModel(modelId) {
         const chat = ensureActiveChat();
-        chat.models[0].model_id = modelId;
+        const slot = chat.models[pickerTargetSlot] || chat.models[0];
+        if (slot) slot.model_id = modelId;
         chat.updated_at = isoNow();
         STATE.preferences.lastModelId = modelId;
         saveState();
         renderModelsBar();
     }
 
-    function openModelPicker() {
+    function openModelPicker(slotIdx) {
+        pickerTargetSlot = typeof slotIdx === "number" ? slotIdx : 0;
         if (pickerEl) return;
         pickerEl = document.createElement("div");
         pickerEl.className = "chat-model-picker";
@@ -684,52 +984,88 @@
 
         try {
             const key = await ensureBrowserKey();
-            // Chunk 2: single-model only — fire one stream.
-            const slot = chat.models[0];
-            assistantMsg.responses.push({
-                model_id: slot.model_id,
-                content: "",
-                tokens_in: 0,
-                tokens_out: 0,
-                cost_microdollars: 0,
-                error: null,
-            });
-            await streamCompletion(key, chat, slot, assistantMsg);
+            // Multi-model fan-out: kick off one stream per enabled
+            // slot, all concurrent. Each writes into its own slot in
+            // assistantMsg.responses[]; the UI updates per-column.
+            const enabledSlots = chat.models.filter((m) => m.enabled);
+            if (enabledSlots.length === 0) {
+                throw new Error("All models are disabled — enable at least one.");
+            }
+            for (const slot of enabledSlots) {
+                assistantMsg.responses.push({
+                    model_id: slot.model_id,
+                    slot_label: slot.label || "",
+                    content: "",
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    cost_microdollars: 0,
+                    error: null,
+                });
+            }
+            // Render once with empty columns; each stream patches its
+            // own column as deltas arrive.
+            renderThread();
+            await Promise.all(
+                enabledSlots.map((slot, i) =>
+                    streamCompletion(key, chat, slot, assistantMsg, i).catch((e) => {
+                        const r = assistantMsg.responses[i];
+                        if (r) r.error = String(e && e.message ? e.message : e);
+                        saveState();
+                        renderThread();
+                    }),
+                ),
+            );
+            saveState();
+            renderThread();
         } catch (e) {
             console.warn("chat: send failed:", e);
-            const resp =
-                assistantMsg.responses[0] ||
-                (assistantMsg.responses[0] = { content: "", error: null });
-            resp.error = String(e && e.message ? e.message : e);
+            if (assistantMsg.responses.length === 0) {
+                assistantMsg.responses.push({
+                    content: "",
+                    error: String(e && e.message ? e.message : e),
+                });
+            } else {
+                for (const r of assistantMsg.responses) {
+                    r.error = r.error || String(e && e.message ? e.message : e);
+                }
+            }
             saveState();
             renderThread();
         }
     }
 
-    async function streamCompletion(key, chat, slot, assistantMsg) {
+    async function streamCompletion(key, chat, slot, assistantMsg, respIdx) {
         // Build the OpenAI-shaped request body.
         const messages = [];
         const sys = slot.system_prompt || chat.shared_system_prompt || "";
         if (sys) messages.push({ role: "system", content: sys });
         // History up to but NOT including the placeholder assistant
-        // message we just appended.
+        // message we just appended. For multi-model, each model sees
+        // ITS OWN prior responses in history — this preserves the
+        // semantic "this is your conversation with me" framing per
+        // model. Find the matching response by model_id+slot_label.
         for (const m of chat.messages) {
             if (m.id === assistantMsg.id) break;
             if (m.role === "user") {
                 messages.push({ role: "user", content: m.content });
-            } else if (m.role === "assistant") {
-                // For chunk 2, history is the single-model response.
-                const resp = m.responses && m.responses[0];
-                if (resp && resp.content) {
-                    messages.push({ role: "assistant", content: resp.content });
+            } else if (m.role === "assistant" && m.responses && m.responses.length) {
+                let mine =
+                    m.responses.find(
+                        (r) =>
+                            r.model_id === slot.model_id &&
+                            (r.slot_label || "") === (slot.label || ""),
+                    ) || m.responses[0];
+                if (mine && mine.content) {
+                    messages.push({ role: "assistant", content: mine.content });
                 }
             }
         }
+        const params = buildParamsForRequest(slot);
         const body = {
             model: slot.model_id,
             messages,
             stream: true,
-            ...slot.params,
+            ...params,
         };
         const abort = new AbortController();
         STREAMS.set(assistantMsg.id, abort);
@@ -749,7 +1085,7 @@
         const reader = resp.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
-        const respSlot = assistantMsg.responses[0];
+        const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -802,12 +1138,21 @@
     }
 
     function patchAssistantBubble(msg, respSlot) {
-        const el = document.querySelector(
-            '[data-msg-id="' + msg.id + '"] .chat-msg-md',
-        );
-        if (el) {
-            el.innerHTML = renderMarkdown(respSlot.content);
-            // Auto-scroll if user is near the bottom.
+        // Find the right column for this response. Use respIdx by
+        // searching responses[] index.
+        const respIdx = (msg.responses || []).indexOf(respSlot);
+        const col =
+            respIdx >= 0
+                ? document.querySelector(
+                      '[data-msg-id="' +
+                          msg.id +
+                          '"] [data-resp-idx="' +
+                          respIdx +
+                          '"] .chat-msg-md',
+                  )
+                : null;
+        if (col) {
+            col.innerHTML = renderMarkdown(respSlot.content);
             const thread = document.querySelector("[data-chat-thread]");
             if (thread) thread.scrollTop = thread.scrollHeight;
         }
@@ -852,9 +1197,35 @@
         document.addEventListener("click", (e) => {
             const target = e.target;
             if (!target || !target.closest) return;
+            // Toggle a model pill's dropdown — separate from picker.
+            // The picker is opened from inside the dropdown via the
+            // "Change model" action.
+            const pillToggle = target.closest('[data-action="toggle-model-dropdown"]');
+            if (pillToggle) {
+                const slotIdx = parseInt(pillToggle.dataset.slotIdx || "0", 10);
+                toggleModelDropdown(slotIdx);
+                return;
+            }
             const opener = target.closest('[data-action="open-model-picker"]');
             if (opener) {
-                openModelPicker();
+                const slotIdx = opener.dataset.slotIdx != null
+                    ? parseInt(opener.dataset.slotIdx, 10)
+                    : 0;
+                openModelPicker(slotIdx);
+                return;
+            }
+            if (target.closest('[data-action="add-model"]')) {
+                addModel();
+                return;
+            }
+            const dupe = target.closest('[data-action="duplicate-model"]');
+            if (dupe) {
+                duplicateModel(parseInt(dupe.dataset.slotIdx, 10));
+                return;
+            }
+            const rm = target.closest('[data-action="remove-model"]');
+            if (rm) {
+                removeModel(parseInt(rm.dataset.slotIdx, 10));
                 return;
             }
             const newChatBtn = target.closest('[data-action="new-chat"]');
@@ -876,6 +1247,11 @@
                     sidebar.dataset.open = open ? "false" : "true";
                 }
                 return;
+            }
+            // Click outside any pill or dropdown closes the open dropdown.
+            if (openDropdownSlotIdx >= 0 && !target.closest(".chat-model-pill-wrap")) {
+                openDropdownSlotIdx = -1;
+                renderModelsBar();
             }
         });
     }

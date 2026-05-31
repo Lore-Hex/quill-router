@@ -514,3 +514,217 @@
     border-radius: 4px;
     font-weight: 600;
 }
+
+/* ── Multi-model: pill wrap + dropdown + add-model button ────────── */
+
+.chat-model-pill-wrap {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.chat-model-pill-wrap.is-disabled .chat-model-pill {
+    opacity: 0.5;
+}
+
+.chat-model-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-model-pill-num {
+    font-size: 10px;
+    background: rgba(0, 0, 0, 0.08);
+    padding: 1px 5px;
+    border-radius: 999px;
+    color: var(--muted, #6b7280);
+}
+
+.chat-model-pill-caret {
+    font-size: 9px;
+    color: var(--muted, #6b7280);
+}
+
+.chat-model-add {
+    background: none;
+    border: 1px dashed var(--border, #d1d5db);
+    color: var(--muted, #6b7280);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.chat-model-add:hover {
+    border-style: solid;
+    color: var(--text, #111827);
+}
+
+.chat-model-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 30;
+    width: 320px;
+    max-width: 90vw;
+    background: var(--bg, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    padding: 12px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.chat-dd-row {
+    margin-bottom: 10px;
+}
+
+.chat-dd-row-flex {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.chat-dd-action {
+    background: var(--hover-bg, #f3f4f6);
+    border: 1px solid var(--border, #e5e7eb);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.chat-dd-action:hover {
+    background: var(--bg, #fff);
+}
+
+.chat-dd-action-danger {
+    color: #b91c1c;
+}
+
+.chat-dd-toggle {
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 8px;
+}
+
+.chat-dd-label-input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.chat-dd-sys-row textarea {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 12px;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    margin-top: 4px;
+    resize: vertical;
+}
+
+.chat-dd-sys-label {
+    font-size: 11px;
+    color: var(--muted, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.chat-dd-sliders {
+    display: grid;
+    gap: 6px;
+    border-top: 1px solid var(--border, #e5e7eb);
+    padding-top: 8px;
+}
+
+.chat-dd-slider {
+    display: grid;
+    grid-template-columns: 1fr 100px 36px;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted, #6b7280);
+}
+
+.chat-dd-slider-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-dd-slider input[type="range"] {
+    width: 100%;
+}
+
+.chat-dd-slider-value {
+    font-variant-numeric: tabular-nums;
+    color: var(--text, #111827);
+    font-weight: 500;
+    text-align: right;
+}
+
+/* ── Multi-model: response grid ──────────────────────────────────── */
+
+.chat-msg-grid {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+}
+
+.chat-msg-grid-1 {
+    grid-template-columns: 1fr;
+    max-width: 760px;
+}
+
+.chat-msg-grid-2 {
+    grid-template-columns: 1fr 1fr;
+    max-width: 100%;
+}
+
+.chat-msg-grid-3 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.chat-msg-grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+}
+
+.chat-msg-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.chat-msg-col-head {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted, #6b7280);
+    padding: 4px 4px 6px;
+}
+
+.chat-msg-col-actions {
+    margin-top: 2px;
+}
+
+/* Mobile: stack all response columns vertically, ignore the column
+ * count. Per the plan: multi-model goes vertical below 780px. */
+@media (max-width: 780px) {
+    .chat-msg-grid,
+    .chat-msg-grid-1,
+    .chat-msg-grid-2,
+    .chat-msg-grid-3,
+    .chat-msg-grid-4 {
+        grid-template-columns: 1fr;
+    }
+}
