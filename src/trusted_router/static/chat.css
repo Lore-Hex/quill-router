@@ -126,6 +126,10 @@
     border-bottom: 1px solid var(--chat-border);
     min-height: 56px;
     flex-wrap: wrap;
+    background: var(--chat-bg);
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 
 .chat-header-title {
@@ -253,11 +257,76 @@
 
 .chat-empty {
     text-align: center;
-    padding: 64px 24px 32px;
+    padding: 48px 24px 32px;
     color: var(--chat-muted);
     margin: auto;
     max-width: 720px;
     width: 100%;
+}
+
+.chat-welcome {
+    position: relative;
+    text-align: left;
+    background: color-mix(in srgb, var(--chat-primary) 6%, var(--chat-bg));
+    border: 1px solid color-mix(in srgb, var(--chat-primary) 25%, var(--chat-border));
+    border-radius: var(--chat-radius-lg);
+    padding: 16px 18px;
+    margin-bottom: 24px;
+    animation: chat-fade-in 220ms ease-out;
+}
+
+.chat-welcome-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: none;
+    border: none;
+    color: var(--chat-muted);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 4px 8px;
+}
+
+.chat-welcome-close:hover {
+    color: var(--chat-text);
+}
+
+.chat-welcome-eyebrow {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--chat-primary);
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+
+.chat-welcome h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    color: var(--chat-text);
+    font-weight: 600;
+}
+
+.chat-welcome ol {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--chat-text);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.chat-welcome li {
+    margin-bottom: 4px;
+}
+
+.chat-welcome kbd {
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--chat-mono);
+    font-size: 11px;
 }
 
 .chat-empty h2 {
@@ -845,6 +914,18 @@
     flex-direction: column;
     margin-bottom: 20px;
     max-width: 760px;
+    animation: chat-msg-enter 180ms ease-out;
+}
+
+@keyframes chat-msg-enter {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
 }
 
 .chat-msg-user {
@@ -913,6 +994,71 @@
 .chat-msg-md a {
     color: var(--chat-primary);
     text-decoration: underline;
+}
+
+/* Polished typography for model responses: headings, lists, tables,
+ * blockquotes. Default browser rendering is fine but feels generic
+ * inside the assistant bubble; tightening these reads closer to a
+ * "designed" playground. */
+
+.chat-msg-md h1,
+.chat-msg-md h2,
+.chat-msg-md h3 {
+    font-weight: 600;
+    color: var(--chat-text);
+    margin: 16px 0 8px;
+    line-height: 1.3;
+}
+
+.chat-msg-md h1 { font-size: 20px; }
+.chat-msg-md h2 { font-size: 17px; }
+.chat-msg-md h3 { font-size: 15px; }
+
+.chat-msg-md ul,
+.chat-msg-md ol {
+    margin: 8px 0;
+    padding-left: 24px;
+}
+
+.chat-msg-md li {
+    margin-bottom: 4px;
+}
+
+.chat-msg-md blockquote {
+    border-left: 3px solid var(--chat-border);
+    margin: 10px 0;
+    padding: 4px 14px;
+    color: var(--chat-muted);
+    background: var(--chat-hover);
+    border-radius: 0 var(--chat-radius) var(--chat-radius) 0;
+}
+
+.chat-msg-md table {
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 13px;
+    width: 100%;
+    overflow-x: auto;
+    display: block;
+}
+
+.chat-msg-md th,
+.chat-msg-md td {
+    border: 1px solid var(--chat-border);
+    padding: 6px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.chat-msg-md th {
+    background: var(--chat-hover);
+    font-weight: 600;
+}
+
+.chat-msg-md hr {
+    border: none;
+    border-top: 1px solid var(--chat-border);
+    margin: 14px 0;
 }
 
 .chat-msg-error {
@@ -1468,6 +1614,19 @@
     color: #92400e;
 }
 
+.chat-tag-active {
+    background: color-mix(in srgb, var(--chat-primary) 18%, transparent);
+    color: var(--chat-primary);
+}
+
+.chat-model-row.is-active-model {
+    box-shadow: inset 3px 0 0 var(--chat-primary);
+}
+
+.chat-model-row.is-active-model .chat-model-row-name {
+    color: var(--chat-primary);
+}
+
 /* ── Scroll-to-bottom FAB ─────────────────────────────────────── */
 
 .chat-main {
@@ -1519,6 +1678,20 @@
     }
     .chat-sidebar-backdrop[hidden] {
         display: none;
+    }
+    /* Full-screen picker sheet on mobile instead of cramped centered
+     * modal — easier to scan + tap on small screens. */
+    .chat-model-picker {
+        padding-top: 0;
+        align-items: stretch;
+    }
+    .chat-model-picker-panel {
+        width: 100%;
+        height: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 0;
+        border: none;
     }
 }
 

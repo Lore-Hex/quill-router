@@ -761,6 +761,21 @@
     function renderEmptyState(thread) {
         const empty = document.createElement("div");
         empty.className = "chat-empty";
+        // First-visit welcome banner. Dismissed permanently to
+        // preferences.welcome_dismissed so the page doesn't keep
+        // showing it after the user gets the hang of things.
+        const welcomeBanner = STATE.preferences.welcome_dismissed
+            ? ""
+            : '<div class="chat-welcome">' +
+              '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
+              '<div class="chat-welcome-eyebrow">Welcome</div>' +
+              '<h3>Compare models side-by-side</h3>' +
+              '<ol>' +
+              '<li>Pick a model in the header, type a prompt.</li>' +
+              '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
+              '<li>Sign in only when you press Send — nothing fires until then.</li>' +
+              "</ol>" +
+              "</div>";
         const grid = pickedSuggestions()
             .map(
                 (p) =>
@@ -776,10 +791,20 @@
             )
             .join("");
         empty.innerHTML =
+            welcomeBanner +
             '<h2>Try any model — zero tokens until you sign in.</h2>' +
             '<p>Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.</p>' +
             '<div class="chat-suggest-grid">' + grid + "</div>";
         empty.addEventListener("click", (e) => {
+            const closer = e.target && e.target.closest
+                ? e.target.closest('[data-action="dismiss-welcome"]')
+                : null;
+            if (closer) {
+                STATE.preferences.welcome_dismissed = true;
+                saveState();
+                renderThread();
+                return;
+            }
             const btn = e.target && e.target.closest && e.target.closest(".chat-suggest");
             if (!btn) return;
             const input = document.querySelector("[data-chat-input]");
@@ -935,16 +960,28 @@
                 err.appendChild(retry);
                 bubble.appendChild(err);
             }
-            if (resp.cost_microdollars || resp.tokens_in || resp.tokens_out) {
+            if (
+                resp.cost_microdollars ||
+                resp.cost_microdollars_est ||
+                resp.tokens_in ||
+                resp.tokens_out
+            ) {
                 const meta = document.createElement("div");
                 meta.className = "chat-msg-meta";
-                const cents = (resp.cost_microdollars || 0) / 10_000;
+                const finalMicro = resp.cost_microdollars || 0;
+                const estMicro = resp.cost_microdollars_est || 0;
+                const cents = (finalMicro || estMicro) / 10_000;
+                const costStr =
+                    finalMicro > 0
+                        ? "$" + (cents / 100).toFixed(4)
+                        : estMicro > 0
+                            ? "~$" + (cents / 100).toFixed(4)
+                            : "$0.0000";
                 const tps = resp.tokens_per_sec
                     ? "  ·  " + resp.tokens_per_sec + " t/s"
                     : "";
                 meta.textContent =
-                    "$" +
-                    (cents / 100).toFixed(4) +
+                    costStr +
                     "  ·  " +
                     (resp.tokens_in || 0) +
                     " in / " +
@@ -1256,6 +1293,33 @@
                 return false;
             return true;
         }).slice(0, 200);
+        // Active model ids in this chat — let the picker rows visually
+        // tag the currently-selected models so the user sees "I'm
+        // already using this one" instead of accidentally picking the
+        // same model twice into two slots.
+        const chat = getActiveChat();
+        const activeIds = new Set(
+            chat ? chat.models.map((m) => m.model_id) : [],
+        );
+        // Recently-used section: surfaces the user's MRU 6 at the top.
+        // Only render when not searching (search results should be
+        // categorical, not order-by-history).
+        const recentIds = STATE.preferences.recentModelIds || [];
+        if (!q && recentIds.length > 0) {
+            const recentModels = recentIds
+                .map((id) => findModel(id))
+                .filter(Boolean)
+                .filter((m) => filtered.includes(m));
+            if (recentModels.length > 0) {
+                const h = document.createElement("div");
+                h.className = "chat-model-picker-group";
+                h.textContent = "Recent";
+                list.appendChild(h);
+                for (const m of recentModels) {
+                    list.appendChild(makePickerRow(m, activeIds));
+                }
+            }
+        }
         // Group by provider so the list reads as anthropic | openai |
         // google sections instead of a flat alphabetical jumble.
         const grouped = new Map();
@@ -1271,15 +1335,18 @@
             header.textContent = provider;
             list.appendChild(header);
             for (const m of grouped.get(provider)) {
-                list.appendChild(makePickerRow(m));
+                list.appendChild(makePickerRow(m, activeIds));
             }
         }
     }
 
-    function makePickerRow(m) {
+    function makePickerRow(m, activeIds) {
         const row = document.createElement("button");
         row.type = "button";
         row.className = "chat-model-row";
+        if (activeIds && activeIds.has(m.id)) {
+            row.classList.add("is-active-model");
+        }
         const provider = providerFromModelId(m.id);
         const avatarLetter = provider ? provider[0].toUpperCase() : "?";
         const avatarStyle = providerColor(provider);
@@ -1306,6 +1373,7 @@
                 ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
                 ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
                 ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
+                ${activeIds && activeIds.has(m.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}
             </div>
         `;
         row.addEventListener("click", () => {
@@ -1362,6 +1430,16 @@
         if (slot) slot.model_id = modelId;
         chat.updated_at = isoNow();
         STATE.preferences.lastModelId = modelId;
+        // Track recently-used models so the picker can surface a
+        // "Recent" section at the top of the list.
+        if (!STATE.preferences.recentModelIds) {
+            STATE.preferences.recentModelIds = [];
+        }
+        const recent = STATE.preferences.recentModelIds.filter(
+            (id) => id !== modelId,
+        );
+        recent.unshift(modelId);
+        STATE.preferences.recentModelIds = recent.slice(0, 6);
         saveState();
         renderModelsBar();
     }
@@ -1697,6 +1775,28 @@
                                     respSlot.tokens_per_sec = Math.round(
                                         respSlot.tokens_out / elapsed,
                                     );
+                                }
+                            }
+                            // Running cost ticker for the column footer
+                            // while streaming. We DON'T have cost back
+                            // until the [DONE]; approximate using the
+                            // model catalog's per-M rates so users see
+                            // a live counter rather than waiting for
+                            // the final cost line.
+                            if (!respSlot.cost_microdollars) {
+                                const modelMeta = findModel(slot.model_id);
+                                if (modelMeta && modelMeta.input_per_m != null) {
+                                    const estIn =
+                                        (respSlot.tokens_in *
+                                            modelMeta.input_per_m) /
+                                        1_000_000;
+                                    const estOut =
+                                        (respSlot.tokens_out *
+                                            (modelMeta.output_per_m ||
+                                                modelMeta.input_per_m * 3)) /
+                                        1_000_000;
+                                    respSlot.cost_microdollars_est =
+                                        Math.round((estIn + estOut) * 1_000_000);
                                 }
                             }
                         }
