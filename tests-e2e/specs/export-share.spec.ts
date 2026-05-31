@@ -80,10 +80,9 @@ test("share-link copies a URL with a #share= fragment", async ({
 }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await seedConvo(page);
-    page.on("dialog", (d) => d.accept());
     await page.locator('[data-action="share-link"]').first().click();
-    // Wait briefly for the alert() success + clipboard write
-    await page.waitForTimeout(150);
+    // Toast replaces the old alert("Share link copied")
+    await expect(page.locator(".chat-toast")).toBeVisible();
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     expect(clip).toContain("/chat#share=");
 });
@@ -94,7 +93,6 @@ test("opening a #share= URL imports the chat as a new entry", async ({
 }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await seedConvo(page);
-    page.on("dialog", (d) => d.accept());
     await page.locator('[data-action="share-link"]').first().click();
     await page.waitForTimeout(150);
     const url = await page.evaluate(() => navigator.clipboard.readText());

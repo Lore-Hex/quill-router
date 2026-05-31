@@ -77,7 +77,6 @@ test("Pinning a chat floats it to a PINNED bucket", async ({ page }) => {
 });
 
 test("Delete confirmation removes the chat", async ({ page }) => {
-    page.on("dialog", (d) => d.accept());
     await page.goto("/chat");
     const stateA = chatStateWithModels(["anthropic/claude-sonnet-4.6"], "Target");
     const aId = Object.keys(stateA.chats)[0];
@@ -90,15 +89,15 @@ test("Delete confirmation removes the chat", async ({ page }) => {
     const item = page.locator(".chat-sidebar-item").filter({ hasText: "Target" });
     await item.hover();
     await item.locator(".chat-sidebar-delete").click();
+    // Modal confirm replaces native confirm()
+    await expect(page.locator(".chat-prompt-panel")).toBeVisible();
+    await page.locator(".chat-prompt-confirm.is-danger").click();
     await expect(page.locator(".chat-sidebar-item").filter({ hasText: "Target" })).toHaveCount(0);
 });
 
 test("Double-clicking a sidebar title triggers a rename prompt", async ({
     page,
 }) => {
-    page.on("dialog", async (d) => {
-        await d.accept("Renamed chat");
-    });
     await page.goto("/chat");
     const stateA = chatStateWithModels(
         ["anthropic/claude-sonnet-4.6"],
@@ -113,6 +112,11 @@ test("Double-clicking a sidebar title triggers a rename prompt", async ({
     await page.reload();
     const titleBtn = page.locator(".chat-sidebar-title").first();
     await titleBtn.dblclick();
+    // Inline modal replaces native prompt()
+    const input = page.locator(".chat-prompt-input");
+    await expect(input).toBeVisible();
+    await input.fill("Renamed chat");
+    await input.press("Enter");
     await expect(page.locator(".chat-sidebar-title-text")).toContainText(
         "Renamed chat",
     );
