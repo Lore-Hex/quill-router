@@ -624,24 +624,108 @@
 
     // ── Render: message thread ────────────────────────────────────────
 
+    // Suggested first-prompt cards on the empty state. Click → fills
+    // the input + focuses. The list rotates so a repeat visitor sees
+    // different suggestions; pure client-side hash of the day-of-year
+    // for stable-within-a-day suggestion ordering.
+    const SUGGESTED_PROMPTS = [
+        { emoji: "💡", title: "Explain a concept", body: "Explain how transformers work, like I'm a curious engineer." },
+        { emoji: "🧠", title: "Brainstorm ideas", body: "Brainstorm 10 startup ideas that combine LLMs and accessibility." },
+        { emoji: "💻", title: "Write code", body: "Write a Python function that returns the n-th Fibonacci number using memoization." },
+        { emoji: "⚖️", title: "Compare two things", body: "Compare Anthropic's Claude and OpenAI's GPT for coding tasks, in a table." },
+        { emoji: "📝", title: "Draft an email", body: "Draft a polite email asking my landlord to fix the heating before winter." },
+        { emoji: "🎨", title: "Be creative", body: "Write a haiku about a rainy commute." },
+        { emoji: "🧪", title: "Plan an experiment", body: "Design an A/B test plan for evaluating a new onboarding flow." },
+        { emoji: "🗺️", title: "Travel planner", body: "Plan a 3-day food-focused trip to Tokyo for someone allergic to shellfish." },
+    ];
+
+    function pickedSuggestions() {
+        // Stable per-day rotation: 4 of N starting at today's offset.
+        const day = Math.floor(Date.now() / 86_400_000);
+        const start = day % SUGGESTED_PROMPTS.length;
+        const out = [];
+        for (let i = 0; i < 4; i++) {
+            out.push(SUGGESTED_PROMPTS[(start + i) % SUGGESTED_PROMPTS.length]);
+        }
+        return out;
+    }
+
+    function renderEmptyState(thread) {
+        const empty = document.createElement("div");
+        empty.className = "chat-empty";
+        const grid = pickedSuggestions()
+            .map(
+                (p) =>
+                    '<button type="button" class="chat-suggest" data-prompt="' +
+                    escapeHtml(p.body) +
+                    '"><span class="chat-suggest-emoji">' +
+                    p.emoji +
+                    '</span><span class="chat-suggest-title">' +
+                    escapeHtml(p.title) +
+                    '</span><span class="chat-suggest-body">' +
+                    escapeHtml(p.body) +
+                    "</span></button>",
+            )
+            .join("");
+        empty.innerHTML =
+            '<h2>Try any model — zero tokens until you sign in.</h2>' +
+            '<p>Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.</p>' +
+            '<div class="chat-suggest-grid">' + grid + "</div>";
+        empty.addEventListener("click", (e) => {
+            const btn = e.target && e.target.closest && e.target.closest(".chat-suggest");
+            if (!btn) return;
+            const input = document.querySelector("[data-chat-input]");
+            if (input) {
+                input.value = btn.dataset.prompt || "";
+                autoResize(input);
+                updateInputEstimate();
+                input.focus();
+            }
+        });
+        thread.appendChild(empty);
+    }
+
     function renderThread() {
         const thread = document.querySelector("[data-chat-thread]");
         if (!thread) return;
         const chat = ensureActiveChat();
         thread.innerHTML = "";
         if (chat.messages.length === 0) {
-            const empty = document.createElement("div");
-            empty.className = "chat-empty";
-            empty.innerHTML =
-                '<h2>Try any model — zero tokens until you sign in.</h2>' +
-                '<p>Pick a model above, type a prompt, hit Send. Sign in to actually run it.</p>';
-            thread.appendChild(empty);
+            renderEmptyState(thread);
             return;
         }
         for (const msg of chat.messages) {
             thread.appendChild(renderMessage(msg, chat));
         }
         thread.scrollTop = thread.scrollHeight;
+        // After rendering, walk for code blocks and inject copy buttons.
+        injectCodeCopyButtons(thread);
+    }
+
+    // Per-code-block copy button. After marked + DOMPurify rendering,
+    // each <pre> gets a hover-revealed Copy button overlay. The button
+    // copies the *raw* code (not the HTML) so the user gets clean text.
+    function injectCodeCopyButtons(root) {
+        const pres = root.querySelectorAll(".chat-msg-md pre");
+        pres.forEach((pre) => {
+            if (pre.querySelector(".chat-code-copy")) return; // already injected
+            const code = pre.querySelector("code") || pre;
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "chat-code-copy";
+            btn.textContent = "Copy";
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const text = code.textContent || "";
+                navigator.clipboard.writeText(text).then(() => {
+                    btn.textContent = "Copied";
+                    setTimeout(() => (btn.textContent = "Copy"), 1200);
+                });
+            });
+            // Make sure pre is positioned for the absolute child
+            pre.style.position = pre.style.position || "relative";
+            pre.appendChild(btn);
+        });
     }
 
     function renderMessage(msg, chat) {
@@ -696,6 +780,17 @@
             md.className = "chat-msg-md";
             md.innerHTML = renderMarkdown(resp.content || "");
             bubble.appendChild(md);
+            if (resp.tool_calls && resp.tool_calls.length > 0) {
+                const tc = document.createElement("details");
+                tc.className = "chat-msg-tools";
+                const summary = document.createElement("summary");
+                summary.textContent = "Tool calls (" + resp.tool_calls.length + ")";
+                tc.appendChild(summary);
+                const pre = document.createElement("pre");
+                pre.textContent = JSON.stringify(resp.tool_calls, null, 2);
+                tc.appendChild(pre);
+                bubble.appendChild(tc);
+            }
             if (resp.error) {
                 const err = document.createElement("div");
                 err.className = "chat-msg-error";
@@ -881,7 +976,9 @@
                             : ""
                     }
                     ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
-                    ${m.free ? '<span class="chat-tag-free">Free</span>' : ""}
+                    ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
+                    ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
+                    ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
                 </div>
             `;
             row.addEventListener("click", () => {
@@ -1157,6 +1254,9 @@
                     if (payload === "[DONE]") {
                         // Final event — write through state once more
                         // so the cost/tokens persist.
+                        patchAssistantBubble(assistantMsg, respSlot, {
+                            streaming: false,
+                        });
                         saveState();
                         renderThread();
                         return;
@@ -1168,7 +1268,16 @@
                         if (delta && typeof delta.content === "string") {
                             respSlot.content += delta.content;
                             // Live re-render this message's bubble
-                            patchAssistantBubble(assistantMsg, respSlot);
+                            patchAssistantBubble(assistantMsg, respSlot, {
+                                streaming: true,
+                            });
+                        }
+                        if (delta && delta.tool_calls) {
+                            // Tool-use display: append to any existing
+                            // tool_calls so multi-chunk tool-call streams
+                            // accumulate cleanly.
+                            respSlot.tool_calls = (respSlot.tool_calls || [])
+                                .concat(delta.tool_calls);
                         }
                         if (ev.usage) {
                             respSlot.tokens_in = ev.usage.prompt_tokens || 0;
@@ -1185,6 +1294,9 @@
                     }
                 }
             }
+            // Stream ended without an explicit [DONE] — still clear
+            // the caret and persist.
+            patchAssistantBubble(assistantMsg, respSlot, { streaming: false });
             saveState();
             renderThread();
         } finally {
@@ -1192,7 +1304,7 @@
         }
     }
 
-    function patchAssistantBubble(msg, respSlot) {
+    function patchAssistantBubble(msg, respSlot, opts) {
         // Find the right column for this response. Use respIdx by
         // searching responses[] index.
         const respIdx = (msg.responses || []).indexOf(respSlot);
@@ -1208,9 +1320,40 @@
                 : null;
         if (col) {
             col.innerHTML = renderMarkdown(respSlot.content);
+            // Toggle the streaming-caret class on the column's bubble.
+            // The CSS adds a blinking block character after the text.
+            const bubble = col.closest(".chat-msg-bubble");
+            if (bubble) {
+                if (opts && opts.streaming) {
+                    bubble.classList.add("is-streaming");
+                } else {
+                    bubble.classList.remove("is-streaming");
+                }
+            }
+            // Auto-scroll only if user hasn't scrolled up; respects
+            // the scroll-to-bottom FAB UX.
             const thread = document.querySelector("[data-chat-thread]");
-            if (thread) thread.scrollTop = thread.scrollHeight;
+            if (thread && isNearBottom(thread)) {
+                thread.scrollTop = thread.scrollHeight;
+            } else {
+                updateScrollToBottomVisibility();
+            }
+            // Re-inject the per-code-block copy buttons for any code
+            // chunk that completed during this delta.
+            injectCodeCopyButtons(col.parentElement.parentElement);
         }
+    }
+
+    function isNearBottom(thread, slack) {
+        const s = slack == null ? 80 : slack;
+        return thread.scrollTop + thread.clientHeight >= thread.scrollHeight - s;
+    }
+
+    function updateScrollToBottomVisibility() {
+        const fab = document.querySelector("[data-chat-scroll-fab]");
+        const thread = document.querySelector("[data-chat-thread]");
+        if (!fab || !thread) return;
+        fab.hidden = isNearBottom(thread, 120);
     }
 
     // ── Input auto-resize ─────────────────────────────────────────────
@@ -1703,6 +1846,35 @@
 
         document.addEventListener("keydown", handleGlobalShortcut);
 
+        // Scroll-to-bottom FAB visibility tied to thread scroll.
+        const thread = document.querySelector("[data-chat-thread]");
+        if (thread) {
+            thread.addEventListener(
+                "scroll",
+                () => updateScrollToBottomVisibility(),
+                { passive: true },
+            );
+        }
+        const fab = document.querySelector("[data-chat-scroll-fab]");
+        if (fab) {
+            fab.addEventListener("click", () => {
+                const t = document.querySelector("[data-chat-thread]");
+                if (t) t.scrollTop = t.scrollHeight;
+            });
+        }
+
+        // Mobile sidebar backdrop tap-to-close
+        const backdrop = document.querySelector("[data-chat-sidebar-backdrop]");
+        if (backdrop) {
+            backdrop.addEventListener("click", () => {
+                const sidebar = document.querySelector("[data-chat-sidebar]");
+                if (sidebar) {
+                    sidebar.dataset.open = "false";
+                    backdrop.hidden = true;
+                }
+            });
+        }
+
         // Window unload — clean any sessionStorage we don't need to
         // persist past the tab close. Browser keys + state stay so the
         // user resumes where they left off.
@@ -1757,9 +1929,11 @@
             const hamburger = target.closest('[data-action="toggle-sidebar"]');
             if (hamburger) {
                 const sidebar = document.querySelector("[data-chat-sidebar]");
+                const bd = document.querySelector("[data-chat-sidebar-backdrop]");
                 if (sidebar) {
                     const open = sidebar.dataset.open === "true";
                     sidebar.dataset.open = open ? "false" : "true";
+                    if (bd) bd.hidden = open;
                 }
                 return;
             }
