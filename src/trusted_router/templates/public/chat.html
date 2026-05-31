@@ -28,6 +28,9 @@
 <link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
 
 <section class="chat-shell" data-chat-shell>
+  {# Mobile-only: backdrop behind the slid-out sidebar. Tap closes
+     the drawer. Hidden on desktop via CSS. #}
+  <div class="chat-sidebar-backdrop" data-chat-sidebar-backdrop hidden></div>
   <aside class="chat-sidebar" data-chat-sidebar>
     <div class="chat-sidebar-head">
       <button class="btn primary chat-new" type="button" data-action="new-chat">+ New chat</button>
@@ -61,12 +64,17 @@
     </div>
 
     <div class="chat-thread" data-chat-thread>
-      {# Messages rendered client-side from localStorage. #}
-      <div class="chat-empty" data-chat-empty>
-        <h2>Try any model — zero tokens until you sign in.</h2>
-        <p>Pick a model above, type a prompt, hit Send. Sign in to actually run it.</p>
-      </div>
+      {# Messages rendered client-side from localStorage. The empty
+         state ships from JS so the suggested prompts can rotate
+         client-side without a re-deploy. #}
     </div>
+    <button
+      class="chat-scroll-fab"
+      type="button"
+      data-chat-scroll-fab
+      aria-label="Scroll to bottom"
+      hidden
+    >↓</button>
 
     <footer class="chat-input-bar">
       <div class="chat-attachments-tray" data-chat-attachments hidden></div>
