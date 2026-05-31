@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from . import broadcast_queue as broadcast_queue
+from . import chat_browser_key as chat_browser_key
 from . import fetch_image as fetch_image
 from . import gateway as gateway
 from . import paypal as paypal
@@ -26,6 +27,7 @@ def register_internal_routes(router: APIRouter) -> None:
     reconcile.register(router)
     synthetic.register(router)
     sentry.register(router)
+    chat_browser_key.register(router)
 
 
 __all__ = ["register_internal_routes"]

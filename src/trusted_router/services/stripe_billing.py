@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import stripe
 
@@ -214,7 +214,12 @@ def list_workspace_payments(
 
     out: list[dict[str, Any]] = []
     for pi in results.data[:limit]:
-        charge = pi.get("latest_charge") if hasattr(pi, "get") else None
+        pi_data = (
+            cast(dict[str, Any], pi)
+            if isinstance(pi, dict)
+            else cast(Any, pi)._to_dict_recursive()
+        )
+        charge = pi_data.get("latest_charge")
         if isinstance(charge, str):  # not expanded for some reason
             charge = None
         card_brand: str | None = None
@@ -229,15 +234,17 @@ def list_workspace_payments(
                 card_last4 = card.get("last4")
         # PaymentIntent.amount is in cents already.
         out.append({
-            "payment_intent": pi.get("id"),
-            "created_at": pi.get("created"),
-            "amount_cents": int(pi.get("amount") or 0),
-            "currency": pi.get("currency") or "usd",
-            "status": pi.get("status"),
+            "payment_intent": pi_data.get("id"),
+            "created_at": pi_data.get("created"),
+            "amount_cents": int(pi_data.get("amount") or 0),
+            "currency": pi_data.get("currency") or "usd",
+            "status": pi_data.get("status"),
             # Display-shaped synonym so the template doesn't need to know
             # the Stripe state machine — "succeeded" → "paid" reads
             # natural alongside checkout-session-style status values.
-            "payment_status": "paid" if pi.get("status") == "succeeded" else pi.get("status"),
+            "payment_status": (
+                "paid" if pi_data.get("status") == "succeeded" else pi_data.get("status")
+            ),
             "receipt_url": receipt_url,
             "card_brand": card_brand,
             "card_last4": card_last4,

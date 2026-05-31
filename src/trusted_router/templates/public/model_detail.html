@@ -43,7 +43,8 @@
           <th>Prompt</th>
           <th>Completion</th>
           <th>Attested</th>
-          <th>Stores content</th>
+          <th>TR stores content</th>
+          <th>Provider policy</th>
         </tr>
       </thead>
       <tbody>
@@ -55,6 +56,12 @@
           <td>{{ endpoint.completion_price }}</td>
           <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>{% if endpoint.stores_content %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td>
+          <td>
+            {% if endpoint.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
+            {% if endpoint.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
+            {% if endpoint.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
+            {% if not endpoint.provider_e2ee and not endpoint.provider_confidential_compute and not endpoint.provider_zero_data_retention %}<span class="pill warn">upstream varies</span>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

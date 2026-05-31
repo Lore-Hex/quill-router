@@ -23,6 +23,7 @@
           <th>Publisher</th>
           <th>Context</th>
           <th>Providers</th>
+          <th>Provider policy</th>
           <th>Prompt</th>
           <th>Completion</th>
           <th>Routes</th>
@@ -38,6 +39,12 @@
           <td>{{ model.provider }}</td>
           <td>{{ model.context_length }}</td>
           <td>{{ model.provider_count }}</td>
+          <td>
+            {% if model.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
+            {% if model.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
+            {% if model.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
+            {% if not model.provider_e2ee and not model.provider_confidential_compute and not model.provider_zero_data_retention %}<span class="pill warn">upstream varies</span>{% endif %}
+          </td>
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.completion_price }}</td>
           <td>

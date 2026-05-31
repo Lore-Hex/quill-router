@@ -184,6 +184,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert "api.quillrouter.com" in dashboard.text
+    assert 'href="/providers"' in dashboard.text
     # The model catalog mentions the providers we serve.
     assert "DeepSeek" in dashboard.text
     assert "Mistral" in dashboard.text
@@ -203,6 +204,23 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     # render with a day-old browser-cached CSS file.
     assert '<script src="/static/dashboard.js?v=' in dashboard.text
     assert 'href="/static/dashboard.css?v=' in dashboard.text
+
+    providers_page = client.get("/providers", headers={"accept": "text/html"})
+    assert providers_page.status_code == 200
+    assert "Provider transparency" in providers_page.text
+    assert "Provider compute" in providers_page.text
+    assert "Phala" in providers_page.text
+    assert "Tinfoil" in providers_page.text
+    assert "No provider claim" in providers_page.text
+    assert "Unknown is not treated as safe" in providers_page.text
+
+    providers_json = client.get("/providers")
+    assert providers_json.status_code == 200
+    assert providers_json.headers["content-type"].startswith("application/json")
+    tinfoil = next(item for item in providers_json.json()["data"] if item["id"] == "tinfoil")
+    assert tinfoil["provider_e2ee"] is True
+    openai = next(item for item in providers_json.json()["data"] if item["id"] == "openai")
+    assert openai["provider_confidential_compute"] is None
 
     js = client.get("/static/dashboard.js")
     assert js.status_code == 200

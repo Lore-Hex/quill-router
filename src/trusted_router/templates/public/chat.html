@@ -1,0 +1,133 @@
+{# Public chat playground at /chat.
+
+   Page loads without auth — anonymous visitors get the full UI to
+   explore. The Send button is gated client-side on the
+   `tr_signed_in=1` companion cookie (see static/chat.js below); a
+   signed-out click pops the existing marketing sign-in modal.
+
+   The page extends _base.html for the marketing chrome (nav,
+   sign-in modal, base CSS) and overrides the hero/body blocks for
+   the chat-specific surface. #}
+{% extends "public/_base.html" %}
+
+{% block hero %}
+{# Empty hero — chat has its own header inside the body block. The
+   public_hero / marketing_hero from _base.html would crowd out the
+   chat-specific surface. #}
+{% endblock %}
+
+{% block body %}
+<link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
+
+<section class="chat-shell" data-chat-shell>
+  <aside class="chat-sidebar" data-chat-sidebar>
+    <div class="chat-sidebar-head">
+      <button class="btn primary chat-new" type="button" data-action="new-chat">+ New chat</button>
+    </div>
+    <div class="chat-sidebar-list" data-chat-list>
+      {# Populated client-side from localStorage. #}
+    </div>
+  </aside>
+
+  <main class="chat-main">
+    <header class="chat-header">
+      <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
+      <div class="chat-models-bar" data-chat-models-bar>
+        {# Model pills + Add-Model button rendered client-side from
+           chat.models[]. Up to 4 pills, with per-model dropdown. #}
+      </div>
+      <div class="chat-header-actions">
+        <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
+        <button class="btn chat-header-btn" type="button" data-action="export-md" title="Export to Markdown">⤓</button>
+        <button class="btn chat-header-btn" type="button" data-action="share-link" title="Copy share link">↗</button>
+        <button class="btn chat-header-btn" type="button" data-action="show-shortcuts" title="Keyboard shortcuts">?</button>
+      </div>
+    </header>
+
+    <div class="chat-system-prompt-panel" data-chat-system-prompt hidden>
+      <label class="chat-system-prompt-label">
+        System prompt
+        <textarea data-chat-system-prompt-input rows="3" placeholder="You are a helpful assistant."></textarea>
+      </label>
+      <span class="chat-system-prompt-tokens" data-chat-system-prompt-tokens></span>
+    </div>
+
+    <div class="chat-thread" data-chat-thread>
+      {# Messages rendered client-side from localStorage. #}
+      <div class="chat-empty" data-chat-empty>
+        <h2>Try any model — zero tokens until you sign in.</h2>
+        <p>Pick a model above, type a prompt, hit Send. Sign in to actually run it.</p>
+      </div>
+    </div>
+
+    <footer class="chat-input-bar">
+      <div class="chat-attachments-tray" data-chat-attachments hidden></div>
+      <div class="chat-input-meta" data-chat-input-meta>
+        <span class="chat-token-counter" data-chat-token-counter></span>
+        <span class="chat-cost-estimate" data-chat-cost-estimate></span>
+      </div>
+      <div class="chat-input-row">
+        <button
+          type="button"
+          class="chat-input-btn"
+          data-action="attach-file"
+          title="Attach image"
+          aria-label="Attach image"
+        >📎</button>
+        <button
+          type="button"
+          class="chat-input-btn"
+          data-chat-voice
+          data-action="voice-input"
+          title="Voice input"
+          aria-label="Voice input"
+        >🎙</button>
+        <input
+          type="file"
+          accept="image/*"
+          data-chat-file-input
+          hidden
+        >
+        <textarea
+          class="chat-input"
+          data-chat-input
+          rows="1"
+          placeholder="Type a prompt…"
+          aria-label="Chat input"
+        ></textarea>
+        <button
+          class="btn primary chat-send"
+          type="button"
+          data-chat-send
+          data-action="send-message"
+          aria-label="Send message"
+        >Send</button>
+      </div>
+    </footer>
+  </main>
+</section>
+
+{# Inline config so chat.js doesn't need a second roundtrip just to
+   know which API base URL to call. Mirrors the dashboard.js pattern. #}
+<script>
+  window.__TR_CHAT__ = {
+    apiBaseUrl: "{{ api_base_url }}",
+    issueKeyPath: "/internal/chat/issue-browser-key",
+    keyCookieName: "tr_chat_key",
+  };
+</script>
+{# Markdown + code highlighting + XSS sanitization loaded from CDN.
+   marked turns the assistant's content into HTML; highlight.js paints
+   code blocks; DOMPurify strips any <script> a model might emit
+   before insertion. chunk 4 may vendor these locally for offline +
+   subresource-integrity guarantees. #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+{# pako gzips the share-URL hash payload so longer chats fit in URL
+   constraints. Optional — if it fails to load, share falls back to
+   raw base64 which is bigger but still works for small chats. #}
+<script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+<script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
+{% endblock %}

@@ -83,7 +83,7 @@ def register(router: APIRouter) -> None:
             if isinstance(constructed, dict):
                 event: dict[str, Any] = constructed
             else:
-                event = constructed._to_dict_recursive()  # type: ignore[attr-defined]  # noqa: SLF001
+                event = constructed._to_dict_recursive()  # noqa: SLF001
         else:
             event = await json_body(request)
         event_id = str(event.get("id") or uuid.uuid4())

@@ -19,6 +19,7 @@ This script enumerates workspaces created in the last 24h and matches on:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -52,14 +53,16 @@ def main() -> int:
             owner = None
             customer = None
             try:
-                import json as _json
-                d = _json.loads(body) if isinstance(body, str) else body
-                email = (d or {}).get("billing_email")
-                owner = (d or {}).get("owner_user_id")
-                customer = (d or {}).get("stripe_customer_id")
-            except Exception:
-                pass
-            print(f"  {wid}  created={created}  email={email!r}  customer={customer!r}  owner={owner!r}")
+                d = json.loads(body) if isinstance(body, str) else body
+            except (TypeError, ValueError):
+                d = {}
+            email = (d or {}).get("billing_email")
+            owner = (d or {}).get("owner_user_id")
+            customer = (d or {}).get("stripe_customer_id")
+            print(
+                f"  {wid}  created={created}  email={email!r}  "
+                f"customer={customer!r}  owner={owner!r}"
+            )
         if not any_rows:
             print("  (no workspaces in last 6h)")
 
@@ -92,11 +95,10 @@ def main() -> int:
             uid, body, created = row[0], row[1], row[2]
             email = None
             try:
-                import json as _json
-                d = _json.loads(body) if isinstance(body, str) else body
-                email = (d or {}).get("email")
-            except Exception:
-                pass
+                d = json.loads(body) if isinstance(body, str) else body
+            except (TypeError, ValueError):
+                d = {}
+            email = (d or {}).get("email")
             print(f"  user={uid}  created={created}  email={email!r}")
         if not any_rows:
             print("  (no users in last 6h)")

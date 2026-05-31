@@ -14,14 +14,17 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
+from trusted_router.catalog import PROVIDERS, provider_to_openrouter_shape
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     STATIC_DIR,
     dashboard_html,
+    public_chat_html,
     public_model_detail_html,
     public_model_not_found_html,
     public_models_html,
     public_page_html,
+    public_providers_html,
 )
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
@@ -202,6 +205,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/models")
     async def models() -> str:
         return public_models_html(settings)
+
+    @public_html_route("/providers")
+    async def providers(request: Request) -> Response:
+        if _wants_html(request):
+            return HTMLResponse(public_providers_html(settings))
+        return JSONResponse(
+            {"data": [provider_to_openrouter_shape(provider) for provider in PROVIDERS.values()]}
+        )
+
+    @public_html_route("/chat")
+    async def chat() -> str:
+        return public_chat_html(settings)
 
     # Per-model detail page. Path captures `{author}/{slug}` (e.g.
     # `z-ai/glm-4.6`, `moonshotai/kimi-k2.6`) so the URL exactly mirrors
@@ -388,6 +403,11 @@ def _wants_history_html(request: Request, *, explicit_format: str | None) -> boo
         return True
     if explicit_format == "json":
         return False
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept
+
+
+def _wants_html(request: Request) -> bool:
     accept = request.headers.get("accept", "")
     return "text/html" in accept
 

@@ -1,0 +1,70 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Gateway guarantee</strong><span>TLS terminates inside TrustedRouter's attested gateway.</span></div>
+  <div><strong>Provider compute</strong><span>Each upstream provider has its own retention and enclave posture.</span></div>
+  <div><strong>No prompt logs</strong><span>TrustedRouter stores metadata and billing records, not prompts or outputs.</span></div>
+  <div><strong>OpenRouter-compatible</strong><span>Machine-readable JSON remains at <span class="mono">{{ api_base_url }}/providers</span>.</span></div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Provider transparency</span>
+      <h2>Trusted gateway first, then explicit provider-side claims.</h2>
+    </div>
+    <p>Provider-side zero data retention, confidential compute, and E2EE are shown only when explicitly tracked. Unknown is not treated as safe.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Trust tier</th>
+          <th>Prepaid</th>
+          <th>BYOK</th>
+          <th>ZDR</th>
+          <th>Confidential compute</th>
+          <th>Provider E2EE</th>
+          <th>Policy note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in providers %}
+        <tr>
+          <td><strong>{{ provider.name }}</strong><br><code>{{ provider.id }}</code></td>
+          <td><span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span></td>
+          <td>{% if provider.supports_prepaid %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
+          <td>{% if provider.supports_byok %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
+          <td><span class="pill {% if provider.zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td>
+          <td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td>
+          <td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td>
+          <td>
+            {{ provider.policy }}
+            {% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">What TR proves</span>
+    <h3>The router path is verifiable.</h3>
+    <p>The hosted API publishes source commit, image reference, and digest for the attested gateway. The control plane does not terminate prompt traffic.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">What providers prove</span>
+    <h3>Provider policy is separate.</h3>
+    <p>If compute runs on Anthropic, OpenAI, Gemini, Phala, Tinfoil, or another upstream, that provider's policy controls model-side handling.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Routing</span>
+    <h3>Choose privacy posture explicitly.</h3>
+    <p>Use provider routing filters when you want only confidential or no-retention providers. Otherwise <span class="mono">trustedrouter/auto</span> optimizes fallback and health.</p>
+  </div>
+</section>
+{% endblock %}
