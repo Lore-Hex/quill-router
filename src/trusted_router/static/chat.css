@@ -421,6 +421,16 @@
     border-color: var(--chat-primary-hover);
 }
 
+.chat-send.is-stop {
+    background: var(--chat-error);
+    border-color: var(--chat-error);
+}
+
+.chat-send.is-stop:hover {
+    background: #991b1b;
+    border-color: #991b1b;
+}
+
 /* ── Sidebar items ─────────────────────────────────────────────── */
 
 .chat-sidebar-empty {
@@ -470,9 +480,25 @@
     color: var(--chat-text);
     cursor: pointer;
     overflow: hidden;
+    font-family: inherit;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+}
+
+.chat-sidebar-title-text {
+    flex: 1;
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: inherit;
+}
+
+.chat-sidebar-title-time {
+    font-size: 10px;
+    color: var(--chat-muted);
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums;
 }
 
 .chat-sidebar-delete,
@@ -927,6 +953,19 @@
     border-bottom: 1px solid var(--chat-border);
 }
 
+.chat-model-picker-group {
+    padding: 12px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--chat-muted);
+    text-transform: uppercase;
+}
+
+.chat-model-picker-group:first-child {
+    padding-top: 8px;
+}
+
 .chat-picker-filter {
     background: var(--chat-bg);
     border: 1px solid var(--chat-border);
@@ -1199,6 +1238,31 @@
 @keyframes chat-caret {
     0%, 49% { opacity: 1; }
     50%, 100% { opacity: 0; }
+}
+
+/* Pre-first-token dots indicator. Shows while we're connected to the
+ * provider but no content has arrived yet. */
+.chat-msg-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+}
+
+.chat-msg-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--chat-muted);
+    animation: chat-dots 1.4s infinite ease-in-out;
+}
+
+.chat-msg-dots span:nth-child(2) { animation-delay: 0.15s; }
+.chat-msg-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-dots {
+    0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+    40% { opacity: 1; transform: scale(1); }
 }
 
 .chat-msg-tools {

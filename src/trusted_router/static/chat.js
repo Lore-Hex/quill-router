@@ -385,7 +385,13 @@
             const title = document.createElement("button");
             title.type = "button";
             title.className = "chat-sidebar-title";
-            title.textContent = chat.title;
+            title.innerHTML =
+                '<span class="chat-sidebar-title-text">' +
+                escapeHtml(chat.title) +
+                "</span>" +
+                '<span class="chat-sidebar-title-time">' +
+                escapeHtml(relativeTime(chat.updated_at)) +
+                "</span>";
             title.addEventListener("click", () => setActiveChat(chat.id));
             const pin = document.createElement("button");
             pin.type = "button";
@@ -863,6 +869,16 @@
             md.className = "chat-msg-md";
             md.innerHTML = renderMarkdown(resp.content || "");
             bubble.appendChild(md);
+            // If we have a key in STREAMS for this slot but no content
+            // yet, render an animated dots indicator so the user sees
+            // "waiting on the model" rather than a silent empty bubble.
+            const inFlightKey = msg.id + ":" + resp.model_id + ":" + (resp.slot_label || "");
+            if (STREAMS.has(inFlightKey) && (!resp.content || resp.content.length === 0)) {
+                const dots = document.createElement("div");
+                dots.className = "chat-msg-dots";
+                dots.innerHTML = "<span></span><span></span><span></span>";
+                bubble.appendChild(dots);
+            }
             if (resp.tool_calls && resp.tool_calls.length > 0) {
                 const tc = document.createElement("details");
                 tc.className = "chat-msg-tools";
@@ -1118,45 +1134,64 @@
             )
                 return false;
             return true;
-        }).slice(0, 100);
+        }).slice(0, 200);
+        // Group by provider so the list reads as anthropic | openai |
+        // google sections instead of a flat alphabetical jumble.
+        const grouped = new Map();
         for (const m of filtered) {
-            const row = document.createElement("button");
-            row.type = "button";
-            row.className = "chat-model-row";
-            const provider = providerFromModelId(m.id);
-            const avatarLetter = provider ? provider[0].toUpperCase() : "?";
-            const avatarStyle = providerColor(provider);
-            row.innerHTML = `
-                <div class="chat-model-row-main">
-                    <span class="chat-model-row-avatar" style="${avatarStyle}">${escapeHtml(avatarLetter)}</span>
-                    <div class="chat-model-row-text">
-                        <div class="chat-model-row-name">${escapeHtml(m.name || m.id)}</div>
-                        <div class="chat-model-row-provider">${escapeHtml(provider || m.id)}</div>
-                    </div>
-                </div>
-                <div class="chat-model-row-meta">
-                    ${
-                        m.input_per_m != null
-                            ? `<span>$${m.input_per_m.toFixed(2)}/M in</span>`
-                            : ""
-                    }
-                    ${
-                        m.output_per_m != null
-                            ? `<span>$${m.output_per_m.toFixed(2)}/M out</span>`
-                            : ""
-                    }
-                    ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
-                    ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
-                    ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
-                    ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
-                </div>
-            `;
-            row.addEventListener("click", () => {
-                selectModel(m.id);
-                closeModelPicker();
-            });
-            list.appendChild(row);
+            const p = providerFromModelId(m.id);
+            if (!grouped.has(p)) grouped.set(p, []);
+            grouped.get(p).push(m);
         }
+        const providers = Array.from(grouped.keys()).sort();
+        for (const provider of providers) {
+            const header = document.createElement("div");
+            header.className = "chat-model-picker-group";
+            header.textContent = provider;
+            list.appendChild(header);
+            for (const m of grouped.get(provider)) {
+                list.appendChild(makePickerRow(m));
+            }
+        }
+    }
+
+    function makePickerRow(m) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "chat-model-row";
+        const provider = providerFromModelId(m.id);
+        const avatarLetter = provider ? provider[0].toUpperCase() : "?";
+        const avatarStyle = providerColor(provider);
+        row.innerHTML = `
+            <div class="chat-model-row-main">
+                <span class="chat-model-row-avatar" style="${avatarStyle}">${escapeHtml(avatarLetter)}</span>
+                <div class="chat-model-row-text">
+                    <div class="chat-model-row-name">${escapeHtml(m.name || m.id)}</div>
+                    <div class="chat-model-row-provider">${escapeHtml(provider || m.id)}</div>
+                </div>
+            </div>
+            <div class="chat-model-row-meta">
+                ${
+                    m.input_per_m != null
+                        ? `<span>$${m.input_per_m.toFixed(2)}/M in</span>`
+                        : ""
+                }
+                ${
+                    m.output_per_m != null
+                        ? `<span>$${m.output_per_m.toFixed(2)}/M out</span>`
+                        : ""
+                }
+                ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
+                ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
+                ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
+                ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
+            </div>
+        `;
+        row.addEventListener("click", () => {
+            selectModel(m.id);
+            closeModelPicker();
+        });
+        return row;
     }
 
     // Pull "anthropic" out of "anthropic/claude-opus-4.7", "openai" out
@@ -1322,6 +1357,11 @@
 
     async function handleSendClick(event) {
         event.preventDefault();
+        // If any stream is active, the Send button is now Stop.
+        if (STREAMS.size > 0) {
+            stopAllStreams();
+            return;
+        }
         if (!isSignedIn()) {
             // The user's hard constraint: NO request fires when
             // signed out.
@@ -1452,7 +1492,11 @@
             ...params,
         };
         const abort = new AbortController();
-        STREAMS.set(assistantMsg.id, abort);
+        // Unique key per (assistantMsg, model) so multi-model parallel
+        // sends each get an independently abortable handle.
+        const streamKey = assistantMsg.id + ":" + slot.model_id + ":" + (slot.label || "");
+        STREAMS.set(streamKey, abort);
+        updateSendButtonMode();
         const resp = await fetch(API_BASE + "/chat/completions", {
             method: "POST",
             signal: abort.signal,
@@ -1532,7 +1576,8 @@
             saveState();
             renderThread();
         } finally {
-            STREAMS.delete(assistantMsg.id);
+            STREAMS.delete(streamKey);
+            updateSendButtonMode();
         }
     }
 
@@ -1594,6 +1639,45 @@
         if (!input) return;
         input.style.height = "auto";
         input.style.height = Math.min(input.scrollHeight, 200) + "px";
+    }
+
+    // Send vs Stop button — when any stream is active, the Send button
+    // switches to a Stop button that aborts all in-flight streams.
+    function updateSendButtonMode() {
+        const btn = document.querySelector("[data-chat-send]");
+        if (!btn) return;
+        if (STREAMS.size > 0) {
+            btn.textContent = "Stop";
+            btn.dataset.mode = "stop";
+            btn.classList.add("is-stop");
+        } else {
+            btn.textContent = "Send";
+            btn.dataset.mode = "send";
+            btn.classList.remove("is-stop");
+        }
+    }
+
+    function stopAllStreams() {
+        for (const [, controller] of STREAMS) {
+            try {
+                controller.abort();
+            } catch (_) {}
+        }
+        STREAMS.clear();
+        updateSendButtonMode();
+    }
+
+    // Relative time strings for sidebar items: "just now", "2m", "1h",
+    // "3d", "2w". Keeps the sidebar dense without sacrificing context.
+    function relativeTime(iso) {
+        if (!iso) return "";
+        const d = new Date(iso);
+        const sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+        if (sec < 30) return "just now";
+        if (sec < 3600) return Math.floor(sec / 60) + "m";
+        if (sec < 86400) return Math.floor(sec / 3600) + "h";
+        if (sec < 604800) return Math.floor(sec / 86400) + "d";
+        return Math.floor(sec / 604800) + "w";
     }
 
     // ── Token + cost estimate (live, while typing) ────────────────────
