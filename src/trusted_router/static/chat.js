@@ -2778,7 +2778,335 @@
         });
     }
 
-    // ── Voice input (Web Speech API) ──────────────────────────────────
+    // ── Voice mode (conversational: STT → send → TTS → loop) ──────────
+    //
+    // Full hands-free conversation in the browser:
+    //   1. Request mic permission via getUserMedia
+    //   2. Continuous SpeechRecognition with interimResults
+    //   3. End-of-utterance detected by a silence timer after the
+    //      last final result chunk → auto-send through the existing
+    //      streaming path (so multi-model / per-model sys-prompt /
+    //      params all still apply)
+    //   4. TTS reads the model's response sentence-by-sentence as
+    //      tokens stream in (chunks at . ? ! to feel responsive)
+    //   5. When TTS playback finishes, resume listening
+    //   6. Esc / button click exits voice mode and stops everything
+    //
+    // Browser support: Web Speech API is Chrome/Edge/Safari only.
+    // Firefox surfaces a friendly toast and doesn't enter the mode.
+
+    let VOICE_STATE = {
+        active: false,
+        rec: null,            // SpeechRecognition instance
+        stream: null,         // MediaStream from getUserMedia (kept for cleanup)
+        overlay: null,        // DOM root for the voice overlay
+        spokenChars: 0,       // index into respSlot.content already TTS'd
+        ttsQueue: [],         // pending SpeechSynthesisUtterance chunks
+        ttsSpeaking: false,
+        silenceTimer: null,
+        currentTranscript: "",
+    };
+    const VOICE_SILENCE_MS = 1200;   // pause length that ends an utterance
+
+    async function enterVoiceMode() {
+        const SR =
+            window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR || typeof window.speechSynthesis === "undefined") {
+            showToast(
+                "Voice mode needs Chrome, Edge, or Safari (Firefox doesn't support the Web Speech API yet)",
+                { danger: true, holdMs: 4000 },
+            );
+            return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showToast(
+                "Microphone access isn't available in this browser",
+                { danger: true },
+            );
+            return;
+        }
+        // Ask the browser for mic permission up-front. SpeechRecognition
+        // implicitly prompts too, but doing it explicitly via
+        // getUserMedia gives us a cleaner failure path AND keeps the
+        // mic stream open so the OS-level mic indicator stays on
+        // throughout the session.
+        try {
+            VOICE_STATE.stream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+            });
+        } catch (err) {
+            const denied =
+                err && (err.name === "NotAllowedError" || err.name === "PermissionDeniedError");
+            showToast(
+                denied
+                    ? "Microphone access denied — allow it in your browser settings to use voice mode"
+                    : "Couldn't access microphone: " + (err.message || err.name),
+                { danger: true, holdMs: 4000 },
+            );
+            return;
+        }
+        VOICE_STATE.active = true;
+        renderVoiceOverlay();
+        startVoiceListening();
+    }
+
+    function exitVoiceMode() {
+        VOICE_STATE.active = false;
+        // Stop recognition
+        if (VOICE_STATE.rec) {
+            try {
+                VOICE_STATE.rec.onend = null;
+                VOICE_STATE.rec.stop();
+            } catch (_) {}
+            VOICE_STATE.rec = null;
+        }
+        // Stop any in-flight TTS
+        if (window.speechSynthesis) {
+            try {
+                window.speechSynthesis.cancel();
+            } catch (_) {}
+        }
+        VOICE_STATE.ttsQueue = [];
+        VOICE_STATE.ttsSpeaking = false;
+        VOICE_STATE.spokenChars = 0;
+        VOICE_STATE.currentTranscript = "";
+        if (VOICE_STATE.silenceTimer) {
+            clearTimeout(VOICE_STATE.silenceTimer);
+            VOICE_STATE.silenceTimer = null;
+        }
+        // Release the mic stream
+        if (VOICE_STATE.stream) {
+            VOICE_STATE.stream.getTracks().forEach((t) => {
+                try { t.stop(); } catch (_) {}
+            });
+            VOICE_STATE.stream = null;
+        }
+        // Stop any inference streams that were started for voice mode
+        stopAllStreams();
+        // Drop the overlay
+        if (VOICE_STATE.overlay) {
+            VOICE_STATE.overlay.remove();
+            VOICE_STATE.overlay = null;
+        }
+    }
+
+    function renderVoiceOverlay() {
+        if (VOICE_STATE.overlay) return;
+        const overlay = document.createElement("div");
+        overlay.className = "chat-voice-overlay";
+        overlay.innerHTML =
+            '<div class="chat-voice-backdrop"></div>' +
+            '<div class="chat-voice-panel">' +
+            '<button type="button" class="chat-voice-exit" aria-label="Exit voice mode">×</button>' +
+            '<div class="chat-voice-orb" data-orb>' +
+            '<div class="chat-voice-orb-pulse"></div>' +
+            '<svg viewBox="0 0 32 32" width="48" height="48" fill="none" ' +
+            'stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+            'stroke-linejoin="round" aria-hidden="true">' +
+            '<rect x="12" y="4" width="8" height="16" rx="4" />' +
+            '<path d="M7 13 C7 18 11 22 16 22 C21 22 25 18 25 13" />' +
+            '<path d="M16 22 L16 28" />' +
+            '<path d="M12 28 L20 28" />' +
+            "</svg></div>" +
+            '<div class="chat-voice-status" data-voice-status>Listening…</div>' +
+            '<div class="chat-voice-transcript" data-voice-transcript></div>' +
+            '<div class="chat-voice-hint">Press <kbd>esc</kbd> to exit</div>' +
+            "</div>";
+        document.body.appendChild(overlay);
+        overlay
+            .querySelector(".chat-voice-exit")
+            .addEventListener("click", exitVoiceMode);
+        overlay
+            .querySelector(".chat-voice-backdrop")
+            .addEventListener("click", exitVoiceMode);
+        VOICE_STATE.overlay = overlay;
+        setVoiceState("listening", "Listening…");
+    }
+
+    function setVoiceState(stateClass, label) {
+        if (!VOICE_STATE.overlay) return;
+        const panel = VOICE_STATE.overlay.querySelector(".chat-voice-panel");
+        panel.dataset.state = stateClass;
+        const status = VOICE_STATE.overlay.querySelector("[data-voice-status]");
+        if (status && label) status.textContent = label;
+    }
+
+    function setVoiceTranscript(text) {
+        if (!VOICE_STATE.overlay) return;
+        const el = VOICE_STATE.overlay.querySelector("[data-voice-transcript]");
+        if (el) el.textContent = text || "";
+    }
+
+    function startVoiceListening() {
+        const SR =
+            window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR || !VOICE_STATE.active) return;
+        const rec = new SR();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = "en-US";
+        VOICE_STATE.rec = rec;
+        VOICE_STATE.currentTranscript = "";
+        setVoiceState("listening", "Listening…");
+
+        rec.onresult = (e) => {
+            let interim = "";
+            let final = "";
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                const r = e.results[i];
+                if (r.isFinal) {
+                    final += r[0].transcript;
+                } else {
+                    interim += r[0].transcript;
+                }
+            }
+            VOICE_STATE.currentTranscript = (
+                VOICE_STATE.currentTranscript +
+                " " +
+                final
+            ).trim();
+            const display = (VOICE_STATE.currentTranscript + " " + interim).trim();
+            setVoiceTranscript(display);
+            // Reset the silence timer on every chunk — when audio
+            // goes quiet for VOICE_SILENCE_MS we treat that as the
+            // end of the user's utterance.
+            if (VOICE_STATE.silenceTimer) clearTimeout(VOICE_STATE.silenceTimer);
+            VOICE_STATE.silenceTimer = setTimeout(() => {
+                finalizeUtterance();
+            }, VOICE_SILENCE_MS);
+        };
+        rec.onerror = (e) => {
+            // Some errors (no-speech) are benign; keep listening.
+            if (e.error === "no-speech" || e.error === "audio-capture") {
+                return;
+            }
+            console.warn("chat: voice rec error:", e.error);
+        };
+        rec.onend = () => {
+            // If we're still active, restart so the loop persists.
+            if (VOICE_STATE.active && !VOICE_STATE.ttsSpeaking) {
+                try { rec.start(); } catch (_) {}
+            }
+        };
+        try {
+            rec.start();
+        } catch (e) {
+            console.warn("chat: voice rec start failed:", e);
+        }
+    }
+
+    function finalizeUtterance() {
+        if (!VOICE_STATE.active) return;
+        const text = (VOICE_STATE.currentTranscript || "").trim();
+        if (!text) return;
+        VOICE_STATE.currentTranscript = "";
+        setVoiceTranscript(text);
+        setVoiceState("thinking", "Thinking…");
+        // Pause the mic while the model thinks + speaks so TTS doesn't
+        // feed back into STT.
+        if (VOICE_STATE.rec) {
+            try {
+                VOICE_STATE.rec.onend = null;
+                VOICE_STATE.rec.stop();
+            } catch (_) {}
+            VOICE_STATE.rec = null;
+        }
+        // Run the prompt through the standard send path; the voice
+        // overlay's content-watcher (below) picks up streaming tokens
+        // and feeds them to TTS.
+        VOICE_STATE.spokenChars = 0;
+        startVoiceSend(text);
+    }
+
+    async function startVoiceSend(text) {
+        const input = document.querySelector("[data-chat-input]");
+        if (input) input.value = text;
+        // Use the existing send pipeline so chat history, multi-model,
+        // and cost accounting all work the same as a typed message.
+        const before = (getActiveChat() || { messages: [] }).messages.length;
+        await handleSendClick();
+        const chat = getActiveChat();
+        if (!chat || chat.messages.length <= before) {
+            setVoiceState("listening", "Listening…");
+            startVoiceListening();
+            return;
+        }
+        const assistantMsg = chat.messages[chat.messages.length - 1];
+        setVoiceState("speaking", "Speaking…");
+        // Poll for streaming tokens on the first response slot; chunk
+        // at sentence boundaries and feed to TTS.
+        const watcher = setInterval(() => {
+            if (!VOICE_STATE.active) {
+                clearInterval(watcher);
+                return;
+            }
+            const resp = (assistantMsg.responses || [])[0];
+            const content = (resp && resp.content) || "";
+            const fresh = content.slice(VOICE_STATE.spokenChars);
+            // Sentence boundary anywhere in the fresh slice → speak up
+            // to and including the last terminator.
+            const match = fresh.match(/^[\s\S]*[.!?](?=\s|$)/);
+            if (match) {
+                const chunk = match[0].trim();
+                if (chunk) speakChunk(chunk);
+                VOICE_STATE.spokenChars += match[0].length;
+            }
+            // Stream done → flush remaining text + resume listening.
+            const streamDone =
+                resp &&
+                (resp.finish_reason ||
+                    (resp.content && !STREAMS.size && content.length > 0));
+            if (streamDone) {
+                clearInterval(watcher);
+                const tail = content.slice(VOICE_STATE.spokenChars).trim();
+                if (tail) speakChunk(tail);
+                // After the last chunk's onend, resumeListening kicks in.
+                if (!VOICE_STATE.ttsQueue.length && !VOICE_STATE.ttsSpeaking) {
+                    resumeListeningSoon();
+                }
+            }
+        }, 120);
+    }
+
+    function speakChunk(text) {
+        if (!VOICE_STATE.active || !window.speechSynthesis) return;
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.05;
+        u.pitch = 1.0;
+        u.lang = "en-US";
+        u.onend = () => {
+            VOICE_STATE.ttsSpeaking = false;
+            if (VOICE_STATE.ttsQueue.length) {
+                const next = VOICE_STATE.ttsQueue.shift();
+                VOICE_STATE.ttsSpeaking = true;
+                window.speechSynthesis.speak(next);
+            } else if (VOICE_STATE.active && !STREAMS.size) {
+                resumeListeningSoon();
+            }
+        };
+        if (VOICE_STATE.ttsSpeaking) {
+            VOICE_STATE.ttsQueue.push(u);
+        } else {
+            VOICE_STATE.ttsSpeaking = true;
+            window.speechSynthesis.speak(u);
+        }
+    }
+
+    function resumeListeningSoon() {
+        if (!VOICE_STATE.active) return;
+        // Short beat so the user has a half-second to start speaking
+        // without the mic picking up the tail of TTS.
+        setTimeout(() => {
+            if (VOICE_STATE.active && !VOICE_STATE.ttsSpeaking) {
+                startVoiceListening();
+            }
+        }, 350);
+    }
+
+    // ── Voice input (one-shot Web Speech API — push-to-talk) ──────────
+    // The original "click mic to dictate a single prompt" flow. Kept
+    // alongside the conversational Voice Mode above so users have a
+    // quick option without entering the full overlay.
 
     function startVoiceInput() {
         const SR =
@@ -2960,8 +3288,13 @@
         const targetTag =
             e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
         const inField = targetTag === "input" || targetTag === "textarea";
-        // Esc — stop any active stream first (before falling through to
-        // close-modal Esc behavior elsewhere).
+        // Esc — exit voice mode first if active, else stop any active
+        // stream (before falling through to close-modal Esc behavior).
+        if (e.key === "Escape" && VOICE_STATE.active) {
+            e.preventDefault();
+            exitVoiceMode();
+            return;
+        }
         if (e.key === "Escape" && STREAMS.size > 0) {
             e.preventDefault();
             stopAllStreams();
@@ -3024,6 +3357,12 @@
         if (e.key.toLowerCase() === "k") {
             e.preventDefault();
             addModel();
+            return;
+        }
+        // V — enter voice mode
+        if (e.key.toLowerCase() === "v") {
+            e.preventDefault();
+            enterVoiceMode();
             return;
         }
         // ? — open shortcuts help
@@ -3161,7 +3500,8 @@
             "<tr><td><kbd>⌘/Ctrl + J / K</kbd></td><td>Next / previous chat</td></tr>" +
             "<tr><td><kbd>/</kbd></td><td>Focus input</td></tr>" +
             "<tr><td><kbd>K</kbd></td><td>Add model</td></tr>" +
-            "<tr><td><kbd>Esc</kbd></td><td>Stop streams / close menu</td></tr>" +
+            "<tr><td><kbd>V</kbd></td><td>Enter voice mode</td></tr>" +
+            "<tr><td><kbd>Esc</kbd></td><td>Stop streams / exit voice / close menu</td></tr>" +
             "<tr><td><kbd>?</kbd></td><td>Show this help</td></tr>" +
             "</table>" +
             "<p>Click outside to close.</p>" +
@@ -3386,6 +3726,10 @@
             }
             if (target.closest('[data-action="voice-input"]')) {
                 startVoiceInput();
+                return;
+            }
+            if (target.closest('[data-action="enter-voice-mode"]')) {
+                enterVoiceMode();
                 return;
             }
             if (target.closest('[data-action="show-shortcuts"]')) {
