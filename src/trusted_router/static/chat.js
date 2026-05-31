@@ -856,11 +856,22 @@
                 const h = document.createElement("div");
                 h.className = "chat-msg-col-head";
                 const model = findModel(resp.model_id);
-                h.textContent =
+                const provider = providerFromModelId(resp.model_id);
+                const avatarStyle = providerColor(provider);
+                const label =
                     resp.slot_label ||
                     (model && model.name) ||
                     resp.model_id ||
                     "";
+                h.innerHTML =
+                    '<span class="chat-msg-col-head-avatar" style="' +
+                    avatarStyle +
+                    '">' +
+                    escapeHtml(provider ? provider[0].toUpperCase() : "?") +
+                    "</span>" +
+                    '<span class="chat-msg-col-head-label">' +
+                    escapeHtml(label) +
+                    "</span>";
                 col.appendChild(h);
             }
             const bubble = document.createElement("div");
@@ -908,6 +919,9 @@
                 const meta = document.createElement("div");
                 meta.className = "chat-msg-meta";
                 const cents = (resp.cost_microdollars || 0) / 10_000;
+                const tps = resp.tokens_per_sec
+                    ? "  ·  " + resp.tokens_per_sec + " t/s"
+                    : "";
                 meta.textContent =
                     "$" +
                     (cents / 100).toFixed(4) +
@@ -916,6 +930,7 @@
                     " in / " +
                     (resp.tokens_out || 0) +
                     " out" +
+                    tps +
                     (responses.length === 1
                         ? "  ·  " + (resp.model_id || "")
                         : "");
@@ -1514,6 +1529,11 @@
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
         const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
+        // Track tokens-per-second for the metric in the column footer.
+        // We measure from the FIRST delta arrival (not request start)
+        // so cold-start / network latency doesn't deflate the number.
+        let streamStartMs = 0;
+        let firstDeltaSeen = false;
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -1542,6 +1562,10 @@
                         const delta =
                             ev.choices && ev.choices[0] && ev.choices[0].delta;
                         if (delta && typeof delta.content === "string") {
+                            if (!firstDeltaSeen) {
+                                firstDeltaSeen = true;
+                                streamStartMs = Date.now();
+                            }
                             respSlot.content += delta.content;
                             // Live re-render this message's bubble
                             patchAssistantBubble(assistantMsg, respSlot, {
@@ -1559,6 +1583,16 @@
                             respSlot.tokens_in = ev.usage.prompt_tokens || 0;
                             respSlot.tokens_out =
                                 ev.usage.completion_tokens || 0;
+                            // tokens/sec for the column footer. Only
+                            // meaningful with a positive elapsed window.
+                            if (firstDeltaSeen && streamStartMs > 0) {
+                                const elapsed = (Date.now() - streamStartMs) / 1000;
+                                if (elapsed > 0.1 && respSlot.tokens_out > 0) {
+                                    respSlot.tokens_per_sec = Math.round(
+                                        respSlot.tokens_out / elapsed,
+                                    );
+                                }
+                            }
                         }
                         if (ev.trustedrouter && ev.trustedrouter.cost_microdollars) {
                             respSlot.cost_microdollars =
@@ -1647,11 +1681,11 @@
         const btn = document.querySelector("[data-chat-send]");
         if (!btn) return;
         if (STREAMS.size > 0) {
-            btn.textContent = "Stop";
+            btn.innerHTML = 'Stop <kbd class="chat-send-kbd">esc</kbd>';
             btn.dataset.mode = "stop";
             btn.classList.add("is-stop");
         } else {
-            btn.textContent = "Send";
+            btn.innerHTML = 'Send <kbd class="chat-send-kbd">⌘↵</kbd>';
             btn.dataset.mode = "send";
             btn.classList.remove("is-stop");
         }
@@ -2038,6 +2072,13 @@
         const targetTag =
             e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
         const inField = targetTag === "input" || targetTag === "textarea";
+        // Esc — stop any active stream first (before falling through to
+        // close-modal Esc behavior elsewhere).
+        if (e.key === "Escape" && STREAMS.size > 0) {
+            e.preventDefault();
+            stopAllStreams();
+            return;
+        }
         // Cmd/Ctrl+Enter — send (handled by the input handler too, but
         // also works when the input has focus)
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
