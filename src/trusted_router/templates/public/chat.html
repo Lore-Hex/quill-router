@@ -50,6 +50,10 @@
   <main class="chat-main">
     <header class="chat-header">
       <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
+      <div class="chat-header-title">
+        <span class="chat-header-chat-title" data-chat-header-title></span>
+        <span class="chat-header-chat-cost" data-chat-header-cost></span>
+      </div>
       <div class="chat-models-bar" data-chat-models-bar>
         {# Model pills + Add-Model button rendered client-side from
            chat.models[]. Up to 4 pills, with per-model dropdown. #}

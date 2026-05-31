@@ -443,6 +443,40 @@
             addBtn.textContent = "+ Add model";
             bar.appendChild(addBtn);
         }
+        renderHeaderMeta();
+    }
+
+    function renderHeaderMeta() {
+        const titleEl = document.querySelector("[data-chat-header-title]");
+        const costEl = document.querySelector("[data-chat-header-cost]");
+        const chat = getActiveChat();
+        if (titleEl) {
+            titleEl.textContent = (chat && chat.title) || "";
+        }
+        if (costEl) {
+            if (!chat) {
+                costEl.textContent = "";
+                return;
+            }
+            let totalCents = 0;
+            let totalIn = 0;
+            let totalOut = 0;
+            for (const m of chat.messages || []) {
+                if (m.role !== "assistant") continue;
+                for (const r of m.responses || []) {
+                    totalCents += (r.cost_microdollars || 0) / 10_000;
+                    totalIn += r.tokens_in || 0;
+                    totalOut += r.tokens_out || 0;
+                }
+            }
+            if (totalCents === 0 && totalIn === 0 && totalOut === 0) {
+                costEl.textContent = "";
+            } else {
+                costEl.textContent =
+                    "$" + (totalCents / 100).toFixed(4) +
+                    "  ·  " + totalIn + " in / " + totalOut + " out";
+            }
+        }
     }
 
     function makeModelPill(chat, slot, idx) {
@@ -460,7 +494,15 @@
             (model && model.name) ||
             slot.model_id ||
             "Select a model";
+        const provider = providerFromModelId(slot.model_id);
+        const avatarLetter = provider ? provider[0].toUpperCase() : "?";
+        const avatarStyle = providerColor(provider);
         pill.innerHTML =
+            '<span class="chat-model-pill-avatar" style="' +
+            avatarStyle +
+            '">' +
+            escapeHtml(avatarLetter) +
+            "</span>" +
             '<span class="chat-model-pill-name">' +
             escapeHtml(label) +
             "</span>" +
@@ -740,6 +782,7 @@
         thread.scrollTop = thread.scrollHeight;
         // After rendering, walk for code blocks and inject copy buttons.
         injectCodeCopyButtons(thread);
+        renderHeaderMeta();
     }
 
     // Per-code-block copy button. After marked + DOMPurify rendering,
@@ -875,9 +918,74 @@
         // Whole-assistant-message actions
         const actions = document.createElement("div");
         actions.className = "chat-msg-actions chat-msg-msg-actions";
+        // Continue: ask the assistant to keep going. Only available when
+        // there's at least one non-empty response (it doesn't make sense
+        // to "continue" before any content has been generated).
+        const anyContent = responses.some((r) => (r.content || "").length > 0);
+        if (anyContent) {
+            actions.appendChild(
+                makeAction("Continue", () => continueAssistant(chat, msg)),
+            );
+        }
         actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
         el.appendChild(actions);
         return el;
+    }
+
+    async function continueAssistant(chat, msg) {
+        // Synthesize a user "continue" turn, then re-stream. The model
+        // sees the existing assistant content in history (already
+        // appended via the per-model history builder) and a user
+        // message saying "continue", so it picks up where it left off.
+        const continueMsg = {
+            id: newMsgId(),
+            role: "user",
+            content: "Continue.",
+            created_at: isoNow(),
+        };
+        const newAssistant = {
+            id: newMsgId(),
+            role: "assistant",
+            responses: [],
+            created_at: isoNow(),
+        };
+        chat.messages.push(continueMsg);
+        chat.messages.push(newAssistant);
+        chat.updated_at = isoNow();
+        saveState();
+        renderThread();
+        try {
+            const key = await ensureBrowserKey();
+            const enabledSlots = chat.models.filter((m) => m.enabled);
+            for (const slot of enabledSlots) {
+                newAssistant.responses.push({
+                    model_id: slot.model_id,
+                    slot_label: slot.label || "",
+                    content: "",
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    cost_microdollars: 0,
+                    error: null,
+                });
+            }
+            renderThread();
+            await Promise.all(
+                enabledSlots.map((slot, i) =>
+                    streamCompletion(key, chat, slot, newAssistant, i).catch((e) => {
+                        const r = newAssistant.responses[i];
+                        if (r) r.error = String(e && e.message ? e.message : e);
+                        saveState();
+                        renderThread();
+                    }),
+                ),
+            );
+        } catch (e) {
+            for (const r of newAssistant.responses) {
+                r.error = r.error || String(e && e.message ? e.message : e);
+            }
+            saveState();
+            renderThread();
+        }
     }
 
     function makeAction(label, handler) {
@@ -1154,7 +1262,44 @@
     }
 
     function pickerKeyHandler(e) {
-        if (e.key === "Escape") closeModelPicker();
+        if (!pickerEl) return;
+        if (e.key === "Escape") {
+            closeModelPicker();
+            return;
+        }
+        const list = pickerEl.querySelector(".chat-model-picker-list");
+        const rows = list ? list.querySelectorAll(".chat-model-row") : null;
+        if (!rows || rows.length === 0) return;
+        let activeIdx = -1;
+        rows.forEach((r, i) => {
+            if (r.classList.contains("is-keyboard-active")) activeIdx = i;
+        });
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            const next = activeIdx < 0 ? 0 : Math.min(activeIdx + 1, rows.length - 1);
+            highlightPickerRow(rows, next);
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            const prev = activeIdx <= 0 ? 0 : activeIdx - 1;
+            highlightPickerRow(rows, prev);
+        } else if (e.key === "Enter") {
+            if (activeIdx >= 0) {
+                e.preventDefault();
+                rows[activeIdx].click();
+            } else if (rows.length > 0) {
+                e.preventDefault();
+                rows[0].click();
+            }
+        }
+    }
+
+    function highlightPickerRow(rows, idx) {
+        rows.forEach((r) => r.classList.remove("is-keyboard-active"));
+        const row = rows[idx];
+        if (row) {
+            row.classList.add("is-keyboard-active");
+            row.scrollIntoView({ block: "nearest" });
+        }
     }
 
     function closeModelPicker() {
