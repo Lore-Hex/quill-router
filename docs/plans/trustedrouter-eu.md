@@ -1,8 +1,38 @@
-# trustedrouter.eu — independent EU-sovereign stack on AWS Frankfurt
+# eu.trustedrouter.com — independent EU-sovereign stack on AWS Frankfurt
 
 **Status:** Phase 1 in progress (storage_aws.py)
 **Decided:** 2026-05-24
 **Owner:** Joseph
+
+## TLD decision (2026-05-24)
+
+**Shipping V1 on the `eu.trustedrouter.com` subdomain.** The original
+plan was `trustedrouter.eu` but two friction points pushed us to defer:
+
+1. The `.eu` TLD has an EU-residency requirement (EURid post-Brexit
+   rules) that Lore Hex Corp doesn't satisfy directly. A nominee
+   service (Gandi "EU Trustee", ~€20/yr) solves it but adds a
+   third-party touch-point on the registrar contact.
+2. Time-to-ship matters more than the marketing-positioning delta for
+   V1. Subdomain is available immediately.
+
+The subdomain approach is **reversible**: once V1 has paying EU
+customers asking for a `.eu` URL (or once regulated-industry
+procurement specifically requires it), we can register `trustedrouter.eu`
+via Gandi Trustee, add it as a Route 53 alias to the same AWS Frankfurt
+ALB, and serve both URLs in parallel. No code changes needed.
+
+For V1 the subdomain shape is:
+  * `eu.trustedrouter.com` — marketing + console root
+  * `api.eu.trustedrouter.com` — OpenAI-compatible API endpoint
+  * `trust.eu.trustedrouter.com` — sovereignty/compliance page
+
+DNS: the existing Cloud DNS zone `trustedrouter-com` gains a new CNAME
+`eu` → AWS Frankfurt ALB hostname. TLS via Let's Encrypt for
+`eu.trustedrouter.com` and `*.eu.trustedrouter.com`.
+
+**Marketing copy** still positions this as "TrustedRouter EU" or "TR
+Sovereign EU" — the `.com` ancestry is honest but de-emphasized.
 
 ## Why this exists
 
@@ -12,10 +42,10 @@ no transatlantic data flow, Schrems-II-defensible. Cross-region Spanner
 still legally counts as "global Google" so the existing
 `trusted-router-nam6` instance does not satisfy this.
 
-trustedrouter.eu is an **independent product on independent
+eu.trustedrouter.com is an **independent product on independent
 infrastructure**:
 
-| Property | trustedrouter.com | trustedrouter.eu |
+| Property | trustedrouter.com | eu.trustedrouter.com |
 |---|---|---|
 | Cloud | GCP | AWS |
 | Region | nam6 multi-region | eu-central-1 (Frankfurt) |
@@ -28,7 +58,7 @@ infrastructure**:
 | LLM providers | OpenAI, Anthropic-direct, Bedrock-US, Cerebras, Gemini, etc. | Mistral, Aleph Alpha, Bedrock-EU, Anthropic-via-Vertex-EU (when launched) |
 
 **Critical property: ZERO shared dependencies.** A GCP-global outage cannot
-take down trustedrouter.eu. An AWS-global outage cannot take down
+take down eu.trustedrouter.com. An AWS-global outage cannot take down
 trustedrouter.com. Reliability for clients using BOTH is multiplicative:
 ~99.99% × ~99.99% = **~99.99999999%** (effectively perfect) — without
 any failover orchestration on our side.
@@ -68,7 +98,7 @@ sovereignty story defensible.
 ## Build phases
 
 ### Phase 0 — Foundations (USER ACTION REQUIRED)
-1. Buy `trustedrouter.eu` (Namecheap, ~€10/yr)
+1. Buy `eu.trustedrouter.com` (Namecheap, ~€10/yr)
 2. Create a separate AWS account for the EU stack (AWS Organizations
    sub-account preferred; standalone OK for MVP). Clean blast radius +
    billing isolation + IAM trust boundary.
@@ -129,19 +159,19 @@ for SQLAlchemy or psycopg's transaction context manager.
    - ECS Fargate cluster + service + ALB
    - KMS keyring `trustedrouter-eu-byok`
    - Secrets Manager namespace `trustedrouter-eu/*`
-   - Route 53 hosted zone `trustedrouter.eu`
+   - Route 53 hosted zone `eu.trustedrouter.com`
    - CloudWatch + CloudWatch Logs for observability (vs Sentry/Axiom on
      .com)
 2. Cross-region Aurora backups to eu-west-1 (DR)
 3. Initial deploy of TR control plane to ECS Fargate
-4. Synthetic monitor running against `https://trustedrouter.eu/v1/healthz`
+4. Synthetic monitor running against `https://eu.trustedrouter.com/v1/healthz`
 
 ### Phase 3 — Federation layer (CAN DO ALONE; after Phase 1+2)
 1. `federated_identity` entity kind on both sides
 2. `POST /internal/federated-signup` handler on each side
 3. HMAC-signed webhook trigger in the signup flow (fire-and-forget +
    retry queue if delivery fails)
-4. Console UI: "you also have a workspace on trustedrouter.eu" banner
+4. Console UI: "you also have a workspace on eu.trustedrouter.com" banner
 5. Operator script: `scripts/transfer_credits.py wid amount --from .com
    --to .eu`
 
@@ -149,7 +179,7 @@ for SQLAlchemy or psycopg's transaction context manager.
 1. `tools/deploy-aws-nitro.sh` — provisions m5n.xlarge ASG (1 prewarm,
    max 50) in eu-central-1
 2. Parent vsock-relay process per Nitro instance
-3. AWS NLB on `enclave.trustedrouter.eu`
+3. AWS NLB on `enclave.eu.trustedrouter.com`
 4. Same `cloud_aws,llm_multi` build of `enclave-go/` — the AWS-side
    build already exists; this is operational work
 
@@ -162,7 +192,7 @@ for SQLAlchemy or psycopg's transaction context manager.
    the Nitro path)
 
 ### Phase 6 — Marketing + cross-promotion (USER + ME)
-1. Landing pages on `trustedrouter.eu`:
+1. Landing pages on `eu.trustedrouter.com`:
    - "Sovereign EU AI Gateway"
    - GDPR / Schrems II compliance page
    - Data-flow diagram showing no US-cloud touch
