@@ -33,10 +33,15 @@
     <header class="chat-header">
       <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
       <div class="chat-models-bar" data-chat-models-bar>
-        {# Model pill(s) rendered client-side. MVP = 1 pill. PR 3 (multi-model)
-           adds an Add Model button that grows this list to up to 4 pills. #}
+        {# Model pills + Add-Model button rendered client-side from
+           chat.models[]. Up to 4 pills, with per-model dropdown. #}
       </div>
-      <button class="btn chat-system-toggle" type="button" data-action="toggle-system-prompt">System</button>
+      <div class="chat-header-actions">
+        <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
+        <button class="btn chat-header-btn" type="button" data-action="export-md" title="Export to Markdown">⤓</button>
+        <button class="btn chat-header-btn" type="button" data-action="share-link" title="Copy share link">↗</button>
+        <button class="btn chat-header-btn" type="button" data-action="show-shortcuts" title="Keyboard shortcuts">?</button>
+      </div>
     </header>
 
     <div class="chat-system-prompt-panel" data-chat-system-prompt hidden>
@@ -56,11 +61,33 @@
     </div>
 
     <footer class="chat-input-bar">
+      <div class="chat-attachments-tray" data-chat-attachments hidden></div>
       <div class="chat-input-meta" data-chat-input-meta>
         <span class="chat-token-counter" data-chat-token-counter></span>
         <span class="chat-cost-estimate" data-chat-cost-estimate></span>
       </div>
       <div class="chat-input-row">
+        <button
+          type="button"
+          class="chat-input-btn"
+          data-action="attach-file"
+          title="Attach image"
+          aria-label="Attach image"
+        >📎</button>
+        <button
+          type="button"
+          class="chat-input-btn"
+          data-chat-voice
+          data-action="voice-input"
+          title="Voice input"
+          aria-label="Voice input"
+        >🎙</button>
+        <input
+          type="file"
+          accept="image/*"
+          data-chat-file-input
+          hidden
+        >
         <textarea
           class="chat-input"
           data-chat-input
@@ -98,5 +125,9 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/index.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+{# pako gzips the share-URL hash payload so longer chats fit in URL
+   constraints. Optional — if it fails to load, share falls back to
+   raw base64 which is bigger but still works for small chats. #}
+<script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
 <script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
 {% endblock %}

@@ -962,10 +962,12 @@
         autoResize(input);
 
         const chat = ensureActiveChat();
+        const attachments = consumePendingAttachments(chat);
         const userMsg = {
             id: newMsgId(),
             role: "user",
             content: text,
+            attachments,
             created_at: isoNow(),
         };
         const assistantMsg = {
@@ -1047,7 +1049,15 @@
         for (const m of chat.messages) {
             if (m.id === assistantMsg.id) break;
             if (m.role === "user") {
-                messages.push({ role: "user", content: m.content });
+                // OpenAI content shape: either a string (text only)
+                // or an array of parts (text + image_url for vision).
+                if (m.attachments && m.attachments.length > 0) {
+                    const parts = [{ type: "text", text: m.content }];
+                    for (const a of m.attachments) parts.push(a);
+                    messages.push({ role: "user", content: parts });
+                } else {
+                    messages.push({ role: "user", content: m.content });
+                }
             } else if (m.role === "assistant" && m.responses && m.responses.length) {
                 let mine =
                     m.responses.find(
@@ -1166,23 +1176,455 @@
         input.style.height = Math.min(input.scrollHeight, 200) + "px";
     }
 
+    // ── Token + cost estimate (live, while typing) ────────────────────
+    //
+    // Rough char-to-token ratio: ~4 chars per token for English. Good
+    // enough for an order-of-magnitude estimate. Precise cost lands
+    // when the response comes back.
+
+    function approxTokens(text) {
+        if (!text) return 0;
+        return Math.ceil(text.length / 4);
+    }
+
+    function updateInputEstimate() {
+        const input = document.querySelector("[data-chat-input]");
+        const tCounter = document.querySelector("[data-chat-token-counter]");
+        const cCounter = document.querySelector("[data-chat-cost-estimate]");
+        if (!input) return;
+        const text = input.value || "";
+        const tokens = approxTokens(text);
+        if (tCounter) tCounter.textContent = tokens > 0 ? "~" + tokens + " tokens" : "";
+        const chat = getActiveChat();
+        if (chat && cCounter) {
+            const enabled = chat.models.filter((m) => m.enabled);
+            const totalRate = enabled.reduce((sum, slot) => {
+                const m = findModel(slot.model_id);
+                return sum + (m && m.input_per_m ? m.input_per_m : 0);
+            }, 0);
+            const estCents = (tokens * totalRate) / 1_000_000 * 100;
+            if (tokens > 0 && totalRate > 0) {
+                cCounter.textContent =
+                    "~$" + (estCents / 100).toFixed(4) +
+                    (enabled.length > 1 ? " × " + enabled.length + " models" : "");
+            } else {
+                cCounter.textContent = "";
+            }
+        }
+    }
+
+    // ── Model presets (saved parameter configurations) ────────────────
+
+    const BUILT_IN_PRESETS = [
+        {
+            name: "Default",
+            params: { ...DEFAULT_PARAMS },
+        },
+        {
+            name: "Creative",
+            params: { ...DEFAULT_PARAMS, temperature: 1.0, top_p: 0.95 },
+        },
+        {
+            name: "Deterministic",
+            params: { ...DEFAULT_PARAMS, temperature: 0, top_p: 1 },
+        },
+        {
+            name: "Long output",
+            params: { ...DEFAULT_PARAMS, max_tokens: 8000 },
+        },
+    ];
+
+    function getPresets() {
+        const custom =
+            (STATE.preferences && STATE.preferences.presets) || [];
+        return BUILT_IN_PRESETS.concat(custom);
+    }
+
+    function savePreset(name, slot) {
+        if (!STATE.preferences.presets) STATE.preferences.presets = [];
+        STATE.preferences.presets.push({ name, params: { ...slot.params } });
+        saveState();
+    }
+
+    function loadPreset(slotIdx, presetName) {
+        const chat = ensureActiveChat();
+        const slot = chat.models[slotIdx];
+        if (!slot) return;
+        const preset = getPresets().find((p) => p.name === presetName);
+        if (!preset) return;
+        slot.params = { ...DEFAULT_PARAMS, ...preset.params };
+        chat.updated_at = isoNow();
+        saveState();
+        renderModelsBar();
+    }
+
+    // ── Export: JSON + Markdown ───────────────────────────────────────
+
+    function downloadFile(name, content, mime) {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            URL.revokeObjectURL(url);
+            a.remove();
+        }, 0);
+    }
+
+    function exportChatJSON() {
+        const chat = getActiveChat();
+        if (!chat) return;
+        downloadFile(
+            (chat.title || "chat") + ".json",
+            JSON.stringify(chat, null, 2),
+            "application/json",
+        );
+    }
+
+    function exportChatMarkdown() {
+        const chat = getActiveChat();
+        if (!chat) return;
+        const lines = [];
+        lines.push("# " + (chat.title || "Chat"));
+        if (chat.shared_system_prompt) {
+            lines.push("");
+            lines.push("> **System:** " + chat.shared_system_prompt);
+        }
+        lines.push("");
+        for (const m of chat.messages) {
+            if (m.role === "user") {
+                lines.push("## You");
+                lines.push("");
+                lines.push(m.content || "");
+                lines.push("");
+            } else if (m.role === "assistant") {
+                for (const r of m.responses || []) {
+                    const model = findModel(r.model_id);
+                    const head =
+                        r.slot_label ||
+                        (model && model.name) ||
+                        r.model_id ||
+                        "Assistant";
+                    lines.push("## " + head);
+                    lines.push("");
+                    lines.push(r.content || "");
+                    if (r.cost_microdollars || r.tokens_out) {
+                        const cents = (r.cost_microdollars || 0) / 10_000;
+                        lines.push("");
+                        lines.push(
+                            "_$" +
+                                (cents / 100).toFixed(4) +
+                                " · " +
+                                (r.tokens_in || 0) +
+                                " in / " +
+                                (r.tokens_out || 0) +
+                                " out_",
+                        );
+                    }
+                    lines.push("");
+                }
+            }
+        }
+        downloadFile(
+            (chat.title || "chat") + ".md",
+            lines.join("\n"),
+            "text/markdown",
+        );
+    }
+
+    // ── Share via URL hash (privacy-preserving: fragment, not query) ──
+
+    function exportShareLink() {
+        const chat = getActiveChat();
+        if (!chat) return null;
+        const json = JSON.stringify({ v: 1, chat });
+        let encoded;
+        try {
+            if (window.pako && window.pako.deflate) {
+                const gz = window.pako.deflate(json);
+                encoded = btoa(String.fromCharCode.apply(null, gz));
+            } else {
+                encoded = btoa(unescape(encodeURIComponent(json)));
+            }
+        } catch (_) {
+            encoded = btoa(unescape(encodeURIComponent(json)));
+        }
+        const url = location.origin + "/chat#share=" + encoded;
+        // URL > 8KB risks browser truncation
+        if (url.length > 8000) {
+            alert(
+                "This chat is too large to share via URL (" +
+                    url.length +
+                    " chars). Use Export to JSON instead.",
+            );
+            return null;
+        }
+        navigator.clipboard.writeText(url).then(
+            () => alert("Share link copied to clipboard."),
+            () => prompt("Copy this share link:", url),
+        );
+        return url;
+    }
+
+    function importSharedChatFromHash() {
+        const hash = location.hash || "";
+        if (!hash.startsWith("#share=")) return;
+        const encoded = hash.slice(7);
+        try {
+            let json;
+            if (window.pako && window.pako.inflate) {
+                try {
+                    const bin = atob(encoded);
+                    const bytes = new Uint8Array(bin.length);
+                    for (let i = 0; i < bin.length; i++)
+                        bytes[i] = bin.charCodeAt(i);
+                    json = window.pako.inflate(bytes, { to: "string" });
+                } catch (_) {
+                    json = decodeURIComponent(escape(atob(encoded)));
+                }
+            } else {
+                json = decodeURIComponent(escape(atob(encoded)));
+            }
+            const payload = JSON.parse(json);
+            if (!payload || !payload.chat) return;
+            // Import as a fresh chat with a new id (avoid clobbering an
+            // existing chat by accident).
+            const incoming = payload.chat;
+            incoming.id = newChatId();
+            incoming.title = (incoming.title || "Shared") + " (shared)";
+            STATE.chats[incoming.id] = incoming;
+            STATE.activeChatId = incoming.id;
+            saveState();
+            // Clean the URL so a refresh doesn't re-import.
+            history.replaceState(null, "", location.pathname);
+            renderSidebar();
+            renderModelsBar();
+            renderSystemPrompt();
+            renderThread();
+        } catch (e) {
+            console.warn("chat: share import failed:", e);
+        }
+    }
+
+    // ── Chat rename (double-click sidebar title) ──────────────────────
+
+    function renameChatPrompt(chatId) {
+        const chat = STATE.chats[chatId];
+        if (!chat) return;
+        const next = prompt("Rename chat:", chat.title || "");
+        if (next == null) return;
+        chat.title = next.trim() || chat.title || "Untitled";
+        chat.updated_at = isoNow();
+        saveState();
+        renderSidebar();
+    }
+
+    // ── Voice input (Web Speech API) ──────────────────────────────────
+
+    function startVoiceInput() {
+        const SR =
+            window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) {
+            alert("Voice input isn't supported in this browser.");
+            return;
+        }
+        const rec = new SR();
+        rec.continuous = false;
+        rec.interimResults = false;
+        rec.lang = "en-US";
+        const input = document.querySelector("[data-chat-input]");
+        const btn = document.querySelector("[data-chat-voice]");
+        if (btn) btn.classList.add("is-recording");
+        rec.onresult = (e) => {
+            const transcript = Array.from(e.results)
+                .map((r) => r[0].transcript)
+                .join(" ");
+            if (input) {
+                const existing = input.value || "";
+                input.value = (existing ? existing + " " : "") + transcript;
+                autoResize(input);
+                updateInputEstimate();
+                input.focus();
+            }
+        };
+        rec.onend = () => {
+            if (btn) btn.classList.remove("is-recording");
+        };
+        rec.onerror = () => {
+            if (btn) btn.classList.remove("is-recording");
+        };
+        try {
+            rec.start();
+        } catch (e) {
+            console.warn("chat: voice rec start failed:", e);
+            if (btn) btn.classList.remove("is-recording");
+        }
+    }
+
+    // ── File attachments (image input for vision models) ──────────────
+
+    async function attachFileToInput(file) {
+        if (!file) return;
+        if (!file.type.startsWith("image/")) {
+            alert("Only image files are supported in V1.");
+            return;
+        }
+        const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+        const chat = ensureActiveChat();
+        if (!chat._pending_attachments) chat._pending_attachments = [];
+        chat._pending_attachments.push({
+            type: "image_url",
+            image_url: { url: dataUrl },
+        });
+        renderAttachmentTray();
+    }
+
+    function renderAttachmentTray() {
+        const tray = document.querySelector("[data-chat-attachments]");
+        if (!tray) return;
+        const chat = getActiveChat();
+        const pending = (chat && chat._pending_attachments) || [];
+        tray.innerHTML = "";
+        if (pending.length === 0) {
+            tray.hidden = true;
+            return;
+        }
+        tray.hidden = false;
+        pending.forEach((att, idx) => {
+            const thumb = document.createElement("div");
+            thumb.className = "chat-attachment-thumb";
+            if (att.type === "image_url") {
+                const img = document.createElement("img");
+                img.src = att.image_url.url;
+                thumb.appendChild(img);
+            }
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "chat-attachment-remove";
+            remove.textContent = "×";
+            remove.addEventListener("click", () => {
+                chat._pending_attachments.splice(idx, 1);
+                renderAttachmentTray();
+            });
+            thumb.appendChild(remove);
+            tray.appendChild(thumb);
+        });
+    }
+
+    function consumePendingAttachments(chat) {
+        const a = chat._pending_attachments || [];
+        chat._pending_attachments = [];
+        renderAttachmentTray();
+        return a;
+    }
+
+    // ── Keyboard shortcuts ────────────────────────────────────────────
+
+    function handleGlobalShortcut(e) {
+        // Skip if inside an input/textarea (except specific combos)
+        const targetTag =
+            e.target && e.target.tagName ? e.target.tagName.toLowerCase() : "";
+        const inField = targetTag === "input" || targetTag === "textarea";
+        // Cmd/Ctrl+Enter — send (handled by the input handler too, but
+        // also works when the input has focus)
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            const sendBtn = document.querySelector("[data-chat-send]");
+            if (sendBtn) sendBtn.click();
+            return;
+        }
+        // Cmd/Ctrl+N — new chat
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+            e.preventDefault();
+            newChat();
+            return;
+        }
+        // Cmd/Ctrl+E — export current chat to JSON
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
+            e.preventDefault();
+            exportChatJSON();
+            return;
+        }
+        if (inField) return;
+        // / — focus new chat (no modifier)
+        if (e.key === "/") {
+            e.preventDefault();
+            const input = document.querySelector("[data-chat-input]");
+            if (input) input.focus();
+            return;
+        }
+        // K — open Add Model
+        if (e.key.toLowerCase() === "k") {
+            e.preventDefault();
+            addModel();
+            return;
+        }
+        // ? — open shortcuts help
+        if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+            e.preventDefault();
+            showShortcutsHelp();
+        }
+    }
+
+    function showShortcutsHelp() {
+        const html =
+            '<div class="chat-help-overlay" data-close>' +
+            '<div class="chat-help-panel">' +
+            "<h3>Keyboard shortcuts</h3>" +
+            "<table>" +
+            "<tr><td><kbd>⌘/Ctrl + Enter</kbd></td><td>Send message</td></tr>" +
+            "<tr><td><kbd>⌘/Ctrl + N</kbd></td><td>New chat</td></tr>" +
+            "<tr><td><kbd>⌘/Ctrl + E</kbd></td><td>Export to JSON</td></tr>" +
+            "<tr><td><kbd>/</kbd></td><td>Focus input</td></tr>" +
+            "<tr><td><kbd>K</kbd></td><td>Add model</td></tr>" +
+            "<tr><td><kbd>Esc</kbd></td><td>Close menu</td></tr>" +
+            "<tr><td><kbd>?</kbd></td><td>Show this help</td></tr>" +
+            "</table>" +
+            "<p>Click outside to close.</p>" +
+            "</div></div>";
+        const el = document.createElement("div");
+        el.innerHTML = html;
+        const node = el.firstChild;
+        document.body.appendChild(node);
+        node.addEventListener("click", (e) => {
+            if (e.target.dataset && e.target.dataset.close != null) {
+                node.remove();
+            }
+        });
+    }
+
     // ── Init ──────────────────────────────────────────────────────────
 
     function init() {
         bootstrapBrowserKey();
         ensureActiveChat();
+        importSharedChatFromHash();
         renderSidebar();
         renderModelsBar();
         renderSystemPrompt();
         renderThread();
+        renderAttachmentTray();
         loadModels();
+        updateInputEstimate();
 
         const sendBtn = document.querySelector("[data-chat-send]");
         if (sendBtn) sendBtn.addEventListener("click", handleSendClick);
 
         const input = document.querySelector("[data-chat-input]");
         if (input) {
-            input.addEventListener("input", () => autoResize(input));
+            input.addEventListener("input", () => {
+                autoResize(input);
+                updateInputEstimate();
+            });
             input.addEventListener("keydown", (e) => {
                 if (
                     (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ||
@@ -1192,7 +1634,35 @@
                     handleSendClick(e);
                 }
             });
+            // Drag-and-drop image attachments — drop directly on the
+            // input or anywhere within the main pane.
+            const main = document.querySelector(".chat-main");
+            if (main) {
+                main.addEventListener("dragover", (e) => {
+                    e.preventDefault();
+                    main.classList.add("is-dragover");
+                });
+                main.addEventListener("dragleave", () => {
+                    main.classList.remove("is-dragover");
+                });
+                main.addEventListener("drop", (e) => {
+                    e.preventDefault();
+                    main.classList.remove("is-dragover");
+                    const files = e.dataTransfer && e.dataTransfer.files;
+                    if (files && files.length > 0) {
+                        for (const f of files) attachFileToInput(f);
+                    }
+                });
+            }
         }
+
+        document.addEventListener("keydown", handleGlobalShortcut);
+
+        // Window unload — clean any sessionStorage we don't need to
+        // persist past the tab close. Browser keys + state stay so the
+        // user resumes where they left off.
+        // (intentionally not clearing sessionStorage here; key is
+        // session-scoped already and clears naturally on tab close)
 
         document.addEventListener("click", (e) => {
             const target = e.target;
@@ -1248,10 +1718,59 @@
                 }
                 return;
             }
+            // Chunk 4 actions
+            if (target.closest('[data-action="export-json"]')) {
+                exportChatJSON();
+                return;
+            }
+            if (target.closest('[data-action="export-md"]')) {
+                exportChatMarkdown();
+                return;
+            }
+            if (target.closest('[data-action="share-link"]')) {
+                exportShareLink();
+                return;
+            }
+            if (target.closest('[data-action="attach-file"]')) {
+                const f = document.querySelector("[data-chat-file-input]");
+                if (f) f.click();
+                return;
+            }
+            if (target.closest('[data-action="voice-input"]')) {
+                startVoiceInput();
+                return;
+            }
+            if (target.closest('[data-action="show-shortcuts"]')) {
+                showShortcutsHelp();
+                return;
+            }
+            // Rename via double-click in sidebar — wired separately via
+            // dblclick on .chat-sidebar-title; bare clicks just select.
+
             // Click outside any pill or dropdown closes the open dropdown.
             if (openDropdownSlotIdx >= 0 && !target.closest(".chat-model-pill-wrap")) {
                 openDropdownSlotIdx = -1;
                 renderModelsBar();
+            }
+        });
+
+        document.addEventListener("dblclick", (e) => {
+            const titleBtn = e.target && e.target.closest
+                ? e.target.closest(".chat-sidebar-title")
+                : null;
+            if (titleBtn) {
+                const item = titleBtn.closest("[data-chat-id]");
+                if (item) renameChatPrompt(item.dataset.chatId);
+            }
+        });
+
+        document.addEventListener("change", (e) => {
+            const fileInput = e.target && e.target.closest
+                ? e.target.closest("[data-chat-file-input]")
+                : null;
+            if (fileInput && fileInput.files) {
+                for (const f of fileInput.files) attachFileToInput(f);
+                fileInput.value = ""; // allow re-selecting the same file
             }
         });
     }
