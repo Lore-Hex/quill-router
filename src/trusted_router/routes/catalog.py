@@ -5,7 +5,13 @@ from typing import Any
 from fastapi import APIRouter
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
-from trusted_router.catalog import MODELS, PROVIDERS, endpoints_for_model, model_to_openrouter_shape
+from trusted_router.catalog import (
+    MODELS,
+    PROVIDERS,
+    endpoints_for_model,
+    model_to_openrouter_shape,
+    provider_to_openrouter_shape,
+)
 from trusted_router.regions import choose_region, region_payload
 
 
@@ -44,11 +50,20 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "pricing": pricing,
                     "supported_parameters": ["messages", "temperature", "top_p", "max_tokens", "stream"],
                     "trustedrouter": {
-                        "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
-                        "stores_content": PROVIDERS[endpoint.provider].stores_content,
-                        "usage_type": endpoint.usage_type,
-                        "prepaid_available": endpoint.usage_type == "Credits",
-                        "byok_available": endpoint.usage_type == "BYOK",
+                    "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
+                    "stores_content": PROVIDERS[endpoint.provider].stores_content,
+                    "provider_zero_data_retention": PROVIDERS[
+                        endpoint.provider
+                    ].provider_zero_data_retention,
+                    "provider_confidential_compute": PROVIDERS[
+                        endpoint.provider
+                    ].provider_confidential_compute,
+                    "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
+                    "provider_policy": PROVIDERS[endpoint.provider].provider_policy,
+                    "provider_policy_url": PROVIDERS[endpoint.provider].provider_policy_url,
+                    "usage_type": endpoint.usage_type,
+                    "prepaid_available": endpoint.usage_type == "Credits",
+                    "byok_available": endpoint.usage_type == "BYOK",
                     },
                 }
                 for endpoint in endpoints_for_model(model.id)
@@ -65,8 +80,16 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "data_collection": "deny",
                     "attested_gateway": provider.attested_gateway,
                     "stores_content": provider.stores_content,
+                    "provider_zero_data_retention": provider.provider_zero_data_retention,
+                    "provider_confidential_compute": provider.provider_confidential_compute,
+                    "provider_e2ee": provider.provider_e2ee,
+                    "provider_policy": provider.provider_policy,
+                    "provider_policy_url": provider.provider_policy_url,
                 }
                 for provider in PROVIDERS.values()
+                if provider.provider_zero_data_retention is True
+                or provider.provider_confidential_compute is True
+                or provider.provider_e2ee is True
             ]
         }
 
@@ -82,16 +105,4 @@ def register_catalog_routes(router: APIRouter) -> None:
 
     @router.get("/providers")
     async def providers() -> dict[str, list[dict[str, Any]]]:
-        return {
-            "data": [
-                {
-                    "id": provider.slug,
-                    "name": provider.name,
-                    "supports_prepaid": provider.supports_prepaid,
-                    "supports_byok": provider.supports_byok,
-                    "attested_gateway": provider.attested_gateway,
-                    "stores_content": provider.stores_content,
-                }
-                for provider in PROVIDERS.values()
-            ]
-        }
+        return {"data": [provider_to_openrouter_shape(provider) for provider in PROVIDERS.values()]}

@@ -593,7 +593,14 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["kimi"]["supports_byok"] is True
     assert provider_flags["mistral"]["supports_byok"] is True
     assert provider_flags["zai"]["supports_byok"] is True
-    assert client.get("/v1/endpoints/zdr").json()["data"]
+    assert provider_flags["tinfoil"]["provider_e2ee"] is True
+    assert provider_flags["phala"]["provider_confidential_compute"] is True
+    assert provider_flags["openai"]["provider_zero_data_retention"] is None
+    zdr = client.get("/v1/endpoints/zdr").json()["data"]
+    assert zdr
+    zdr_providers = {item["provider"] for item in zdr}
+    assert {"trustedrouter", "phala", "tinfoil"}.issubset(zdr_providers)
+    assert "openai" not in zdr_providers
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200
     assert credits.json()["data"]["total_credits"] >= 0

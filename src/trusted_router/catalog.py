@@ -25,6 +25,14 @@ class Provider:
     supports_byok: bool = True
     attested_gateway: bool = True
     stores_content: bool = False
+    provider_zero_data_retention: bool | None = None
+    provider_confidential_compute: bool | None = None
+    provider_e2ee: bool | None = None
+    provider_policy: str = (
+        "No public zero-retention, confidential-compute, or provider-side "
+        "end-to-end-encryption claim is tracked yet."
+    )
+    provider_policy_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -242,6 +250,14 @@ PROVIDERS: dict[str, Provider] = {
         supports_embeddings=False,
         supports_prepaid=True,
         supports_byok=True,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "TrustedRouter's attested gateway stores no prompt or output content. "
+            "Provider compute policy still depends on the selected upstream route."
+        ),
+        provider_policy_url="https://trust.trustedrouter.com",
     ),
     "anthropic": Provider(
         slug="anthropic", name="Anthropic", supports_messages=True, supports_prepaid=True
@@ -275,7 +291,19 @@ PROVIDERS: dict[str, Provider] = {
     # / NVIDIA Confidential Compute enclaves. Verified attestation,
     # end-to-end encrypted prompts. **On-brand for TR's trust story.**
     # OpenAI-compatible at api.red-pill.ai/v1.
-    "phala": Provider(slug="phala", name="Phala", supports_prepaid=True, stores_content=False),
+    "phala": Provider(
+        slug="phala",
+        name="Phala",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "Tracked as a confidential AI provider with provider-side "
+            "attestation and encrypted prompt transport."
+        ),
+    ),
     # SiliconFlow — Chinese serverless inference with 200+ open-weight
     # models. OpenAI-compatible at api.siliconflow.com/v1.
     "siliconflow": Provider(slug="siliconflow", name="SiliconFlow", supports_prepaid=True),
@@ -283,11 +311,33 @@ PROVIDERS: dict[str, Provider] = {
     # via remote attestation. **Also on-brand for TR's trust story.**
     # OpenAI-compatible at inference.tinfoil.sh/v1.
     "tinfoil": Provider(
-        slug="tinfoil", name="Tinfoil", supports_prepaid=True, stores_content=False
+        slug="tinfoil",
+        name="Tinfoil",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+        provider_policy=(
+            "Tracked as a confidential inference provider with attested "
+            "provider compute and no prompt/output logging claims."
+        ),
     ),
     # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
     # positioning. OpenAI-compatible at api.venice.ai/api/v1.
-    "venice": Provider(slug="venice", name="Venice", supports_prepaid=True, stores_content=False),
+    "venice": Provider(
+        slug="venice",
+        name="Venice",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Tracked as a no-logs provider claim. This is not the same as "
+            "attested confidential compute."
+        ),
+    ),
     # Parasail — serverless inference platform. Hosts Llama, Qwen,
     # Gemma 4 family, plus their own quantized variants
     # (parasail-* aliases). OpenAI-compatible at api.parasail.io/v1.
@@ -303,7 +353,16 @@ PROVIDERS: dict[str, Provider] = {
     # OpenAI-compatible at api.gmi-serving.com/v1. Pricing is in the
     # /v1/models response under each model's `pricing` block (per-token
     # rates as strings).
-    "gmi": Provider(slug="gmi", name="GMI Cloud", supports_prepaid=True),
+    "gmi": Provider(
+        slug="gmi",
+        name="GMI Cloud",
+        supports_prepaid=True,
+        provider_confidential_compute=True,
+        provider_policy=(
+            "Tracked as confidential-GPU provider compute. Zero-retention "
+            "and provider-side E2EE are not marked unless separately verified."
+        ),
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -516,10 +575,15 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "x-ai": "grok",
     "xai": "grok",
     "phala": "phala",
-    # `meta-llama/*`, `qwen/*`, `minimax/*` etc. fall back to whichever
-    # endpoint provider serves them — Cerebras / Novita / SiliconFlow
-    # all host open-weight Llama / Qwen variants, and the endpoint
-    # provider determines which TR-keyed provider answers the call.
+    # Keep Meta Llama's primary TR route on Cerebras even when the
+    # OpenRouter endpoint snapshot temporarily exposes only a different
+    # host. Cerebras is one of TR's direct prepaid/BYOK providers and
+    # the gateway can call this upstream model id directly.
+    "meta-llama": "cerebras",
+    # `qwen/*`, `minimax/*` etc. fall back to whichever endpoint
+    # provider serves them — Novita / SiliconFlow and others host
+    # open-weight variants, and the endpoint provider determines which
+    # TR-keyed provider answers the call.
 }
 
 
@@ -985,6 +1049,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "byok_available": byok_available,
         "attested_gateway": provider.attested_gateway,
         "stores_content": provider.stores_content,
+        "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "provider_confidential_compute": provider.provider_confidential_compute,
+        "provider_e2ee": provider.provider_e2ee,
+        "provider_policy": provider.provider_policy,
+        "provider_policy_url": provider.provider_policy_url,
         "prompt_price_microdollars_per_million_tokens": prompt_min,
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
@@ -1006,6 +1075,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "upstream_id": endpoint.upstream_id,
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": PROVIDERS[endpoint.provider].stores_content,
+                "provider_zero_data_retention": PROVIDERS[
+                    endpoint.provider
+                ].provider_zero_data_retention,
+                "provider_confidential_compute": PROVIDERS[
+                    endpoint.provider
+                ].provider_confidential_compute,
+                "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
+                "provider_policy": PROVIDERS[endpoint.provider].provider_policy,
+                "provider_policy_url": PROVIDERS[endpoint.provider].provider_policy_url,
             }
             for endpoint in endpoints
         ],
@@ -1033,4 +1111,20 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         },
         "per_request_limits": None,
         "trustedrouter": tr_block,
+    }
+
+
+def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
+    return {
+        "id": provider.slug,
+        "name": provider.name,
+        "supports_prepaid": provider.supports_prepaid,
+        "supports_byok": provider.supports_byok,
+        "attested_gateway": provider.attested_gateway,
+        "stores_content": provider.stores_content,
+        "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "provider_confidential_compute": provider.provider_confidential_compute,
+        "provider_e2ee": provider.provider_e2ee,
+        "provider_policy": provider.provider_policy,
+        "provider_policy_url": provider.provider_policy_url,
     }

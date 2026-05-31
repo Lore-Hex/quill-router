@@ -1,0 +1,93 @@
+{# Public chat playground at /chat.
+
+   Page loads without auth — anonymous visitors get the full UI to
+   explore. The Send button is gated client-side on the
+   `tr_signed_in=1` companion cookie (see static/chat.js below); a
+   signed-out click pops the existing marketing sign-in modal.
+
+   The page extends _base.html for the marketing chrome (nav,
+   sign-in modal, base CSS) and overrides the hero/body blocks for
+   the chat-specific surface. #}
+{% extends "public/_base.html" %}
+
+{% block hero %}
+{# Empty hero — chat has its own header inside the body block. The
+   public_hero / marketing_hero from _base.html would crowd out the
+   chat-specific surface. #}
+{% endblock %}
+
+{% block body %}
+<link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
+
+<section class="chat-shell" data-chat-shell>
+  <aside class="chat-sidebar" data-chat-sidebar>
+    <div class="chat-sidebar-head">
+      <button class="btn primary chat-new" type="button" data-action="new-chat">+ New chat</button>
+    </div>
+    <div class="chat-sidebar-list" data-chat-list>
+      {# Populated client-side from localStorage. #}
+    </div>
+  </aside>
+
+  <main class="chat-main">
+    <header class="chat-header">
+      <button class="chat-hamburger" type="button" aria-label="Toggle sidebar" data-action="toggle-sidebar">&#9776;</button>
+      <div class="chat-models-bar" data-chat-models-bar>
+        {# Model pill(s) rendered client-side. MVP = 1 pill. PR 3 (multi-model)
+           adds an Add Model button that grows this list to up to 4 pills. #}
+      </div>
+      <button class="btn chat-system-toggle" type="button" data-action="toggle-system-prompt">System</button>
+    </header>
+
+    <div class="chat-system-prompt-panel" data-chat-system-prompt hidden>
+      <label class="chat-system-prompt-label">
+        System prompt
+        <textarea data-chat-system-prompt-input rows="3" placeholder="You are a helpful assistant."></textarea>
+      </label>
+      <span class="chat-system-prompt-tokens" data-chat-system-prompt-tokens></span>
+    </div>
+
+    <div class="chat-thread" data-chat-thread>
+      {# Messages rendered client-side from localStorage. #}
+      <div class="chat-empty" data-chat-empty>
+        <h2>Try any model — zero tokens until you sign in.</h2>
+        <p>Pick a model above, type a prompt, hit Send. Sign in to actually run it.</p>
+      </div>
+    </div>
+
+    <footer class="chat-input-bar">
+      <div class="chat-input-meta" data-chat-input-meta>
+        <span class="chat-token-counter" data-chat-token-counter></span>
+        <span class="chat-cost-estimate" data-chat-cost-estimate></span>
+      </div>
+      <div class="chat-input-row">
+        <textarea
+          class="chat-input"
+          data-chat-input
+          rows="1"
+          placeholder="Type a prompt…"
+          aria-label="Chat input"
+        ></textarea>
+        <button
+          class="btn primary chat-send"
+          type="button"
+          data-chat-send
+          data-action="send-message"
+          aria-label="Send message"
+        >Send</button>
+      </div>
+    </footer>
+  </main>
+</section>
+
+{# Inline config so chat.js doesn't need a second roundtrip just to
+   know which API base URL to call. Mirrors the dashboard.js pattern. #}
+<script>
+  window.__TR_CHAT__ = {
+    apiBaseUrl: "{{ api_base_url }}",
+    issueKeyPath: "/internal/chat/issue-browser-key",
+    keyCookieName: "tr_chat_key",
+  };
+</script>
+<script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
+{% endblock %}

@@ -20,6 +20,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     Model,
     ModelEndpoint,
+    Provider,
     endpoints_for_model,
     meta_candidate_models,
 )
@@ -175,6 +176,50 @@ def public_models_html(settings: Settings) -> str:
     )
 
 
+def public_chat_html(settings: Settings) -> str:
+    """Render the public chat playground at /chat.
+
+    The page itself is auth-free — anyone can load it and explore the
+    model picker. The Send button is gated client-side on the
+    `tr_signed_in=1` companion cookie via the existing
+    `hasSignedInHint()` JS in static/dashboard.js; signed-out clicks
+    pop the marketing sign-in modal instead of firing any provider
+    inference.
+
+    See docs (plan file) for the full architecture.
+    """
+    return _env().get_template("public/chat.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/chat",
+        title="Chat - TrustedRouter",
+        heading="Chat",
+        description=(
+            "Try any model, compare up to four side-by-side. Zero "
+            "tokens spent until you sign in."
+        ),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_providers_html(settings: Settings) -> str:
+    return _env().get_template("public/providers.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/providers",
+        title="Providers - TrustedRouter",
+        heading="Providers",
+        description=(
+            "Provider transparency for upstream model compute, retention, "
+            "confidential compute, and end-to-end encryption."
+        ),
+        providers=[_provider_view(provider) for provider in PROVIDERS.values()],
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
 def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     """Render the per-model detail page for `/models/{author}/{slug}`.
     Returns None when the model id isn't in the catalog (route handler
@@ -247,9 +292,52 @@ def _model_view(model: Model) -> dict[str, object]:
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
         "stores_content": provider.stores_content,
+        "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "provider_confidential_compute": provider.provider_confidential_compute,
+        "provider_e2ee": provider.provider_e2ee,
         "provider_count": len(distinct_providers),
         "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
     }
+
+
+def _provider_view(provider: Provider) -> dict[str, object]:
+    return {
+        "id": provider.slug,
+        "name": provider.name,
+        "supports_prepaid": provider.supports_prepaid,
+        "supports_byok": provider.supports_byok,
+        "attested_gateway": provider.attested_gateway,
+        "gateway_stores_content": provider.stores_content,
+        "zero_data_retention": provider.provider_zero_data_retention,
+        "confidential_compute": provider.provider_confidential_compute,
+        "provider_e2ee": provider.provider_e2ee,
+        "zero_data_retention_label": _policy_label(provider.provider_zero_data_retention),
+        "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
+        "provider_e2ee_label": _policy_label(provider.provider_e2ee),
+        "policy": provider.provider_policy,
+        "policy_url": provider.provider_policy_url,
+        "privacy_tier": _provider_privacy_tier(provider),
+    }
+
+
+def _provider_privacy_tier(provider: Provider) -> str:
+    if provider.slug == "trustedrouter":
+        return "TR gateway"
+    if provider.provider_e2ee and provider.provider_confidential_compute:
+        return "Confidential"
+    if provider.provider_zero_data_retention:
+        return "No logs"
+    if provider.provider_confidential_compute:
+        return "Confidential compute"
+    return "No provider claim"
+
+
+def _policy_label(value: bool | None) -> str:
+    if value is True:
+        return "yes"
+    if value is False:
+        return "no"
+    return "not claimed"
 
 
 def _model_detail_view(model: Model) -> dict[str, object]:
@@ -268,6 +356,14 @@ def _model_detail_view(model: Model) -> dict[str, object]:
             "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
             "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
             "stores_content": ep_provider.stores_content if ep_provider else False,
+            "provider_zero_data_retention": (
+                ep_provider.provider_zero_data_retention if ep_provider else None
+            ),
+            "provider_confidential_compute": (
+                ep_provider.provider_confidential_compute if ep_provider else None
+            ),
+            "provider_e2ee": ep_provider.provider_e2ee if ep_provider else None,
+            "provider_policy": ep_provider.provider_policy if ep_provider else "",
             "endpoint_id": endpoint.id,
         })
     # Sort cheapest-first by total prompt+completion price; ties broken by
