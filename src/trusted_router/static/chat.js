@@ -958,6 +958,23 @@
             }
             const bubble = document.createElement("div");
             bubble.className = "chat-msg-bubble";
+            // Reasoning block (collapsible, defaults open while
+            // streaming with no content yet, collapsed once content
+            // arrives so the user focuses on the answer).
+            if (resp.reasoning) {
+                const reas = document.createElement("details");
+                reas.className = "chat-msg-reasoning";
+                if (!resp.content) reas.open = true;
+                const summary = document.createElement("summary");
+                summary.innerHTML =
+                    '<span class="chat-msg-reasoning-icon">🧠</span> Thinking';
+                reas.appendChild(summary);
+                const body = document.createElement("div");
+                body.className = "chat-msg-reasoning-body";
+                body.textContent = resp.reasoning;
+                reas.appendChild(body);
+                bubble.appendChild(reas);
+            }
             const md = document.createElement("div");
             md.className = "chat-msg-md";
             md.innerHTML = renderMarkdown(resp.content || "");
@@ -1052,9 +1069,46 @@
                 makeAction("Continue", () => continueAssistant(chat, msg)),
             );
         }
+        actions.appendChild(makeAction("Branch", () => branchFromMessage(chat, msg)));
         actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
         el.appendChild(actions);
         return el;
+    }
+
+    function branchFromMessage(chat, msg) {
+        // Make a new chat that mirrors this one up to (and including)
+        // `msg`. Useful for "explore this idea further" workflows
+        // without polluting the original thread.
+        const idx = chat.messages.indexOf(msg);
+        if (idx < 0) return;
+        const branched = {
+            id: newChatId(),
+            title: chat.title + " (branch)",
+            created_at: isoNow(),
+            updated_at: isoNow(),
+            models: chat.models.map((m) => ({
+                model_id: m.model_id,
+                system_prompt: m.system_prompt,
+                params: { ...m.params },
+                enabled: m.enabled,
+                label: m.label,
+            })),
+            shared_system_prompt: chat.shared_system_prompt,
+            messages: chat.messages.slice(0, idx + 1).map((m) => ({
+                ...m,
+                id: newMsgId(),
+                responses: m.responses
+                    ? m.responses.map((r) => ({ ...r }))
+                    : undefined,
+            })),
+        };
+        STATE.chats[branched.id] = branched;
+        STATE.activeChatId = branched.id;
+        saveState();
+        renderSidebar();
+        renderModelsBar();
+        renderSystemPrompt();
+        renderThread();
     }
 
     async function continueAssistant(chat, msg) {
@@ -1860,6 +1914,27 @@
                                 streaming: true,
                             });
                         }
+                        // Reasoning-model output (o1, Claude w/ thinking,
+                        // DeepSeek-R1, etc.) — appears in a parallel
+                        // `reasoning` or `reasoning_content` field per
+                        // delta. Capture into respSlot.reasoning so the
+                        // UI can render it as a collapsible "Thinking"
+                        // section above the final answer.
+                        const reasoningText =
+                            (delta && typeof delta.reasoning === "string"
+                                ? delta.reasoning
+                                : "") ||
+                            (delta &&
+                            typeof delta.reasoning_content === "string"
+                                ? delta.reasoning_content
+                                : "");
+                        if (reasoningText) {
+                            respSlot.reasoning =
+                                (respSlot.reasoning || "") + reasoningText;
+                            patchAssistantBubble(assistantMsg, respSlot, {
+                                streaming: true,
+                            });
+                        }
                         if (delta && delta.tool_calls) {
                             // Tool-use display: append to any existing
                             // tool_calls so multi-chunk tool-call streams
@@ -2430,6 +2505,115 @@
         }
     }
 
+    function showSettings() {
+        const overlay = document.createElement("div");
+        overlay.className = "chat-settings-overlay";
+        const prefs = STATE.preferences;
+        const enterToSend = prefs.enter_to_send !== false; // default true
+        overlay.innerHTML =
+            '<div class="chat-settings-backdrop" data-close></div>' +
+            '<div class="chat-settings-panel">' +
+            '<div class="chat-settings-head">' +
+            '<h3>Settings</h3>' +
+            '<button class="chat-settings-close" type="button" data-close>×</button>' +
+            "</div>" +
+            '<div class="chat-settings-body">' +
+            '<label class="chat-settings-row">' +
+            '<span class="chat-settings-row-label">Default system prompt</span>' +
+            '<textarea data-setting="default_system_prompt" rows="3" placeholder="Used when a new chat doesn\'t set one.">' +
+            escapeHtml(prefs.defaultSystemPrompt || "") +
+            "</textarea>" +
+            "</label>" +
+            '<label class="chat-settings-row">' +
+            '<span class="chat-settings-row-label">Default model</span>' +
+            '<input type="text" data-setting="default_model_id" value="' +
+            escapeHtml(prefs.lastModelId || "") +
+            '" placeholder="anthropic/claude-sonnet-4.6">' +
+            "</label>" +
+            '<label class="chat-settings-row chat-settings-row-flex">' +
+            '<input type="checkbox" data-setting="enter_to_send" ' +
+            (enterToSend ? "checked" : "") +
+            ">" +
+            '<span>Press Enter to send (Shift+Enter for newline). Disable for newline-only Enter.</span>' +
+            "</label>" +
+            '<div class="chat-settings-row">' +
+            '<span class="chat-settings-row-label">Saved presets</span>' +
+            '<div class="chat-settings-presets">' +
+            (prefs.presets || [])
+                .map(
+                    (p, i) =>
+                        '<div class="chat-settings-preset">' +
+                        '<span>' +
+                        escapeHtml(p.name) +
+                        "</span>" +
+                        '<button type="button" data-delete-preset="' +
+                        i +
+                        '">×</button>' +
+                        "</div>",
+                )
+                .join("") +
+            ((prefs.presets || []).length === 0
+                ? '<span class="chat-settings-empty">Save your first preset from the per-model dropdown.</span>'
+                : "") +
+            "</div></div>" +
+            '<div class="chat-settings-row">' +
+            '<span class="chat-settings-row-label">Wipe all data</span>' +
+            '<button class="chat-settings-danger" type="button" data-wipe>Clear all chats + preferences</button>' +
+            "</div>" +
+            "</div>" +
+            "</div>";
+        document.body.appendChild(overlay);
+        overlay.addEventListener("click", (e) => {
+            const target = e.target;
+            if (target && target.dataset && target.dataset.close != null) {
+                overlay.remove();
+                return;
+            }
+            if (target && target.dataset && target.dataset.deletePreset != null) {
+                const i = parseInt(target.dataset.deletePreset, 10);
+                if (prefs.presets) prefs.presets.splice(i, 1);
+                saveState();
+                overlay.remove();
+                showSettings();
+                return;
+            }
+            if (target && target.dataset && target.dataset.wipe != null) {
+                if (confirm("Clear ALL chats and preferences? This can't be undone.")) {
+                    STATE = { chats: {}, activeChatId: null, preferences: {} };
+                    saveState();
+                    overlay.remove();
+                    ensureActiveChat();
+                    renderSidebar();
+                    renderModelsBar();
+                    renderSystemPrompt();
+                    renderThread();
+                }
+            }
+        });
+        overlay.addEventListener("change", (e) => {
+            const target = e.target;
+            if (!target.dataset || !target.dataset.setting) return;
+            const key = target.dataset.setting;
+            if (target.type === "checkbox") {
+                prefs[key] = target.checked;
+            } else {
+                prefs[key] = target.value;
+            }
+            saveState();
+        });
+        overlay.addEventListener("input", (e) => {
+            const target = e.target;
+            if (!target.dataset || !target.dataset.setting) return;
+            const key = target.dataset.setting;
+            if (key === "default_system_prompt") {
+                prefs.defaultSystemPrompt = target.value;
+            } else if (key === "default_model_id") {
+                prefs.lastModelId = target.value;
+            }
+            saveState();
+        });
+    }
+
     function showShortcutsHelp() {
         const html =
             '<div class="chat-help-overlay" data-close>' +
@@ -2663,6 +2847,10 @@
             }
             if (target.closest('[data-action="show-shortcuts"]')) {
                 showShortcutsHelp();
+                return;
+            }
+            if (target.closest('[data-action="show-settings"]')) {
+                showSettings();
                 return;
             }
             // Rename via double-click in sidebar — wired separately via
