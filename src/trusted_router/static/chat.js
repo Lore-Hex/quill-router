@@ -858,8 +858,17 @@
             const row = document.createElement("button");
             row.type = "button";
             row.className = "chat-model-row";
+            const provider = providerFromModelId(m.id);
+            const avatarLetter = provider ? provider[0].toUpperCase() : "?";
+            const avatarStyle = providerColor(provider);
             row.innerHTML = `
-                <div class="chat-model-row-name">${escapeHtml(m.name || m.id)}</div>
+                <div class="chat-model-row-main">
+                    <span class="chat-model-row-avatar" style="${avatarStyle}">${escapeHtml(avatarLetter)}</span>
+                    <div class="chat-model-row-text">
+                        <div class="chat-model-row-name">${escapeHtml(m.name || m.id)}</div>
+                        <div class="chat-model-row-provider">${escapeHtml(provider || m.id)}</div>
+                    </div>
+                </div>
                 <div class="chat-model-row-meta">
                     ${
                         m.input_per_m != null
@@ -881,6 +890,42 @@
             });
             list.appendChild(row);
         }
+    }
+
+    // Pull "anthropic" out of "anthropic/claude-opus-4.7", "openai" out
+    // of "openai/gpt-5.4-nano", etc. Falls back to the whole id when
+    // there's no "/" (some catalog entries use unqualified ids).
+    function providerFromModelId(id) {
+        if (!id || typeof id !== "string") return "";
+        const slash = id.indexOf("/");
+        return slash > 0 ? id.slice(0, slash) : id;
+    }
+
+    // Deterministic per-provider tint so each row's avatar reads as
+    // "from anthropic" vs "from openai" at a glance — matches the
+    // OpenRouter visual cue of provider-colored circles without
+    // requiring actual logo images. Hash the provider name to one
+    // of N OR-style accent hues.
+    const _PROVIDER_PALETTE = [
+        ["#6467f2", "#ffffff"], // primary purple — Anthropic/Claude-ish
+        ["#10a37f", "#ffffff"], // green — OpenAI vibe
+        ["#4285f4", "#ffffff"], // blue — Google
+        ["#f97316", "#ffffff"], // orange — Mistral/Mistral-ish
+        ["#ec4899", "#ffffff"], // pink — Cohere
+        ["#8b5cf6", "#ffffff"], // violet — Perplexity
+        ["#06b6d4", "#ffffff"], // cyan — Cerebras
+        ["#ef4444", "#ffffff"], // red — Together
+        ["#0ea5e9", "#ffffff"], // sky — DeepSeek
+        ["#84cc16", "#ffffff"], // lime — Groq
+    ];
+    function providerColor(provider) {
+        if (!provider) return "background:#e4e4e7;color:#717179;";
+        let h = 0;
+        for (let i = 0; i < provider.length; i++) {
+            h = (h * 31 + provider.charCodeAt(i)) | 0;
+        }
+        const [bg, fg] = _PROVIDER_PALETTE[Math.abs(h) % _PROVIDER_PALETTE.length];
+        return "background:" + bg + ";color:" + fg + ";";
     }
 
     // Which slot the next selectModel() call should write to. Set by
