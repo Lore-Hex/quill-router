@@ -89,5 +89,14 @@
     keyCookieName: "tr_chat_key",
   };
 </script>
+{# Markdown + code highlighting + XSS sanitization loaded from CDN.
+   marked turns the assistant's content into HTML; highlight.js paints
+   code blocks; DOMPurify strips any <script> a model might emit
+   before insertion. chunk 4 may vendor these locally for offline +
+   subresource-integrity guarantees. #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
 {% endblock %}
