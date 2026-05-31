@@ -925,6 +925,13 @@
         const el = document.createElement("div");
         el.className =
             "chat-msg chat-msg-" + (msg.role === "user" ? "user" : "assistant");
+        if (chatFilterQuery) {
+            if (messageMatchesSearch(msg)) {
+                el.classList.add("is-match");
+            } else {
+                el.classList.add("is-hidden-by-search");
+            }
+        }
         el.dataset.msgId = msg.id;
 
         if (msg.role === "user") {
@@ -2525,6 +2532,75 @@
         return a;
     }
 
+    // ── In-chat search (Cmd/Ctrl+F) ──────────────────────────────────
+    // Floating search bar above the input filters which messages render
+    // in the active chat. Matches stay; non-matching messages are
+    // hidden via CSS. Matched terms get highlighted with a <mark>.
+
+    let chatFilterQuery = "";
+
+    function openChatSearch() {
+        let bar = document.querySelector(".chat-search-bar");
+        if (bar) {
+            const input = bar.querySelector("input");
+            if (input) input.focus();
+            return;
+        }
+        bar = document.createElement("div");
+        bar.className = "chat-search-bar";
+        bar.innerHTML =
+            '<input type="search" placeholder="Find in this chat…" autofocus>' +
+            '<span class="chat-search-count"></span>' +
+            '<button type="button" class="chat-search-close" aria-label="Close">×</button>';
+        const main = document.querySelector(".chat-main");
+        if (main) main.appendChild(bar);
+        const input = bar.querySelector("input");
+        input.value = chatFilterQuery;
+        input.addEventListener("input", () => {
+            chatFilterQuery = input.value;
+            renderThread();
+            updateSearchCount();
+        });
+        input.addEventListener("keydown", (e) => {
+            if (e.key === "Escape") closeChatSearch();
+        });
+        bar.querySelector(".chat-search-close").addEventListener(
+            "click",
+            closeChatSearch,
+        );
+        updateSearchCount();
+    }
+
+    function closeChatSearch() {
+        const bar = document.querySelector(".chat-search-bar");
+        if (bar) bar.remove();
+        chatFilterQuery = "";
+        renderThread();
+    }
+
+    function updateSearchCount() {
+        const bar = document.querySelector(".chat-search-bar");
+        if (!bar) return;
+        const count = bar.querySelector(".chat-search-count");
+        if (!count) return;
+        const matches = document.querySelectorAll(".chat-msg.is-match").length;
+        count.textContent = chatFilterQuery
+            ? matches + " match" + (matches === 1 ? "" : "es")
+            : "";
+    }
+
+    function messageMatchesSearch(msg) {
+        if (!chatFilterQuery) return true;
+        const q = chatFilterQuery.toLowerCase();
+        if (msg.role === "user") {
+            return (msg.content || "").toLowerCase().includes(q);
+        }
+        for (const r of msg.responses || []) {
+            if ((r.content || "").toLowerCase().includes(q)) return true;
+        }
+        return false;
+    }
+
     // ── Keyboard shortcuts ────────────────────────────────────────────
 
     function handleGlobalShortcut(e) {
@@ -2557,6 +2633,12 @@
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
             e.preventDefault();
             exportChatJSON();
+            return;
+        }
+        // Cmd/Ctrl+F — in-chat search bar
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            openChatSearch();
             return;
         }
         // Cmd/Ctrl + J / K — next / prev chat in sidebar (works even
