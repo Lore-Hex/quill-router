@@ -1,0 +1,40 @@
+# Local Postgres for `aws-postgres` backend development.
+#
+# When working on storage_aws.py (the Aurora-PostgreSQL Store port for
+# trustedrouter.eu), bring this up locally so you don't need an AWS
+# account to iterate:
+#
+#   docker compose up -d postgres
+#   psql 'postgresql://tr:tr@localhost:5433/trustedrouter' \
+#     -f infra-aws/migrations/0001_initial.sql
+#   export TR_STORAGE_BACKEND=aws-postgres
+#   export TR_AWS_POSTGRES_URL=postgresql://tr:tr@localhost:5433/trustedrouter
+#   uv run pytest tests/test_storage_aws_basic.py
+#
+# Port 5433 to avoid clashing with a system Postgres on the default 5432.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tr-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tr
+      POSTGRES_PASSWORD: tr
+      POSTGRES_DB: trustedrouter
+    ports:
+      - "5433:5432"
+    volumes:
+      - tr-postgres-data:/var/lib/postgresql/data
+      # Auto-apply the initial migration on first container start. Subsequent
+      # restarts skip this (the postgres image only runs init scripts on
+      # an empty data volume).
+      - ./infra-aws/migrations/0001_initial.sql:/docker-entrypoint-initdb.d/0001_initial.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "tr", "-d", "trustedrouter"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  tr-postgres-data:

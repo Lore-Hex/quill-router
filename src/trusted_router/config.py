@@ -24,12 +24,33 @@ class Settings(BaseSettings):
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
+    # Allowed values: "memory" | "spanner-bigtable" | "aws-postgres"
+    # - memory:           in-process dict-backed store, for tests and `local`
+    #                     env. Loses all data on process restart.
+    # - spanner-bigtable: production GCP backend for trustedrouter.com
+    #                     (see storage_gcp.py).
+    # - aws-postgres:     production AWS backend for trustedrouter.eu
+    #                     (Aurora PostgreSQL Serverless v2 in eu-central-1;
+    #                     see storage_aws.py and docs/plans/trustedrouter-eu.md).
+    #                     Requires TR_AWS_POSTGRES_URL to be set.
     storage_backend: str = "memory"
     gcp_project_id: str = "quill-cloud-proxy"
     spanner_instance_id: str | None = None
     spanner_database_id: str | None = None
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
+    # `aws-postgres` backend connection string. SQLAlchemy-style URL:
+    #   postgresql://user:password@host:port/dbname
+    # In production this is the Aurora cluster's writer endpoint; in
+    # local dev it points at the Docker Compose Postgres (see
+    # docker-compose.yml). Reads `?sslmode=require` is implicit for
+    # Aurora — the SQLAlchemy engine adds it when the host looks like
+    # an AWS RDS endpoint.
+    aws_postgres_url: str | None = None
+    # AWS region for the .eu stack's regional services (Secrets Manager,
+    # KMS, Route 53 zone lookups). Independent of TR_AWS_REGION which
+    # is for SES email sending on .com.
+    aws_eu_region: str = "eu-central-1"
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
@@ -200,7 +221,10 @@ class Settings(BaseSettings):
         if self.bootstrap_management_key:
             missing.append("unset TR_BOOTSTRAP_MANAGEMENT_KEY")
         if self.storage_backend == "memory":
-            missing.append("TR_STORAGE_BACKEND=spanner-bigtable")
+            missing.append(
+                "TR_STORAGE_BACKEND=spanner-bigtable (for .com) or "
+                "aws-postgres (for .eu)"
+            )
         if self.storage_backend == "spanner-bigtable":
             if not self.spanner_instance_id:
                 missing.append("TR_SPANNER_INSTANCE_ID")
@@ -208,6 +232,12 @@ class Settings(BaseSettings):
                 missing.append("TR_SPANNER_DATABASE_ID")
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
+        if self.storage_backend == "aws-postgres":
+            # trustedrouter.eu stack: Aurora PostgreSQL is the only state
+            # store (we don't need Bigtable's append-only generation table
+            # because Postgres + BRIN handles it at our volume).
+            if not self.aws_postgres_url:
+                missing.append("TR_AWS_POSTGRES_URL")
         if not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
         # OAuth providers are independently optional in production. We DO

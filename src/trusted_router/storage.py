@@ -994,6 +994,20 @@ def create_store(settings: Any) -> Store:
                 settings, "bigtable_app_profile_id", ""
             ),
         )
+    if backend == "aws-postgres":
+        # trustedrouter.eu — Aurora PostgreSQL on AWS Frankfurt. Lazy
+        # import keeps the GCP-only test environment from pulling in
+        # psycopg/SQLAlchemy when it doesn't need to (and vice versa
+        # for AWS-only deployments).
+        from trusted_router.storage_aws import PostgresStore
+
+        url = getattr(settings, "aws_postgres_url", None)
+        if not url:
+            raise ValueError(
+                "TR_AWS_POSTGRES_URL must be set when "
+                "TR_STORAGE_BACKEND=aws-postgres"
+            )
+        return PostgresStore(database_url=url)
     raise ValueError(f"unsupported storage backend: {backend}")
 
 
