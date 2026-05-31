@@ -23,6 +23,7 @@ from trusted_router.catalog import (
     Provider,
     endpoints_for_model,
     meta_candidate_models,
+    providers_for_display,
 )
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -213,7 +214,7 @@ def public_providers_html(settings: Settings) -> str:
             "Provider transparency for upstream model compute, retention, "
             "confidential compute, and end-to-end encryption."
         ),
-        providers=[_provider_view(provider) for provider in PROVIDERS.values()],
+        providers=[_provider_view(provider) for provider in providers_for_display()],
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),

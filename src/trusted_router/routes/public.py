@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
-from trusted_router.catalog import PROVIDERS, provider_to_openrouter_shape
+from trusted_router.catalog import provider_to_openrouter_shape, providers_for_display
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     STATIC_DIR,
@@ -211,7 +211,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         if _wants_html(request):
             return HTMLResponse(public_providers_html(settings))
         return JSONResponse(
-            {"data": [provider_to_openrouter_shape(provider) for provider in PROVIDERS.values()]}
+            {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}
         )
 
     @public_html_route("/chat")

@@ -11,6 +11,7 @@ from trusted_router.catalog import (
     endpoints_for_model,
     model_to_openrouter_shape,
     provider_to_openrouter_shape,
+    providers_for_display,
 )
 from trusted_router.regions import choose_region, region_payload
 
@@ -86,7 +87,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "provider_policy": provider.provider_policy,
                     "provider_policy_url": provider.provider_policy_url,
                 }
-                for provider in PROVIDERS.values()
+                for provider in providers_for_display()
                 if provider.provider_zero_data_retention is True
                 or provider.provider_confidential_compute is True
                 or provider.provider_e2ee is True
@@ -105,4 +106,4 @@ def register_catalog_routes(router: APIRouter) -> None:
 
     @router.get("/providers")
     async def providers() -> dict[str, list[dict[str, Any]]]:
-        return {"data": [provider_to_openrouter_shape(provider) for provider in PROVIDERS.values()]}
+        return {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}

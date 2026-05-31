@@ -260,17 +260,75 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://trust.trustedrouter.com",
     ),
     "anthropic": Provider(
-        slug="anthropic", name="Anthropic", supports_messages=True, supports_prepaid=True
+        slug="anthropic",
+        name="Anthropic",
+        supports_messages=True,
+        supports_prepaid=True,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Marked ZDR for direct Anthropic Messages API routing. Anthropic documents "
+            "zero data retention for appropriately configured API usage; non-message "
+            "features may have separate retention behavior."
+        ),
+        provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
     ),
     "openai": Provider(
-        slug="openai", name="OpenAI", supports_embeddings=True, supports_prepaid=True
+        slug="openai",
+        name="OpenAI",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        provider_policy=(
+            "OpenAI API data is not marked as provider-ZDR here unless a zero-retention "
+            "agreement is explicitly configured. Treat default direct routing as "
+            "non-ZDR for privacy filtering."
+        ),
+        provider_policy_url="https://openai.com/policies/row-privacy-policy/",
     ),
     "gemini": Provider(
-        slug="gemini", name="Gemini", supports_embeddings=True, supports_prepaid=True
+        slug="gemini",
+        name="Gemini",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        provider_policy=(
+            "Google/Gemini routes are not marked provider-ZDR by default. Use explicit "
+            "region/provider policy controls for sensitive workloads."
+        ),
     ),
-    "cerebras": Provider(slug="cerebras", name="Cerebras", supports_prepaid=True),
-    "deepseek": Provider(slug="deepseek", name="DeepSeek", supports_prepaid=True),
-    "mistral": Provider(slug="mistral", name="Mistral", supports_prepaid=True),
+    "cerebras": Provider(
+        slug="cerebras",
+        name="Cerebras",
+        supports_prepaid=True,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Tracked as provider-ZDR. Cerebras documents ZDR-compliant ephemeral "
+            "prompt caching and no persisted prompt cache data."
+        ),
+        provider_policy_url="https://inference-docs.cerebras.ai/capabilities/prompt-caching",
+    ),
+    "deepseek": Provider(
+        slug="deepseek",
+        name="DeepSeek",
+        supports_prepaid=True,
+        provider_zero_data_retention=False,
+        provider_policy=(
+            "Not ZDR. DeepSeek's published privacy policy says prompts/inputs may be "
+            "collected and personal data may be used to train or improve machine "
+            "learning models and algorithms."
+        ),
+        provider_policy_url=(
+            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
+            "?locale=en_US"
+        ),
+    ),
+    "mistral": Provider(
+        slug="mistral",
+        name="Mistral",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. This is separate from any "
+            "no-training or enterprise retention commitments Mistral may offer."
+        ),
+    ),
     "kimi": Provider(slug="kimi", name="Kimi", supports_prepaid=True),
     "zai": Provider(slug="zai", name="Z.AI", supports_prepaid=True),
     # Together AI hosts a broad open-weight catalog (Llama, DeepSeek
@@ -1128,3 +1186,13 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_policy": provider.provider_policy,
         "provider_policy_url": provider.provider_policy_url,
     }
+
+
+_PROVIDER_DISPLAY_ORDER = ("tinfoil", "venice")
+
+
+def providers_for_display() -> tuple[Provider, ...]:
+    """Provider transparency should lead with privacy-forward upstreams."""
+    pinned = [PROVIDERS[slug] for slug in _PROVIDER_DISPLAY_ORDER if slug in PROVIDERS]
+    pinned_slugs = {provider.slug for provider in pinned}
+    return tuple(pinned + [provider for provider in PROVIDERS.values() if provider.slug not in pinned_slugs])

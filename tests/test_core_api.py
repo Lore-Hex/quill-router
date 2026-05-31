@@ -585,6 +585,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
+    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]
     assert {"anthropic", "openai", "gemini", "deepseek", "kimi", "mistral", "zai"}.issubset(
         provider_flags
     )
@@ -595,12 +596,20 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["zai"]["supports_byok"] is True
     assert provider_flags["tinfoil"]["provider_e2ee"] is True
     assert provider_flags["phala"]["provider_confidential_compute"] is True
+    assert provider_flags["anthropic"]["provider_zero_data_retention"] is True
+    assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
+    assert provider_flags["venice"]["provider_zero_data_retention"] is True
+    assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
+    assert "train or improve" in provider_flags["deepseek"]["provider_policy"]
     assert provider_flags["openai"]["provider_zero_data_retention"] is None
     zdr = client.get("/v1/endpoints/zdr").json()["data"]
     assert zdr
     zdr_providers = {item["provider"] for item in zdr}
-    assert {"trustedrouter", "phala", "tinfoil"}.issubset(zdr_providers)
+    assert {"trustedrouter", "anthropic", "cerebras", "phala", "tinfoil", "venice"}.issubset(
+        zdr_providers
+    )
     assert "openai" not in zdr_providers
+    assert "deepseek" not in zdr_providers
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200
     assert credits.json()["data"]["total_credits"] >= 0

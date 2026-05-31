@@ -217,10 +217,16 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     providers_json = client.get("/providers")
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
-    tinfoil = next(item for item in providers_json.json()["data"] if item["id"] == "tinfoil")
+    provider_rows = providers_json.json()["data"]
+    assert [item["id"] for item in provider_rows[:2]] == ["tinfoil", "venice"]
+    tinfoil = next(item for item in provider_rows if item["id"] == "tinfoil")
     assert tinfoil["provider_e2ee"] is True
-    openai = next(item for item in providers_json.json()["data"] if item["id"] == "openai")
+    openai = next(item for item in provider_rows if item["id"] == "openai")
     assert openai["provider_confidential_compute"] is None
+    anthropic = next(item for item in provider_rows if item["id"] == "anthropic")
+    assert anthropic["provider_zero_data_retention"] is True
+    deepseek = next(item for item in provider_rows if item["id"] == "deepseek")
+    assert deepseek["provider_zero_data_retention"] is False
 
     js = client.get("/static/dashboard.js")
     assert js.status_code == 200
