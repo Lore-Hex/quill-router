@@ -331,23 +331,46 @@
         return "OLDER";
     }
 
+    let SIDEBAR_QUERY = "";
+
     function renderSidebar() {
         const list = document.querySelector("[data-chat-list]");
         if (!list) return;
         list.innerHTML = "";
-        const chats = Object.values(STATE.chats).sort(
-            (a, b) => new Date(b.updated_at) - new Date(a.updated_at),
-        );
+        const q = SIDEBAR_QUERY.trim().toLowerCase();
+        let chats = Object.values(STATE.chats);
+        // Pinned chats first (independent of date sort), then by recency.
+        chats.sort((a, b) => {
+            const pa = a.pinned ? 1 : 0;
+            const pb = b.pinned ? 1 : 0;
+            if (pa !== pb) return pb - pa;
+            return new Date(b.updated_at) - new Date(a.updated_at);
+        });
+        if (q) {
+            chats = chats.filter((c) => {
+                if ((c.title || "").toLowerCase().includes(q)) return true;
+                // Also match against the most recent user message so a
+                // searcher who remembers what they asked finds the chat.
+                const lastUser = (c.messages || [])
+                    .filter((m) => m.role === "user")
+                    .slice(-1)[0];
+                return (
+                    lastUser &&
+                    (lastUser.content || "").toLowerCase().includes(q)
+                );
+            });
+        }
         if (chats.length === 0) {
             const empty = document.createElement("div");
             empty.className = "chat-sidebar-empty";
-            empty.textContent = "No chats yet.";
+            empty.textContent = q ? "No matches." : "No chats yet.";
             list.appendChild(empty);
             return;
         }
         let lastBucket = "";
         for (const chat of chats) {
-            const bucket = dateBucket(chat.updated_at);
+            // Pinned items get their own bucket label at the top.
+            const bucket = chat.pinned ? "PINNED" : dateBucket(chat.updated_at);
             if (bucket !== lastBucket) {
                 const header = document.createElement("div");
                 header.className = "chat-sidebar-bucket";
@@ -364,6 +387,22 @@
             title.className = "chat-sidebar-title";
             title.textContent = chat.title;
             title.addEventListener("click", () => setActiveChat(chat.id));
+            const pin = document.createElement("button");
+            pin.type = "button";
+            pin.className = "chat-sidebar-pin";
+            if (chat.pinned) pin.classList.add("is-pinned");
+            pin.setAttribute(
+                "aria-label",
+                chat.pinned ? "Unpin chat" : "Pin chat",
+            );
+            pin.textContent = chat.pinned ? "★" : "☆";
+            pin.addEventListener("click", (e) => {
+                e.stopPropagation();
+                chat.pinned = !chat.pinned;
+                chat.updated_at = isoNow();
+                saveState();
+                renderSidebar();
+            });
             const del = document.createElement("button");
             del.type = "button";
             del.className = "chat-sidebar-delete";
@@ -374,6 +413,7 @@
                 if (confirm("Delete this chat?")) deleteChat(chat.id);
             });
             item.appendChild(title);
+            item.appendChild(pin);
             item.appendChild(del);
             list.appendChild(item);
         }
@@ -795,6 +835,14 @@
                 const err = document.createElement("div");
                 err.className = "chat-msg-error";
                 err.textContent = "Error: " + resp.error;
+                const retry = document.createElement("button");
+                retry.type = "button";
+                retry.className = "chat-msg-error-retry";
+                retry.textContent = "Retry";
+                retry.addEventListener("click", () => {
+                    regenerateResponse(chat, msg, respIdx);
+                });
+                err.appendChild(retry);
                 bubble.appendChild(err);
             }
             if (resp.cost_microdollars || resp.tokens_in || resp.tokens_out) {
@@ -936,6 +984,7 @@
 
     let pickerEl = null;
     let pickerQuery = "";
+    const PICKER_FILTERS = { free: false, vision: false, tools: false };
 
     function renderModelPicker() {
         if (!pickerEl) return;
@@ -943,12 +992,25 @@
         if (!list) return;
         list.innerHTML = "";
         const q = pickerQuery.toLowerCase();
-        const filtered = MODELS.filter(
-            (m) =>
-                !q ||
-                m.id.toLowerCase().includes(q) ||
-                (m.name || "").toLowerCase().includes(q),
-        ).slice(0, 100);
+        const filtered = MODELS.filter((m) => {
+            if (
+                q &&
+                !m.id.toLowerCase().includes(q) &&
+                !(m.name || "").toLowerCase().includes(q)
+            ) {
+                return false;
+            }
+            const caps = m.capabilities || [];
+            if (PICKER_FILTERS.free && !m.free) return false;
+            if (PICKER_FILTERS.vision && !caps.includes("vision")) return false;
+            if (
+                PICKER_FILTERS.tools &&
+                !caps.includes("tools") &&
+                !caps.includes("tool_use")
+            )
+                return false;
+            return true;
+        }).slice(0, 100);
         for (const m of filtered) {
             const row = document.createElement("button");
             row.type = "button";
@@ -1049,6 +1111,11 @@
             <div class="chat-model-picker-backdrop" data-close></div>
             <div class="chat-model-picker-panel">
                 <input type="text" class="chat-model-picker-search" placeholder="Search models..." autofocus>
+                <div class="chat-model-picker-filters">
+                    <button type="button" class="chat-picker-filter" data-filter="free">Free</button>
+                    <button type="button" class="chat-picker-filter" data-filter="vision">Vision</button>
+                    <button type="button" class="chat-picker-filter" data-filter="tools">Tools</button>
+                </div>
                 <div class="chat-model-picker-list"></div>
             </div>
         `;
@@ -1061,8 +1128,28 @@
             pickerQuery = input.value;
             renderModelPicker();
         });
-        renderModelPicker();
-        // ESC to close
+        // Filter toggle buttons
+        pickerEl.querySelectorAll(".chat-picker-filter").forEach((btn) => {
+            const key = btn.dataset.filter;
+            if (PICKER_FILTERS[key]) btn.classList.add("is-on");
+            btn.addEventListener("click", () => {
+                PICKER_FILTERS[key] = !PICKER_FILTERS[key];
+                btn.classList.toggle("is-on", PICKER_FILTERS[key]);
+                renderModelPicker();
+            });
+        });
+        // Render loading skeleton if the catalog isn't loaded yet,
+        // otherwise show rows.
+        if (MODELS.length === 0 && MODELS_LOADING) {
+            const list = pickerEl.querySelector(".chat-model-picker-list");
+            for (let i = 0; i < 6; i++) {
+                const sk = document.createElement("div");
+                sk.className = "chat-model-skeleton";
+                list.appendChild(sk);
+            }
+        } else {
+            renderModelPicker();
+        }
         document.addEventListener("keydown", pickerKeyHandler);
     }
 
@@ -1860,6 +1947,15 @@
             fab.addEventListener("click", () => {
                 const t = document.querySelector("[data-chat-thread]");
                 if (t) t.scrollTop = t.scrollHeight;
+            });
+        }
+
+        // Sidebar search
+        const sbSearch = document.querySelector("[data-chat-sidebar-search]");
+        if (sbSearch) {
+            sbSearch.addEventListener("input", () => {
+                SIDEBAR_QUERY = sbSearch.value;
+                renderSidebar();
             });
         }
 
