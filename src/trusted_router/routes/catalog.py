@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
     providers_for_display,
 )
+from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 from trusted_router.regions import choose_region, region_payload
 
 
@@ -54,7 +55,6 @@ def register_catalog_routes(router: APIRouter) -> None:
         model = MODELS.get(model_id)
         if model is None:
             return {"data": []}
-        pricing = model_to_openrouter_shape(model)["pricing"]
         return {
             "data": [
                 {
@@ -63,7 +63,22 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "endpoint_id": endpoint.id,
                     "provider": endpoint.provider,
                     "context_length": model.context_length,
-                    "pricing": pricing,
+                    "pricing": {
+                        "prompt": microdollars_per_million_tokens_to_token_decimal(
+                            endpoint.prompt_price_microdollars_per_million_tokens
+                        ),
+                        "completion": microdollars_per_million_tokens_to_token_decimal(
+                            endpoint.completion_price_microdollars_per_million_tokens
+                        ),
+                    },
+                    "usage_type": endpoint.usage_type,
+                    "upstream_id": endpoint.upstream_id,
+                    "prompt_price_microdollars_per_million_tokens": (
+                        endpoint.prompt_price_microdollars_per_million_tokens
+                    ),
+                    "completion_price_microdollars_per_million_tokens": (
+                        endpoint.completion_price_microdollars_per_million_tokens
+                    ),
                     "supported_parameters": ["messages", "temperature", "top_p", "max_tokens", "stream"],
                     "trustedrouter": {
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,

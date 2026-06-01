@@ -76,6 +76,30 @@ def test_catalog_exposes_together_llama_33_endpoint_at_new_rate() -> None:
     } == {1_144_000}
 
 
+def test_model_endpoints_route_uses_provider_specific_together_price(client: Any) -> None:
+    response = client.get("/v1/models/meta-llama/llama-3.3-70b-instruct/endpoints")
+    assert response.status_code == 200
+
+    together_endpoints = [
+        item for item in response.json()["data"] if item["provider"] == "together"
+    ]
+
+    assert {item["usage_type"] for item in together_endpoints} == {"Credits", "BYOK"}
+    assert {item["upstream_id"] for item in together_endpoints} == {
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    }
+    assert {
+        item["prompt_price_microdollars_per_million_tokens"]
+        for item in together_endpoints
+    } == {1_144_000}
+    assert {
+        item["completion_price_microdollars_per_million_tokens"]
+        for item in together_endpoints
+    } == {1_144_000}
+    assert {item["pricing"]["prompt"] for item in together_endpoints} == {"0.000001144"}
+    assert {item["pricing"]["completion"] for item in together_endpoints} == {"0.000001144"}
+
+
 def test_together_pricing_is_on_hourly_refresh_path() -> None:
     workflow = Path(".github/workflows/refresh-prices.yml").read_text(encoding="utf-8")
 
