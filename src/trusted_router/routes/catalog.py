@@ -21,17 +21,31 @@ def register_catalog_routes(router: APIRouter) -> None:
     async def embeddings_models() -> dict[str, list[dict[str, Any]]]:
         return {"data": [model_to_openrouter_shape(m) for m in MODELS.values() if m.supports_embeddings]}
 
+    def _public_model_shapes() -> list[dict[str, Any]]:
+        # `internal_only` models (e.g. trustedrouter/monitor) must
+        # never appear in the public catalog — they're system-internal
+        # routing pools, not user-selectable. The shape itself carries
+        # the flag; filter it BEFORE handing to callers so SDKs +
+        # chat playground don't accidentally surface them.
+        shapes = []
+        for model in MODELS.values():
+            shape = model_to_openrouter_shape(model)
+            if (shape.get("trustedrouter") or {}).get("internal_only"):
+                continue
+            shapes.append(shape)
+        return shapes
+
     @router.get("/models")
     async def models() -> dict[str, list[dict[str, Any]]]:
-        return {"data": [model_to_openrouter_shape(model) for model in MODELS.values()]}
+        return {"data": _public_model_shapes()}
 
     @router.get("/models/count")
     async def models_count() -> dict[str, dict[str, int]]:
-        return {"data": {"count": len(MODELS)}}
+        return {"data": {"count": len(_public_model_shapes())}}
 
     @router.get("/models/user")
     async def models_user(_principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
-        return {"data": [model_to_openrouter_shape(model) for model in MODELS.values()]}
+        return {"data": _public_model_shapes()}
 
     @router.get("/models/{author}/{slug}/endpoints")
     async def model_endpoints(author: str, slug: str) -> dict[str, list[dict[str, Any]]]:

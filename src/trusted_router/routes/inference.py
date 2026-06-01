@@ -127,6 +127,15 @@ def register_inference_routes(router: APIRouter) -> None:
 
         # Single-candidate path.
         model = candidates[0]
+        # Surface routing-provenance headers so non-streaming clients
+        # AND streaming clients can show "served by …" without parsing
+        # the SSE wire. The provider on a single-candidate request is
+        # decided up front (no rollover), so emitting on the response
+        # header is correct.
+        provenance_headers = {
+            "x-trustedrouter-provider": model.provider,
+            "x-trustedrouter-served-model": model.id,
+        }
         if body.get("stream") is True:
             return StreamingResponse(
                 run_chat_stream(
@@ -138,7 +147,11 @@ def register_inference_routes(router: APIRouter) -> None:
                     usage_type=usage_type,
                 ),
                 media_type="text/event-stream",
-                headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+                headers={
+                    "cache-control": "no-cache",
+                    "x-accel-buffering": "no",
+                    **provenance_headers,
+                },
             )
         result, generation = await run_chat(
             body,
@@ -153,7 +166,9 @@ def register_inference_routes(router: APIRouter) -> None:
                 result=result,
                 model_id=model.id,
                 generation_id=generation.id,
-            )
+                extra_tr_block={"selected_provider": model.provider},
+            ),
+            headers=provenance_headers,
         )
 
     @router.post("/messages")
