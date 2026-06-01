@@ -110,6 +110,53 @@ def test_together_pricing_is_on_hourly_refresh_path() -> None:
     assert "meta-llama/llama-3.3-70b-instruct" in together.EXPECTED_MODELS
 
 
+def test_together_refresh_preserves_native_upstream_model_id() -> None:
+    assert (
+        together.UPSTREAM_ID_MAP["meta-llama/llama-3.3-70b-instruct"]
+        == "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    )
+    assert (
+        refresh._upstream_id_map_for("together")["meta-llama/llama-3.3-70b-instruct"]
+        == "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    )
+
+
+def test_hourly_merge_writes_together_native_model_id() -> None:
+    merged = refresh._merge_snapshot(
+        {
+            "models": [
+                {
+                    "id": "meta-llama/llama-3.3-70b-instruct",
+                    "name": "Meta: Llama 3.3 70B Instruct",
+                    "context_length": 131072,
+                    "pricing": {"prompt": "0.00000088", "completion": "0.00000088"},
+                    "endpoints": [
+                        {
+                            "tr_provider_slug": "together",
+                            "model_id": "meta-llama/llama-3.3-70b-instruct",
+                            "pricing": {
+                                "prompt": "0.00000088",
+                                "completion": "0.00000088",
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        {
+            "meta-llama/llama-3.3-70b-instruct": {
+                "together": refresh.ModelPrice(1_040_000, 1_040_000)
+            }
+        },
+        set(),
+    )
+
+    endpoint = merged["models"][0]["endpoints"][0]
+    assert endpoint["model_id"] == "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+    assert endpoint["pricing"]["prompt"] == "0.00000104"
+    assert endpoint["pricing"]["completion"] == "0.00000104"
+
+
 def test_failed_together_refresh_reuses_committed_snapshot_price() -> None:
     snapshot = {
         "models": [

@@ -2812,7 +2812,7 @@
         },
         {
           "name": "together | meta-llama/llama-3.1-70b-instruct",
-          "model_id": "meta-llama/llama-3.1-70b-instruct",
+          "model_id": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
           "model_name": "Meta: Llama 3.1 70B Instruct",
           "provider_name": "together",
           "tag": "together",
@@ -2859,7 +2859,7 @@
       "endpoints": [
         {
           "name": "together | meta-llama/llama-3.1-8b-instruct",
-          "model_id": "meta-llama/llama-3.1-8b-instruct",
+          "model_id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
           "model_name": "Meta: Llama 3.1 8B Instruct",
           "provider_name": "together",
           "tag": "together",
@@ -2945,7 +2945,7 @@
         },
         {
           "name": "Together | meta-llama/llama-3.3-70b-instruct",
-          "model_id": "meta-llama/llama-3.3-70b-instruct",
+          "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
           "model_name": "Meta: Llama 3.3 70B Instruct",
           "provider_name": "Together",
           "tag": "together/fp8",
@@ -4092,7 +4092,7 @@
         },
         {
           "name": "Together | moonshotai/kimi-k2.6-20260420",
-          "model_id": "moonshotai/kimi-k2.6",
+          "model_id": "moonshotai/Kimi-K2.6",
           "model_name": "MoonshotAI: Kimi K2.6",
           "provider_name": "Together",
           "tag": "together",
@@ -5650,7 +5650,7 @@
       "endpoints": [
         {
           "name": "together | qwen/qwen-2.5-72b-instruct",
-          "model_id": "qwen/qwen-2.5-72b-instruct",
+          "model_id": "Qwen/Qwen2.5-72B-Instruct-Turbo",
           "model_name": "Qwen2.5 72B Instruct",
           "provider_name": "together",
           "tag": "together",
@@ -5732,7 +5732,7 @@
         },
         {
           "name": "Together | qwen/qwen-2.5-7b-instruct",
-          "model_id": "qwen/qwen-2.5-7b-instruct",
+          "model_id": "Qwen/Qwen2.5-7B-Instruct-Turbo",
           "model_name": "Qwen: Qwen2.5 7B Instruct",
           "provider_name": "Together",
           "tag": "together/fp8",

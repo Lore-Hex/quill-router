@@ -59,6 +59,13 @@ _NATIVE_TO_OR_ID = {
     "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
 }
 
+# OR-canonical id -> Together-native id. refresh.py reads this human-only
+# map when rebuilding the hourly snapshot so endpoint `model_id` remains
+# directly callable by Together after every automated price update.
+UPSTREAM_ID_MAP = {
+    or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()
+}
+
 
 def _row_to_micro_per_m(price_per_token: object) -> int | None:
     """Together returns prices as dollars per token (or sometimes per million,
