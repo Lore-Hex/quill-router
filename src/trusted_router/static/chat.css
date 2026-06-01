@@ -509,7 +509,7 @@
 
 .chat-send {
     height: 36px;
-    padding: 0 16px;
+    padding: 0 14px;
     background: var(--chat-primary);
     color: #fff;
     border: 1px solid var(--chat-primary);
@@ -517,6 +517,18 @@
     font-weight: 500;
     cursor: pointer;
     transition: background 120ms;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-send-icon {
+    display: inline-block;
+    flex: 0 0 auto;
+}
+
+.chat-send-label {
+    /* hidden on mobile via the breakpoint below */
 }
 
 .chat-send:hover {
@@ -548,6 +560,17 @@
 
 @media (max-width: 780px) {
     .chat-send-kbd {
+        display: none;
+    }
+}
+
+@media (max-width: 480px) {
+    /* Tight viewport: collapse Send to icon-only, drop the text. */
+    .chat-send {
+        padding: 0 12px;
+        gap: 0;
+    }
+    .chat-send-label {
         display: none;
     }
 }
@@ -620,6 +643,21 @@
     color: var(--chat-muted);
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
+}
+
+.chat-sidebar-title-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    flex: 0 0 auto;
+}
+
+.chat-sidebar-title-cost {
+    font-size: 9px;
+    color: color-mix(in srgb, var(--chat-primary) 75%, var(--chat-muted));
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
 }
 
 .chat-sidebar-delete,
@@ -721,6 +759,28 @@
     height: 20px;
     font-size: 10px;
     flex: 0 0 20px;
+}
+
+/* Provider chip on the model pill — shown on desktop only so the
+ * pill stays compact on mobile where the avatar already carries
+ * the provider identity. Subtle styling so it reads as metadata
+ * rather than a clickable element. */
+.chat-model-pill-provider {
+    font-size: 10px;
+    color: var(--chat-muted);
+    background: var(--chat-hover);
+    padding: 1px 6px;
+    border-radius: 999px;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    font-weight: 500;
+    flex: 0 0 auto;
+}
+
+@media (max-width: 780px) {
+    .chat-model-pill-provider {
+        display: none;
+    }
 }
 
 .chat-avatar-row {
