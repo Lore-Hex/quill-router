@@ -28,11 +28,12 @@ SLUG = "together"
 URL = "https://api.together.xyz/v1/models"
 
 # Model IDs we expect Together to expose, in OR-canonical form. Parser
-# below translates Together's native IDs to these.
+# below translates Together's native IDs to these. These are the
+# canaries for hourly pricing drift: if Together renames or drops one,
+# the refresh job should keep the previous committed price instead of
+# silently deleting the endpoint from the catalog.
 EXPECTED_MODELS = [
-    # Llama family that we route through Together — kept loose because
-    # Together's catalog churns and we don't want to fail the workflow
-    # over a single rename.
+    "meta-llama/llama-3.3-70b-instruct",
 ]
 
 
@@ -44,6 +45,7 @@ _NATIVE_TO_OR_ID = {
     "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo": "meta-llama/llama-3.1-8b-instruct",
     "meta-llama/Llama-3.1-70B-Instruct-Turbo": "meta-llama/llama-3.1-70b-instruct",
     "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Llama-3.3-70B-Instruct-Turbo": "meta-llama/llama-3.3-70b-instruct",
     "deepseek-ai/DeepSeek-V3": "deepseek/deepseek-v3",
     "deepseek-ai/DeepSeek-V3-OCR": "deepseek/deepseek-v3-ocr",
     "Qwen/Qwen2.5-7B-Instruct-Turbo": "qwen/qwen-2.5-7b-instruct",
@@ -129,16 +131,14 @@ def fetch() -> ProviderPricingResult:
             "no Together models matched _NATIVE_TO_OR_ID — extend the table "
             "or check the API response"
         )
-    # Validate but DO NOT raise on errors — the orchestrator distinguishes
-    # "this provider had problems" (notes attached, source still 'api')
-    # from "this provider is unusable" (raised exception, treated as a
-    # failure under MAX_TOLERATED_FAILURES). EXPECTED_MODELS is empty
-    # for Together so price-floor validation can't fail; only the
-    # all-zeros / non-empty check triggers, and an empty Together result
-    # is an expected outcome on auth-key absence.
+    # Validate strictly: Together is a direct JSON API, not a brittle
+    # HTML scraper. If a canary model disappears, treat this provider
+    # as failed so refresh.py reuses the previous committed prices
+    # instead of dropping live endpoints from the catalog.
     errors = validate(prices, EXPECTED_MODELS)
     if errors:
         notes.append(f"validation notes: {errors}")
+        raise RuntimeError("; ".join(errors))
 
     return ProviderPricingResult(
         slug=SLUG,

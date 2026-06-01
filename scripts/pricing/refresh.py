@@ -45,6 +45,7 @@ from typing import Any
 
 from scripts.pricing.base import (
     ModelPrice,
+    PriceTier,
     ProviderPricingResult,
     log,
 )
@@ -202,19 +203,121 @@ def _index_provider_prices(
 def _or_pricing_to_micro_per_m(pricing: dict[str, Any]) -> ModelPrice | None:
     """Read OR's pricing block (dollars-per-token strings) and convert
     to microdollars per million."""
+    tiered = _snapshot_pricing_to_model_price(pricing)
+    if tiered is not None:
+        return tiered
+
+    return _flat_snapshot_pricing_to_model_price(pricing)
+
+
+def _micro_per_m_from_dollars_per_token(raw: object) -> int | None:
     try:
-        prompt = Decimal(str(pricing.get("prompt") or "0"))
-        completion = Decimal(str(pricing.get("completion") or "0"))
+        value = Decimal(str(raw or "0"))
     except Exception:  # noqa: BLE001
         return None
+    return int((value * Decimal(1_000_000_000_000)).to_integral_value())
 
-    def _micro_per_m(d: Decimal) -> int:
-        return int((d * Decimal(1_000_000_000_000)).to_integral_value())
 
+def _flat_snapshot_pricing_to_model_price(pricing: dict[str, Any]) -> ModelPrice | None:
+    prompt = _micro_per_m_from_dollars_per_token(pricing.get("prompt"))
+    completion = _micro_per_m_from_dollars_per_token(pricing.get("completion"))
+    if prompt is None or completion is None:
+        return None
+    cache_read = _micro_per_m_from_dollars_per_token(pricing.get("input_cache_read"))
     return ModelPrice(
-        prompt_micro_per_m=_micro_per_m(prompt),
-        completion_micro_per_m=_micro_per_m(completion),
+        prompt_micro_per_m=prompt,
+        completion_micro_per_m=completion,
+        prompt_cached_micro_per_m=cache_read,
     )
+
+
+def _snapshot_pricing_to_model_price(pricing: dict[str, Any]) -> ModelPrice | None:
+    prompt_tiers = pricing.get("prompt_tiers")
+    completion_tiers = pricing.get("completion_tiers")
+    if not isinstance(prompt_tiers, list) or not isinstance(completion_tiers, list):
+        return None
+    if not prompt_tiers or len(prompt_tiers) != len(completion_tiers):
+        return None
+
+    tiers: list[PriceTier] = []
+    for prompt_tier, completion_tier in zip(prompt_tiers, completion_tiers, strict=False):
+        if not isinstance(prompt_tier, dict) or not isinstance(completion_tier, dict):
+            return None
+        threshold = prompt_tier.get("max_prompt_tokens")
+        if threshold is not None and not isinstance(threshold, int):
+            return None
+        prompt = _micro_per_m_from_dollars_per_token(prompt_tier.get("prompt"))
+        completion = _micro_per_m_from_dollars_per_token(completion_tier.get("completion"))
+        if prompt is None or completion is None:
+            return None
+        cache_read = _micro_per_m_from_dollars_per_token(prompt_tier.get("input_cache_read"))
+        tiers.append(
+            PriceTier(
+                max_prompt_tokens=threshold,
+                prompt_micro_per_m=prompt,
+                completion_micro_per_m=completion,
+                prompt_cached_micro_per_m=cache_read,
+            )
+        )
+    if tiers[-1].max_prompt_tokens is not None:
+        return None
+    return ModelPrice(tiers=tiers)
+
+
+def _read_existing_snapshot() -> dict[str, Any]:
+    if not SNAPSHOT_PATH.exists():
+        return {"models": []}
+    try:
+        raw = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"models": []}
+    return raw if isinstance(raw, dict) else {"models": []}
+
+
+def _stale_results_from_snapshot(
+    snapshot: dict[str, Any], failed_slugs: list[str]
+) -> dict[str, ProviderPricingResult]:
+    """Reuse committed endpoint prices for providers whose live refresh
+    failed. This makes the "kept last hour's value" workflow guarantee
+    literal: a temporary Together/API outage does not delete routes from
+    the catalog or reset prices to OpenRouter fallback data."""
+    failed = set(failed_slugs)
+    prices_by_slug: dict[str, dict[str, ModelPrice]] = {slug: {} for slug in failed}
+    for model in snapshot.get("models", []):
+        if not isinstance(model, dict):
+            continue
+        model_id = model.get("id")
+        if not isinstance(model_id, str):
+            continue
+        endpoints = model.get("endpoints")
+        if not isinstance(endpoints, list):
+            continue
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            slug = endpoint.get("tr_provider_slug")
+            if not isinstance(slug, str) or slug not in failed:
+                continue
+            pricing = endpoint.get("pricing")
+            if not isinstance(pricing, dict):
+                continue
+            price = _or_pricing_to_micro_per_m(pricing)
+            if price is None:
+                continue
+            prices_by_slug[slug][model_id] = price
+
+    out: dict[str, ProviderPricingResult] = {}
+    for slug, prices in prices_by_slug.items():
+        if not prices:
+            continue
+        out[slug] = ProviderPricingResult(
+            slug=slug,
+            prices=prices,
+            source="stale_snapshot",
+            fetched_url=str(SNAPSHOT_PATH),
+            notes=["provider refresh failed; reused previous committed endpoint prices"],
+        )
+    return out
 
 
 def _cross_check(
@@ -543,6 +646,10 @@ def _summary_lines(
         lines.append(
             f"  {slug}: {len(result.prices)} models via {result.source}"
         )
+        for note in result.notes[:3]:
+            lines.append(f"    note: {note}")
+        if len(result.notes) > 3:
+            lines.append(f"    ... and {len(result.notes) - 3} more note(s)")
     if healed:
         lines.append("")
         lines.append(f"Self-healed parsers this run: {', '.join(healed)}")
@@ -599,6 +706,12 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 1
 
+    if failures:
+        stale_results = _stale_results_from_snapshot(
+            _read_existing_snapshot(), [slug for slug, _err in failures]
+        )
+        results.update(stale_results)
+
     log.info("pricing.refresh.openrouter_ingest")
     or_snapshot = build_openrouter_snapshot()
 
@@ -618,6 +731,7 @@ def main(argv: list[str] | None = None) -> int:
         f"Sources: {sum(1 for r in results.values() if r.source == 'deterministic')} "
         f"deterministic, {len(healed)} self-healed, "
         f"{sum(1 for r in results.values() if r.source == 'api')} api, "
+        f"{sum(1 for r in results.values() if r.source == 'stale_snapshot')} stale, "
         f"{len(failures)} failed (kept last hour's value)"
     )
     print()

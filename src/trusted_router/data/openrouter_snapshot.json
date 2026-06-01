@@ -3117,6 +3117,22 @@
           "pricing_source": "provider_direct",
           "supported_parameters": [],
           "quantization": "unknown"
+        },
+        {
+          "name": "together | meta-llama/llama-3.3-70b-instruct",
+          "model_id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+          "model_name": "Meta: Llama 3.3 70B Instruct",
+          "provider_name": "together",
+          "tag": "together",
+          "tr_provider_slug": "together",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.00000104",
+            "completion": "0.00000104"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
         }
       ],
       "pricing_source": "provider_direct"
