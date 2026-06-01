@@ -27,7 +27,7 @@ Runs every hour from `.github/workflows/refresh-prices.yml`:
 Exit codes:
    0 — success (snapshot may or may not have changed; the workflow
        checks `git diff --quiet` separately)
-   1 — too many providers failed entirely (> MAX_TOLERATED_FAILURES);
+   1 — too many providers failed and had no committed snapshot fallback;
        no snapshot written
 """
 from __future__ import annotations
@@ -318,6 +318,28 @@ def _stale_results_from_snapshot(
             notes=["provider refresh failed; reused previous committed endpoint prices"],
         )
     return out
+
+
+def _apply_stale_fallbacks(
+    results: dict[str, ProviderPricingResult],
+    failures: list[tuple[str, str]],
+    snapshot: dict[str, Any],
+) -> list[tuple[str, str]]:
+    """Recover failed provider refreshes from committed endpoint prices.
+
+    A provider with stale prices is still reported as failed in the summary,
+    but it is no longer a fatal missing-provider failure. This keeps one
+    provider's live update, such as Together's JSON API result, from being
+    blocked by unrelated scraper/self-heal failures on other providers.
+    """
+    if not failures:
+        return []
+    stale_results = _stale_results_from_snapshot(
+        snapshot,
+        [slug for slug, _err in failures],
+    )
+    results.update(stale_results)
+    return [(slug, err) for slug, err in failures if slug not in stale_results]
 
 
 def _cross_check(
@@ -693,24 +715,24 @@ def main(argv: list[str] | None = None) -> int:
 
     log.info("pricing.refresh.start providers=%d", len(PROVIDER_SLUGS))
     results, failures = _fetch_all_providers()
+
+    unrecovered_failures = _apply_stale_fallbacks(
+        results,
+        failures,
+        _read_existing_snapshot(),
+    )
     healed = [slug for slug, res in results.items() if res.source == "self_healed"]
 
-    if len(failures) > MAX_TOLERATED_FAILURES:
+    if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
         log.error(
-            "pricing.refresh.too_many_failures count=%d limit=%d failures=%s",
-            len(failures),
+            "pricing.refresh.too_many_unrecovered_failures count=%d limit=%d failures=%s",
+            len(unrecovered_failures),
             MAX_TOLERATED_FAILURES,
-            failures,
+            unrecovered_failures,
         )
         for line in _summary_lines(results, healed, failures, [], []):
             print(line)
         return 1
-
-    if failures:
-        stale_results = _stale_results_from_snapshot(
-            _read_existing_snapshot(), [slug for slug, _err in failures]
-        )
-        results.update(stale_results)
 
     log.info("pricing.refresh.openrouter_ingest")
     or_snapshot = build_openrouter_snapshot()

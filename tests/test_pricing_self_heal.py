@@ -325,3 +325,78 @@ def test_cross_check_ids_no_notes_on_perfect_match() -> None:
     # the function only emits notes when there's an actual mismatch.
     anthropic_notes = [n for n in notes if n.startswith("anthropic:")]
     assert anthropic_notes == []
+
+
+def test_failed_provider_fallbacks_are_not_fatal_when_snapshot_has_prices() -> None:
+    results = {
+        "together": pricing_base.ProviderPricingResult(
+            slug="together",
+            prices={
+                "meta-llama/llama-3.3-70b-instruct": pricing_base.ModelPrice(
+                    1_040_000,
+                    1_040_000,
+                )
+            },
+            source="api",
+        )
+    }
+    failures = [
+        ("cerebras", "self-heal 502"),
+        ("mistral", "self-heal 502"),
+        ("venice", "self-heal 502"),
+        ("novita", "self-heal 502"),
+    ]
+    snapshot = {
+        "models": [
+            {
+                "id": "provider/model",
+                "endpoints": [
+                    {
+                        "tr_provider_slug": slug,
+                        "pricing": {
+                            "prompt": "0.0000001",
+                            "completion": "0.0000002",
+                        },
+                    }
+                    for slug, _err in failures
+                ],
+            }
+        ]
+    }
+
+    unrecovered = refresh._apply_stale_fallbacks(results, failures, snapshot)
+
+    assert unrecovered == []
+    assert results["together"].source == "api"
+    assert {slug for slug, _err in failures}.issubset(results)
+    assert {results[slug].source for slug, _err in failures} == {"stale_snapshot"}
+
+
+def test_failed_provider_without_snapshot_price_still_counts_unrecovered() -> None:
+    results: dict[str, pricing_base.ProviderPricingResult] = {}
+    failures = [
+        ("provider-with-snapshot", "temporary 502"),
+        ("new-provider", "temporary 502"),
+    ]
+    snapshot = {
+        "models": [
+            {
+                "id": "provider/model",
+                "endpoints": [
+                    {
+                        "tr_provider_slug": "provider-with-snapshot",
+                        "pricing": {
+                            "prompt": "0.0000001",
+                            "completion": "0.0000002",
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+
+    unrecovered = refresh._apply_stale_fallbacks(results, failures, snapshot)
+
+    assert unrecovered == [("new-provider", "temporary 502")]
+    assert results["provider-with-snapshot"].source == "stale_snapshot"
+    assert "new-provider" not in results
