@@ -93,6 +93,27 @@ def test_monitor_alias_is_marked_internal_only() -> None:
     assert shape["trustedrouter"]["synthetic_monitor"] is True
 
 
+def test_monitor_alias_is_hidden_from_public_v1_models(client: TestClient) -> None:
+    """The synthetic-monitor pool is a system-internal routing target
+    that user-facing clients (chat playground, third-party SDKs) must
+    never see. The catalog marks it `internal_only: true` — the
+    /v1/models endpoint must filter on that flag."""
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+    ids = {entry["id"] for entry in response.json()["data"]}
+    assert MONITOR_MODEL_ID not in ids
+    # The other meta-models stay user-visible.
+    assert FREE_MODEL_ID in ids
+    assert CHEAP_MODEL_ID in ids
+
+
+def test_models_count_excludes_internal_only(client: TestClient) -> None:
+    response = client.get("/v1/models/count")
+    full_count = response.json()["data"]["count"]
+    list_count = len(client.get("/v1/models").json()["data"])
+    assert full_count == list_count
+
+
 def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     samples = [
         _sample(

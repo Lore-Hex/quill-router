@@ -261,6 +261,7 @@
 
     function normalizeModel(raw) {
         const pricing = raw.pricing || {};
+        const ext = raw.trustedrouter || {};
         // Pricing in OpenAI shape is dollars per token; convert to
         // $/M for display.
         const inPerM =
@@ -269,7 +270,6 @@
             pricing.completion != null
                 ? Number(pricing.completion) * 1_000_000
                 : null;
-        const ext = raw.trustedrouter || {};
         return {
             id: raw.id,
             name: raw.name || raw.id,
@@ -280,6 +280,10 @@
             uptime_pct: ext.uptime_pct || null,
             capabilities: ext.capabilities || [],
             free: pricing && Number(pricing.prompt) === 0,
+            // Internal-only routing pools (trustedrouter/monitor) leak
+            // through some catalog snapshots; track the flag so the
+            // picker can drop them defensively.
+            internal_only: !!ext.internal_only,
         };
     }
 
@@ -1183,6 +1187,13 @@
                 const tps = resp.tokens_per_sec
                     ? "  ·  " + resp.tokens_per_sec + " t/s"
                     : "";
+                // Routing provenance — TR's transparency story is that
+                // each request says exactly which provider served it.
+                // Populated from the x-trustedrouter-provider header
+                // when the gateway exposes it via CORS.
+                const viaProvider = resp.selected_provider
+                    ? "  ·  via " + resp.selected_provider
+                    : "";
                 meta.textContent =
                     costStr +
                     "  ·  " +
@@ -1193,7 +1204,8 @@
                     tps +
                     (responses.length === 1
                         ? "  ·  " + (resp.model_id || "")
-                        : "");
+                        : "") +
+                    viaProvider;
                 bubble.appendChild(meta);
             }
             const acts = document.createElement("div");
@@ -1671,6 +1683,10 @@
         list.innerHTML = "";
         const q = pickerQuery.toLowerCase();
         const filtered = MODELS.filter((m) => {
+            // System-internal routing pools (trustedrouter/monitor)
+            // must never show in the picker even when the catalog
+            // emits them.
+            if (m.internal_only) return false;
             if (
                 q &&
                 !m.id.toLowerCase().includes(q) &&
@@ -2282,10 +2298,23 @@
             const errText = await resp.text();
             throw new Error(errText.slice(0, 240));
         }
+        // Capture routing provenance from response headers when the
+        // gateway exposes them via Access-Control-Expose-Headers.
+        // Falls back gracefully if browsers don't see them (cross-
+        // origin without explicit expose) — meta line will just
+        // omit "via …" until the gateway is reconfigured.
+        const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
+        const headerProvider = resp.headers.get("x-trustedrouter-provider");
+        const headerServedModel = resp.headers.get("x-trustedrouter-served-model");
+        if (headerProvider && respSlot) {
+            respSlot.selected_provider = headerProvider;
+        }
+        if (headerServedModel && respSlot) {
+            respSlot.selected_model_id = headerServedModel;
+        }
         const reader = resp.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
-        const respSlot = assistantMsg.responses[respIdx] || assistantMsg.responses[0];
         // Track tokens-per-second for the metric in the column footer.
         // We measure from the FIRST delta arrival (not request start)
         // so cold-start / network latency doesn't deflate the number.
