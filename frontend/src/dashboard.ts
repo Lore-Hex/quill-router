@@ -115,7 +115,47 @@ async function postJSON<T>(path: string, body: unknown): Promise<T | null> {
   }
 }
 
+// Read the `tr_signed_in=1` companion cookie set alongside the HttpOnly
+// session cookie. The marketing chrome (static/dashboard.js + the
+// _base.html "Sign in" / "Get an API key" buttons) uses this to know
+// whether to render the auth-aware version of the nav. Returning `true`
+// when the cookie is present is a UI hint only — actual auth happens via
+// the HttpOnly `tr_session` cookie, which is sent automatically on every
+// request to /console/*. So a stale `tr_signed_in=1` cookie can only
+// cause a wasted click ("Open console" → 302 to /?reason=signin) not an
+// auth bypass.
+function hasSignedInHint(): boolean {
+  return document.cookie
+    .split(";")
+    .map((c) => c.trim())
+    .some((c) => c === "tr_signed_in=1");
+}
+
+// Swap the marketing-chrome "Sign in" + "Get an API key" buttons for an
+// "Open console" link when the user is signed in. Fixes the 2026-05-23
+// Gabriella bug where a logged-in user clicked Models → saw "Sign in"
+// → assumed they were signed out → OAuth'd a second time.
+function applyAuthAwareChrome(): void {
+  if (!hasSignedInHint()) return;
+  document.querySelectorAll('[data-action="open-signin"]').forEach((el) => {
+    // The marketing chrome has two of these:
+    //   header nav: <button>Sign in</button>
+    //   hero CTA:   <button>Get an API key</button>
+    // For a signed-in user, both should become "Open console" links.
+    const replacement = document.createElement("a");
+    replacement.href = "/console/api-keys";
+    replacement.className = (el as HTMLElement).className;
+    replacement.textContent =
+      el.textContent && el.textContent.trim().toLowerCase().includes("api key")
+        ? "Open console"
+        : "Console";
+    el.replaceWith(replacement);
+  });
+}
+
 function init(): void {
+  applyAuthAwareChrome();
+
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;
     if (!target) return;
@@ -148,7 +188,10 @@ function init(): void {
     }
   });
 
-  if (location.search.includes("reason=signin")) {
+  // Don't auto-pop the sign-in modal on `?reason=signin` if the user is
+  // already signed in — that'd be the same kind of "you're signed out"
+  // false-alarm that triggered Gabriella's second OAuth roundtrip.
+  if (location.search.includes("reason=signin") && !hasSignedInHint()) {
     openSigninModal();
   }
 }
