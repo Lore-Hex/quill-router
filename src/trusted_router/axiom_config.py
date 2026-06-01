@@ -165,13 +165,13 @@ class _SafeAxiomHandler(logging.Handler):
     def __init__(self, inner: logging.Handler) -> None:
         super().__init__()
         self.inner = inner
-        self._last_error_log_at = 0.0
+        self._last_error_log_at: float | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             self.inner.handle(record)
         except Exception as exc:  # noqa: BLE001 - logging must never break requests.
             now = time.monotonic()
-            if now - self._last_error_log_at > 60:
+            if self._last_error_log_at is None or now - self._last_error_log_at > 60:
                 self._last_error_log_at = now
                 sys.stderr.write(f"axiom.emit_failed dropped=true err={exc!r}\n")
