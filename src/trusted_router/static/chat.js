@@ -270,6 +270,16 @@
             pricing.completion != null
                 ? Number(pricing.completion) * 1_000_000
                 : null;
+        // Catalog rarely populates `capabilities` so the picker's
+        // vision/tools filters were dead chips. Derive flags from the
+        // model id when the catalog doesn't carry them — keeps the
+        // filters useful immediately, and the catalog-supplied list
+        // takes precedence if it's there.
+        const catalogCaps = ext.capabilities || [];
+        const inferredCaps = inferCapabilities(raw.id || "");
+        const allCaps = Array.from(
+            new Set([...catalogCaps, ...inferredCaps]),
+        );
         return {
             id: raw.id,
             name: raw.name || raw.id,
@@ -278,13 +288,53 @@
             input_per_m: inPerM,
             output_per_m: outPerM,
             uptime_pct: ext.uptime_pct || null,
-            capabilities: ext.capabilities || [],
+            capabilities: allCaps,
             free: pricing && Number(pricing.prompt) === 0,
+            total_per_m: (inPerM || 0) + (outPerM || 0),
             // Internal-only routing pools (trustedrouter/monitor) leak
             // through some catalog snapshots; track the flag so the
             // picker can drop them defensively.
             internal_only: !!ext.internal_only,
         };
+    }
+
+    // Heuristic capability detection from model id — used when the
+    // catalog doesn't populate the `capabilities` field. Captures the
+    // model families that publicly advertise vision (image input) and
+    // tool-use; anything else falls through and the chip filter just
+    // won't match it. Picky over generous so we don't promise
+    // capabilities a model doesn't have.
+    function inferCapabilities(id) {
+        const i = (id || "").toLowerCase();
+        const caps = [];
+        // Vision-capable families (image input via /chat/completions
+        // multimodal parts):
+        const VISION_FAMILIES = [
+            "claude-opus", "claude-sonnet", "claude-haiku",
+            "gpt-5", "gpt-4o", "gpt-4-vision", "gpt-4-turbo",
+            "gemini-2", "gemini-1.5", "gemini-pro-vision",
+            "llama-3.2-vision", "llama-3.3-vision",
+            "qwen-vl", "qwen2-vl", "qwen2.5-vl",
+            "pixtral", "molmo", "internvl", "minicpm-v",
+            "minimax-m2", "minimax-m2.1", "minimax-m2.5", "minimax-m2.7",
+            "step-1v", "yi-vision", "phi-3.5-vision",
+            "vision", // any explicit "-vision" suffix
+        ];
+        if (VISION_FAMILIES.some((f) => i.includes(f))) caps.push("vision");
+        // Tool-use families (function calling reliably supported):
+        const TOOLS_FAMILIES = [
+            "claude-opus", "claude-sonnet", "claude-haiku",
+            "gpt-5", "gpt-4o", "gpt-4-turbo", "gpt-4.1", "gpt-4.5",
+            "gemini-2", "gemini-1.5",
+            "mistral-large", "mistral-small", "mistral-medium",
+            "llama-3.1-70b-instruct", "llama-3.3-70b-instruct",
+            "qwen2.5", "qwen3",
+            "deepseek-v3", "deepseek-v4", "deepseek-r1",
+            "kimi-k2", "glm-4", "yi-large",
+            "command-r", "nova-pro", "nova-lite",
+        ];
+        if (TOOLS_FAMILIES.some((f) => i.includes(f))) caps.push("tools");
+        return caps;
     }
 
     function findModel(id) {
@@ -589,6 +639,21 @@
                 : "") +
             '<span class="chat-model-pill-caret">▾</span>';
         wrap.appendChild(pill);
+        // Inline × close button — OR-style one-click model removal.
+        // Visible on hover; on mobile (no hover) it's always visible.
+        // For the LAST model the action becomes "reset to default"
+        // rather than "remove" so the user is never stuck with zero.
+        const closer = document.createElement("button");
+        closer.type = "button";
+        closer.className = "chat-model-pill-close";
+        closer.dataset.action = "remove-model";
+        closer.dataset.slotIdx = String(idx);
+        closer.title = chat.models.length > 1
+            ? "Remove this model from the chat"
+            : "Reset to default model";
+        closer.setAttribute("aria-label", closer.title);
+        closer.innerHTML = "×";
+        wrap.appendChild(closer);
         if (openDropdownSlotIdx === idx) {
             wrap.appendChild(makeModelDropdown(chat, slot, idx));
         }
@@ -635,11 +700,13 @@
             '<button type="button" class="chat-dd-action" data-action="duplicate-model" data-slot-idx="' +
             idx +
             '">Duplicate</button>' +
-            (chat.models.length > 1
-                ? '<button type="button" class="chat-dd-action chat-dd-action-danger" data-action="remove-model" data-slot-idx="' +
-                  idx +
-                  '">Remove</button>'
-                : "") +
+            // Always allow Remove. When it's the last model, removeModel()
+            // resets the slot to the default model instead of leaving the
+            // chat empty — matches OR's "you always have at least one
+            // model" invariant without the user feeling stuck.
+            '<button type="button" class="chat-dd-action chat-dd-action-danger" data-action="remove-model" data-slot-idx="' +
+            idx +
+            '">' + (chat.models.length > 1 ? "Remove" : "Reset") + "</button>" +
             "</div>" +
             '<div class="chat-dd-row">' +
             '<label class="chat-dd-toggle"><input type="checkbox" ' +
@@ -816,13 +883,27 @@
 
     function removeModel(idx) {
         const chat = ensureActiveChat();
-        if (chat.models.length <= 1) return;
-        chat.models.splice(idx, 1);
+        if (chat.models.length > 1) {
+            chat.models.splice(idx, 1);
+        } else {
+            // Last model — reset it to the user's default instead of
+            // leaving the chat empty (OR's "Reset" behaviour). Keeps
+            // user from feeling stuck.
+            chat.models[0] = {
+                model_id:
+                    STATE.preferences.lastModelId || DEFAULT_MODEL_ID,
+                system_prompt: "",
+                params: { ...DEFAULT_PARAMS },
+                enabled: true,
+                label: "",
+            };
+        }
         openDropdownSlotIdx = -1;
         chat.updated_at = isoNow();
         saveState();
         renderModelsBar();
         renderThread();
+        updateSysButtonState();
     }
 
     function toggleModelDropdown(idx) {
@@ -1714,7 +1795,10 @@
 
     let pickerEl = null;
     let pickerQuery = "";
-    const PICKER_FILTERS = { free: false, vision: false, tools: false };
+    // "cheap" replaces the old "free" chip — TR has no truly free
+    // models, so the chip would always be empty. Cheap sorts the
+    // visible list by ascending total price ($/M in + out).
+    const PICKER_FILTERS = { cheap: false, vision: false, tools: false };
 
     function renderModelPicker() {
         if (!pickerEl) return;
@@ -1722,7 +1806,7 @@
         if (!list) return;
         list.innerHTML = "";
         const q = pickerQuery.toLowerCase();
-        const filtered = MODELS.filter((m) => {
+        let filtered = MODELS.filter((m) => {
             // System-internal routing pools (trustedrouter/monitor)
             // must never show in the picker even when the catalog
             // emits them.
@@ -1735,7 +1819,6 @@
                 return false;
             }
             const caps = m.capabilities || [];
-            if (PICKER_FILTERS.free && !m.free) return false;
             if (PICKER_FILTERS.vision && !caps.includes("vision")) return false;
             if (
                 PICKER_FILTERS.tools &&
@@ -1744,27 +1827,45 @@
             )
                 return false;
             return true;
-        }).slice(0, 200);
+        });
+        // "Cheap" filter — sort ascending by total $/M and cap to the
+        // top 30 cheapest. Doesn't drop models for being expensive in
+        // the absence of the chip; just reorders + truncates when on.
+        if (PICKER_FILTERS.cheap) {
+            filtered = filtered
+                .slice()
+                .sort((a, b) => (a.total_per_m || 0) - (b.total_per_m || 0))
+                .slice(0, 30);
+        } else {
+            filtered = filtered.slice(0, 200);
+        }
         // Filter chip counts — total count per capability across the
         // QUERY-filtered set (ignoring chip filters themselves), so
-        // toggling Free shows "Free (n)" against the same backdrop.
+        // toggling a chip shows the same backdrop.
         const queryMatched = MODELS.filter((m) => {
+            if (m.internal_only) return false;
             if (!q) return true;
             const idMatch = m.id.toLowerCase().includes(q);
             const nameMatch = (m.name || "").toLowerCase().includes(q);
             return idMatch || nameMatch;
         });
-        const counts = { free: 0, vision: 0, tools: 0 };
+        const counts = { cheap: queryMatched.length, vision: 0, tools: 0 };
         for (const m of queryMatched) {
             const caps = m.capabilities || [];
-            if (m.free) counts.free++;
             if (caps.includes("vision")) counts.vision++;
             if (caps.includes("tools") || caps.includes("tool_use")) counts.tools++;
         }
         if (pickerEl) {
-            for (const k of ["free", "vision", "tools"]) {
+            for (const k of ["cheap", "vision", "tools"]) {
                 const el = pickerEl.querySelector('[data-count="' + k + '"]');
+                const chip = pickerEl.querySelector(
+                    '.chat-picker-filter[data-filter="' + k + '"]',
+                );
                 if (el) el.textContent = counts[k] > 0 ? "(" + counts[k] + ")" : "";
+                // Hide chips whose category has zero matches in the
+                // current catalog — saves the user from clicking a
+                // chip that would empty the picker.
+                if (chip) chip.hidden = counts[k] === 0;
             }
         }
         // Active model ids in this chat — let the picker rows visually
@@ -1809,7 +1910,7 @@
                 if (real) {
                     if (filtered.includes(real)) popularRows.push(real);
                 } else if (
-                    !PICKER_FILTERS.free &&
+                    !PICKER_FILTERS.cheap &&
                     !PICKER_FILTERS.vision &&
                     !PICKER_FILTERS.tools
                 ) {
@@ -2072,9 +2173,9 @@
             <div class="chat-model-picker-panel">
                 <input type="text" class="chat-model-picker-search" placeholder="Search models..." autofocus>
                 <div class="chat-model-picker-filters">
-                    <button type="button" class="chat-picker-filter" data-filter="free">Free <span class="chat-picker-filter-count" data-count="free"></span></button>
-                    <button type="button" class="chat-picker-filter" data-filter="vision">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
-                    <button type="button" class="chat-picker-filter" data-filter="tools">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="cheap" title="Sort ascending by price (top 30 cheapest)">Cheap <span class="chat-picker-filter-count" data-count="cheap"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="vision" title="Models with image-input support">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="tools" title="Models with tool/function-call support">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
                 </div>
                 <div class="chat-model-picker-list"></div>
                 <div class="chat-model-picker-footer">

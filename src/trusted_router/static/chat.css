@@ -183,12 +183,13 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    overflow-x: auto;
+    flex-wrap: wrap;
     min-width: 0;
-}
-
-.chat-models-bar::-webkit-scrollbar {
-    height: 4px;
+    /* Critical: must NOT clip — the per-model dropdown drops below
+     * each pill via position:absolute, and overflow-x:auto here used
+     * to hide it entirely (the OG bug behind "right button doesn't
+     * show anything"). The pills wrap to a second row instead. */
+    overflow: visible;
 }
 
 .chat-header-actions {
@@ -699,11 +700,53 @@
 .chat-model-pill-wrap {
     position: relative;
     display: inline-flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
 }
 
 .chat-model-pill-wrap.is-disabled .chat-model-pill {
     opacity: 0.4;
+}
+
+/* Inline × on the pill — OR-style one-click model removal. Sits
+ * to the right of the pill, fades in on hover. On touch viewports
+ * (no hover) it's always visible so it's reachable. */
+.chat-model-pill-close {
+    width: 18px;
+    height: 18px;
+    margin-left: 2px;
+    margin-right: 4px;
+    background: var(--chat-hover);
+    border: 1px solid var(--chat-border);
+    color: var(--chat-muted);
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms, background 120ms, color 120ms;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.chat-model-pill-wrap:hover .chat-model-pill-close,
+.chat-model-pill-close:focus {
+    opacity: 1;
+}
+
+.chat-model-pill-close:hover {
+    background: var(--chat-error-bg);
+    color: var(--chat-error);
+    border-color: color-mix(in srgb, var(--chat-error) 40%, var(--chat-border));
+}
+
+@media (hover: none) {
+    /* Touch viewports — always show the close affordance. */
+    .chat-model-pill-close {
+        opacity: 1;
+    }
 }
 
 .chat-model-pill {
@@ -838,7 +881,9 @@
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    z-index: 30;
+    /* Above the sticky header (z-index 10) AND any other inline
+     * decoration; stays below modals (z-index 100+). */
+    z-index: 50;
     width: 320px;
     max-width: 90vw;
     background: #ffffff;
