@@ -16,7 +16,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import sys
 
 os.environ.setdefault("TR_STORAGE_BACKEND", "spanner-bigtable")
 os.environ.setdefault("TR_GCP_PROJECT_ID", "quill-cloud-proxy")
