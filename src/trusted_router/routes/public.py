@@ -147,6 +147,31 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
+    # ── SEO landing pages ────────────────────────────────────────────
+    # Top-level slugs targeting high-intent buyer queries. Each is a
+    # self-contained sales surface (see PUBLIC_PAGES in dashboard.py).
+    # Keep these top-level (not under /seo or /landing) — that hurts
+    # ranking and looks defensive.
+    @public_html_route("/openrouter-alternative")
+    async def seo_openrouter_alternative() -> str:
+        return public_page_html(settings, "openrouter-alternative")
+
+    @public_html_route("/private-llm-api")
+    async def seo_private_llm_api() -> str:
+        return public_page_html(settings, "private-llm-api")
+
+    @public_html_route("/hipaa-llm-api")
+    async def seo_hipaa_llm_api() -> str:
+        return public_page_html(settings, "hipaa-llm-api")
+
+    @public_html_route("/llm-zero-data-retention")
+    async def seo_llm_zero_data_retention() -> str:
+        return public_page_html(settings, "llm-zero-data-retention")
+
+    @public_html_route("/claude-api-privacy")
+    async def seo_claude_api_privacy() -> str:
+        return public_page_html(settings, "claude-api-privacy")
+
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")

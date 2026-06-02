@@ -1,77 +1,129 @@
 {% extends "public/_base.html" %}
 {% block body %}
-<section class="public-proof-strip">
-  <div><strong>Same client shape</strong><span>Keep your OpenAI SDK and change the base URL.</span></div>
-  <div><strong>Verifiable gateway</strong><span>Source commit, image reference, and image digest are published.</span></div>
-  <div><strong>Provider fallback</strong><span>Use <span class="mono">trustedrouter/auto</span> for rollover across healthy routes.</span></div>
-  <div><strong>Open source</strong><span>Control plane, gateway, config, and public site.</span></div>
-</section>
 
-<section class="marketing-split">
+<section class="marketing-split" aria-label="One-line migration">
   <div class="marketing-copy">
-    <span class="eyebrow">Why switch</span>
-    <h2>Routing convenience with a prompt path you can inspect.</h2>
-    <p>TrustedRouter is for teams that want model choice, provider fallback, usage tracking, BYOK, prepaid credits, and a hosted gateway whose code path is published for verification.</p>
-    <p>The control plane does not terminate production prompt traffic. Prompts belong on <span class="mono">api.quillrouter.com</span>, which is the attested API path.</p>
+    <span class="eyebrow">Switch in 1 line</span>
+    <h2>OpenRouter, but you can verify the prompt path.</h2>
+    <p>Change <span class="mono">base_url</span>. Keep your OpenAI SDK. Keep your model IDs. Keep your code.</p>
+    <p>What you add: a hardware-attested gateway, open-source source-to-binary, no prompt or output logs, and a public status page with continuous SLO probes.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try the playground</a>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+    </p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Client migration</span><span>OpenAI SDK</span></div>
-    <pre><code>client = OpenAI(
+    <div class="code-head"><span>Before / after — Python</span><span>OpenAI SDK</span></div>
+    <pre><code>from openai import OpenAI
+
+# Before
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key="sk-or-..."
+)
+
+# After
+client = OpenAI(
     base_url="{{ api_base_url }}",
     api_key="sk-tr-v1-..."
 )
 
-model = "trustedrouter/auto"</code></pre>
+# Everything else stays the same:
+resp = client.chat.completions.create(
+    model="anthropic/claude-sonnet-4.6",
+    messages=[{"role": "user", "content": "hi"}],
+)</code></pre>
   </div>
 </section>
 
 <section class="marketing-grid three">
   <div class="marketing-card">
-    <span class="card-label">Migrate</span>
-    <h3>Change one URL.</h3>
-    <p>Point your existing client at <span class="mono">{{ api_base_url }}</span> and keep your model IDs.</p>
-    <a class="btn" href="/docs/migrate-from-openrouter">Open migration guide</a>
+    <span class="card-label">Same API</span>
+    <h3>OpenAI-compatible.</h3>
+    <p>Drop into any OpenRouter integration. Streaming, tool calls, vision, structured output — all supported.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Verify</span>
-    <h3>Check the exact code path.</h3>
-    <p>The trust page publishes the source commit, image reference, and image digest for the gateway.</p>
-    <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+    <span class="card-label">Verifiable</span>
+    <h3>Attested gateway.</h3>
+    <p>Cross-cloud confidential VMs sign their boot measurement. You check the image hash against the published artifact.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Route</span>
-    <h3>Move sensitive routes deliberately.</h3>
-    <p>Start with a single workflow, inspect status and activity, then expand routes once the trust boundary matches your needs.</p>
-    <button class="btn primary" type="button" data-action="open-signin">Create key</button>
+    <span class="card-label">No logging</span>
+    <h3>Zero by construction.</h3>
+    <p>Prompt and output paths never touch persistent storage. The binary you can verify is the binary that handles your traffic.</p>
   </div>
 </section>
 
-<section class="compare-matrix" aria-label="OpenRouter comparison">
+<section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter">
   <div class="matrix-row matrix-head">
     <span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong>
   </div>
   <div class="matrix-row">
-    <span>API shape</span><span>OpenAI style routing</span><span>OpenAI style routing</span>
+    <span>API shape</span><span>OpenAI compatible</span><span>OpenAI compatible</span>
   </div>
   <div class="matrix-row">
-    <span>Trust model</span><span>Hosted router trust</span><span>Open source plus attestation</span>
+    <span>Prompt logging</span><span>Operator-controlled retention</span><span>None — verifiable in source</span>
   </div>
   <div class="matrix-row">
-    <span>Prompt handling</span><span>Service policy</span><span>No prompt or output logs by default</span>
+    <span>Trust model</span><span>Hosted policy</span><span>Hardware attestation + open source</span>
   </div>
   <div class="matrix-row">
-    <span>Best fit</span><span>Broad model marketplace</span><span>Verifiable private routing</span>
+    <span>Source</span><span>Closed</span><span>Open — every line that touches your prompt</span>
+  </div>
+  <div class="matrix-row">
+    <span>Provider fallback</span><span>Yes</span><span>Yes — across 30+ providers</span>
+  </div>
+  <div class="matrix-row">
+    <span>Status SLOs</span><span>Public status page</span><span>Public 99.99% SLO + 30-day burn rates</span>
+  </div>
+  <div class="matrix-row">
+    <span>Best fit</span><span>Broad model marketplace</span><span>Privacy-sensitive workloads, regulated industries, audited routing</span>
+  </div>
+</section>
+
+<section class="marketing-split" aria-label="Verify in 60 seconds">
+  <div class="copy-terminal">
+    <div class="code-head"><span>Verify the gateway</span><span>curl + jq</span></div>
+    <pre><code># 1. Get a nonce-bound attestation
+NONCE=$(openssl rand -hex 16)
+curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
+  | jq .
+
+# Response includes:
+#   eat_nonce     — your nonce, replay-protected
+#   image_digest  — SHA-256 of the running container
+#   pcrs          — platform measurements at boot
+
+# 2. Compare image_digest against the published artifact:
+#    https://trustedrouter.com/security
+#
+# If they match, the code processing your prompts is
+# the code on GitHub.</code></pre>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">60-second proof</span>
+    <h2>Don't trust. Check.</h2>
+    <p>The gateway exposes a live attestation endpoint that returns a JWT signed by the CPU's hardware root key. You match the image digest to the open-source binary, and you know — not assume — what code is running.</p>
+    <p>Everyone else publishes a privacy policy. We publish the hash.</p>
+    <p>
+      <a class="btn" href="/security">How attestation works</a>
+      <a class="btn" href="/docs/migrate-from-openrouter">Migration guide</a>
+    </p>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
-    <span class="eyebrow">Developer workflow</span>
-    <h2>Keep the easy parts. Make the trust boundary explicit.</h2>
+    <span class="eyebrow">Common questions</span>
+    <h2>The boring details that make this real.</h2>
   </div>
   <div>
-    <p>Model routers are useful because they remove provider account sprawl, normalize usage records, and make fallback possible. TrustedRouter keeps that workflow and adds a published gateway boundary for production prompt traffic.</p>
-    <p>Use the public model pages to compare providers, policy notes, prices, benchmark links, and status before routing real traffic.</p>
+    <p><strong>Do my existing keys work?</strong> No — TR keys are a different prefix (<span class="mono">sk-tr-v1-…</span>). Issuance takes 30 seconds after sign-up.</p>
+    <p><strong>Same model catalog?</strong> Yes — every OpenRouter model id resolves on TR, plus 30+ providers including DeepSeek, Kimi, MiniMax, GLM, and Together.</p>
+    <p><strong>Pricing?</strong> Provider cost + 10% markup, $0.01/M floor. Published per-model on every catalog page. No hidden margin on inference.</p>
+    <p><strong>BYOK?</strong> Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p>
+    <p><strong>Self-host?</strong> The full control plane and gateway are open source. Run it yourself; the attestation story still works because the image hash you build is the hash your enclave reports.</p>
   </div>
 </section>
+
 {% endblock %}

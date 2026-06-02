@@ -65,6 +65,12 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/compare/openrouter",
     "/compare/vercel-ai-gateway",
     "/compare/litellm",
+    # SEO landing pages — each targets a high-intent buyer query.
+    "/openrouter-alternative",
+    "/private-llm-api",
+    "/hipaa-llm-api",
+    "/llm-zero-data-retention",
+    "/claude-api-privacy",
     "/docs/migrate-from-openrouter",
 )
 _BENCHMARK_INDEX_LINKS: tuple[dict[str, str], ...] = (
@@ -217,6 +223,51 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/security.html",
         title="Security",
         description="What is logged, what is not logged, and where prompt traffic belongs.",
+    ),
+    # SEO landing pages — top-level slugs target high-intent buyer
+    # queries. Each one is a self-contained sales surface: H2 above the
+    # fold, one runnable code sample, one comparison table, a clear
+    # CTA to /chat. Internal-link target for the marketing-grid cards
+    # on /, /compare/openrouter, and the related landing pages.
+    "openrouter-alternative": PublicPage(
+        template="public/seo_openrouter_alternative.html",
+        title="OpenRouter Alternative — TrustedRouter",
+        description=(
+            "An open-source, hardware-attested OpenRouter alternative. "
+            "Same OpenAI-compatible API, verifiable prompt path, no logs."
+        ),
+    ),
+    "private-llm-api": PublicPage(
+        template="public/seo_private_llm_api.html",
+        title="Private LLM API — Verifiable, Attested, Open Source",
+        description=(
+            "A private LLM API where privacy is cryptographically verifiable. "
+            "Route to Claude, GPT, Gemini, DeepSeek through an attested gateway."
+        ),
+    ),
+    "hipaa-llm-api": PublicPage(
+        template="public/seo_hipaa_llm_api.html",
+        title="HIPAA-Compatible LLM Routing — TrustedRouter",
+        description=(
+            "An auditable LLM API for HIPAA covered entities. "
+            "Attested gateway, open-source routing code, no prompt logs by construction."
+        ),
+    ),
+    "llm-zero-data-retention": PublicPage(
+        template="public/seo_zero_data_retention.html",
+        title="Zero Data Retention LLM API — Verifiable in Source",
+        description=(
+            "Zero data retention as a structural property of the open-source code, "
+            "not just a contract clause. Multi-provider routing with the same posture."
+        ),
+    ),
+    "claude-api-privacy": PublicPage(
+        template="public/seo_claude_api_privacy.html",
+        title="Claude API Privacy — Through TrustedRouter",
+        description=(
+            "Call Anthropic Claude through a hardware-attested, open-source router. "
+            "Anthropic's privacy posture plus a routing path you can verify."
+        ),
     ),
 }
 

@@ -1,0 +1,80 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="OpenRouter alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">OpenRouter alternative</span>
+    <h2>An OpenRouter alternative built around verifiable privacy.</h2>
+    <p>TrustedRouter is OpenAI-compatible, supports the same model catalog, and adds two things OpenRouter does not: hardware-attested execution and full open-source code.</p>
+    <p>You change one URL. Your existing code keeps working.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try side-by-side</a>
+      <a class="btn" href="/compare/openrouter">Detailed comparison</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>One line</span><span>OpenAI SDK</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+# Same model IDs. Same SDK. Same code.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Privacy</span>
+    <h3>No prompt or output logs.</h3>
+    <p>The attested gateway never persists request or response bodies. You can verify this by reading the open source.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Attestation</span>
+    <h3>Cryptographic, not contractual.</h3>
+    <p>AWS Nitro Enclaves and GCP Confidential VMs sign the running image. Cross-cloud so a single vendor breach doesn't take everything.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Open source</span>
+    <h3>Every line that touches your prompt.</h3>
+    <p>Control plane, gateway, configuration, web UI. Self-host if you want; the attestation story still works.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="OpenRouter alternative comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>API compatibility</span><span>OpenAI compatible</span><span>OpenAI compatible</span>
+  </div>
+  <div class="matrix-row">
+    <span>Source code</span><span>Closed</span><span>Open</span>
+  </div>
+  <div class="matrix-row">
+    <span>Prompt path</span><span>Hosted, opaque</span><span>Hardware-attested, verifiable</span>
+  </div>
+  <div class="matrix-row">
+    <span>Logging</span><span>Retention policy</span><span>None by construction</span>
+  </div>
+  <div class="matrix-row">
+    <span>Self-host</span><span>No</span><span>Yes</span>
+  </div>
+  <div class="matrix-row">
+    <span>Status SLOs</span><span>Status page</span><span>99.99% target with public burn-rate alerts</span>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">When to use TR over OpenRouter</span>
+    <h2>The teams switching over.</h2>
+  </div>
+  <div>
+    <p><strong>Privacy-sensitive workloads.</strong> Medical, legal, financial, internal tooling. Anywhere prompts shouldn't leave a hardware-attested boundary.</p>
+    <p><strong>Regulated industries.</strong> HIPAA, FINRA, GDPR-strict deployments where "no logging" needs to be verifiable, not promised.</p>
+    <p><strong>Audited routing.</strong> Build-vs-buy decisions where the security review team needs to read the routing code.</p>
+    <p><strong>Self-hosters.</strong> Run TrustedRouter inside your own VPC and keep attestation working — your image hash is your image hash.</p>
+  </div>
+</section>
+
+{% endblock %}

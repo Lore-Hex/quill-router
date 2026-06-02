@@ -1,0 +1,89 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Zero data retention LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">Zero data retention</span>
+    <h2>Zero data retention as a verifiable property, not a contract clause.</h2>
+    <p>"ZDR" usually means a clause in your enterprise agreement. The operator promises not to retain. You hope they comply.</p>
+    <p>TrustedRouter's prompt path never writes request or response bodies to persistent storage. The code that handles your prompts is open-source. The image hash is published. You can verify that retention is zero — without trusting us.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try the playground</a>
+      <a class="btn" href="/security">Trust surface</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>What gets logged — schema</span><span>open source</span></div>
+    <pre><code># Per-request record (token counts, timing, model id)
+{
+  "request_id": "req_...",
+  "workspace_id": "...",
+  "model_id": "anthropic/claude-sonnet-4.6",
+  "input_tokens": 12,
+  "output_tokens": 84,
+  "cost_microdollars": 218,
+  "provider": "anthropic",
+  "region": "us-central1",
+  "created_at": "..."
+}
+# What's NOT in here:
+#   - prompt body
+#   - response body
+#   - user inputs of any kind
+# Audit the schema:
+#   github.com/.../storage_models.py</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Structural</span>
+    <h3>Zero, by construction.</h3>
+    <p>The attested binary doesn't open a write handle to a prompt path. The retention isn't a policy choice; it's a structural property of the code.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Verifiable</span>
+    <h3>Check it yourself.</h3>
+    <p>Grep the source for any code that touches request bodies. There isn't any. The image hash you build is the hash the enclave reports.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">End-to-end</span>
+    <h3>Including upstream where possible.</h3>
+    <p>For providers with their own ZDR posture (Anthropic, OpenAI Enterprise, Tinfoil, GCP Confidential), we route under their stronger guarantees and surface that on each model page.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="ZDR comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Typical ZDR clause</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Enforcement</span><span>Contractual</span><span>Structural — in source</span>
+  </div>
+  <div class="matrix-row">
+    <span>Audit path</span><span>SOC 2 + breach disclosure</span><span>Read the open-source binary + hash check</span>
+  </div>
+  <div class="matrix-row">
+    <span>Operator privilege</span><span>Operator can change behavior</span><span>Operator can't change without breaking attestation</span>
+  </div>
+  <div class="matrix-row">
+    <span>Multi-provider</span><span>Per-provider negotiation</span><span>One TR contract, route across providers</span>
+  </div>
+  <div class="matrix-row">
+    <span>Self-host</span><span>Usually not available</span><span>Yes — same attestation chain</span>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">The honest limits</span>
+    <h2>What ZDR doesn't cover.</h2>
+  </div>
+  <div>
+    <p>Upstream providers have their own retention behavior. We can route to providers that match your posture and we publish each one's known stance on the model pages.</p>
+    <p>Attestation proves the running binary is the published binary. It doesn't prove the binary is bug-free.</p>
+    <p>If you can't trust AWS or GCP's hardware root keys at all, the attestation chain doesn't save you. Cross-cloud helps — TR runs on both — but it doesn't eliminate the dependency.</p>
+  </div>
+</section>
+
+{% endblock %}

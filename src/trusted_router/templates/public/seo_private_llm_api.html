@@ -1,0 +1,84 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Private LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">Private LLM API</span>
+    <h2>A private LLM API where "private" means cryptographically verified.</h2>
+    <p>Every hosted LLM provider claims privacy. Almost none of them give you a way to verify it.</p>
+    <p>TrustedRouter routes to every major model — Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral — through a hardware-attested gateway. The code is open source. The image is hashed. You can check what runs.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try the playground</a>
+      <a class="btn" href="/security">Trust surface</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Standard call</span><span>OpenAI SDK</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+resp = client.chat.completions.create(
+    model="anthropic/claude-sonnet-4.6",
+    messages=[
+        {"role": "user", "content": "your prompt"}
+    ],
+)
+# No logs. Source verified. Attestation on demand.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Verifiable</span>
+    <h3>Read the source.</h3>
+    <p>Every line that handles your prompt is on GitHub. Search it. Audit it. Run it locally if you want.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Attested</span>
+    <h3>Hardware-rooted trust.</h3>
+    <p>The gateway runs inside AWS Nitro Enclaves and GCP Confidential VMs. The CPU signs the running image. You verify the signature.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Fail-closed</span>
+    <h3>No request without attestation.</h3>
+    <p>If the gateway can't prove its own integrity, traffic stops. The synthetic monitor probes this every minute and pages on the first miss.</p>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">What "private" actually means here</span>
+    <h2>Things that are zero, with proof.</h2>
+  </div>
+  <div>
+    <p><strong>Prompt body.</strong> Never written to disk. Never shipped to a logging service. The binary doesn't open a write handle to a prompt path. You can grep for this.</p>
+    <p><strong>Output body.</strong> Same. The streamed response goes from upstream provider straight back to you. TR sees it in transit; it never persists.</p>
+    <p><strong>Per-request audit trail.</strong> What TR <em>does</em> log: token counts, timestamps, model id, region, billing. No content. The schema is in the open-source code.</p>
+    <p><strong>Upstream provider behavior.</strong> Out of TR's control. We publish each provider's known retention and ZDR posture on every model page so you can route deliberately.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="Private LLM API comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Direct provider</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Privacy claim</span><span>Privacy policy</span><span>Verifiable in source + attestation</span>
+  </div>
+  <div class="matrix-row">
+    <span>Source</span><span>Closed</span><span>Open</span>
+  </div>
+  <div class="matrix-row">
+    <span>Multi-model</span><span>One provider</span><span>30+ providers, one API</span>
+  </div>
+  <div class="matrix-row">
+    <span>Provider rollover</span><span>No</span><span>Yes — automatic on failure</span>
+  </div>
+  <div class="matrix-row">
+    <span>Self-host</span><span>No</span><span>Yes</span>
+  </div>
+</section>
+
+{% endblock %}
