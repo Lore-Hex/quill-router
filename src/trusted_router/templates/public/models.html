@@ -35,6 +35,13 @@
           <td>
             {% if model.detail_href %}<a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a>{% else %}<code>{{ model.id }}</code>{% endif %}
             <br>{{ model.name }}
+            {% if model.benchmarks_href %}
+            <div class="mini-links">
+              <a href="{{ model.benchmarks_href }}">benchmarks</a>
+              <a href="{{ model.detail_href }}/providers">providers</a>
+              <a href="{{ model.detail_href }}/pricing">pricing</a>
+            </div>
+            {% endif %}
           </td>
           <td>{{ model.provider }}</td>
           <td>{{ model.context_length }}</td>

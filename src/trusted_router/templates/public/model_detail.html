@@ -7,6 +7,11 @@
   </div>
   <div class="panel-body">
     <p><a href="/models">&larr; All models</a></p>
+    <nav class="section-tabs" aria-label="{{ model.name }} sections">
+      {% for link in model.section_links %}
+      <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
+      {% endfor %}
+    </nav>
     <table>
       <tbody>
         <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
@@ -14,7 +19,7 @@
         <tr><th>Providers</th><td>
           <div class="provider-chip-list">
             {% for provider in model.providers %}
-            <span class="pill" title="{{ provider.slug }}">{{ provider.name }}</span>
+            <a class="pill" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}">{{ provider.name }}</a>
             {% endfor %}
           </div>
         </td></tr>
@@ -57,7 +62,7 @@
       <tbody>
         {% for endpoint in model.endpoints %}
         <tr>
-          <td>{{ endpoint.provider }} <code>({{ endpoint.provider_slug }})</code></td>
+          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>({{ endpoint.provider_slug }})</code></td>
           <td>{{ endpoint.usage_type }}</td>
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>

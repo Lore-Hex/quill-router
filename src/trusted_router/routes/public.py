@@ -17,14 +17,24 @@ from starlette.types import Scope
 from trusted_router.catalog import provider_to_openrouter_shape, providers_for_display
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
+    MODEL_SEO_SECTIONS,
     STATIC_DIR,
     dashboard_html,
+    docs_llms_full_txt,
+    docs_llms_txt,
+    llms_txt,
+    public_benchmarks_html,
     public_chat_html,
     public_model_detail_html,
     public_model_not_found_html,
+    public_model_section_html,
     public_models_html,
     public_page_html,
+    public_provider_detail_html,
     public_providers_html,
+    public_rankings_html,
+    robots_txt,
+    sitemap_xml,
 )
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
@@ -140,6 +150,54 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def security() -> str:
         return public_page_html(settings, "security")
 
+    @public_html_route("/benchmarks")
+    async def benchmarks() -> str:
+        return public_benchmarks_html(settings)
+
+    @public_html_route("/rankings")
+    async def rankings() -> str:
+        return public_rankings_html(settings)
+
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def robots() -> PlainTextResponse:
+        return PlainTextResponse(
+            robots_txt(settings),
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
+    async def sitemap() -> Response:
+        return Response(
+            sitemap_xml(settings),
+            media_type="application/xml",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            llms_txt(settings),
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/docs/llms.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
+    async def docs_llms() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_txt(settings),
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route(
+        "/docs/llms-full.txt",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+    )
+    async def docs_llms_full() -> PlainTextResponse:
+        return PlainTextResponse(
+            docs_llms_full_txt(settings),
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
     @public_html_route("/status")
     async def status_page(request: Request, background_tasks: BackgroundTasks) -> Response:
         return _cached_status_page_response(
@@ -214,6 +272,16 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}
         )
 
+    @public_html_route("/providers/{provider_slug}")
+    async def provider_detail(provider_slug: str) -> HTMLResponse:
+        body = public_provider_detail_html(settings, provider_slug.strip())
+        if body is None:
+            return HTMLResponse(
+                public_page_html(settings, "security"),
+                status_code=404,
+            )
+        return HTMLResponse(body)
+
     @public_html_route("/chat")
     async def chat() -> str:
         return public_chat_html(settings)
@@ -231,6 +299,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     )
     async def model_detail(model_id: str) -> HTMLResponse:
         cleaned = model_id.strip()
+        maybe_base_model_id, separator, maybe_section = cleaned.rpartition("/")
+        if separator and maybe_section in MODEL_SEO_SECTIONS:
+            body = public_model_section_html(settings, maybe_base_model_id, maybe_section)
+            if body is None:
+                return HTMLResponse(
+                    public_model_not_found_html(settings, cleaned),
+                    status_code=404,
+                )
+            return HTMLResponse(body)
         body = public_model_detail_html(settings, cleaned)
         if body is None:
             return HTMLResponse(
@@ -409,7 +486,11 @@ def _wants_history_html(request: Request, *, explicit_format: str | None) -> boo
 
 def _wants_html(request: Request) -> bool:
     accept = request.headers.get("accept", "")
-    return "text/html" in accept
+    if not accept or accept == "*/*":
+        return True
+    if "text/html" in accept:
+        return True
+    return "application/json" not in accept
 
 
 def _status_history_page_html(

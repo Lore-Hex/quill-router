@@ -33,10 +33,10 @@ The proxy:
 """
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 from trusted_router.auth import SettingsDep
@@ -80,7 +80,7 @@ _RESPONSE_HEADERS_TO_STRIP = frozenset(
 )
 
 
-def register_chat_proxy_routes(router: APIRouter) -> None:
+def register_chat_proxy_routes(router: APIRouter | FastAPI) -> None:
     @router.api_route(
         "/chat-proxy/v1/{path:path}",
         methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -125,7 +125,7 @@ async def _forward(
             content=body,
         )
         upstream_response = await client.send(upstream_request, stream=True)
-    except httpx.HTTPError as exc:
+    except httpx.HTTPError:
         await client.aclose()
         # Surface as a 502 — the chat client classifies this as
         # "Upstream provider hiccup" in friendlyStreamError().

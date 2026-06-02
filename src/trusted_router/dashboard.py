@@ -11,6 +11,7 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import cast
+from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -33,6 +34,149 @@ from trusted_router.regions import configured_regions, region_map_payload
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 DEV_USER_FALLBACK = "alpha@trustedrouter.local"
+MODEL_SEO_SECTIONS: tuple[str, ...] = (
+    "benchmarks",
+    "providers",
+    "performance",
+    "pricing",
+    "uptime",
+    "api",
+)
+MODEL_SEO_SECTION_LABELS: dict[str, str] = {
+    "benchmarks": "Benchmarks",
+    "providers": "Providers",
+    "performance": "Performance",
+    "pricing": "Pricing",
+    "uptime": "Uptime",
+    "api": "API",
+}
+SEO_CORE_PATHS: tuple[str, ...] = (
+    "/",
+    "/models",
+    "/providers",
+    "/benchmarks",
+    "/rankings",
+    "/status",
+    "/security",
+    "/chat",
+    "/compare/openrouter",
+    "/compare/vercel-ai-gateway",
+    "/compare/litellm",
+    "/docs/migrate-from-openrouter",
+)
+_BENCHMARK_INDEX_LINKS: tuple[dict[str, str], ...] = (
+    {
+        "label": "LMArena leaderboard",
+        "href": "https://arena.ai/leaderboard",
+        "kind": "Independent benchmark index",
+    },
+    {
+        "label": "LiveBench",
+        "href": "https://livebench.ai/",
+        "kind": "Independent benchmark index",
+    },
+    {
+        "label": "Artificial Analysis models",
+        "href": "https://artificialanalysis.ai/models",
+        "kind": "Independent benchmark index",
+    },
+    {
+        "label": "HELM",
+        "href": "https://crfm.stanford.edu/helm/",
+        "kind": "Independent benchmark index",
+    },
+)
+_PROVIDER_MODEL_INFO_LINKS: dict[str, tuple[dict[str, str], ...]] = {
+    "anthropic": (
+        {
+            "label": "Anthropic model docs",
+            "href": "https://platform.claude.com/docs/en/about-claude/models/overview",
+            "kind": "Official model information",
+        },
+    ),
+    "openai": (
+        {
+            "label": "OpenAI model docs",
+            "href": "https://developers.openai.com/api/docs/models",
+            "kind": "Official model information",
+        },
+    ),
+    "gemini": (
+        {
+            "label": "Gemini model docs",
+            "href": "https://ai.google.dev/gemini-api/docs/models",
+            "kind": "Official model information",
+        },
+    ),
+    "mistral": (
+        {
+            "label": "Mistral model docs",
+            "href": "https://docs.mistral.ai/models/overview",
+            "kind": "Official model information",
+        },
+    ),
+    "deepseek": (
+        {
+            "label": "DeepSeek API docs",
+            "href": "https://api-docs.deepseek.com/",
+            "kind": "Official model information",
+        },
+    ),
+    "kimi": (
+        {
+            "label": "Kimi API docs",
+            "href": "https://platform.kimi.ai/docs/overview",
+            "kind": "Official model information",
+        },
+    ),
+    "zai": (
+        {
+            "label": "Z.AI model docs",
+            "href": "https://docs.z.ai/guides/overview/quick-start",
+            "kind": "Official model information",
+        },
+    ),
+    "minimax": (
+        {
+            "label": "MiniMax model docs",
+            "href": "https://platform.minimaxi.com/document/guides/chat-model/V2",
+            "kind": "Official model information",
+        },
+    ),
+    "grok": (
+        {
+            "label": "xAI model docs",
+            "href": "https://docs.x.ai/developers/models",
+            "kind": "Official model information",
+        },
+    ),
+    "together": (
+        {
+            "label": "Together model reference",
+            "href": "https://docs.together.ai/docs/serverless/models",
+            "kind": "Official provider catalog",
+        },
+    ),
+}
+_MODEL_SPECIFIC_BENCHMARK_LINKS: dict[str, tuple[dict[str, str], ...]] = {
+    "minimax/minimax-m3": (
+        {
+            "label": "MiniMax M3 model page",
+            "href": "https://www.minimax.io/models/text/m3",
+            "kind": "Official model information",
+        },
+        {
+            "label": "MiniMax M3 release notes",
+            "href": "https://www.minimax.io/blog/minimax-m3",
+            "kind": "Official model information",
+        },
+        {
+            "label": "BenchLM MiniMax M3",
+            "href": "https://benchlm.ai/models/minimax-m3",
+            "kind": "Independent benchmark page",
+        },
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -177,6 +321,46 @@ def public_models_html(settings: Settings) -> str:
     )
 
 
+def public_benchmarks_html(settings: Settings) -> str:
+    return _env().get_template("public/seo_index.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/benchmarks",
+        title="Benchmarks - TrustedRouter",
+        heading="Benchmarks",
+        description=(
+            "TrustedRouter model benchmark entry points, provider latency pages, "
+            "and independent benchmark references without prompt or output logs."
+        ),
+        page_kind="benchmarks",
+        models=_seo_model_rows(),
+        providers=[_provider_view(provider) for provider in providers_for_display()],
+        benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_rankings_html(settings: Settings) -> str:
+    return _env().get_template("public/seo_index.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/rankings",
+        title="Model Rankings - TrustedRouter",
+        heading="Model Rankings",
+        description=(
+            "Rank models by route count, provider diversity, pricing, and "
+            "provider-side privacy posture before choosing a router target."
+        ),
+        page_kind="rankings",
+        models=_seo_model_rows(),
+        providers=[_provider_view(provider) for provider in providers_for_display()],
+        benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
 def public_chat_html(settings: Settings) -> str:
     """Render the public chat playground at /chat.
 
@@ -230,6 +414,28 @@ def public_providers_html(settings: Settings) -> str:
     )
 
 
+def public_provider_detail_html(settings: Settings, provider_slug: str) -> str | None:
+    provider = PROVIDERS.get(provider_slug)
+    if provider is None:
+        return None
+    served_models = _provider_model_rows(provider_slug)
+    return _env().get_template("public/provider_detail.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
+        title=f"{provider.name} Models - TrustedRouter",
+        heading=provider.name,
+        description=(
+            f"TrustedRouter provider page for {provider.name}: supported models, "
+            "prices, privacy claims, and policy source."
+        ),
+        provider=_provider_detail_view(provider, served_models=served_models),
+        served_models=served_models,
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
 def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     """Render the per-model detail page for `/models/{author}/{slug}`.
     Returns None when the model id isn't in the catalog (route handler
@@ -259,6 +465,29 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     )
 
 
+def public_model_section_html(settings: Settings, model_id: str, section: str) -> str | None:
+    model = MODELS.get(model_id)
+    if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
+        return None
+    site_url = f"https://{settings.trusted_domain}/models/{model_id}/{section}"
+    label = MODEL_SEO_SECTION_LABELS[section]
+    return _env().get_template("public/model_section.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=site_url,
+        title=f"{model.name} {label} - TrustedRouter",
+        heading=f"{model.name} {label}",
+        description=_model_section_description(model, section),
+        model=_model_detail_view(model, active_section=section),
+        section=section,
+        section_label=label,
+        benchmark_links=_benchmark_links(model),
+        json_ld_blob=_model_json_ld(settings, model, f"https://{settings.trusted_domain}/models/{model_id}"),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
 def public_model_not_found_html(settings: Settings, model_id: str) -> str:
     """Styled HTML 404 for `/models/{nonexistent}` — keeps the visitor
     inside the marketing chrome instead of dumping FastAPI's default
@@ -274,6 +503,157 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
     )
+
+
+def robots_txt(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    return "\n".join(
+        [
+            "User-agent: *",
+            "Allow: /",
+            "Disallow: /console",
+            "Disallow: /auth/",
+            "Disallow: /v1/",
+            "Disallow: /internal/",
+            "Disallow: /google_oauth_callback",
+            "Disallow: /github_oauth_callback",
+            f"Sitemap: https://{domain}/sitemap.xml",
+            "",
+        ]
+    )
+
+
+def sitemap_xml(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    paths: list[tuple[str, str, str]] = []
+    for path in SEO_CORE_PATHS:
+        paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
+    for provider in providers_for_display():
+        paths.append((f"/providers/{provider.slug}", "weekly", "0.7"))
+    for model in _public_models_for_seo():
+        paths.append((f"/models/{model.id}", "daily", "0.8"))
+        for section in MODEL_SEO_SECTIONS:
+            paths.append((f"/models/{model.id}/{section}", "daily", "0.7"))
+    urls = "\n".join(
+        "  <url>"
+        f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
+        f"<changefreq>{changefreq}</changefreq>"
+        f"<priority>{priority}</priority>"
+        "</url>"
+        for path, changefreq, priority in paths
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        "</urlset>\n"
+    )
+
+
+def llms_txt(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    model_count = len(_public_models_for_seo())
+    provider_count = len(providers_for_display())
+    lines = [
+        "# TrustedRouter",
+        "",
+        "TrustedRouter is an OpenRouter-compatible AI router with an attested prompt path.",
+        "The control plane does not terminate prompt traffic; prompts belong on api.quillrouter.com.",
+        "",
+        "## Primary Links",
+        f"- Homepage: https://{domain}/",
+        f"- Models: https://{domain}/models",
+        f"- Providers: https://{domain}/providers",
+        f"- Benchmarks: https://{domain}/benchmarks",
+        f"- Rankings: https://{domain}/rankings",
+        "- Status: https://status.trustedrouter.com/",
+        "- Trust: https://trust.trustedrouter.com/",
+        f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
+        "",
+        "## API",
+        "- OpenAI-compatible base URL: https://api.quillrouter.com/v1",
+        "- Chat completions: POST /v1/chat/completions",
+        "- Responses: POST /v1/responses",
+        "- Models: GET /v1/models",
+        "- Providers: GET /v1/providers",
+        "",
+        "## Catalog",
+        f"- Public model pages: {model_count}",
+        f"- Provider pages: {provider_count}",
+        "- Model pages include providers, pricing, performance, uptime, API quickstart, and benchmark links.",
+        "",
+        "## Privacy Boundary",
+        "- TrustedRouter stores metadata and billing records, not prompt/output content by default.",
+        "- Provider compute policy is shown separately on provider and model pages.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def docs_llms_txt(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    return "\n".join(
+        [
+            "# TrustedRouter Docs",
+            "",
+            f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
+            f"- Security: https://{domain}/security",
+            f"- Model catalog: https://{domain}/models",
+            f"- Provider transparency: https://{domain}/providers",
+            "- Public status: https://status.trustedrouter.com/",
+            "- Trust evidence: https://trust.trustedrouter.com/",
+            "",
+            "Use https://api.quillrouter.com/v1 as the OpenAI-compatible API base URL.",
+            "",
+        ]
+    )
+
+
+def docs_llms_full_txt(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    models = _seo_model_rows()
+    providers = [_provider_view(provider) for provider in providers_for_display()]
+    lines = [
+        "# TrustedRouter Full LLM Context",
+        "",
+        "TrustedRouter is a hosted AI routing service with OpenRouter-compatible APIs and an attested gateway.",
+        "The hosted prompt path is designed so the API gateway source, image digest, and attestation can be verified.",
+        "",
+        "## Canonical URLs",
+        f"- Homepage: https://{domain}/",
+        "- API base: https://api.quillrouter.com/v1",
+        "- Trust: https://trust.trustedrouter.com/",
+        "- Status: https://status.trustedrouter.com/",
+        "",
+        "## Models",
+    ]
+    for model in models[:250]:
+        lines.append(
+            f"- {model['id']}: {model['name']}; providers={model['provider_count']}; "
+            f"prompt={model['prompt_price']}; completion={model['completion_price']}; "
+            f"url=https://{domain}{model['detail_href']}"
+        )
+    if len(models) > 250:
+        lines.append(f"- Additional model pages are listed in https://{domain}/sitemap.xml")
+    lines.extend(["", "## Providers"])
+    for provider in providers:
+        lines.append(
+            f"- {provider['name']} ({provider['id']}): tier={provider['privacy_tier']}; "
+            f"ZDR={provider['zero_data_retention_label']}; "
+            f"confidential={provider['confidential_compute_label']}; "
+            f"E2EE={provider['provider_e2ee_label']}; "
+            f"url=https://{domain}{provider['detail_href']}"
+        )
+    lines.extend(
+        [
+            "",
+            "## Important Boundary",
+            "TrustedRouter can prove the router code path and prompt transport boundary. "
+            "It cannot make every upstream model provider confidential unless that route is explicitly marked.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _model_view(model: Model) -> dict[str, object]:
@@ -308,6 +688,9 @@ def _model_view(model: Model) -> dict[str, object]:
         "providers": providers,
         "provider_count": len(providers),
         "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
+        "benchmarks_href": (
+            f"/models/{model.id}/benchmarks" if model.id not in META_MODEL_IDS else None
+        ),
     }
 
 
@@ -349,7 +732,20 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "policy": provider.provider_policy,
         "policy_url": provider.provider_policy_url,
         "privacy_tier": _provider_privacy_tier(provider),
+        "detail_href": f"/providers/{provider.slug}",
     }
+
+
+def _provider_detail_view(
+    provider: Provider,
+    *,
+    served_models: list[dict[str, object]],
+) -> dict[str, object]:
+    view = _provider_view(provider)
+    view["served_model_count"] = len(served_models)
+    view["prepaid_model_count"] = sum(1 for model in served_models if model["prepaid"])
+    view["byok_model_count"] = sum(1 for model in served_models if model["byok"])
+    return view
 
 
 def _provider_privacy_tier(provider: Provider) -> str:
@@ -372,7 +768,7 @@ def _policy_label(value: bool | None) -> str:
     return "not claimed"
 
 
-def _model_detail_view(model: Model) -> dict[str, object]:
+def _model_detail_view(model: Model, *, active_section: str | None = None) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     endpoints = endpoints_for_model(model.id)
     endpoint_views: list[dict[str, object]] = []
@@ -381,6 +777,7 @@ def _model_detail_view(model: Model) -> dict[str, object]:
         endpoint_views.append({
             "provider": ep_provider.name if ep_provider else endpoint.provider,
             "provider_slug": endpoint.provider,
+            "provider_href": f"/providers/{endpoint.provider}",
             "usage_type": endpoint.usage_type,
             "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
             "completion_price": _price(endpoint.completion_price_microdollars_per_million_tokens),
@@ -418,12 +815,113 @@ def _model_detail_view(model: Model) -> dict[str, object]:
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
         "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),
+        "section_links": _model_section_links(model.id, active_section=active_section),
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
         "prepaid": model.prepaid_available,
         "byok": model.byok_available,
     }
+
+
+def _model_section_links(
+    model_id: str,
+    *,
+    active_section: str | None,
+) -> list[dict[str, object]]:
+    links: list[dict[str, object]] = [
+        {
+            "label": "Overview",
+            "href": f"/models/{model_id}",
+            "active": active_section is None,
+        }
+    ]
+    for section in MODEL_SEO_SECTIONS:
+        links.append(
+            {
+                "label": MODEL_SEO_SECTION_LABELS[section],
+                "href": f"/models/{model_id}/{section}",
+                "active": active_section == section,
+            }
+        )
+    return links
+
+
+def _model_section_description(model: Model, section: str) -> str:
+    label = MODEL_SEO_SECTION_LABELS[section].lower()
+    if section == "benchmarks":
+        return f"Benchmark and measurement links for {model.name}, with TrustedRouter route data first."
+    if section == "providers":
+        return f"Every provider endpoint TrustedRouter can route for {model.name}."
+    if section == "performance":
+        return f"TrustedRouter performance signals and provider route posture for {model.name}."
+    if section == "pricing":
+        return f"Prompt and completion pricing for every {model.name} route."
+    if section == "uptime":
+        return f"Uptime and status entry points for {model.name} routes."
+    if section == "api":
+        return f"OpenAI-compatible quickstart for {model.name} on TrustedRouter."
+    return f"{model.name} {label} on TrustedRouter."
+
+
+def _benchmark_links(model: Model) -> list[dict[str, str]]:
+    provider_links = list(_PROVIDER_MODEL_INFO_LINKS.get(model.provider, ()))
+    model_links = list(_MODEL_SPECIFIC_BENCHMARK_LINKS.get(model.id, ()))
+    return [
+        {
+            "label": "TrustedRouter performance page",
+            "href": f"/models/{model.id}/performance",
+            "kind": "TrustedRouter measurement",
+        },
+        {
+            "label": "TrustedRouter uptime page",
+            "href": f"/models/{model.id}/uptime",
+            "kind": "TrustedRouter measurement",
+        },
+        *model_links,
+        *provider_links,
+        *_BENCHMARK_INDEX_LINKS,
+    ]
+
+
+def _public_models_for_seo() -> list[Model]:
+    return sorted(
+        [model for model in MODELS.values() if model.id not in META_MODEL_IDS],
+        key=lambda model: model.id,
+    )
+
+
+def _seo_model_rows() -> list[dict[str, object]]:
+    return [_model_view(model) for model in _public_models_for_seo()]
+
+
+def _provider_model_rows(provider_slug: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for model in _public_models_for_seo():
+        endpoints = [endpoint for endpoint in endpoints_for_model(model.id) if endpoint.provider == provider_slug]
+        if not endpoints:
+            continue
+        rows.append(
+            {
+                "id": model.id,
+                "name": model.name,
+                "detail_href": f"/models/{model.id}",
+                "benchmarks_href": f"/models/{model.id}/benchmarks",
+                "context_length": f"{model.context_length:,}",
+                "endpoint_count": len(endpoints),
+                "prompt_price": _endpoint_price_range(
+                    endpoints,
+                    "prompt_price_microdollars_per_million_tokens",
+                ),
+                "completion_price": _endpoint_price_range(
+                    endpoints,
+                    "completion_price_microdollars_per_million_tokens",
+                ),
+                "prepaid": any(not endpoint.is_byok for endpoint in endpoints),
+                "byok": any(endpoint.is_byok for endpoint in endpoints),
+            }
+        )
+    return sorted(rows, key=lambda row: str(row["id"]))
 
 
 _BRAND_DISPLAY_NAMES: dict[str, str] = {

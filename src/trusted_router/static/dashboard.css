@@ -136,6 +136,18 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .model-table-wrap { overflow:auto; }
 .provider-chip-list { display:flex; flex-wrap:wrap; gap:5px; min-width:160px; max-width:320px; }
 .provider-chip-list .pill { max-width:160px; overflow:hidden; text-overflow:ellipsis; }
+.mini-links { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; font-size:12px; line-height:1.25; }
+.mini-links a { color:#2463eb; }
+.section-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 18px; }
+.section-tabs a { display:inline-flex; align-items:center; min-height:32px; border:1px solid var(--line); border-radius:8px; padding:6px 10px; color:#334155; background:#fff; font-size:13px; font-weight:700; }
+.section-tabs a.active { color:#fff; background:#111827; border-color:#111827; }
+.seo-two-col { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.link-list { list-style:none; display:flex; flex-direction:column; gap:10px; padding:0; margin:0; }
+.link-list li { border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#fff; }
+.link-list a { display:block; font-weight:800; }
+.link-list span { display:block; margin-top:3px; color:var(--muted); font-size:12px; }
+.muted-copy { color:var(--muted); line-height:1.5; }
+.code-block { overflow:auto; margin:0; border:1px solid var(--line); border-radius:8px; padding:16px; background:#0f172a; color:#e2e8f0; font-size:13px; line-height:1.45; }
 .band { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
 .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; min-width:0; }
 .panel-head { padding:14px 16px; border-bottom:1px solid var(--line2); display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -368,7 +380,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   .router-scene-shell { min-height:500px; }
   .router-scene { min-height:500px; width:min(100%,620px); }
   .proof { grid-template-columns:1fr 1fr; }
-  .code-strip, .marketing-hero, .marketing-split, .quote-feature, .model-catalog-head { grid-template-columns:1fr; }
+  .code-strip, .marketing-hero, .marketing-split, .quote-feature, .model-catalog-head, .seo-two-col { grid-template-columns:1fr; }
   .public-proof-strip, .flow-steps, .marketing-grid.three { grid-template-columns:1fr 1fr; }
   h1 { font-size:38px; }
   .auth-grid { grid-template-columns:1fr; }

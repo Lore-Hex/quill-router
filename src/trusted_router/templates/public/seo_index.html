@@ -1,0 +1,75 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Model pages</strong><span>Every public model links to benchmarks, pricing, providers, uptime, and API quickstarts.</span></div>
+  <div><strong>Provider pages</strong><span>Provider-side ZDR, confidential compute, E2EE, and policy sources are separated from the TR gateway claim.</span></div>
+  <div><strong>Status data</strong><span>TrustedRouter measurements are metadata-only and roll up by probe, target, component, and region.</span></div>
+  <div><strong>No hidden source</strong><span>Benchmark pages link to independent or official sources, not third-party router pages.</span></div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">{{ page_kind }}</span>
+      <h2>{% if page_kind == "rankings" %}Rank routes by practical operating signals.{% else %}Benchmark entry points for every model.{% endif %}</h2>
+    </div>
+    <p>{% if page_kind == "rankings" %}Use route count, price, and provider privacy posture until enough public traffic exists for richer rankings.{% else %}Each model page carries internal TrustedRouter measurements and verified external benchmark indexes.{% endif %}</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Publisher</th>
+          <th>Providers</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+          <th>SEO pages</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in models %}
+        <tr>
+          <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
+          <td>{{ model.provider }}</td>
+          <td>{{ model.provider_count }}</td>
+          <td>{{ model.prompt_price }}</td>
+          <td>{{ model.completion_price }}</td>
+          <td>
+            <div class="mini-links">
+              <a href="{{ model.detail_href }}/benchmarks">benchmarks</a>
+              <a href="{{ model.detail_href }}/performance">performance</a>
+              <a href="{{ model.detail_href }}/pricing">pricing</a>
+              <a href="{{ model.detail_href }}/api">api</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="seo-two-col">
+  <div class="panel">
+    <div class="panel-head"><h2>Benchmark sources</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        {% for link in benchmark_links %}
+        <li><a href="{{ link.href }}">{{ link.label }}</a><span>{{ link.kind }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Provider pages</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        {% for provider in providers %}
+        <li><a href="{{ provider.detail_href }}">{{ provider.name }}</a><span>{{ provider.privacy_tier }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</section>
+{% endblock %}

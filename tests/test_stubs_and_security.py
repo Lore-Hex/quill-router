@@ -214,7 +214,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "No provider claim" in providers_page.text
     assert "Unknown is not treated as safe" in providers_page.text
 
-    providers_json = client.get("/providers")
+    providers_json = client.get("/providers", headers={"accept": "application/json"})
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
     provider_rows = providers_json.json()["data"]

@@ -32,7 +32,7 @@
       <tbody>
         {% for provider in providers %}
         <tr>
-          <td><strong>{{ provider.name }}</strong><br><code>{{ provider.id }}</code></td>
+          <td><a href="{{ provider.detail_href }}"><strong>{{ provider.name }}</strong></a><br><code>{{ provider.id }}</code></td>
           <td><span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span></td>
           <td>{% if provider.supports_prepaid %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>{% if provider.supports_byok %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>

@@ -1,0 +1,70 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2><code>{{ provider.id }}</code></h2>
+    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
+  </div>
+  <div class="panel-body">
+    <p><a href="/providers">&larr; All providers</a></p>
+    <table>
+      <tbody>
+        <tr><th>Provider</th><td>{{ provider.name }}</td></tr>
+        <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
+        <tr><th>Prepaid routes</th><td>{{ provider.prepaid_model_count }}</td></tr>
+        <tr><th>BYOK routes</th><td>{{ provider.byok_model_count }}</td></tr>
+        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td></tr>
+        <tr><th>Confidential compute</th><td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td></tr>
+        <tr><th>Provider E2EE</th><td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td></tr>
+        <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Provider models</span>
+      <h2>Models served by {{ provider.name }}.</h2>
+    </div>
+    <p>Each row links to pricing, provider, benchmark, and API pages for the model.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Context</th>
+          <th>Endpoints</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+          <th>Routes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for model in served_models %}
+        <tr>
+          <td>
+            <a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}
+            <div class="mini-links">
+              <a href="{{ model.benchmarks_href }}">benchmarks</a>
+              <a href="{{ model.detail_href }}/performance">performance</a>
+              <a href="{{ model.detail_href }}/api">api</a>
+            </div>
+          </td>
+          <td>{{ model.context_length }}</td>
+          <td>{{ model.endpoint_count }}</td>
+          <td>{{ model.prompt_price }}</td>
+          <td>{{ model.completion_price }}</td>
+          <td>
+            {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
+            {% if model.byok %}<span class="pill">BYOK</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

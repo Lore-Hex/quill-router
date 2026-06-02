@@ -1,0 +1,146 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2><code>{{ model.id }}</code></h2>
+    <span class="pill good">{{ section_label }}</span>
+  </div>
+  <div class="panel-body">
+    <p><a href="/models">&larr; All models</a></p>
+    <nav class="section-tabs" aria-label="{{ model.name }} sections">
+      {% for link in model.section_links %}
+      <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
+      {% endfor %}
+    </nav>
+
+    {% if section == "benchmarks" %}
+    <div class="seo-two-col">
+      <div>
+        <h3>TrustedRouter measurements</h3>
+        <p class="muted-copy">TrustedRouter publishes route and status measurements without storing prompt or output content. Provider-specific latency and uptime are exposed through the model performance and uptime pages.</p>
+        <ul class="link-list">
+          <li><a href="/models/{{ model.id }}/performance">Provider performance for {{ model.name }}</a></li>
+          <li><a href="/models/{{ model.id }}/uptime">Route uptime for {{ model.name }}</a></li>
+          <li><a href="/status">Public status rollups</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>External benchmark references</h3>
+        <ul class="link-list">
+          {% for link in benchmark_links %}
+          <li><a href="{{ link.href }}">{{ link.label }}</a><span>{{ link.kind }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% elif section == "providers" %}
+    <p class="muted-copy">All provider endpoints currently serving this model through TrustedRouter.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Usage</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+          <th>Provider policy</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for endpoint in model.endpoints %}
+        <tr>
+          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a> <code>{{ endpoint.provider_slug }}</code></td>
+          <td>{{ endpoint.usage_type }}</td>
+          <td>{{ endpoint.prompt_price }}</td>
+          <td>{{ endpoint.completion_price }}</td>
+          <td>
+            {% if endpoint.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
+            {% if endpoint.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
+            {% if endpoint.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
+            {% if not endpoint.provider_e2ee and not endpoint.provider_confidential_compute and not endpoint.provider_zero_data_retention %}<span class="pill warn">unknown</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif section == "performance" %}
+    <div class="marketing-grid three">
+      <div class="marketing-card">
+        <span class="card-label">Provider diversity</span>
+        <h3>{{ model.endpoint_count }} route{{ '' if model.endpoint_count == 1 else 's' }}.</h3>
+        <p>More routes give the auto router more room to fail over around provider 429s and 5xxs.</p>
+      </div>
+      <div class="marketing-card">
+        <span class="card-label">Streaming</span>
+        <h3>Gateway overhead is measured separately.</h3>
+        <p>Public status separates TLS/health overhead from full model latency so slow LLMs do not inflate the router metric.</p>
+      </div>
+      <div class="marketing-card">
+        <span class="card-label">Status</span>
+        <h3>Metadata-only rollups.</h3>
+        <p>Status samples store latency, outcome, provider, model, route, cost, and region metadata only.</p>
+      </div>
+    </div>
+    <p class="signup-foot"><a href="/status">View public status</a> or inspect <a href="/models/{{ model.id }}/providers">provider routes</a>.</p>
+    {% elif section == "pricing" %}
+    <p class="muted-copy">Prices are shown as USD per million tokens and billed internally as integer microdollars, not floats.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Usage</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for endpoint in model.endpoints %}
+        <tr>
+          <td><a href="{{ endpoint.provider_href }}">{{ endpoint.provider }}</a></td>
+          <td>{{ endpoint.usage_type }}</td>
+          <td>{{ endpoint.prompt_price }}</td>
+          <td>{{ endpoint.completion_price }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif section == "uptime" %}
+    <div class="seo-two-col">
+      <div>
+        <h3>Route availability</h3>
+        <p class="muted-copy">TrustedRouter reports router-core status separately from provider-effective availability. If one upstream model provider fails and fallback succeeds, the router-core path remains up.</p>
+        <ul class="link-list">
+          <li><a href="/status">Current public status</a></li>
+          <li><a href="/status/history?window=48h">48-hour visual history</a></li>
+          <li><a href="/status/history?window=monthly">Monthly rollups</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Routes</h3>
+        <p class="muted-copy">{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }} across {{ model.providers|length }} provider{{ '' if model.providers|length == 1 else 's' }}.</p>
+        <ul class="link-list">
+          {% for provider in model.providers %}
+          <li><a href="/providers/{{ provider.slug }}">{{ provider.name }}</a><span>{{ provider.slug }}</span></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+    {% elif section == "api" %}
+    <p class="muted-copy">Use the same OpenAI-compatible clients you already use; only the base URL and model change.</p>
+    <pre class="code-block"><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+response = client.chat.completions.create(
+    model="{{ model.id }}",
+    messages=[{"role": "user", "content": "Give me a one-sentence status."}],
+    max_tokens=64,
+)
+print(response.choices[0].message.content)</code></pre>
+    <p class="signup-foot">Endpoint metadata: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span></p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
