@@ -25,7 +25,7 @@
     <div class="status-banner-metrics">
       <span>{{ snapshot.overall_status_label }}</span>
       <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>In-region gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+      <small>In region gateway overhead p50, {{ snapshot.headline_metrics.window }}</small>
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
       <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
@@ -89,7 +89,7 @@
   <section class="status-section">
     <div class="status-section-head">
       <div>
-        <h2>48-hour component timeline</h2>
+        <h2>48 hour component timeline</h2>
         <p>One bar per hour. Gray is only used when a bucket has no sample data.</p>
       </div>
       <div class="status-legend" aria-label="History legend">
@@ -109,7 +109,7 @@
           </div>
           <span class="component-status status-{{ component.status_class }}">{{ component.status_label }}</span>
         </div>
-        <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">
+        <div class="history-strip" aria-label="{{ component.name }} last 48 hour uptime history">
           {% for bucket in component.history %}
           <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
             <span class="history-tooltip" role="tooltip" aria-hidden="true">
@@ -242,7 +242,7 @@
   <div class="status-actions">
     <a class="btn" href="/status">Back to status</a>
     <a class="btn" href="{{ json_url }}">View JSON</a>
-    {% if window != "48h" %}<a class="btn" href="/status/history?window=48h">48-hour view</a>{% endif %}
+    {% if window != "48h" %}<a class="btn" href="/status/history?window=48h">48 hour view</a>{% endif %}
     {% if window != "monthly" %}<a class="btn" href="/status/history?window=monthly">Monthly view</a>{% endif %}
   </div>
 </section>

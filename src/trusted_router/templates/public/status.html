@@ -24,7 +24,7 @@
     <div class="status-banner-metrics">
       <span>{{ snapshot.overall_status_label }}</span>
       <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>In-region gateway overhead p50 · {{ snapshot.headline_metrics.window }}</small>
+      <small>In region gateway overhead p50, {{ snapshot.headline_metrics.window }}</small>
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
       <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
@@ -35,7 +35,7 @@
   </div>
   {% if snapshot.monitor_freshness.is_stale %}
   <div class="status-note status-note-warning">
-    Synthetic monitor data is stale. The uptime rollups below are historical; current 5-minute status will recover after US/EU monitor jobs resume.
+    Synthetic monitor data is stale. The uptime rollups below are historical. Current 5 minute status will recover after US and EU monitor jobs resume.
   </div>
   {% endif %}
 
@@ -63,8 +63,8 @@
   <section class="status-section">
     <div class="status-section-head">
       <div>
-        <h2>Error-Budget Burn</h2>
-        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal; Provider Effective is an upstream/provider quality watch and is not counted as router-core downtime.</p>
+        <h2>Error budget burn</h2>
+        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal. Provider Effective is an upstream provider quality watch and is not counted as router core downtime.</p>
       </div>
     </div>
     <div class="burn-list">
@@ -118,7 +118,7 @@
           {% endfor %}
         </div>
         {% endif %}
-        <div class="history-strip" aria-label="{{ component.name }} last-48-hour uptime history">
+        <div class="history-strip" aria-label="{{ component.name }} last 48 hour uptime history">
           {% for bucket in component.history %}
           <span class="history-bar status-{{ bucket.status_class }}" tabindex="0" title="{{ bucket.title }}">
             <span class="history-tooltip" role="tooltip" aria-hidden="true">
@@ -148,7 +148,7 @@
       <div class="status-section-head">
         <div>
           <h2>Uptime</h2>
-          <p>Precomputed public rollups from metadata-only samples.</p>
+          <p>Precomputed public rollups from metadata samples.</p>
         </div>
       </div>
       <table class="activity-table status-table">
@@ -186,7 +186,7 @@
       <div class="status-section-head">
         <div>
           <h2>Recent Events</h2>
-          <p>Non-operational samples from the last 24 hours.</p>
+          <p>Samples that were not operational in the last 24 hours.</p>
         </div>
       </div>
       {% if snapshot.recent_events %}

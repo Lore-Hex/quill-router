@@ -6,7 +6,7 @@
     <span class="pill good">{{ section_label }}</span>
   </div>
   <div class="panel-body">
-    <p><a href="/models">&larr; All models</a></p>
+    <p><a href="/models">All models</a></p>
     <nav class="section-tabs" aria-label="{{ model.name }} sections">
       {% for link in model.section_links %}
       <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
@@ -17,7 +17,7 @@
     <div class="seo-two-col">
       <div>
         <h3>TrustedRouter measurements</h3>
-        <p class="muted-copy">TrustedRouter publishes route and status measurements without storing prompt or output content. Provider-specific latency and uptime are exposed through the model performance and uptime pages.</p>
+        <p class="muted-copy">TrustedRouter publishes route and status measurements without storing prompt or output content. Provider latency and uptime are exposed through the model performance and uptime pages.</p>
         <ul class="link-list">
           <li><a href="/models/{{ model.id }}/performance">Provider performance for {{ model.name }}</a></li>
           <li><a href="/models/{{ model.id }}/uptime">Route uptime for {{ model.name }}</a></li>
@@ -67,7 +67,7 @@
       <div class="marketing-card">
         <span class="card-label">Provider diversity</span>
         <h3>{{ model.endpoint_count }} route{{ '' if model.endpoint_count == 1 else 's' }}.</h3>
-        <p>More routes give the auto router more room to fail over around provider 429s and 5xxs.</p>
+        <p>More routes give the auto router more room to fail over around provider 429 and 5xx responses.</p>
       </div>
       <div class="marketing-card">
         <span class="card-label">Streaming</span>
@@ -76,7 +76,7 @@
       </div>
       <div class="marketing-card">
         <span class="card-label">Status</span>
-        <h3>Metadata-only rollups.</h3>
+        <h3>Metadata rollups.</h3>
         <p>Status samples store latency, outcome, provider, model, route, cost, and region metadata only.</p>
       </div>
     </div>
@@ -107,10 +107,10 @@
     <div class="seo-two-col">
       <div>
         <h3>Route availability</h3>
-        <p class="muted-copy">TrustedRouter reports router-core status separately from provider-effective availability. If one upstream model provider fails and fallback succeeds, the router-core path remains up.</p>
+        <p class="muted-copy">TrustedRouter reports router core status separately from provider availability. If one upstream model provider fails and fallback succeeds, the router path remains up.</p>
         <ul class="link-list">
           <li><a href="/status">Current public status</a></li>
-          <li><a href="/status/history?window=48h">48-hour visual history</a></li>
+          <li><a href="/status/history?window=48h">48 hour visual history</a></li>
           <li><a href="/status/history?window=monthly">Monthly rollups</a></li>
         </ul>
       </div>
@@ -125,7 +125,7 @@
       </div>
     </div>
     {% elif section == "api" %}
-    <p class="muted-copy">Use the same OpenAI-compatible clients you already use; only the base URL and model change.</p>
+    <p class="muted-copy">Use the same OpenAI compatible clients you already use. Only the base URL and model change.</p>
     <pre class="code-block"><code>from openai import OpenAI
 
 client = OpenAI(

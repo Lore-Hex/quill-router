@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>No prompt logs</strong><span>TrustedRouter alpha does not store prompt or output content.</span></div>
+  <div><strong>No prompt logs</strong><span>TrustedRouter does not store prompt or output content by default.</span></div>
   <div><strong>Fail closed</strong><span>If attestation fails, the prompt path shuts down.</span></div>
   <div><strong>Open source</strong><span>Backend, infrastructure, config, and UI.</span></div>
   <div><strong>Verify</strong><span>Source commit, image reference, image digest.</span></div>
@@ -11,13 +11,13 @@
   <div class="marketing-copy">
     <span class="eyebrow">Trust boundary</span>
     <h2>What touches your prompt is the part you can verify.</h2>
-    <p>Metadata rows are limited to generation ID, workspace, key hash, model, provider, token counts, cost, usage type, speed, finish reason, and status.</p>
-    <blockquote>We never log your prompt or the output. We only log metadata like tokens used and processed for billing. We log date and time, which model you use, and which region was used.</blockquote>
-    <blockquote>We can never claim that we're perfectly secure but we can claim that we're perfectly transparent and being open source and open about everything that we're doing.</blockquote>
+    <p>Metadata rows are limited to generation ID, workspace, key hash, model, provider, token counts, cost, usage type, speed, finish reason, status, and region.</p>
+    <p>Prompt and output content are off by default. When a workspace explicitly enables content export for observability, that destination is configured separately and clearly marked.</p>
+    <p>The router can prove the hosted gateway code path and transport boundary. Provider compute policy is listed separately on provider pages.</p>
   </div>
   <div class="trust-diagram" aria-label="Prompt path trust boundary">
     <div>User app</div>
-    <span>OpenAI-compatible request</span>
+    <span>OpenAI compatible request</span>
     <div>Attested gateway</div>
     <span>metadata only</span>
     <div>Provider</div>
@@ -33,7 +33,7 @@
   <div class="marketing-card">
     <span class="card-label">Fail closed</span>
     <h3>Attestation failure stops the API path.</h3>
-    <p>It's very important that if the security attestation ever fails that we have to have it shut down, not stay open.</p>
+    <p>If the gateway cannot satisfy the attestation boundary, production prompt traffic should stop rather than fall back to a weaker path.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Verify</span>
@@ -49,16 +49,14 @@
     <h2>Demand routers you can inspect.</h2>
   </div>
   <div>
-    <blockquote>We should really demand that all routers be totally open source. That's really the only way to be sure that it is running things that are safe and secure.</blockquote>
-    <blockquote>Most importantly it's all open source software. Every part of the backend infrastructure, configuration, bring up, and UI is entirely open source.</blockquote>
+    <p>AI routers sit between your application and the model provider. Developers should be able to inspect how routing, billing, fallback, content handling, and provider selection work before sending production prompts.</p>
   </div>
 </section>
 
 <section class="limitation-band">
   <span class="pill warn">Honest limitations</span>
   <div>
-    <blockquote>The intention of this is to secure your prompts from anybody who can attack part of our network or any kind of attack that could be used to look at your prompts.</blockquote>
-    <blockquote>We cannot provide complete protection if the cloud provider has physical access to the machine in a way that lets them do something to look at it, and obviously if there's a state-level actor that has direct access we would not necessarily be able to stop that.</blockquote>
+    <p>TrustedRouter can verify the hosted gateway path and reduce what the control plane can see. It cannot make every upstream model provider confidential. Provider retention and training claims remain provider specific.</p>
   </div>
 </section>
 {% endblock %}

@@ -14,6 +14,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert sitemap.status_code == 200
     assert sitemap.headers["content-type"].startswith("application/xml")
     assert "<urlset" in sitemap.text
+    assert sitemap.text.count("<url>") >= 4_000
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/performance</loc>" in sitemap.text
@@ -21,6 +22,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/providers/minimax</loc>" in sitemap.text
+    assert "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>" in sitemap.text
     assert "trustedrouter/monitor" not in sitemap.text
     assert "openrouter.ai" not in sitemap.text
 
@@ -41,7 +43,7 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     response = client.get("/providers")
 
     assert response.status_code == 200
-    assert "<title>Providers - TrustedRouter</title>" in response.text
+    assert "<title>Providers | TrustedRouter</title>" in response.text
     assert "Provider transparency" in response.text
     assert "application/json" not in response.headers["content-type"]
 
@@ -54,7 +56,7 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     response = client.get("/providers/minimax")
 
     assert response.status_code == 200
-    assert "<title>MiniMax Models - TrustedRouter</title>" in response.text
+    assert "<title>MiniMax Models | TrustedRouter</title>" in response.text
     assert "MiniMax M3" in response.text
     assert "/models/minimax/minimax-m3/benchmarks" in response.text
     assert "Policy source" in response.text
@@ -78,6 +80,17 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
     api = client.get("/models/minimax/minimax-m3/api")
     assert 'model="minimax/minimax-m3"' in api.text
     assert 'base_url="https://api.quillrouter.com/v1"' in api.text
+
+
+def test_model_comparison_pages_are_public(client: TestClient) -> None:
+    response = client.get("/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1")
+
+    assert response.status_code == 200
+    assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
+    assert "Compare routes" in response.text
+    assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
+    assert "/models/z-ai/glm-5.1/providers" in response.text
+    assert "openrouter.ai" not in response.text.lower()
 
 
 def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -> None:

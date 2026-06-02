@@ -15,12 +15,12 @@
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="{{ og_image_width }}">
   <meta property="og:image:height" content="{{ og_image_height }}">
-  <meta property="og:image:alt" content="TrustedRouter — verifiable, hosted, OpenRouter-compatible">
+  <meta property="og:image:alt" content="TrustedRouter, verifiable hosted AI routing">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{{ og_title }}">
   <meta name="twitter:description" content="{{ og_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
-  <meta name="twitter:image:alt" content="TrustedRouter — verifiable, hosted, OpenRouter-compatible">
+  <meta name="twitter:image:alt" content="TrustedRouter, verifiable hosted AI routing">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <script>window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
@@ -48,23 +48,23 @@
       <div class="hero-copy">
         <a class="oss-banner" href="https://github.com/Lore-Hex/quill-router">
           <span class="oss-dot" aria-hidden="true"></span>
-          <strong>100% radically open source</strong>
-          <span class="oss-sub">Control plane and attested gateway, on GitHub. Audit, fork, or self-host.</span>
+          <strong>Open source router</strong>
+          <span class="oss-sub">Control plane and attested gateway on GitHub. Audit it, fork it, or run it yourself.</span>
         </a>
-        <span class="eyebrow">End-to-End Encrypted Router. Hosted, attested, OpenRouter-compatible.</span>
-        <h1>One API. Every LLM. Provable privacy.</h1>
-        <p class="lead">One OpenAI-compatible key for hundreds of models across Anthropic, OpenAI, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras, and more — prepaid or BYOK. Every prompt is end-to-end encrypted, with 99.9% router availability.</p>
+        <span class="eyebrow">End to end encrypted router for production AI apps</span>
+        <h1>Route every model through a prompt path you can verify.</h1>
+        <p class="lead">One OpenAI compatible API for hundreds of models across Anthropic, OpenAI, Google, DeepSeek, Mistral, Cerebras, MiniMax, Kimi, Z.AI and more. Use prepaid credits, bring provider keys, or let <span class="mono">trustedrouter/auto</span> choose a healthy route.</p>
         <div class="hero-actions">
-          <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+          <button class="btn primary" type="button" data-action="open-signin">Create key</button>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
         </div>
-        <p class="signup-foot">Trial credit unlocks once you add a valid card (Stripe-validated, no charge required). Wallet sign-in starts at $0. Migration credit is available by approval for teams spending more than $100/month on LLMs. OpenAI SDK compatible. Open-source SDKs in Python and TS.</p>
+        <p class="signup-foot">Add a card to unlock trial credit. Wallet accounts start at $0. Migration credits are available by approval for teams already spending more than $100 per month on LLMs. Open source SDKs are available for Python and TypeScript.</p>
         <div class="proof">
-          <div class="proof-card" id="uptime"><b>99.9% availability</b><span><span class="mono">trustedrouter/auto</span> fails over across providers for uptime higher than individual LLM endpoints.</span></div>
-          <div class="proof-card"><b>End-to-End Encrypted Router</b><span>TLS terminates inside the attested gateway; the SaaS control plane never sees prompts.</span></div>
-          <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage-based billing. No monthly plan required.</span></div>
-          <div class="proof-card"><b>Hosted OSS</b><span>Hosted service backed by open-source control plane and attested gateway code.</span></div>
-          <div class="proof-card"><b>Verifiable API</b><span>The trust page publishes source commit, image reference, and image digest.</span></div>
+          <div class="proof-card" id="uptime"><b>Provider failover</b><span><span class="mono">trustedrouter/auto</span> ranks healthy routes and rolls over around 429 and 5xx failures.</span></div>
+          <div class="proof-card"><b>Encrypted prompt path</b><span>TLS terminates inside the attested gateway. The dashboard does not receive prompts.</span></div>
+          <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage based billing. No monthly plan required.</span></div>
+          <div class="proof-card"><b>Open source hosting</b><span>Run the router yourself or inspect the code used by the hosted service.</span></div>
+          <div class="proof-card"><b>Published trust record</b><span>The trust page publishes source commit, image reference, and image digest.</span></div>
         </div>
       </div>
       <aside class="router-scene-shell" aria-label="Visualization of attested model routing">
@@ -78,8 +78,8 @@
   <main class="wrap">
     <section class="code-strip" aria-label="OpenAI SDK compatible example">
       <div>
-        <span class="eyebrow">One-line migration</span>
-        <h2>Change <span class="mono">base_url</span>. Keep your models.</h2>
+        <span class="eyebrow">Small migration</span>
+        <h2>Change <span class="mono">base_url</span>. Keep your client.</h2>
       </div>
       <pre><code>client = OpenAI(
     base_url="{{ api_base_url }}",
@@ -97,24 +97,24 @@ resp = client.chat.completions.create(
     <aside class="quill-ad" aria-label="Sponsored: Quill Feather">
       <div class="quill-ad-inner">
         <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill Feather">
-          <img src="/static/quill-feather.png" alt="Quill Feather — palm-sized device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
+          <img src="/static/quill-feather.png" alt="Quill Feather device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
         </a>
         <div>
-          <span class="quill-ad-eyebrow">Sponsored · Quill Feather</span>
-          <h2 class="quill-ad-title">Quill Feather — a private agent that fits in your hand.</h2>
-          <p class="quill-ad-lead">Run the <strong>OpenClaw</strong> or <strong>Hermes</strong> agent 24/7. First customer evaluation kits shipping now.</p>
+          <span class="quill-ad-eyebrow">Quill Feather</span>
+          <h2 class="quill-ad-title">A private agent that fits in your hand.</h2>
+          <p class="quill-ad-lead">Run the <strong>OpenClaw</strong> or <strong>Hermes</strong> agent around the clock. First customer evaluation kits are shipping now.</p>
         </div>
         <div class="quill-ad-cta">
-          <a class="btn primary" href="https://quill.lorehex.co">Buy a Quill Feather →</a>
+          <a class="btn primary" href="https://quill.lorehex.co">Buy a Quill Feather</a>
           <a class="pill" href="https://github.com/Lore-Hex/quill">github.com/Lore-Hex/quill</a>
         </div>
       </div>
     </aside>
     <section class="band">
       <div class="panel">
-        <div class="panel-head"><h2>Trust Boundary</h2><span class="pill good">no prompt logs</span></div>
+        <div class="panel-head"><h2>Trust boundary</h2><span class="pill good">no prompt logs</span></div>
         <div class="panel-body">
-          <p>Production inference belongs on <span class="mono">api.quillrouter.com</span>. The SaaS control plane stores metadata and billing records only. Every model in the catalog — Anthropic Claude, OpenAI GPT, Google Vertex, Gemini, DeepSeek, Mistral, Cerebras — runs through the same attested non-logging gateway.</p>
+          <p>Production inference belongs on <span class="mono">api.quillrouter.com</span>. The control plane stores metadata and billing records only. Prompt traffic runs through the attested gateway before it reaches Anthropic, OpenAI, Google, DeepSeek, Mistral, Cerebras and other providers.</p>
           <a class="btn" href="https://trust.trustedrouter.com">Open trust page</a>
         </div>
       </div>
@@ -127,14 +127,14 @@ resp = client.chat.completions.create(
             {% else %}
             Stripe Checkout and <strong>Stablecoin</strong> checkout are wired for prepaid credits.
             {% endif %}
-            Auto-refill keeps prepaid routes flowing once you've saved a Stripe card.
+            Auto refill keeps prepaid routes flowing once you have saved a Stripe card.
           </p>
         </div>
       </div>
       <div class="panel">
-        <div class="panel-head"><h2>Production</h2><span class="pill good">multi-region</span></div>
+        <div class="panel-head"><h2>Production</h2><span class="pill good">regional routing</span></div>
         <div class="panel-body">
-          <p>The live attested API is serving in {{ api_region_count }} verified regions, with a {{ map_regions|length }}-region global footprint for routing, monitoring, and cold expansion. Pick one explicitly via the <span class="mono">region</span> header or let the router choose.</p>
+          <p>The live attested API is serving in {{ api_region_count }} verified regions, with {{ map_regions|length }} regions tracked for routing, monitoring, and expansion. Pick a region explicitly or let the router choose.</p>
         </div>
       </div>
     </section>
@@ -142,7 +142,7 @@ resp = client.chat.completions.create(
     <section class="regions-map">
       <div class="regions-map-head">
         <h2>Global footprint: {{ map_regions|length }} regions</h2>
-        <p>Verified live gateways plus cold regional expansion points for lower latency and faster failover. 99.9% router availability, higher than individual LLM endpoints.</p>
+        <p>Verified live gateways plus regional expansion points for lower latency and faster failover. Public status separates router health from provider health.</p>
       </div>
       <div class="regions-map-stage" data-regions-stage>
         <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
@@ -151,7 +151,7 @@ resp = client.chat.completions.create(
           <g class="region-marker {{ 'is-primary' if region.primary else '' }} {{ 'is-serving' if region.serving else 'is-edge' }}" data-region-id="{{ region.id }}">
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '20' if region.primary else '18' }}" class="region-pulse"/>
             <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '10' if region.primary else '9' }}" class="region-dot"/>
-            <title>{{ region.id }} — {{ region.city }} ({{ region.status_label }}){% if region.primary %} (primary){% endif %}</title>
+            <title>{{ region.id }} in {{ region.city }}. {{ region.status_label }}{% if region.primary %}. Primary{% endif %}</title>
           </g>
           {% endfor %}
         </svg>
@@ -174,7 +174,7 @@ resp = client.chat.completions.create(
       <button class="signin-close" type="submit" aria-label="Close">×</button>
     </form>
     <h2 id="signinTitle">Sign in</h2>
-    <p class="signin-sub">Choose a sign-in method. Wallet sign-in requires only a signature and starts with $0 credits.</p>
+    <p class="signin-sub">Choose a sign in method. Wallet sign in requires only a signature and starts with $0 credits.</p>
     <div class="signin-providers">
       {% if google_enabled %}
       <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">

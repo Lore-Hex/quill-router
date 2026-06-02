@@ -172,11 +172,11 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     dashboard = client.get("/")
     assert dashboard.status_code == 200
     # Marketing page hero copy stays.
-    assert "Get an API key" in dashboard.text
+    assert "Create key" in dashboard.text
     assert "Stablecoin" in dashboard.text
     assert "$25 USDC" not in dashboard.text
     assert "Stripe Crypto" not in dashboard.text
-    assert "multi-region" in dashboard.text  # pill copy or section header
+    assert "regional routing" in dashboard.text
     assert "regions-map-svg" in dashboard.text  # the new world map renders
     assert "Global footprint: 7 regions" in dashboard.text
     assert "aws-us-west-2" in dashboard.text
@@ -188,7 +188,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     # The model catalog mentions the providers we serve.
     assert "DeepSeek" in dashboard.text
     assert "Mistral" in dashboard.text
-    assert "Google Vertex" in dashboard.text
+    assert "Google" in dashboard.text
     # Inline console is gone — these used to be rendered server-side here.
     assert "Workspace Console" not in dashboard.text
     assert 'id="signupForm"' not in dashboard.text
@@ -212,7 +212,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "Phala" in providers_page.text
     assert "Tinfoil" in providers_page.text
     assert "No provider claim" in providers_page.text
-    assert "Unknown is not treated as safe" in providers_page.text
+    assert "Unknown stays unknown" in providers_page.text
 
     providers_json = client.get("/providers", headers={"accept": "application/json"})
     assert providers_json.status_code == 200

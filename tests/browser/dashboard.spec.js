@@ -3,7 +3,7 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /One API\. Every LLM\./ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Route every model through a prompt path/ })).toBeVisible();
   await expect(page.locator(".proof-card .mono", { hasText: "trustedrouter/auto" })).toBeVisible();
 
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -95,7 +95,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /One API\. Every LLM\./ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Route every model through a prompt path/ })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 });
@@ -103,10 +103,10 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
 test("homepage exposes stablecoin, open-source, and trust claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("End-to-End Encrypted Router").first()).toBeVisible();
+  await expect(page.getByText("End to end encrypted router").first()).toBeVisible();
   await expect(page.getByText("Stablecoin")).toBeVisible();
   await expect(page.getByText("No subscriptions")).toBeVisible();
-  await expect(page.getByText("Hosted OSS")).toBeVisible();
+  await expect(page.getByText("Open source hosting")).toBeVisible();
   await expect(page.locator(".panel-body .mono", { hasText: "api.quillrouter.com" })).toBeVisible();
   await expect(page.getByRole("link", { name: "trusted-router-py" })).toHaveAttribute(
     "href",

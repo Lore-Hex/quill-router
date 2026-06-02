@@ -9,11 +9,11 @@ from trusted_router.storage import STORE
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
     markers = {
-        "/compare/openrouter": "OpenRouter-compatible, but verifiable.",
-        "/compare/vercel-ai-gateway": "Vercel-native frontend",
-        "/compare/litellm": "LiteLLM if you want to self-host.",
-        "/docs/migrate-from-openrouter": "qualified design partners",
-        "/security": "TrustedRouter alpha does not store prompt or output content.",
+        "/compare/openrouter": "Routing convenience with a prompt path you can inspect.",
+        "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
+        "/compare/litellm": "LiteLLM for your own infra",
+        "/docs/migrate-from-openrouter": "Change base_url",
+        "/security": "TrustedRouter does not store prompt or output content by default.",
     }
 
     for path, marker in markers.items():
@@ -21,7 +21,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert response.status_code == 200
         assert marker in response.text
         assert "Approved short copy only" not in response.text
-        assert "99.9% router availability" in response.text
+        assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text
         assert "Continue with MetaMask" in response.text
 
@@ -46,9 +46,9 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     response = client.get("/models")
 
     assert response.status_code == 200
-    assert "Public Catalog" in response.text
+    assert "Public catalog" in response.text
     assert "trustedrouter/auto" in response.text
-    assert "OpenRouter-compatible JSON remains" in response.text
+    assert "API JSON remains" in response.text
     assert '<span class="pill" title="kimi">Kimi</span>' in response.text
     assert '<span class="pill" title="parasail">Parasail</span>' in response.text
     assert '<span class="pill" title="tinfoil">Tinfoil</span>' in response.text
@@ -70,10 +70,10 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert response.status_code == 200
     assert 'href="/models"' in response.text
     assert 'href="https://api.quillrouter.com/v1/models"' not in response.text
-    assert "Migration credit" in response.text
-    assert "spending more than $100/month on LLMs" in response.text
-    assert "99.9% availability" in response.text
-    assert "higher than individual LLM endpoints" in response.text
+    assert "Migration credits" in response.text
+    assert "spending more than $100 per month on LLMs" in response.text
+    assert "Provider failover" in response.text
+    assert "Public status separates router health from provider health" in response.text
     assert "/static/hero-router-scene.js" in response.text
     assert "data-router-scene" in response.text
     assert "Change <span class=\"mono\">base_url</span>" in response.text

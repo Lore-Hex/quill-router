@@ -4,11 +4,10 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter — End-to-End Encrypted Router for every LLM"
+OG_TITLE = "TrustedRouter | End to end encrypted AI router"
 OG_DESCRIPTION = (
-    "Hosted, OpenRouter-compatible router for Anthropic, OpenAI, Google, and "
-    "more — prepaid or BYOK. TLS terminates inside a measured Confidential "
-    "Space workload, and the SaaS control plane never sees prompts."
+    "Hosted OpenAI compatible router for hundreds of models. Use prepaid credits "
+    "or BYOK. TLS terminates inside the attested gateway, not the dashboard."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630
@@ -52,19 +51,19 @@ def og_image_svg(_settings: Settings) -> str:
     <text x="74" y="36" font-size="22" font-weight="700" fill="#cfe1f1" letter-spacing="0.2">TrustedRouter</text>
   </g>
 
-  <!-- Open-source badge, top-right -->
+  <!-- Open source badge, top right -->
   <g transform="translate({OG_IMAGE_WIDTH - 80} 92)" font-family="{_SANS}" text-anchor="end">
     <rect x="-220" y="-26" width="220" height="44" rx="22" fill="#0e2a1d" stroke="#1f6447"/>
-    <text x="-110" y="3" font-size="17" font-weight="700" fill="#7be0b1" text-anchor="middle">100% open source</text>
+    <text x="-110" y="3" font-size="17" font-weight="700" fill="#7be0b1" text-anchor="middle">open source</text>
   </g>
 
   <!-- Headline -->
   <g font-family="{_SANS}">
-    <text x="80" y="244" font-size="78" font-weight="800" fill="#ffffff" letter-spacing="-1.2">One API.</text>
-    <text x="80" y="332" font-size="78" font-weight="800" fill="#ffffff" letter-spacing="-1.2">Every LLM.</text>
-    <text x="80" y="424" font-size="62" font-weight="800" letter-spacing="-1.0">
-      <tspan fill="#7be0b1">Provable</tspan>
-      <tspan fill="#ffffff" dx="14">privacy.</tspan>
+    <text x="80" y="244" font-size="70" font-weight="800" fill="#ffffff" letter-spacing="-1.2">Route every model.</text>
+    <text x="80" y="332" font-size="70" font-weight="800" fill="#ffffff" letter-spacing="-1.2">Verify the gateway.</text>
+    <text x="80" y="424" font-size="56" font-weight="800" letter-spacing="-1.0">
+      <tspan fill="#7be0b1">No prompt logs</tspan>
+      <tspan fill="#ffffff" dx="14">by default.</tspan>
     </text>
   </g>
 
@@ -92,7 +91,7 @@ def og_image_svg(_settings: Settings) -> str:
     </g>
   </g>
 
-  <!-- Bottom row: API endpoint + trust attestation pill -->
+  <!-- Bottom row: API endpoint and trust attestation pill -->
   <g transform="translate(80 568)" font-family="{_MONO}">
     <rect x="-12" y="-26" width="384" height="42" rx="10" fill="#0d1f33" stroke="#22436a"/>
     <text x="8" y="3" font-size="18" fill="#9bbcd8">api.quillrouter.com</text>

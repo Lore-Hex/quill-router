@@ -4,11 +4,11 @@
   <div class="marketing-copy">
     <span class="eyebrow">Base URL swap</span>
     <h2>Migrate in the time it takes to run one request.</h2>
-    <blockquote>Migration is very, very simple. It's very easy to migrate from just calling a single LLM, an OpenAI-compatible LLM, including OpenAI or Anthropic or DeepSeek or anything else, or OpenRouter or something like it, to us. It is as simple as changing one URL, so one line of code.</blockquote>
+    <p>TrustedRouter keeps the OpenAI client shape. Start by changing <span class="mono">base_url</span>, then route a small workflow through <span class="mono">trustedrouter/auto</span> or a model from the catalog.</p>
     <p>Start with <span class="mono">trustedrouter/auto</span> or a model from <a href="/models">the catalog</a>.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Before / after</span><span>base_url</span></div>
+    <div class="code-head"><span>Before and after</span><span>base_url</span></div>
     <pre><code>from openai import OpenAI
 
 client = OpenAI(
@@ -19,7 +19,7 @@ client = OpenAI(
 </section>
 
 <section class="flow-steps" aria-label="Migration steps">
-  <div><span>1</span><strong>Swap URL</strong><p>The wedge: one-line replace your direct LLM call.</p></div>
+  <div><span>1</span><strong>Swap URL</strong><p>Point your existing client at TrustedRouter.</p></div>
   <div><span>2</span><strong>Verify trust</strong><p>Check the source commit and attestation instructions.</p></div>
   <div><span>3</span><strong>Measure</strong><p>Measure uptime, latency, and time to first token.</p></div>
   <div><span>4</span><strong>Route more</strong><p>Move sensitive routes once the path checks out.</p></div>
@@ -29,31 +29,29 @@ client = OpenAI(
   <div class="marketing-card">
     <span class="card-label">Trust</span>
     <h3>Verify before production.</h3>
-    <p>Customers can verify that the code that they're reaching out to and talking to is in fact what they're seeing in the open source repo.</p>
-    <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+    <p>Check the source commit, image reference, and image digest before you move production traffic.</p>
+    <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
   </div>
   <div class="marketing-card">
     <span class="card-label">Credit</span>
     <h3>$100 design partner credit.</h3>
     <p>Migration credits are available by approval for qualified design partners.</p>
-    <p class="microcopy">No automatic grant. Apply one-off credit manually.</p>
+    <p class="microcopy">No automatic grant. Credits are reviewed manually.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Stack</span>
     <h3>Bring Python, JavaScript, agents, or BYOK.</h3>
-    <p>There are no stack expectations because all we do is implement a fully OpenAI-compatible API.</p>
+    <p>Use Python, TypeScript, agents, direct HTTP, or BYOK. The API is OpenAI compatible.</p>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
     <span class="eyebrow">Design partners</span>
-    <h2>For teams spending more than $100/month on LLMs.</h2>
+    <h2>For teams already spending on LLMs.</h2>
   </div>
   <div>
-    <blockquote>Today we are looking for design partners and we are therefore willing to give a hundred dollar credit for those teams to switch over a part of their workflows to us.</blockquote>
-    <blockquote>Thirty minutes? I mean, 30 seconds after signup you'll have an API key and then you'll drop it into your app and you'll see that it's operating much better, faster, cheaper, more uptime.</blockquote>
-    <blockquote>We move very fast, so we're really eager to have design partners give us their most juicy problems and solve them.</blockquote>
+    <p>Bring one production workflow, one sensitive workflow, or one provider fallback problem. We will help you move it through the attested path, measure status, and tune routing.</p>
   </div>
 </section>
 {% endblock %}

@@ -6,7 +6,7 @@
     <span class="pill good">{{ model.provider }}</span>
   </div>
   <div class="panel-body">
-    <p><a href="/models">&larr; All models</a></p>
+    <p><a href="/models">All models</a></p>
     <nav class="section-tabs" aria-label="{{ model.name }} sections">
       {% for link in model.section_links %}
       <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
@@ -42,7 +42,7 @@
   <div class="panel-head"><h2>Providers serving this model</h2></div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px">
-      Sorted cheapest-first by total prompt+completion price. Use
+      Sorted by lowest combined prompt and completion price. Use
       <code>"provider": {"sort": "throughput"}</code> in the request body
       (or append <code>:nitro</code> to the model id) to route to the
       fastest provider instead.
@@ -79,7 +79,7 @@
       </tbody>
     </table>
     <p class="signup-foot">
-      OpenRouter-compatible JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
+      Endpoint JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
     </p>
   </div>
 </section>

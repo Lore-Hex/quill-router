@@ -1,21 +1,21 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>OpenRouter-compatible, but verifiable.</strong><span>Same OpenAI-shaped client, different trust model.</span></div>
-  <div><strong>One API</strong><span>All the LLMs, provably private.</span></div>
-  <div><strong>99.9%</strong><span>Router availability above individual endpoints.</span></div>
-  <div><strong>Open source</strong><span>Backend, config, bring-up, and UI.</span></div>
+  <div><strong>Same client shape</strong><span>Keep your OpenAI SDK and change the base URL.</span></div>
+  <div><strong>Verifiable gateway</strong><span>Source commit, image reference, and image digest are published.</span></div>
+  <div><strong>Provider fallback</strong><span>Use <span class="mono">trustedrouter/auto</span> for rollover across healthy routes.</span></div>
+  <div><strong>Open source</strong><span>Control plane, gateway, config, and public site.</span></div>
 </section>
 
 <section class="marketing-split">
   <div class="marketing-copy">
     <span class="eyebrow">Why switch</span>
-    <h2>All the routing convenience. A prompt path you can verify.</h2>
-    <blockquote>TrustedRouter lets you route to any LLM very easily. Switch between all your LLMs, have higher uptime, have backups, and try out much cheaper models, saving you money without needing to trust TrustedRouter servers as an intermediary any more than you need to.</blockquote>
-    <blockquote>Many engineers are using OpenRouter but only for low-security non-sensitive data because they know it's not so safe to put sensitive data in this third-party router.</blockquote>
+    <h2>Routing convenience with a prompt path you can inspect.</h2>
+    <p>TrustedRouter is for teams that want model choice, provider fallback, usage tracking, BYOK, prepaid credits, and a hosted gateway whose code path is published for verification.</p>
+    <p>The control plane does not terminate production prompt traffic. Prompts belong on <span class="mono">api.quillrouter.com</span>, which is the attested API path.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Drop-in route</span><span>OpenAI-compatible</span></div>
+    <div class="code-head"><span>Client migration</span><span>OpenAI SDK</span></div>
     <pre><code>client = OpenAI(
     base_url="{{ api_base_url }}",
     api_key="sk-tr-v1-..."
@@ -29,20 +29,20 @@ model = "trustedrouter/auto"</code></pre>
   <div class="marketing-card">
     <span class="card-label">Migrate</span>
     <h3>Change one URL.</h3>
-    <p>It is as simple as changing one URL, so one line of code.</p>
+    <p>Point your existing client at <span class="mono">{{ api_base_url }}</span> and keep your model IDs.</p>
     <a class="btn" href="/docs/migrate-from-openrouter">Open migration guide</a>
   </div>
   <div class="marketing-card">
     <span class="card-label">Verify</span>
     <h3>Check the exact code path.</h3>
-    <p>The trust page lists the commit hash of what code exactly is running.</p>
-    <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+    <p>The trust page publishes the source commit, image reference, and image digest for the gateway.</p>
+    <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
   </div>
   <div class="marketing-card">
     <span class="card-label">Route</span>
-    <h3>Use more prompts safely.</h3>
-    <p>They have a lot more other prompts that they would love to use something like OpenRouter for.</p>
-    <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+    <h3>Move sensitive routes deliberately.</h3>
+    <p>Start with a single workflow, inspect status and activity, then expand routes once the trust boundary matches your needs.</p>
+    <button class="btn primary" type="button" data-action="open-signin">Create key</button>
   </div>
 </section>
 
@@ -51,28 +51,27 @@ model = "trustedrouter/auto"</code></pre>
     <span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong>
   </div>
   <div class="matrix-row">
-    <span>API shape</span><span>OpenAI-compatible routing</span><span>OpenAI-compatible routing</span>
+    <span>API shape</span><span>OpenAI style routing</span><span>OpenAI style routing</span>
   </div>
   <div class="matrix-row">
-    <span>Trust model</span><span>Opaque third-party router</span><span>Open source plus attestation</span>
+    <span>Trust model</span><span>Hosted router trust</span><span>Open source plus attestation</span>
   </div>
   <div class="matrix-row">
-    <span>Prompt handling</span><span>You have to trust the router</span><span>We never log your prompt or the output</span>
+    <span>Prompt handling</span><span>Service policy</span><span>No prompt or output logs by default</span>
   </div>
   <div class="matrix-row">
-    <span>Best fit</span><span>Low-sensitivity routing</span><span>Privacy-sensitive agent and app traffic</span>
+    <span>Best fit</span><span>Broad model marketplace</span><span>Verifiable private routing</span>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
-    <span class="eyebrow">Founder words</span>
-    <h2>OpenRouter convenience for traffic you could not send before.</h2>
+    <span class="eyebrow">Developer workflow</span>
+    <h2>Keep the easy parts. Make the trust boundary explicit.</h2>
   </div>
   <div>
-    <blockquote>The most common feedback I hear from engineers is that they don't use OpenRouter at all because of their security and privacy concerns, especially for sensitive prompts, or they use it only for low-sensitivity prompts.</blockquote>
-    <blockquote>Then you can see it working flawlessly. You can measure the uptime, the latency, the time to first token, and see that it's all really good and fast.</blockquote>
-    <blockquote>Most importantly it's all open source software. Every part of the backend infrastructure, configuration, bring up, and UI is entirely open source.</blockquote>
+    <p>Model routers are useful because they remove provider account sprawl, normalize usage records, and make fallback possible. TrustedRouter keeps that workflow and adds a published gateway boundary for production prompt traffic.</p>
+    <p>Use the public model pages to compare providers, policy notes, prices, benchmark links, and status before routing real traffic.</p>
   </div>
 </section>
 {% endblock %}

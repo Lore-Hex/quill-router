@@ -37,18 +37,18 @@
     {% block hero %}
     <section class="public-hero marketing-hero">
       <div>
-        <span class="eyebrow">OpenRouter-compatible. Attested. 99.9% router availability.</span>
+        <span class="eyebrow">OpenAI compatible API. Attested gateway. Public status.</span>
         <h1>{{ heading }}</h1>
         <p class="lead">{{ description }}</p>
         <div class="hero-actions">
-          <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+          <button class="btn primary" type="button" data-action="open-signin">Create key</button>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
         </div>
       </div>
       <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-        <div><strong>1 line</strong><span>base_url migration</span></div>
-        <div><strong>99.9%</strong><span>router availability</span></div>
-        <div><strong>0</strong><span>prompt/output logs</span></div>
+        <div><strong>1 URL</strong><span>base_url migration</span></div>
+        <div><strong>100s</strong><span>models and routes</span></div>
+        <div><strong>0</strong><span>prompt logs by default</span></div>
       </div>
     </section>
     {% endblock %}
@@ -59,7 +59,7 @@
       <button class="signin-close" type="submit" aria-label="Close">x</button>
     </form>
     <h2 id="signinTitle">Sign in</h2>
-    <p class="signin-sub">Choose a sign-in method.</p>
+    <p class="signin-sub">Choose a sign in method.</p>
     <div class="signin-providers">
       {% if google_enabled %}
       <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">

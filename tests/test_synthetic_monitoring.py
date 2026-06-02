@@ -161,9 +161,9 @@ def test_status_json_is_public_metadata_only(client: TestClient) -> None:
     assert "stale-while-revalidate" in status.headers["cache-control"]
     assert "All Systems Operational" in page.text
     assert "Components" in page.text
-    assert "In-region gateway overhead p50" in page.text
+    assert "In region gateway overhead p50" in page.text
     assert "Error-Budget Burn" not in page.text
-    assert "last-48-hour uptime history" in page.text
+    assert "last 48 hour uptime history" in page.text
     text = status.text
     # Probe prompts must not leak to the public status surface.
     assert "reply exactly PONG" not in text
@@ -280,11 +280,11 @@ def test_status_history_browser_requests_render_48h_visual_page(client: TestClie
 
     assert history.status_code == 200
     assert history.headers["content-type"].startswith("text/html")
-    assert "48-hour status history" in history.text
+    assert "48 hour status history" in history.text
     assert (
         "Latency is broken out by target, probe, monitor region, and target region" in history.text
     )
-    assert "48-hour component timeline" in history.text
+    assert "48 hour component timeline" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
     assert "sk-tr-" not in history.text

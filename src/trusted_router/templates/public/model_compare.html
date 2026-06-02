@@ -1,0 +1,84 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Compare routes</strong><span>Providers, price, context, and policy posture in one view.</span></div>
+  <div><strong>Use auto when uptime matters</strong><span>Keep a primary model and let fallback handle provider failures.</span></div>
+  <div><strong>Same API shape</strong><span>Use the OpenAI client and set the model you want.</span></div>
+</section>
+
+<section class="compare-matrix" aria-label="{{ left.name }} and {{ right.name }} comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>{{ left.name }}</strong><strong>{{ right.name }}</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Model id</span><span><code>{{ left.id }}</code></span><span><code>{{ right.id }}</code></span>
+  </div>
+  <div class="matrix-row">
+    <span>Publisher</span><span>{{ left.provider }}</span><span>{{ right.provider }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Context</span><span>{{ left.context_length }} tokens</span><span>{{ right.context_length }} tokens</span>
+  </div>
+  <div class="matrix-row">
+    <span>Provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Modes</span>
+    <span>
+      {% if left.supports_chat %}<span class="pill">chat</span>{% endif %}
+      {% if left.supports_messages %}<span class="pill">messages</span>{% endif %}
+      {% if left.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+    </span>
+    <span>
+      {% if right.supports_chat %}<span class="pill">chat</span>{% endif %}
+      {% if right.supports_messages %}<span class="pill">messages</span>{% endif %}
+      {% if right.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+    </span>
+  </div>
+</section>
+
+<section class="seo-two-col">
+  <div class="panel">
+    <div class="panel-head"><h2>{{ left.name }} routes</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/models/{{ left.id }}">Overview</a><span>{{ left.endpoint_count }} endpoints</span></li>
+        <li><a href="/models/{{ left.id }}/pricing">Pricing</a><span>Prompt and completion rates</span></li>
+        <li><a href="/models/{{ left.id }}/benchmarks">Benchmarks</a><span>TrustedRouter and external sources</span></li>
+        <li><a href="/models/{{ left.id }}/providers">Providers</a><span>All serving providers</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>{{ right.name }} routes</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/models/{{ right.id }}">Overview</a><span>{{ right.endpoint_count }} endpoints</span></li>
+        <li><a href="/models/{{ right.id }}/pricing">Pricing</a><span>Prompt and completion rates</span></li>
+        <li><a href="/models/{{ right.id }}/benchmarks">Benchmarks</a><span>TrustedRouter and external sources</span></li>
+        <li><a href="/models/{{ right.id }}/providers">Providers</a><span>All serving providers</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">Production choice</span>
+    <h2>Pick a default model. Keep fallback enabled.</h2>
+    <p>TrustedRouter is useful when you know the model you want, but still need provider rollover, budget limits, usage records, and a prompt path you can verify.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>OpenAI client</span><span>Python</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+response = client.chat.completions.create(
+    model="{{ left.id }}",
+    messages=messages,
+)</code></pre>
+  </div>
+</section>
+{% endblock %}

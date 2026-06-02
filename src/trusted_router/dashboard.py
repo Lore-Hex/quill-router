@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
+from itertools import combinations
 from pathlib import Path
 from typing import cast
 from xml.sax.saxutils import escape as xml_escape
@@ -50,6 +51,8 @@ MODEL_SEO_SECTION_LABELS: dict[str, str] = {
     "uptime": "Uptime",
     "api": "API",
 }
+MODEL_COMPARE_URL_LIMIT = 2_600
+MODEL_COMPARE_MODEL_LIMIT = 73
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/",
     "/models",
@@ -189,26 +192,26 @@ class PublicPage:
 PUBLIC_PAGES: dict[str, PublicPage] = {
     "compare/openrouter": PublicPage(
         template="public/compare_openrouter.html",
-        title="OpenRouter-Compatible, But Verifiable",
-        description="Change base_url, keep your models, get a verifiable non-logging prompt path.",
+        title="TrustedRouter Compared With OpenRouter",
+        description="Keep the same API shape and add a verifiable prompt path.",
     ),
     "compare/vercel-ai-gateway": PublicPage(
         template="public/compare_vercel_ai_gateway.html",
         title="TrustedRouter And Vercel AI Gateway",
         description=(
-            "Vercel AI Gateway for Vercel-native model access. "
-            "TrustedRouter for verifiable private routing."
+            "Vercel AI Gateway is a strong developer gateway. "
+            "TrustedRouter adds an open source attested prompt path."
         ),
     ),
     "compare/litellm": PublicPage(
         template="public/compare_litellm.html",
         title="TrustedRouter And LiteLLM",
-        description="LiteLLM if you want to self-host. TrustedRouter if you want hosted plus attested.",
+        description="Use LiteLLM when you want to run the router yourself. Use TrustedRouter when you want hosted attestation.",
     ),
     "docs/migrate-from-openrouter": PublicPage(
         template="public/migrate_from_openrouter.html",
         title="Migrate From OpenRouter",
-        description="Change base_url, keep OpenAI-compatible clients, and test the trust path.",
+        description="Change base_url, keep OpenAI compatible clients, and verify the hosted gateway.",
     ),
     "security": PublicPage(
         template="public/security.html",
@@ -298,7 +301,7 @@ def public_page_html(settings: Settings, page_key: str) -> str:
     return _env().get_template(page.template).render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/{page_key}",
-        title=f"{page.title} - TrustedRouter",
+        title=f"{page.title} | TrustedRouter",
         heading=page.title,
         description=page.description,
         google_enabled=settings.google_oauth_enabled,
@@ -311,9 +314,9 @@ def public_models_html(settings: Settings) -> str:
     return _env().get_template("public/models.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/models",
-        title="Models - TrustedRouter",
+        title="Models | TrustedRouter",
         heading="Models",
-        description="Public model catalog. Prompt traffic belongs on the attested API path.",
+        description="Hundreds of models with provider routes, prices, status, and policy notes.",
         models=[_model_view(model) for model in MODELS.values()],
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
@@ -325,11 +328,10 @@ def public_benchmarks_html(settings: Settings) -> str:
     return _env().get_template("public/seo_index.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/benchmarks",
-        title="Benchmarks - TrustedRouter",
+        title="Benchmarks | TrustedRouter",
         heading="Benchmarks",
         description=(
-            "TrustedRouter model benchmark entry points, provider latency pages, "
-            "and independent benchmark references without prompt or output logs."
+            "Model benchmark entry points, route measurements, and independent sources."
         ),
         page_kind="benchmarks",
         models=_seo_model_rows(),
@@ -345,11 +347,10 @@ def public_rankings_html(settings: Settings) -> str:
     return _env().get_template("public/seo_index.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/rankings",
-        title="Model Rankings - TrustedRouter",
+        title="Model Rankings | TrustedRouter",
         heading="Model Rankings",
         description=(
-            "Rank models by route count, provider diversity, pricing, and "
-            "provider-side privacy posture before choosing a router target."
+            "Rank models by route count, provider diversity, price, and policy posture."
         ),
         page_kind="rankings",
         models=_seo_model_rows(),
@@ -385,10 +386,10 @@ def public_chat_html(settings: Settings) -> str:
         # expose-headers work, so "via {provider}" lights up.
         api_base_url="/chat-proxy/v1",
         site_url=f"https://{settings.trusted_domain}/chat",
-        title="Chat - TrustedRouter",
+        title="Chat | TrustedRouter",
         heading="Chat",
         description=(
-            "Try any model, compare up to four side-by-side. Zero "
+            "Try any model and compare up to four at once. Zero "
             "tokens spent until you sign in."
         ),
         google_enabled=settings.google_oauth_enabled,
@@ -401,11 +402,10 @@ def public_providers_html(settings: Settings) -> str:
     return _env().get_template("public/providers.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/providers",
-        title="Providers - TrustedRouter",
+        title="Providers | TrustedRouter",
         heading="Providers",
         description=(
-            "Provider transparency for upstream model compute, retention, "
-            "confidential compute, and end-to-end encryption."
+            "Provider transparency for model compute, retention, confidential compute, and encrypted routes."
         ),
         providers=[_provider_view(provider) for provider in providers_for_display()],
         google_enabled=settings.google_oauth_enabled,
@@ -422,11 +422,10 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
     return _env().get_template("public/provider_detail.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
-        title=f"{provider.name} Models - TrustedRouter",
+        title=f"{provider.name} Models | TrustedRouter",
         heading=provider.name,
         description=(
-            f"TrustedRouter provider page for {provider.name}: supported models, "
-            "prices, privacy claims, and policy source."
+            f"{provider.name} models on TrustedRouter with prices, routes, policy notes, and source links."
         ),
         provider=_provider_detail_view(provider, served_models=served_models),
         served_models=served_models,
@@ -447,7 +446,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     return _env().get_template("public/model_detail.html").render(
         api_base_url=settings.api_base_url,
         site_url=site_url,
-        title=f"{model.name} - TrustedRouter",
+        title=f"{model.name} | TrustedRouter",
         heading=model.name,
         description=f"All providers serving {model.name} via TrustedRouter.",
         model=_model_detail_view(model),
@@ -465,6 +464,35 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     )
 
 
+def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -> str | None:
+    left = MODELS.get(left_id)
+    right = MODELS.get(right_id)
+    if (
+        left is None
+        or right is None
+        or left.id in META_MODEL_IDS
+        or right.id in META_MODEL_IDS
+        or left.id == right.id
+    ):
+        return None
+    site_path = f"/compare/models/{left.id}/vs/{right.id}"
+    return _env().get_template("public/model_compare.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}{site_path}",
+        title=f"{left.name} vs {right.name} | TrustedRouter",
+        heading=f"{left.name} vs {right.name}",
+        description=(
+            f"Compare {left.name} and {right.name} by providers, context, price, "
+            "and TrustedRouter route support."
+        ),
+        left=_model_detail_view(left),
+        right=_model_detail_view(right),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
 def public_model_section_html(settings: Settings, model_id: str, section: str) -> str | None:
     model = MODELS.get(model_id)
     if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
@@ -474,7 +502,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     return _env().get_template("public/model_section.html").render(
         api_base_url=settings.api_base_url,
         site_url=site_url,
-        title=f"{model.name} {label} - TrustedRouter",
+        title=f"{model.name} {label} | TrustedRouter",
         heading=f"{model.name} {label}",
         description=_model_section_description(model, section),
         model=_model_detail_view(model, active_section=section),
@@ -495,7 +523,7 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
     return _env().get_template("public/model_not_found.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/models",
-        title="Model not found - TrustedRouter",
+        title="Model not found | TrustedRouter",
         heading="Model not found",
         description=f"No model with id {model_id} is in the TrustedRouter catalog.",
         requested_model_id=model_id,
@@ -534,6 +562,8 @@ def sitemap_xml(settings: Settings) -> str:
         paths.append((f"/models/{model.id}", "daily", "0.8"))
         for section in MODEL_SEO_SECTIONS:
             paths.append((f"/models/{model.id}/{section}", "daily", "0.7"))
+    for left, right in _model_comparison_pairs():
+        paths.append((f"/compare/models/{left.id}/vs/{right.id}", "weekly", "0.5"))
     urls = "\n".join(
         "  <url>"
         f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
@@ -557,7 +587,7 @@ def llms_txt(settings: Settings) -> str:
     lines = [
         "# TrustedRouter",
         "",
-        "TrustedRouter is an OpenRouter-compatible AI router with an attested prompt path.",
+        "TrustedRouter is an OpenAI compatible AI router with an attested prompt path.",
         "The control plane does not terminate prompt traffic; prompts belong on api.quillrouter.com.",
         "",
         "## Primary Links",
@@ -571,7 +601,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
         "## API",
-        "- OpenAI-compatible base URL: https://api.quillrouter.com/v1",
+        "- OpenAI compatible base URL: https://api.quillrouter.com/v1",
         "- Chat completions: POST /v1/chat/completions",
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
@@ -583,7 +613,7 @@ def llms_txt(settings: Settings) -> str:
         "- Model pages include providers, pricing, performance, uptime, API quickstart, and benchmark links.",
         "",
         "## Privacy Boundary",
-        "- TrustedRouter stores metadata and billing records, not prompt/output content by default.",
+        "- TrustedRouter stores metadata and billing records, not prompt or output content by default.",
         "- Provider compute policy is shown separately on provider and model pages.",
         "",
     ]
@@ -603,7 +633,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Public status: https://status.trustedrouter.com/",
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
-            "Use https://api.quillrouter.com/v1 as the OpenAI-compatible API base URL.",
+            "Use https://api.quillrouter.com/v1 as the OpenAI compatible API base URL.",
             "",
         ]
     )
@@ -616,7 +646,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
     lines = [
         "# TrustedRouter Full LLM Context",
         "",
-        "TrustedRouter is a hosted AI routing service with OpenRouter-compatible APIs and an attested gateway.",
+        "TrustedRouter is a hosted AI routing service with OpenAI compatible APIs and an attested gateway.",
         "The hosted prompt path is designed so the API gateway source, image digest, and attestation can be verified.",
         "",
         "## Canonical URLs",
@@ -860,7 +890,7 @@ def _model_section_description(model: Model, section: str) -> str:
     if section == "uptime":
         return f"Uptime and status entry points for {model.name} routes."
     if section == "api":
-        return f"OpenAI-compatible quickstart for {model.name} on TrustedRouter."
+        return f"OpenAI compatible quickstart for {model.name} on TrustedRouter."
     return f"{model.name} {label} on TrustedRouter."
 
 
@@ -889,6 +919,18 @@ def _public_models_for_seo() -> list[Model]:
         [model for model in MODELS.values() if model.id not in META_MODEL_IDS],
         key=lambda model: model.id,
     )
+
+
+def _model_comparison_pairs() -> list[tuple[Model, Model]]:
+    candidates = sorted(
+        _public_models_for_seo(),
+        key=lambda model: (
+            -len(endpoints_for_model(model.id)),
+            -(model.context_length or 0),
+            model.id.lower(),
+        ),
+    )[:MODEL_COMPARE_MODEL_LIMIT]
+    return list(combinations(candidates, 2))[:MODEL_COMPARE_URL_LIMIT]
 
 
 def _seo_model_rows() -> list[dict[str, object]]:
@@ -1064,7 +1106,7 @@ def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:
     high = max(values)
     if low == high:
         return _price(low)
-    return f"{_price(low)}–{_price(high)}"
+    return f"{_price(low)} to {_price(high)}"
 
 
 def _price_range(models: list[Model], attr: str) -> str:
@@ -1075,7 +1117,7 @@ def _price_range(models: list[Model], attr: str) -> str:
     high = max(values)
     if low == high:
         return _price(low)
-    return f"{_price(low)}-{_price(high)}"
+    return f"{_price(low)} to {_price(high)}"
 
 
 def _price(microdollars_per_million: int) -> str:

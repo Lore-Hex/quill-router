@@ -1,20 +1,20 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>LiteLLM if you want to self-host.</strong><span>Keep owning the flow yourself.</span></div>
-  <div><strong>TrustedRouter if you want hosted plus attested.</strong><span>Open-source service with a verifiable prompt path.</span></div>
+  <div><strong>LiteLLM for your own infra</strong><span>Run the router in your environment.</span></div>
+  <div><strong>TrustedRouter for hosted attestation</strong><span>Use a managed service with a verifiable prompt path.</span></div>
   <div><strong>Apache licensed</strong><span>Run it yourself or build another service.</span></div>
 </section>
 
 <section class="marketing-split">
   <div class="marketing-copy">
-    <span class="eyebrow">Hosted or self-hosted</span>
+    <span class="eyebrow">Hosted or owned</span>
     <h2>Use the shape that matches your team.</h2>
-    <blockquote>LiteLLM has been around for a while, and you can also just take our open source code and use that as well. It's also a battle-tested solution.</blockquote>
-    <blockquote>A lot of teams love to self-host and if you're that type of team, then you should totally do that.</blockquote>
+    <p>LiteLLM is a good fit when you want to own and operate the routing layer. TrustedRouter is a fit when you want a hosted router, public status, billing, BYOK, and a gateway trust record.</p>
+    <p>The TrustedRouter code is open source, so you can still run it yourself if hosted does not match your security model.</p>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Hosted route</span><span>OpenAI-compatible</span></div>
+    <div class="code-head"><span>Hosted route</span><span>OpenAI SDK</span></div>
     <pre><code>base_url="{{ api_base_url }}"
 model="trustedrouter/auto"
 
@@ -25,31 +25,29 @@ model="trustedrouter/auto"
 
 <section class="marketing-grid three">
   <div class="marketing-card">
-    <span class="card-label">Self-host</span>
+    <span class="card-label">Own infra</span>
     <h3>Own every part.</h3>
-    <p>If you're looking to just own your flow and make something very custom, that's something that you want to own.</p>
+    <p>Use a router you operate directly when customization and internal control matter more than managed service speed.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Hosted</span>
     <h3>Use attested routing now.</h3>
-    <p>They can run it hosted. Someone else can take this and run it.</p>
+    <p>Create a key, add credits or BYOK, and route requests through the attested gateway.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Open source</span>
     <h3>Fork the router.</h3>
-    <p>You can also take our code and create another version of TrustedRouter that you run as a service.</p>
+    <p>The control plane and gateway are public so teams can inspect, fork, or operate their own service.</p>
   </div>
 </section>
 
 <section class="quote-feature">
   <div>
     <span class="eyebrow">Why open source matters</span>
-    <h2>Router infrastructure should proliferate.</h2>
+    <h2>Router infrastructure should be inspectable.</h2>
   </div>
   <div>
-    <blockquote>What we want is for proliferation of these routers to exist because it's important that people have the safety, security, uptime, and cost savings from this.</blockquote>
-    <blockquote>We should really demand that all routers be totally open source. That's really the only way to be sure that it is running things that are safe and secure.</blockquote>
-    <blockquote>We're very happy with that because we want to let so many other companies have this service and be open, fully Apache licensed open source.</blockquote>
+    <p>Developers should be able to see how model routing, fallback, billing, prompt handling, and provider selection actually work. Open source makes that possible, whether you use the hosted service or run the code yourself.</p>
   </div>
 </section>
 {% endblock %}

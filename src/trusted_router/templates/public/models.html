@@ -1,10 +1,10 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Public Catalog</strong><span>No auth needed to inspect routes.</span></div>
-  <div><strong>trustedrouter/auto</strong><span>Multi-provider failover target.</span></div>
+  <div><strong>Public catalog</strong><span>No auth needed to inspect routes.</span></div>
+  <div><strong>trustedrouter/auto</strong><span>Provider failover target.</span></div>
   <div><strong>Streaming</strong><span>No buffering in the prompt path.</span></div>
-  <div><strong>More daily</strong><span>Open source model requests welcome.</span></div>
+  <div><strong>Hundreds of models</strong><span>More provider routes are added as keys and pricing are verified.</span></div>
 </section>
 
 <section class="model-catalog">
@@ -13,7 +13,7 @@
       <span class="eyebrow">Models</span>
       <h2>Route by model, provider, price, or privacy posture.</h2>
     </div>
-    <p>OpenRouter-compatible JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
+    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
   </div>
   <div class="model-table-wrap">
     <table>
@@ -77,17 +77,17 @@
   <div class="marketing-card">
     <span class="card-label">Coverage</span>
     <h3>Top models first.</h3>
-    <p>We cover the top models that people are using and we're adding more every day.</p>
+    <p>The catalog includes frontier, open weight, fast, cheap, image capable, and provider specific routes.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Latency</span>
     <h3>Streaming path.</h3>
-    <p>We do full streaming chat so that we're not buffering anything.</p>
+    <p>Streaming responses pass through the gateway so clients can render tokens as providers emit them.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Price</span>
-    <h3>Competitive with OpenRouter.</h3>
-    <p>We offer a price that's competitive with OpenRouter.</p>
+    <h3>Visible before you call.</h3>
+    <p>Model pages show prompt and completion pricing per provider route.</p>
   </div>
 </section>
 {% endblock %}

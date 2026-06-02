@@ -1,19 +1,19 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Gateway guarantee</strong><span>TLS terminates inside TrustedRouter's attested gateway.</span></div>
+  <div><strong>Gateway boundary</strong><span>TLS terminates inside TrustedRouter's attested gateway.</span></div>
   <div><strong>Provider compute</strong><span>Each upstream provider has its own retention and enclave posture.</span></div>
   <div><strong>No prompt logs</strong><span>TrustedRouter stores metadata and billing records, not prompts or outputs.</span></div>
-  <div><strong>OpenRouter-compatible</strong><span>Machine-readable JSON remains at <span class="mono">{{ api_base_url }}/providers</span>.</span></div>
+  <div><strong>API metadata</strong><span>Machine readable JSON remains at <span class="mono">{{ api_base_url }}/providers</span>.</span></div>
 </section>
 
 <section class="model-catalog">
   <div class="model-catalog-head">
     <div>
       <span class="eyebrow">Provider transparency</span>
-      <h2>Trusted gateway first, then explicit provider-side claims.</h2>
+      <h2>Trusted gateway first, then explicit provider claims.</h2>
     </div>
-    <p>Provider-side zero data retention, confidential compute, and E2EE are shown only when explicitly tracked. Unknown is not treated as safe.</p>
+    <p>Zero data retention, confidential compute, and encrypted provider routes are shown only when explicitly tracked. Unknown stays unknown.</p>
   </div>
   <div class="model-table-wrap">
     <table>
@@ -59,7 +59,7 @@
   <div class="marketing-card">
     <span class="card-label">What providers prove</span>
     <h3>Provider policy is separate.</h3>
-    <p>If compute runs on Anthropic, OpenAI, Gemini, Phala, Tinfoil, or another upstream, that provider's policy controls model-side handling.</p>
+    <p>If compute runs on Anthropic, OpenAI, Gemini, Phala, Tinfoil, or another upstream, that provider's policy controls model handling.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Routing</span>

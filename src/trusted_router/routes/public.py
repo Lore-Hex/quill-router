@@ -25,6 +25,7 @@ from trusted_router.dashboard import (
     llms_txt,
     public_benchmarks_html,
     public_chat_html,
+    public_model_compare_html,
     public_model_detail_html,
     public_model_not_found_html,
     public_model_section_html,
@@ -282,6 +283,23 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         return HTMLResponse(body)
 
+    @public_html_route("/compare/models/{left_author}/{left_slug}/vs/{right_author}/{right_slug}")
+    async def model_compare(
+        left_author: str,
+        left_slug: str,
+        right_author: str,
+        right_slug: str,
+    ) -> HTMLResponse:
+        left_id = f"{left_author.strip()}/{left_slug.strip()}"
+        right_id = f"{right_author.strip()}/{right_slug.strip()}"
+        body = public_model_compare_html(settings, left_id, right_id)
+        if body is None:
+            return HTMLResponse(
+                public_model_not_found_html(settings, f"{left_id}/vs/{right_id}"),
+                status_code=404,
+            )
+        return HTMLResponse(body)
+
     @public_html_route("/chat")
     async def chat() -> str:
         return public_chat_html(settings)
@@ -507,17 +525,17 @@ def _status_history_page_html(
         else f"https://{settings.trusted_domain}/status/history?window={window}"
     )
     title = {
-        "48h": "48-hour Status History - TrustedRouter",
-        "monthly": "Monthly Status History - TrustedRouter",
-        "daily": "Daily Status History - TrustedRouter",
-        "24h": "24-hour Status History - TrustedRouter",
-        "5m": "Current Status History - TrustedRouter",
+        "48h": "48 hour Status History | TrustedRouter",
+        "monthly": "Monthly Status History | TrustedRouter",
+        "daily": "Daily Status History | TrustedRouter",
+        "24h": "24 hour Status History | TrustedRouter",
+        "5m": "Current Status History | TrustedRouter",
     }[window]
     heading = {
-        "48h": "48-hour status history",
+        "48h": "48 hour status history",
         "monthly": "Monthly status history",
         "daily": "Daily status history",
-        "24h": "24-hour status history",
+        "24h": "24 hour status history",
         "5m": "Current status history",
     }[window]
     return render_template(
@@ -526,7 +544,7 @@ def _status_history_page_html(
         site_url=site_url,
         title=title,
         heading=heading,
-        description="Visual rollups from metadata-only synthetic checks.",
+        description="Visual rollups from metadata synthetic checks.",
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
@@ -644,7 +662,7 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         "public/status.html",
         api_base_url=settings.api_base_url,
         site_url=site_url,
-        title="Status - TrustedRouter",
+        title="Status | TrustedRouter",
         heading="TrustedRouter Status",
         description="Regional uptime, attestation, SDK, billing, and fallback checks.",
         google_enabled=settings.google_oauth_enabled,

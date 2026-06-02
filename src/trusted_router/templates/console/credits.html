@@ -5,10 +5,10 @@
   <div class="panel-body">
     <div class="metrics">
       <div class="metric"><div class="label">Available</div><div class="value">{{ credits_available }}</div><div class="sub">prepaid balance</div></div>
-      <div class="metric"><div class="label">Lifetime usage</div><div class="value">{{ credits_usage }}</div><div class="sub">all-time spend</div></div>
+      <div class="metric"><div class="label">Lifetime usage</div><div class="value">{{ credits_usage }}</div><div class="sub">total spend</div></div>
     </div>
     <div class="notice warn" style="margin-top:18px">
-      Migration credits are available by approval for qualified design partners spending more than $100/month on LLMs. This console does not grant them automatically; apply one-off credits manually after approval.
+      Migration credits are available by approval for qualified design partners spending more than $100 per month on LLMs. This console does not grant them automatically. Apply credits manually after approval.
     </div>
     <form class="form" method="post" action="/console/credits/checkout" style="margin-top:18px">
       <div class="row">
@@ -37,7 +37,7 @@
   </div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
-      Save a Stripe card for auto-refill. One-time credit purchases can use Stripe, PayPal, or USDC checkout above.
+      Save a Stripe card for auto refill. Credit purchases can use Stripe, PayPal, or USDC checkout above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}
@@ -59,7 +59,7 @@
 
 <section class="panel">
   <div class="panel-head">
-    <h2>Auto-refill</h2>
+    <h2>Auto refill</h2>
     <span class="pill {{ 'good' if auto_refill_enabled else '' }}">{{ 'enabled' if auto_refill_enabled else 'disabled' }}</span>
   </div>
   <div class="panel-body">
@@ -70,13 +70,13 @@
       {% if payment_method_pending %}
       <br><strong>Stripe is still confirming your payment method.</strong>
       {% elif not has_payment_method %}
-      <br><strong>Add a Stripe payment method before enabling auto-refill.</strong>
+      <br><strong>Add a Stripe payment method before enabling auto refill.</strong>
       {% endif %}
     </p>
     <form class="form" method="post" action="/console/credits/auto-refill">
       <label class="checkbox-row">
         <input type="checkbox" name="enabled" value="1" {% if auto_refill_enabled %}checked{% endif %}>
-        Enable auto-refill
+        Enable auto refill
       </label>
       <div class="row">
         <label>When balance drops below (USD)
@@ -90,7 +90,7 @@
     </form>
     {% if last_auto_refill_at %}
     <p style="color:var(--muted);font-size:12px;margin-top:14px">
-      Last attempt: {{ last_auto_refill_at }} — {{ last_auto_refill_status }}
+      Last attempt: {{ last_auto_refill_at }}. {{ last_auto_refill_status }}
     </p>
     {% endif %}
   </div>
@@ -117,7 +117,7 @@
         {% for p in payments %}
         <tr style="border-bottom:1px solid var(--border)">
           <td style="padding:10px 6px;color:var(--muted);font-variant-numeric:tabular-nums">
-            {{ p.created_at | datetime_iso if p.created_at else '—' }}
+            {{ p.created_at | datetime_iso if p.created_at else 'none' }}
           </td>
           <td style="padding:10px 6px;font-variant-numeric:tabular-nums">
             ${{ '%.2f'|format((p.amount_cents or 0) / 100) }}
@@ -127,7 +127,7 @@
             {% if p.card_brand and p.card_last4 %}
               <span style="text-transform:capitalize">{{ p.card_brand }}</span> ····{{ p.card_last4 }}
             {% else %}
-              <span style="color:var(--muted)">—</span>
+              <span style="color:var(--muted)">none</span>
             {% endif %}
           </td>
           <td style="padding:10px 6px">
@@ -138,14 +138,14 @@
             {% elif p.status == 'expired' %}
               <span class="pill">expired</span>
             {% else %}
-              <span class="pill">{{ p.payment_status or p.status or '—' }}</span>
+              <span class="pill">{{ p.payment_status or p.status or 'none' }}</span>
             {% endif %}
           </td>
           <td style="padding:10px 6px">
             {% if p.receipt_url %}
               <a href="{{ p.receipt_url }}" target="_blank" rel="noopener">Receipt ↗</a>
             {% else %}
-              <span style="color:var(--muted)">—</span>
+              <span style="color:var(--muted)">none</span>
             {% endif %}
           </td>
         </tr>

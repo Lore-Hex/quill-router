@@ -906,7 +906,7 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
     assert "Stripe USDC / stablecoin" in credits.text
     assert "Payment methods" in credits.text
     assert "Add payment method" in credits.text
-    assert "Auto-refill" in credits.text
+    assert "Auto refill" in credits.text
     assert "Continue to checkout" in credits.text
 
     assert settings.status_code == 200

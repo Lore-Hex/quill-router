@@ -7,7 +7,7 @@
       BYOK ("bring your own key") routes requests through TrustedRouter using
       <em>your</em> account at the upstream provider. You keep the billing
       relationship; we just relay the call. Paste an API key from the provider
-      below — we encrypt it and never display it again.
+      below. We encrypt it and never display it again.
     </p>
     <form class="form" method="post" action="/console/byok">
       <label>Provider
@@ -23,7 +23,7 @@
       </label>
       <label>Provider API key
         <input name="api_key" type="password" autocomplete="off" required
-               placeholder="paste your API key — e.g. sk-ant-api03-..., sk-proj-..., AIza...">
+               placeholder="paste your API key, for example sk-ant-api03, sk-proj, or AIza">
       </label>
       <p style="color:var(--muted);font-size:12px;margin:-4px 0 0">
         Stored encrypted. Only the last 4 characters are ever shown again, as a hint to help you identify the key.
@@ -41,7 +41,7 @@
         {% for p in providers %}
         <tr>
           <td>{{ p.provider_name }}</td>
-          <td><code>{{ p.key_hint or '—' }}</code></td>
+          <td><code>{{ p.key_hint or 'none' }}</code></td>
           <td><span class="pill good">active</span></td>
         </tr>
         {% endfor %}

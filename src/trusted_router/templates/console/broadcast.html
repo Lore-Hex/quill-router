@@ -41,7 +41,7 @@
         <span>Include prompt and output content.</span>
       </label>
       <p class="warning-note">
-        Content export sends prompt and output text to the destination. Leave it off for metadata-only observability.
+        Content export sends prompt and output text to the destination. Leave it off for metadata observability.
       </p>
       <button class="btn primary" type="submit">Add destination</button>
     </form>
@@ -65,7 +65,7 @@
           <td>
             {% if destination.api_key_configured %}<span class="pill">api key</span>{% endif %}
             {% if destination.headers_configured %}<span class="pill">headers</span>{% endif %}
-            {% if not destination.api_key_configured and not destination.headers_configured %}—{% endif %}
+            {% if not destination.api_key_configured and not destination.headers_configured %}none{% endif %}
           </td>
           <td><span class="pill {{ 'good' if destination.enabled else '' }}">{{ 'active' if destination.enabled else 'disabled' }}</span></td>
           <td>
