@@ -2731,6 +2731,18 @@
         if (m.includes("Failed to fetch") || m.includes("NetworkError")) {
             return "Network hiccup — check your connection and retry.";
         }
+        // 402 = Payment Required. The attested gateway uses this for
+        // both "workspace out of credits" (most common) and "browser
+        // key's $5/day cap reached". The body says "gateway
+        // authorization failed" generically — match status code first.
+        if (
+            /\b402\b/.test(m) ||
+            /insufficient.credit/i.test(m) ||
+            /spend limit/i.test(m) ||
+            /key_limit_exceeded/i.test(m)
+        ) {
+            return "Out of credits — add some at trustedrouter.com/credits, then refresh and retry.";
+        }
         if (/\b401\b|invalid_api_key|Invalid API key/i.test(m)) {
             return "Authentication expired — refresh the page to re-issue your browser key.";
         }
