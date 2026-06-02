@@ -625,6 +625,7 @@ DEFAULT_AUTO_MODEL_ORDER = [
     "openai/gpt-5.4-nano",
     "google/gemini-2.5-flash",
     "deepseek/deepseek-v4-flash",
+    "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
     "mistralai/mistral-small-2603",
     "z-ai/glm-4.6",
@@ -906,6 +907,76 @@ def _as_positive_int(value: object) -> int:
     return max(parsed, 0)
 
 
+def _provider_manifest_price_tiers(
+    raw_model: dict[str, Any],
+    default_prompt_price: int,
+    default_completion_price: int,
+    default_cached_prompt_price: int | None,
+) -> tuple[PriceTier, ...]:
+    raw_tiers = raw_model.get("price_tiers")
+    if not isinstance(raw_tiers, list) or not raw_tiers:
+        return _flat_tier(
+            default_prompt_price,
+            default_completion_price,
+            prompt_cached=default_cached_prompt_price,
+        )
+
+    tiers: list[PriceTier] = []
+    for raw_tier in raw_tiers:
+        if not isinstance(raw_tier, dict):
+            return _flat_tier(
+                default_prompt_price,
+                default_completion_price,
+                prompt_cached=default_cached_prompt_price,
+            )
+        raw_threshold = raw_tier.get("max_prompt_tokens")
+        if raw_threshold is None:
+            threshold = None
+        elif isinstance(raw_threshold, int | str | float | bytes | bytearray):
+            threshold = _as_positive_int(raw_threshold)
+            if threshold <= 0:
+                return _flat_tier(
+                    default_prompt_price,
+                    default_completion_price,
+                    prompt_cached=default_cached_prompt_price,
+                )
+        else:
+            return _flat_tier(
+                default_prompt_price,
+                default_completion_price,
+                prompt_cached=default_cached_prompt_price,
+            )
+
+        prompt_cost = _as_positive_int(raw_tier.get("input_token_price_per_m"))
+        completion_cost = _as_positive_int(raw_tier.get("output_token_price_per_m"))
+        if prompt_cost <= 0 or completion_cost <= 0:
+            return _flat_tier(
+                default_prompt_price,
+                default_completion_price,
+                prompt_cached=default_cached_prompt_price,
+            )
+        cached_cost = _as_positive_int(raw_tier.get("cached_input_token_price_per_m"))
+        cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
+        tiers.append(
+            PriceTier(
+                max_prompt_tokens=threshold,
+                prompt_price_microdollars_per_million_tokens=_customer_price(prompt_cost),
+                completion_price_microdollars_per_million_tokens=_customer_price(
+                    completion_cost
+                ),
+                prompt_cached_price_microdollars_per_million_tokens=cached_price,
+            )
+        )
+
+    if tiers[-1].max_prompt_tokens is not None:
+        return _flat_tier(
+            default_prompt_price,
+            default_completion_price,
+            prompt_cached=default_cached_prompt_price,
+        )
+    return tuple(tiers)
+
+
 def _supplemental_provider_models_and_endpoints() -> tuple[
     dict[str, Model], dict[str, ModelEndpoint]
 ]:
@@ -946,9 +1017,16 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
 
             prompt_cost = _as_positive_int(raw_model.get("input_token_price_per_m"))
             completion_cost = _as_positive_int(raw_model.get("output_token_price_per_m"))
+            cached_cost = _as_positive_int(raw_model.get("cached_input_token_price_per_m"))
             prompt_price = _customer_price(prompt_cost)
             completion_price = _customer_price(completion_cost)
-            tiers = _flat_tier(prompt_price, completion_price)
+            cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
+            tiers = _provider_manifest_price_tiers(
+                raw_model,
+                prompt_price,
+                completion_price,
+                cached_price,
+            )
             publisher = (
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
             )

@@ -94,8 +94,9 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
         ),
         (
             "minimax",
-            7,
+            8,
             [
+                "minimax/minimax-m3",
                 "minimax/minimax-m2.7",
                 "minimax/minimax-m2.7-highspeed",
                 "minimax/minimax-m2.5",
@@ -127,11 +128,30 @@ def test_native_provider_catalog_preserves_live_model_ids(
 
 
 def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
+    assert MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"].upstream_id == "MiniMax-M3"
+    assert MODEL_ENDPOINTS["minimax/minimax-m3@minimax/byok"].upstream_id == "MiniMax-M3"
     assert MODEL_ENDPOINTS["minimax/minimax-m2.7@minimax/prepaid"].upstream_id == "MiniMax-M2.7"
     assert (
         MODEL_ENDPOINTS["minimax/minimax-m2.7-highspeed@minimax/byok"].upstream_id
         == "MiniMax-M2.7-highspeed"
     )
+
+
+def test_minimax_m3_uses_provider_native_context_tiers() -> None:
+    m3 = MODELS["minimax/minimax-m3"]
+    prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
+
+    assert m3.context_length == 1_000_000
+    assert [tier.max_prompt_tokens for tier in m3.price_tiers] == [512_000, None]
+    assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [512_000, None]
+
+    low, high = prepaid.price_tiers
+    assert low.prompt_price_microdollars_per_million_tokens == 660_000
+    assert low.completion_price_microdollars_per_million_tokens == 2_640_000
+    assert low.prompt_cached_price_microdollars_per_million_tokens == 132_000
+    assert high.prompt_price_microdollars_per_million_tokens == 1_320_000
+    assert high.completion_price_microdollars_per_million_tokens == 5_280_000
+    assert high.prompt_cached_price_microdollars_per_million_tokens == 264_000
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
