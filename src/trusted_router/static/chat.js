@@ -2741,7 +2741,10 @@
             /spend limit/i.test(m) ||
             /key_limit_exceeded/i.test(m)
         ) {
-            return "Out of credits — add some at trustedrouter.com/credits, then refresh and retry.";
+            return (
+                "Out of TrustedRouter credits. Add a card and top up at " +
+                "trustedrouter.com/credits, then refresh this page and retry."
+            );
         }
         if (/\b401\b|invalid_api_key|Invalid API key/i.test(m)) {
             return "Authentication expired — refresh the page to re-issue your browser key.";
