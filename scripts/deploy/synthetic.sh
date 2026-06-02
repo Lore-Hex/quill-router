@@ -54,18 +54,16 @@ BASE_ENV_VARS=(
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_SYNTHETIC_MONITOR_MODEL=trustedrouter/monitor"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
-  # 10-second sub-cadence: each per-minute scheduler invocation runs
-  # the probe 6 times spaced 10s apart, so we get ~96K samples/day
-  # instead of ~16K. Tightens burn-rate windows by another 3x vs the
-  # 30s setting, drops 95% CI on 99.9% uptime to ~±0.010%, and detects
-  # a real outage within 10s instead of 60s.
-  #
-  # Budget impact: DeepSeek V4 Flash leads (and is served by 4
-  # providers transparently), so per-probe spend is ~3 μ$. At 6 passes
-  # × 60 min × 24h × per-region-pair × 2 probe types ≈ ~$0.30/day —
-  # negligible vs the SLO observability win.
-  "TR_SYNTHETIC_RUNS_PER_INVOCATION=6"
-  "TR_SYNTHETIC_RUN_SPACING_SECONDS=10"
+  # 30-second sub-cadence (2 passes/invocation). The 10s/6-passes
+  # plan from a prior iteration exceeded the Cloud Run Job CPU budget
+  # — N concurrent TLS handshakes serialized on 1 CPU, probe latency
+  # ballooned from 2s → 12s, executions hit 90-400s and stacked up
+  # past the 60s cron tick. With CPU 2 / 1Gi (set below in the job
+  # deploy flags) we may be able to safely return to 10s — but
+  # ratchet there in a SEPARATE PR after we've watched a few hours
+  # of clean runs at 30s under the new resources.
+  "TR_SYNTHETIC_RUNS_PER_INVOCATION=2"
+  "TR_SYNTHETIC_RUN_SPACING_SECONDS=30"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
 )
@@ -98,7 +96,15 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     --update-secrets "$UPDATE_SECRETS" \
     --max-retries 0 \
     --task-timeout 300s \
+    --cpu 2 \
+    --memory 1Gi \
     --quiet >/dev/null
+  # CPU 2 + 1Gi mem: the synthetic CLI fans out N probes per pass
+  # concurrently via asyncio.gather + httpx. On 1 CPU / 512Mi (the
+  # Cloud Run default) the parallel TLS handshakes serialize and
+  # probe latency balloons from ~2s to ~12s, blowing past task-
+  # timeout. 2 CPU / 1Gi handles 6 passes × 4 region pairs × 2
+  # probe types per pass comfortably.
 
   run_uri="https://${monitor_region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job_name}:run"
   if gc scheduler jobs describe "$scheduler_name" --location "$monitor_region" >/dev/null 2>&1; then
