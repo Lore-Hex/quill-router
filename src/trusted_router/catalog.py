@@ -360,10 +360,12 @@ PROVIDERS: dict[str, Provider] = {
         name="Together",
         supports_embeddings=True,
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Together documents privacy controls, including ZDR as an account/privacy "
-            "setting. TrustedRouter does not mark this route as provider-ZDR unless "
-            "the deployed account setting is separately verified."
+            "Tracked as provider ZDR for TrustedRouter prepaid routes because the "
+            "deployed Together account has ZDR enabled. Together documents ZDR as "
+            "an account/privacy setting."
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
     ),
@@ -525,10 +527,12 @@ PROVIDERS: dict[str, Provider] = {
         slug="nebius",
         name="Nebius Token Factory",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Nebius documents no model training on customer data and an optional ZDR "
-            "account setting. TrustedRouter does not mark this route as provider-ZDR "
-            "unless that setting is separately verified."
+            "Tracked as provider ZDR for TrustedRouter prepaid routes because the "
+            "deployed Nebius account has ZDR enabled. Nebius documents no model "
+            "training on customer data and optional ZDR controls."
         ),
         provider_policy_url="https://docs.studio.nebius.com/legal/legal-quick-guide",
     ),

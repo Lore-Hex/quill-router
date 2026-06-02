@@ -225,6 +225,10 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert openai["provider_confidential_compute"] is None
     anthropic = next(item for item in provider_rows if item["id"] == "anthropic")
     assert anthropic["provider_zero_data_retention"] is True
+    together = next(item for item in provider_rows if item["id"] == "together")
+    assert together["provider_zero_data_retention"] is True
+    nebius = next(item for item in provider_rows if item["id"] == "nebius")
+    assert nebius["provider_zero_data_retention"] is True
     deepseek = next(item for item in provider_rows if item["id"] == "deepseek")
     assert deepseek["provider_zero_data_retention"] is False
 
