@@ -79,11 +79,21 @@ def test_monitor_alias_expands_to_paid_rollover_candidates() -> None:
     )
 
     assert len(candidates) >= 2
+    # Cheapest-first ordering: DeepSeek V4 Flash leads (~0.154/0.308 $/M),
+    # then Mistral Small. Steady-state probe cost is ~12x lower than the
+    # previous claude-haiku-4.5 leader. See monitor_candidate_models
+    # docstring for the full cost-ordered list.
     assert [candidate.id for candidate in candidates[:2]] == [
-        "anthropic/claude-haiku-4.5",
-        "z-ai/glm-4.5-air",
+        "deepseek/deepseek-v4-flash",
+        "mistralai/mistral-small-2603",
     ]
     assert all(not candidate.id.endswith(":free") for candidate in candidates)
+    # Reasoning-by-default models (kimi-k2.6, glm-4.6) are kept in the
+    # rollover tail but not at the head, so the steady-state probe
+    # path is reasoning-content-free and pong_mismatch noise stays low.
+    head = [c.id for c in candidates[:3]]
+    assert "moonshotai/kimi-k2.6" not in head
+    assert "z-ai/glm-4.6" not in head
 
 
 def test_monitor_alias_is_marked_internal_only() -> None:
