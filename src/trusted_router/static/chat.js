@@ -29,9 +29,20 @@
     const KEY_SESSION_STORAGE = "tr_chat_key";
     const KEY_COOKIE =
         (window.__TR_CHAT__ && window.__TR_CHAT__.keyCookieName) || "tr_chat_key";
+    // Inference endpoints (chat/completions, messages, responses) go
+    // through the same-origin chat-proxy because direct cross-origin
+    // fetch to api.quillrouter.com is CORS-blocked by the attested
+    // gateway. Server-side template renders this as "/chat-proxy/v1".
     const API_BASE =
         (window.__TR_CHAT__ && window.__TR_CHAT__.apiBaseUrl) ||
-        "https://api.quillrouter.com/v1";
+        "/chat-proxy/v1";
+    // Public catalog endpoint — TR control plane serves /v1/models
+    // anonymously, so the picker can load without any browser key /
+    // proxy hop. Avoids hitting the attested gateway's 401 for an
+    // unauthenticated catalog list.
+    const CATALOG_BASE =
+        (window.__TR_CHAT__ && window.__TR_CHAT__.catalogBaseUrl) ||
+        "/v1";
     const ISSUE_KEY_PATH =
         (window.__TR_CHAT__ && window.__TR_CHAT__.issueKeyPath) ||
         "/internal/chat/issue-browser-key";
@@ -243,7 +254,7 @@
         if (MODELS_LOADING || MODELS.length > 0) return;
         MODELS_LOADING = true;
         try {
-            const resp = await fetch(API_BASE + "/models");
+            const resp = await fetch(CATALOG_BASE + "/models");
             if (!resp.ok) throw new Error("models fetch " + resp.status);
             const json = await resp.json();
             const data = Array.isArray(json.data) ? json.data : [];

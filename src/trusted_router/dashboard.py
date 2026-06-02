@@ -190,18 +190,16 @@ def public_chat_html(settings: Settings) -> str:
     See docs (plan file) for the full architecture.
     """
     return _env().get_template("public/chat.html").render(
-        # CRITICAL: chat playground talks SAME-ORIGIN to TR's own /v1/*
-        # (FastAPI inference routes), not cross-origin to
-        # api.quillrouter.com. The attested gateway at api.quillrouter.com
-        # rejects browser preflight (401 + no CORS headers), so any
-        # cross-origin fetch from a browser fails with NetworkError.
-        # TR's same-origin /v1 routes through the same attested gateway
-        # internally, so users still hit the verifiable path — they
-        # just don't hit it directly with a browser fetch. As a free
-        # bonus, x-trustedrouter-provider response headers are visible
-        # to the playground (same-origin = no CORS expose required),
-        # so the "via {provider}" meta line lights up.
-        api_base_url="/v1",
+        # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
+        # streaming pipe in routes/chat_proxy.py) to forward to
+        # api.quillrouter.com. Direct browser fetch to api.quillrouter.com
+        # is blocked by CORS (the attested gateway 401s preflight
+        # with no ACAO headers). The proxy pipes raw bytes without
+        # inspecting / logging them — privacy posture matches the
+        # attested gateway itself. Same-origin also means x-trustedrouter-
+        # provider response headers are visible without any CORS
+        # expose-headers work, so "via {provider}" lights up.
+        api_base_url="/chat-proxy/v1",
         site_url=f"https://{settings.trusted_domain}/chat",
         title="Chat - TrustedRouter",
         heading="Chat",

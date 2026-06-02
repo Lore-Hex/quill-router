@@ -28,6 +28,7 @@ from trusted_router.routes.billing import register_billing_routes
 from trusted_router.routes.broadcast import register_broadcast_routes
 from trusted_router.routes.byok import register_byok_routes
 from trusted_router.routes.catalog import register_catalog_routes
+from trusted_router.routes.chat_proxy import register_chat_proxy_routes
 from trusted_router.routes.compat import register_compat_stub_routes
 from trusted_router.routes.console import register_console_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
@@ -94,6 +95,15 @@ def create_app(
     api = _make_api_router(settings)
     register_oauth_routes(app, api)
     register_console_routes(app)
+    # /chat-proxy/v1/* — same-origin streaming pipe for the chat
+    # playground. Mounted on the FastAPI app directly (not on `api`) so
+    # it's not re-prefixed; the route declares its own /chat-proxy/v1
+    # prefix. Production inference is intentionally restricted to the
+    # attested gateway, but the browser-side playground needs a same-
+    # origin path because cross-origin fetch to the attested gateway
+    # fails CORS. The proxy pipes raw bytes — no body inspection or
+    # logging — preserving the privacy posture.
+    register_chat_proxy_routes(app)
     app.include_router(api)
     app.include_router(api, prefix="/v1")
     return app
