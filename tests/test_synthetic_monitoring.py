@@ -78,23 +78,24 @@ def test_monitor_alias_expands_to_paid_rollover_candidates() -> None:
         Settings(environment="test"),
     )
 
-    assert len(candidates) >= 3
-    # Tier 1 + tier 2 are both DeepSeek-family non-reasoning models so
-    # a single-model glitch on v4-flash rolls over INSTANTLY to v3.2
-    # within the same provider API path (still cheap, still non-
-    # reasoning). Mistral Small follows at tier 3 as cross-provider
-    # fallback for a full DeepSeek outage. See monitor_candidate_models
-    # for the full cost-ordered list.
-    assert [candidate.id for candidate in candidates[:3]] == [
+    assert len(candidates) >= 4
+    # Tiers 1-3 are all DeepSeek-family non-reasoning models:
+    #   1. v4-flash (cheapest, 4 providers: deepseek/parasail/siliconflow/novita)
+    #   2. v3.2     (same-family backup if v4-flash misbehaves)
+    #   3. v4-pro   (+tinfoil +gmi providers — total of ~7 routes before
+    #                we cross to a different model)
+    # Mistral Small comes at tier 4 as the first cross-MODEL fallback.
+    assert [candidate.id for candidate in candidates[:4]] == [
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v3.2",
+        "deepseek/deepseek-v4-pro",
         "mistralai/mistral-small-2603",
     ]
     assert all(not candidate.id.endswith(":free") for candidate in candidates)
     # Reasoning-by-default models (kimi-k2.6, glm-4.6) are kept in the
     # rollover tail but not at the head, so the steady-state probe
     # path is reasoning-content-free and pong_mismatch noise stays low.
-    head = [c.id for c in candidates[:4]]
+    head = [c.id for c in candidates[:5]]
     assert "moonshotai/kimi-k2.6" not in head
     assert "z-ai/glm-4.6" not in head
 
