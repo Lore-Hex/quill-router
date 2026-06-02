@@ -16,15 +16,21 @@ from trusted_router.synthetic.probes import (
 )
 
 # Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-
-# granularity at best (`* * * * *`); to get 10-second sampling we run
-# the probe 6 times per invocation with a 10s sleep between starts.
-# Sample density goes from ~16K → ~96K/day per region pair, the burn
-# windows tighten 6x, and real outages are detected within 10s instead
-# of 60s. Spending is still negligible because DeepSeek V4 leads
-# (~$0.30/day total across all probes at 10s).
+# granularity at best (`* * * * *`); to get sub-minute sampling we
+# run the probe multiple times per invocation with a sleep between
+# starts. 2 passes × 30s spacing = ~32K samples/day per region pair,
+# fits comfortably in a 60s scheduler tick on Cloud Run Job defaults.
+#
+# Going more aggressive (6 × 10s for ~96K samples/day) caused probe
+# executions to stack up under load: with default 1 CPU / 512Mi the
+# concurrent TLS handshakes serialized, individual probe latency
+# ballooned from ~2s to ~12s, and 60s cron ticks fired faster than
+# 90-400s executions could finish. Bumping Cloud Run Job to 2 CPU /
+# 1Gi in synthetic.sh should make 10s feasible again — try that in
+# a separate PR after watching a stable 30s baseline.
 # Override via TR_SYNTHETIC_RUNS_PER_INVOCATION (1 = old behaviour).
-_DEFAULT_RUNS_PER_INVOCATION = 6
-_DEFAULT_RUN_SPACING_SECONDS = 10.0
+_DEFAULT_RUNS_PER_INVOCATION = 2
+_DEFAULT_RUN_SPACING_SECONDS = 30.0
 
 
 async def _one_probe_pass(
