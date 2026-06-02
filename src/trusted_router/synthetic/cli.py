@@ -7,7 +7,8 @@ import time
 
 import httpx
 
-from trusted_router.config import get_settings
+from trusted_router.config import Settings, get_settings
+from trusted_router.storage_models import SyntheticProbeSample
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
@@ -25,10 +26,10 @@ _DEFAULT_RUN_SPACING_SECONDS = 30.0
 
 
 async def _one_probe_pass(
-    *, settings, monitor_region: str, control_plane: str,
+    *, settings: Settings, monitor_region: str, control_plane: str,
     internal_token: str | None, api_key: str | None,
     timeout: httpx.Timeout,
-) -> list:
+) -> list[SyntheticProbeSample]:
     samples = await run_synthetic_once(
         settings, monitor_region=monitor_region, api_key=api_key,
     )
@@ -38,7 +39,7 @@ async def _one_probe_pass(
                 await gateway_billing_probe(
                     client,
                     control_plane_base_url=control_plane,
-                    monitor_region=monitor_region or settings.primary_region,
+                    monitor_region=monitor_region,
                     api_key=api_key,
                     internal_token=internal_token,
                     model=settings.synthetic_monitor_model,
@@ -48,7 +49,7 @@ async def _one_probe_pass(
                 await gateway_fallback_probe(
                     client,
                     control_plane_base_url=control_plane,
-                    monitor_region=monitor_region or settings.primary_region,
+                    monitor_region=monitor_region,
                     api_key=api_key,
                     internal_token=internal_token,
                     model=settings.synthetic_monitor_model,
@@ -59,7 +60,11 @@ async def _one_probe_pass(
 
 async def run() -> int:
     settings = get_settings()
-    monitor_region = os.environ.get("TR_SYNTHETIC_MONITOR_REGION") or settings.synthetic_monitor_region
+    monitor_region = (
+        os.environ.get("TR_SYNTHETIC_MONITOR_REGION")
+        or settings.synthetic_monitor_region
+        or settings.primary_region
+    )
     control_plane = os.environ.get("TR_SYNTHETIC_CONTROL_PLANE_URL", "https://trustedrouter.com")
     internal_token = settings.internal_gateway_token
     api_key = settings.synthetic_monitor_api_key
@@ -80,7 +85,7 @@ async def run() -> int:
         )
     )
 
-    all_samples: list = []
+    all_samples: list[SyntheticProbeSample] = []
     pass_start_monotonic = time.monotonic()
     for pass_idx in range(runs_per_invocation):
         all_samples.extend(
