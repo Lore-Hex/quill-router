@@ -125,11 +125,13 @@ ensure_project_role() {
   # read-modify-write. Sleep + retry is the documented mitigation.
   local attempt=0
   local max_attempts=6
+  local last_stderr=""
   while [ "$attempt" -lt "$max_attempts" ]; do
-    if gc projects add-iam-policy-binding "$PROJECT_ID" \
+    last_stderr="$(gc projects add-iam-policy-binding "$PROJECT_ID" \
         --member="$member" \
         --role="$role" \
-        --quiet >/dev/null 2>&1; then
+        --quiet 2>&1 >/dev/null)"
+    if [ "$?" -eq 0 ]; then
       return 0
     fi
     attempt=$((attempt + 1))
@@ -137,6 +139,20 @@ ensure_project_role() {
       sleep "$attempt"
     fi
   done
-  echo "ERROR: failed to bind ${role} to ${member} after ${max_attempts} attempts" >&2
+  # PERMISSION_DENIED means the caller lacks
+  # resourcemanager.projects.setIamPolicy — typically the case in CI
+  # where the deploy service account has run.developer but not IAM
+  # admin. In that case the role binding is expected to already be in
+  # place from a prior local provisioning run; treat as soft-success
+  # and let the actual Cloud Run deploy fail loudly if the perm IS
+  # missing. Without this, every CI deploy of a job requiring
+  # ensure_project_role would silently no-op via continue-on-error
+  # AND leave the underlying Cloud Run Job unchanged — exactly the
+  # silent failure mode that hid the 2026-06-02 pong surge for 8h.
+  if echo "$last_stderr" | grep -qE 'PERMISSION_DENIED|setIamPolicy'; then
+    echo "WARN: caller lacks setIamPolicy on ${PROJECT_ID}; assuming ${role} for ${member} is already bound (provisioned in a prior local run). The Cloud Run deploy below will surface a clear error if the binding is actually missing." >&2
+    return 0
+  fi
+  echo "ERROR: failed to bind ${role} to ${member} after ${max_attempts} attempts. Last stderr: ${last_stderr}" >&2
   return 1
 }
