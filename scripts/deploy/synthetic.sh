@@ -54,13 +54,18 @@ BASE_ENV_VARS=(
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_SYNTHETIC_MONITOR_MODEL=trustedrouter/monitor"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
-  # 30-second sub-cadence: each per-minute scheduler invocation runs
-  # the probe twice with a 30s gap, so we get ~32K samples/day instead
-  # of ~16K. Tighter burn-rate windows, faster real-outage detection.
-  # DeepSeek V4 Flash leads the rollover pool so the extra spend is
-  # ~$0.10/day vs ~$0.05/day at 1× — well inside the synthetic budget.
-  "TR_SYNTHETIC_RUNS_PER_INVOCATION=2"
-  "TR_SYNTHETIC_RUN_SPACING_SECONDS=30"
+  # 10-second sub-cadence: each per-minute scheduler invocation runs
+  # the probe 6 times spaced 10s apart, so we get ~96K samples/day
+  # instead of ~16K. Tightens burn-rate windows by another 3x vs the
+  # 30s setting, drops 95% CI on 99.9% uptime to ~±0.010%, and detects
+  # a real outage within 10s instead of 60s.
+  #
+  # Budget impact: DeepSeek V4 Flash leads (and is served by 4
+  # providers transparently), so per-probe spend is ~3 μ$. At 6 passes
+  # × 60 min × 24h × per-region-pair × 2 probe types ≈ ~$0.30/day —
+  # negligible vs the SLO observability win.
+  "TR_SYNTHETIC_RUNS_PER_INVOCATION=6"
+  "TR_SYNTHETIC_RUN_SPACING_SECONDS=10"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
 )
@@ -92,7 +97,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     --set-env-vars "$set_env_vars" \
     --update-secrets "$UPDATE_SECRETS" \
     --max-retries 0 \
-    --task-timeout 150s \
+    --task-timeout 300s \
     --quiet >/dev/null
 
   run_uri="https://${monitor_region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job_name}:run"

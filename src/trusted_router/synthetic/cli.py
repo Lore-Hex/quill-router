@@ -16,13 +16,15 @@ from trusted_router.synthetic.probes import (
 )
 
 # Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-
-# granularity at best (`* * * * *`); to get 30-second sampling we run
-# the probe twice per invocation with a sleep in between. Doubles the
-# sample density (~16K → ~32K samples/day) so the burn-rate windows
-# tighten faster after a real outage. Default 2 sub-runs spaced 30s.
+# granularity at best (`* * * * *`); to get 10-second sampling we run
+# the probe 6 times per invocation with a 10s sleep between starts.
+# Sample density goes from ~16K → ~96K/day per region pair, the burn
+# windows tighten 6x, and real outages are detected within 10s instead
+# of 60s. Spending is still negligible because DeepSeek V4 leads
+# (~$0.30/day total across all probes at 10s).
 # Override via TR_SYNTHETIC_RUNS_PER_INVOCATION (1 = old behaviour).
-_DEFAULT_RUNS_PER_INVOCATION = 2
-_DEFAULT_RUN_SPACING_SECONDS = 30.0
+_DEFAULT_RUNS_PER_INVOCATION = 6
+_DEFAULT_RUN_SPACING_SECONDS = 10.0
 
 
 async def _one_probe_pass(

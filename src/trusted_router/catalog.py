@@ -1162,21 +1162,21 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
     return sorted(by_provider.values(), key=_price_sort_key)[:limit]
 
 
-def monitor_candidate_models(limit: int = 10) -> list[Model]:
+def monitor_candidate_models(limit: int = 12) -> list[Model]:
     # Order is ASCENDING by cost-per-probe so the steady-state synthetic
     # spend hits the cheapest reliable model first; rollover only
     # escalates to pricier models when the cheap path fails. This keeps
     # the rollover-resilience signal AND cuts steady-state probe cost
     # ~12x vs. anthropic/claude-haiku-4.5 leading.
     #
-    # Tier 1 + tier 2 are BOTH DeepSeek-family non-reasoning models —
-    # v4-flash and v3.2. When v4-flash has a bad minute the rollover
-    # immediately retries on v3.2 (same provider API path), which is
-    # still cheap and proven; only after BOTH DeepSeek tiers fail do
-    # we cross to a different provider. The intent is fastest possible
-    # rollover for the common case (a single model glitching) without
-    # losing the multi-provider resilience signal for full-provider
-    # outages.
+    # Tiers 1-3 are ALL DeepSeek-family non-reasoning models —
+    # v4-flash, v3.2, v4-pro. The lead (v4-flash) is served by 4
+    # providers (deepseek, parasail, siliconflow, novita) so TR's
+    # within-model routing already fans across providers transparently.
+    # Tier 2 (v3.2) is same-family fallback for the cheap path; tier 3
+    # (v4-pro) brings 2 ADDITIONAL providers (tinfoil + gmi) so a 6th
+    # and 7th provider show up in the rollover ladder before crossing
+    # to Mistral / OpenAI / etc.
     #
     # Leading with non-reasoning models (DeepSeek V4/V3.2, Mistral
     # Small, GPT-5.4 nano) avoids the reasoning_content failure mode
@@ -1184,9 +1184,10 @@ def monitor_candidate_models(limit: int = 10) -> list[Model]:
     # stay in the rollover tail but won't be hit in steady state.
     #
     # Costs at 2026-06 prices ($/M tokens, in / out):
-    #   deepseek/deepseek-v4-flash    0.154 / 0.308   ← cheapest, lead
+    #   deepseek/deepseek-v4-flash    0.154 / 0.308   ← lead (4 providers)
     #   deepseek/deepseek-v3.2        0.308 / 0.495   ← same-family backup
-    #   mistralai/mistral-small-2603  0.165 / 0.660
+    #   deepseek/deepseek-v4-pro      0.478 / 0.957   ← +tinfoil +gmi
+    #   mistralai/mistral-small-2603  0.165 / 0.660   ← cross-provider
     #   openai/gpt-5.4-nano           0.176 / 1.100
     #   z-ai/glm-4.5-air              0.220 / 1.210
     #   google/gemini-2.5-flash       0.330 / 2.750
@@ -1196,6 +1197,7 @@ def monitor_candidate_models(limit: int = 10) -> list[Model]:
     preferred_ids = [
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v3.2",
+        "deepseek/deepseek-v4-pro",
         "mistralai/mistral-small-2603",
         "openai/gpt-5.4-nano",
         "z-ai/glm-4.5-air",
