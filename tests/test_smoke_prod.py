@@ -146,7 +146,7 @@ def test_status_pages_are_publicly_reachable(
     }.items():
         assert response.status_code == 200, f"{label}: {response.status_code} {response.text[:200]}"
 
-    assert "Status - TrustedRouter" in status_page.text
+    assert "Status | TrustedRouter" in status_page.text
     status_payload = status_json.json()["data"]
     status_host_payload = status_host_json.json()["data"]
     for payload in [status_payload, status_host_payload]:
@@ -218,14 +218,14 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
 def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) -> None:
     """Belt-and-suspenders for the alpha-removal: if a future deploy
     accidentally restores 'Public Alpha' framing, this test fails. The
-    'multi-region' pill is also the smoke check that the regions panel
+    'regional routing' pill is also the smoke check that the regions panel
     rendered (Jinja didn't error out on map_regions)."""
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
     assert "Production" in body
-    assert "multi-region" in body
+    assert "regional routing" in body
     assert "world-map.svg" in body or "<svg" in body  # map renders
 
 
