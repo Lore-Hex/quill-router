@@ -289,6 +289,23 @@ jobs:
           TR_DEPLOY_TARGET_REGIONS: asia-northeast1,asia-southeast1,southamerica-east1
         run: bash scripts/deploy/rollout.sh
 
+      - name: Deploy synthetic monitor Cloud Run Job
+        # Re-deploys the synthetic monitor Cloud Run Job + Cloud Scheduler
+        # cron with the latest image. Without this step, probe code or
+        # cron-config (TR_SYNTHETIC_RUNS_PER_INVOCATION, monitor pool
+        # ordering, etc.) changes ONLY land on the API service while the
+        # cron job keeps running stale code — exactly what caused the
+        # 06:00Z 2026-06-02 pong surge to persist after PR #14 + #15
+        # "deployed".
+        #
+        # The script is idempotent and gracefully no-ops if the
+        # synthetic monitor secret isn't present in this environment
+        # (test, staging). Failure here does NOT block the API rollout
+        # (continue-on-error) because synthetic monitoring is observability,
+        # not user-serving traffic.
+        continue-on-error: true
+        run: bash scripts/deploy/synthetic.sh
+
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1, then
       # europe-west4, then us-east4, each with its own 3-min watchdog
