@@ -1162,20 +1162,30 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
     return sorted(by_provider.values(), key=_price_sort_key)[:limit]
 
 
-def monitor_candidate_models(limit: int = 8) -> list[Model]:
+def monitor_candidate_models(limit: int = 10) -> list[Model]:
     # Order is ASCENDING by cost-per-probe so the steady-state synthetic
     # spend hits the cheapest reliable model first; rollover only
     # escalates to pricier models when the cheap path fails. This keeps
     # the rollover-resilience signal AND cuts steady-state probe cost
     # ~12x vs. anthropic/claude-haiku-4.5 leading.
     #
-    # Bonus: leading with non-reasoning models (DeepSeek V4, Mistral
+    # Tier 1 + tier 2 are BOTH DeepSeek-family non-reasoning models —
+    # v4-flash and v3.2. When v4-flash has a bad minute the rollover
+    # immediately retries on v3.2 (same provider API path), which is
+    # still cheap and proven; only after BOTH DeepSeek tiers fail do
+    # we cross to a different provider. The intent is fastest possible
+    # rollover for the common case (a single model glitching) without
+    # losing the multi-provider resilience signal for full-provider
+    # outages.
+    #
+    # Leading with non-reasoning models (DeepSeek V4/V3.2, Mistral
     # Small, GPT-5.4 nano) avoids the reasoning_content failure mode
     # that drove the 2026-05 pong_mismatch surge — kimi-k2.6 / glm-4.6
     # stay in the rollover tail but won't be hit in steady state.
     #
     # Costs at 2026-06 prices ($/M tokens, in / out):
-    #   deepseek/deepseek-v4-flash    0.154 / 0.308   ← cheapest
+    #   deepseek/deepseek-v4-flash    0.154 / 0.308   ← cheapest, lead
+    #   deepseek/deepseek-v3.2        0.308 / 0.495   ← same-family backup
     #   mistralai/mistral-small-2603  0.165 / 0.660
     #   openai/gpt-5.4-nano           0.176 / 1.100
     #   z-ai/glm-4.5-air              0.220 / 1.210
@@ -1185,6 +1195,7 @@ def monitor_candidate_models(limit: int = 8) -> list[Model]:
     #   anthropic/claude-haiku-4.5    1.100 / 5.500   ← most expensive
     preferred_ids = [
         "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v3.2",
         "mistralai/mistral-small-2603",
         "openai/gpt-5.4-nano",
         "z-ai/glm-4.5-air",
