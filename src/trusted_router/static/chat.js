@@ -140,8 +140,33 @@
             if (raw) {
                 const parsed = JSON.parse(raw);
                 if (parsed && typeof parsed === "object") {
-                    parsed.chats = parsed.chats || {};
-                    parsed.preferences = parsed.preferences || {};
+                    parsed.chats = parsed.chats && typeof parsed.chats === "object"
+                        ? parsed.chats
+                        : {};
+                    parsed.preferences = parsed.preferences && typeof parsed.preferences === "object"
+                        ? parsed.preferences
+                        : {};
+                    // Walk every chat and heal missing/wrong-typed fields so a
+                    // schema drift between deploys can't crash later
+                    // renderers. Drops chats that are completely
+                    // unrecoverable (non-object).
+                    const healedChats = {};
+                    for (const [id, chat] of Object.entries(parsed.chats)) {
+                        const healed = healChatShape(id, chat);
+                        if (healed) healedChats[healed.id] = healed;
+                    }
+                    parsed.chats = healedChats;
+                    // If the previously-active chat got dropped during
+                    // heal, fall back to the most recent remaining one
+                    // (or null, in which case ensureActiveChat creates
+                    // a fresh chat).
+                    if (
+                        !parsed.activeChatId ||
+                        !healedChats[parsed.activeChatId]
+                    ) {
+                        const ids = Object.keys(healedChats);
+                        parsed.activeChatId = ids.length > 0 ? ids[0] : null;
+                    }
                     return parsed;
                 }
             }
@@ -149,6 +174,65 @@
             // Corrupt state — reset rather than break the page
         }
         return { chats: {}, activeChatId: null, preferences: {} };
+    }
+
+    // Belt-and-suspenders chat-shape healer. Returns a guaranteed-valid
+    // chat object or null if the input is unrecoverable. Every renderer
+    // assumes these fields are present and the right type; without this
+    // a stale chat from an old schema (or one written by a bad partial
+    // save) crashes the page on load.
+    function healChatShape(id, chat) {
+        if (!chat || typeof chat !== "object") return null;
+        const out = {
+            id: typeof chat.id === "string" ? chat.id : (id || newChatId()),
+            title: typeof chat.title === "string" ? chat.title : "New chat",
+            created_at: typeof chat.created_at === "string" ? chat.created_at : isoNow(),
+            updated_at: typeof chat.updated_at === "string" ? chat.updated_at : isoNow(),
+            shared_system_prompt: typeof chat.shared_system_prompt === "string"
+                ? chat.shared_system_prompt
+                : "",
+            pinned: !!chat.pinned,
+            messages: Array.isArray(chat.messages) ? chat.messages : [],
+            models: Array.isArray(chat.models) && chat.models.length > 0
+                ? chat.models.map(_healSlotShape).filter(Boolean)
+                : [_defaultSlot()],
+        };
+        // If healing the models list killed every slot, fall back to one
+        // default model so the chat is still usable.
+        if (out.models.length === 0) out.models = [_defaultSlot()];
+        return out;
+    }
+
+    function _healSlotShape(slot) {
+        if (!slot || typeof slot !== "object") return null;
+        return {
+            model_id: typeof slot.model_id === "string" && slot.model_id
+                ? slot.model_id
+                : DEFAULT_MODEL_ID,
+            system_prompt: typeof slot.system_prompt === "string" ? slot.system_prompt : "",
+            params: slot.params && typeof slot.params === "object"
+                ? { ...DEFAULT_PARAMS, ...slot.params }
+                : { ...DEFAULT_PARAMS },
+            enabled: slot.enabled !== false,
+            label: typeof slot.label === "string" ? slot.label : "",
+            provider_preferences: slot.provider_preferences && typeof slot.provider_preferences === "object"
+                ? slot.provider_preferences
+                : undefined,
+        };
+    }
+
+    function _defaultSlot() {
+        // Note: can't read from STATE here — _defaultSlot is called
+        // FROM inside loadState, which runs before STATE is assigned
+        // (TDZ for the `let STATE = loadState()` line). DEFAULT_MODEL_ID
+        // is the safest fallback.
+        return {
+            model_id: DEFAULT_MODEL_ID,
+            system_prompt: "",
+            params: { ...DEFAULT_PARAMS },
+            enabled: true,
+            label: "",
+        };
     }
 
     function saveState() {
@@ -212,12 +296,20 @@
     }
 
     /** Returns the raw browser-API key. Fetches a new one if missing. */
-    async function ensureBrowserKey() {
+    async function ensureBrowserKey(opts) {
+        const forceRefresh = !!(opts && opts.forceRefresh);
         let key = null;
-        try {
-            key = sessionStorage.getItem(KEY_SESSION_STORAGE);
-        } catch (_) {}
-        if (key) return key;
+        if (!forceRefresh) {
+            try {
+                key = sessionStorage.getItem(KEY_SESSION_STORAGE);
+            } catch (_) {}
+            if (key) return key;
+        } else {
+            // Caller hit a 401 — the cached key is stale. Drop it before
+            // asking for a fresh one so we don't accidentally reuse it
+            // on the next call.
+            try { sessionStorage.removeItem(KEY_SESSION_STORAGE); } catch (_) {}
+        }
 
         // POST to the issue-key endpoint. Same-origin (trustedrouter.com)
         // so the session cookie is sent automatically.
@@ -2453,15 +2545,34 @@
         const streamKey = assistantMsg.id + ":" + slot.model_id + ":" + (slot.label || "");
         STREAMS.set(streamKey, abort);
         updateSendButtonMode();
-        const resp = await fetch(API_BASE + "/chat/completions", {
-            method: "POST",
-            signal: abort.signal,
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: "Bearer " + key,
-            },
-            body: JSON.stringify(body),
-        });
+        // Self-healing on stale browser key: if the first attempt 401s
+        // because the cached sk-tr-… has expired, been rotated, or
+        // belongs to a previous deploy era, drop it and re-issue ONCE
+        // before giving up. Avoids the failure mode where a stale
+        // sessionStorage entry from a previous session permanently
+        // breaks Send until the user manually clears storage.
+        async function _sendOnce(bearer) {
+            return fetch(API_BASE + "/chat/completions", {
+                method: "POST",
+                signal: abort.signal,
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: "Bearer " + bearer,
+                },
+                body: JSON.stringify(body),
+            });
+        }
+        let resp = await _sendOnce(key);
+        if (resp.status === 401) {
+            try {
+                const freshKey = await ensureBrowserKey({ forceRefresh: true });
+                resp = await _sendOnce(freshKey);
+            } catch (e) {
+                // ensureBrowserKey already pops the sign-in modal on a
+                // hard 401/302 from issue-key; propagate the original
+                // 401 if re-issue itself failed.
+            }
+        }
         if (!resp.ok) {
             const errText = await resp.text();
             throw new Error(errText.slice(0, 240));
