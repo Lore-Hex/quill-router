@@ -9,17 +9,25 @@ from trusted_router.storage import STORE
 
 def test_revenue_pages_are_public(client: TestClient) -> None:
     markers = {
-        "/compare/openrouter": "Routing convenience with a prompt path you can inspect.",
+        "/compare/openrouter": "OpenRouter, but you can verify the prompt path.",
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/security": "TrustedRouter does not store prompt or output content by default.",
+        # SEO landing pages — each targets a high-intent buyer query.
+        # The marker is a load-bearing headline from the page so a
+        # silent template breakage gets caught here.
+        "/openrouter-alternative": "An OpenRouter alternative built around verifiable privacy.",
+        "/private-llm-api": "A private LLM API where \"private\" means cryptographically verified.",
+        "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
+        "/llm-zero-data-retention": "Zero data retention as a verifiable property",
+        "/claude-api-privacy": "Call Claude through a prompt path you can verify.",
     }
 
     for path, marker in markers.items():
         response = client.get(path)
-        assert response.status_code == 200
-        assert marker in response.text
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        assert marker in response.text, f"{path} missing marker {marker!r}"
         assert "Approved short copy only" not in response.text
         assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text

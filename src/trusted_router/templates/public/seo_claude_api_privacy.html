@@ -1,0 +1,91 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Claude API privacy via TrustedRouter">
+  <div class="marketing-copy">
+    <span class="eyebrow">Claude API privacy</span>
+    <h2>Call Claude through a prompt path you can verify.</h2>
+    <p>Anthropic's privacy posture is one of the best in the industry. But the path between your code and Anthropic still matters — and most routing layers are closed-source black boxes.</p>
+    <p>TrustedRouter routes to Claude (and 30+ other providers) through a hardware-attested, open-source gateway. Anthropic's privacy claims plus a verifiable router on top.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try Claude Sonnet in the playground</a>
+      <a class="btn" href="/security">How attestation works</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Claude via TR</span><span>Anthropic + OpenAI SDKs</span></div>
+    <pre><code># Anthropic SDK
+from anthropic import Anthropic
+client = Anthropic(
+    base_url="{{ api_base_url|replace('/v1', '') }}",
+    api_key="sk-tr-v1-..."
+)
+
+# Or via OpenAI-compat SDK
+from openai import OpenAI
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+resp = client.chat.completions.create(
+    model="anthropic/claude-sonnet-4.6",
+    messages=[{"role": "user", "content": "hi"}],
+)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">No router logs</span>
+    <h3>TR doesn't store your prompts.</h3>
+    <p>Attested gateway never writes request or response bodies. Verifiable in source. Anthropic's own privacy policy applies upstream.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Models you want</span>
+    <h3>Sonnet 4.6, Opus 4.7, Haiku 4.5.</h3>
+    <p>Plus the older 3.x family, plus the full models from OpenAI, Google, Meta, Mistral, Z.AI, DeepSeek, Kimi, MiniMax. Same API, one key.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Verifiable</span>
+    <h3>Hash-check the gateway image.</h3>
+    <p>Fetch /attestation, grab the image_digest, compare to the published artifact. Now you know what code is between you and Anthropic.</p>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">When you'd use TR for Claude</span>
+    <h2>You want Anthropic + something more.</h2>
+  </div>
+  <div>
+    <p><strong>Audit-driven routing.</strong> Your security team needs to read the router code. Anthropic's API is closed; TR's router is open.</p>
+    <p><strong>Provider fallback.</strong> Anthropic has occasional API hiccups. TR's pool falls over to GPT, Gemini, or other Claude-class models on a hard failure.</p>
+    <p><strong>Comparison playground.</strong> Try the same prompt across Claude, GPT, Gemini, Kimi side-by-side at trustedrouter.com/chat — no per-provider setup.</p>
+    <p><strong>Unified billing.</strong> One TR contract, one invoice, one usage dashboard. No per-provider account sprawl.</p>
+    <p><strong>Self-host.</strong> Run TR inside your own VPC for HIPAA, FedRAMP, or air-gapped environments. Anthropic-via-TR still works because the routing image is verifiable.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="Claude via TR comparison">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Anthropic direct</strong><strong>Claude via TR</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Anthropic privacy posture</span><span>Anthropic's policy</span><span>Anthropic's policy (passthrough)</span>
+  </div>
+  <div class="matrix-row">
+    <span>Router code</span><span>n/a</span><span>Open source, attested</span>
+  </div>
+  <div class="matrix-row">
+    <span>Multi-model</span><span>Claude only</span><span>Claude + 30 more providers, same API</span>
+  </div>
+  <div class="matrix-row">
+    <span>Failover</span><span>Manual</span><span>Automatic on hard failures</span>
+  </div>
+  <div class="matrix-row">
+    <span>Unified billing</span><span>Per-provider</span><span>One invoice</span>
+  </div>
+</section>
+
+{% endblock %}

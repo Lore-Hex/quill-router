@@ -1,0 +1,71 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="HIPAA-compatible LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">HIPAA-compatible LLM routing</span>
+    <h2>The LLM API whose privacy posture is verifiable, not just contractual.</h2>
+    <p>HIPAA covered entities and their business associates can't legally route PHI through a service whose data-handling claims they can't audit.</p>
+    <p>TrustedRouter's prompt path runs inside a hardware-attested gateway. The source is open. The image hash is published. Privacy isn't promised — it's checkable.</p>
+    <p>
+      <a class="btn primary" href="/security">Security architecture</a>
+      <a class="btn" href="/chat">Try in playground</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Verify the gateway</span><span>curl</span></div>
+    <pre><code># Live attestation, bound to a nonce
+NONCE=$(openssl rand -hex 16)
+curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+
+# Returns a JWT signed by the CPU's root key.
+# image_digest matches the artifact published at
+# trustedrouter.com/security — verifiable end to end.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">No retention</span>
+    <h3>Prompts and outputs aren't stored.</h3>
+    <p>The attested binary never writes request or response bodies. Token counts and metadata only. The schema is in source.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Verifiable</span>
+    <h3>Read the code that handles PHI.</h3>
+    <p>Every byte that touches a prompt body flows through open-source code you can audit. Your security team doesn't have to take our word.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Multi-provider</span>
+    <h3>Route to providers with strong posture.</h3>
+    <p>Anthropic Claude, GPT-5, Gemini, Llama via Tinfoil, GLM, DeepSeek — pick by published per-provider retention and ZDR status.</p>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">What HIPAA buyers actually need</span>
+    <h2>Verifiability beats audit theater.</h2>
+  </div>
+  <div>
+    <p><strong>An auditable prompt path.</strong> Open source lets your security team trace exactly what happens to PHI from request entry to provider hand-off. No reverse engineering.</p>
+    <p><strong>Provider transparency.</strong> Each model page publishes the upstream provider's posture — zero-retention contracts, confidential compute, end-to-end encryption claims — with links to source. You route deliberately.</p>
+    <p><strong>BAA where it matters.</strong> Direct BAAs with TR + the upstream provider you select. The attestation gives you what BAAs can't: cryptographic proof of which code processed a specific request.</p>
+    <p><strong>Fail-closed gateway.</strong> If attestation can't verify, the gateway stops accepting requests. There is no degraded mode that processes PHI without proof.</p>
+    <p><strong>Self-host option.</strong> Run the same open-source gateway inside your own VPC. Same image hash, same attestation chain, same verifiability.</p>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">Honest scope</span>
+    <h2>What attestation doesn't cover.</h2>
+  </div>
+  <div>
+    <p>Attestation proves the running binary is the published binary. It doesn't prove the binary is bug-free — open-source code can have flaws and we welcome reports.</p>
+    <p>It doesn't bypass nation-state actors with physical access to the cloud provider. The threat model is "operator can't see PHI" + "code is what was published," not "absolute secrecy from all adversaries."</p>
+    <p>Upstream providers handle prompts according to their own policies. We publish each one's posture on the model pages so you can route accordingly.</p>
+  </div>
+</section>
+
+{% endblock %}
