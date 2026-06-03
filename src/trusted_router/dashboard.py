@@ -197,6 +197,10 @@ class PublicPage:
     template: str
     title: str
     description: str
+    # Optional per-page social card filename under /static/og/. When set,
+    # link unfurls use that tailored 1200x630 image instead of the default
+    # /og.png. Generate the files per docs/marketing/og-card-spec.md.
+    og_card: str | None = None
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
@@ -235,6 +239,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     # on /, /compare/openrouter, and the related landing pages.
     "openrouter-alternative": PublicPage(
         template="public/seo_openrouter_alternative.html",
+        og_card="openrouter-alternative.png",
         title="OpenRouter Alternative — TrustedRouter",
         description=(
             "An open-source, hardware-attested OpenRouter alternative. "
@@ -243,6 +248,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "private-llm-api": PublicPage(
         template="public/seo_private_llm_api.html",
+        og_card="private-llm-api.png",
         title="Private LLM API — Verifiable, Attested, Open Source",
         description=(
             "A private LLM API where privacy is cryptographically verifiable. "
@@ -251,6 +257,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "hipaa-llm-api": PublicPage(
         template="public/seo_hipaa_llm_api.html",
+        og_card="hipaa-llm-api.png",
         title="HIPAA-Compatible LLM Routing — TrustedRouter",
         description=(
             "An auditable LLM API for HIPAA covered entities. "
@@ -259,6 +266,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "llm-zero-data-retention": PublicPage(
         template="public/seo_zero_data_retention.html",
+        og_card="llm-zero-data-retention.png",
         title="Zero Data Retention LLM API — Verifiable in Source",
         description=(
             "Zero data retention as a structural property of the open-source code, "
@@ -267,6 +275,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "claude-api-privacy": PublicPage(
         template="public/seo_claude_api_privacy.html",
+        og_card="claude-api-privacy.png",
         title="Claude API Privacy — Through TrustedRouter",
         description=(
             "Call Anthropic Claude through a hardware-attested, open-source router. "
@@ -276,6 +285,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     # Competitor-alternative + category SEO pages (round 2).
     "litellm-alternative": PublicPage(
         template="public/seo_litellm_alternative.html",
+        og_card="litellm-alternative.png",
         title="LiteLLM Alternative — Self-Host and Verify It",
         description=(
             "A LiteLLM alternative that's self-hostable AND verifiable. "
@@ -284,6 +294,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "portkey-alternative": PublicPage(
         template="public/seo_portkey_alternative.html",
+        og_card="portkey-alternative.png",
         title="Portkey Alternative — Routing Without Logging Every Prompt",
         description=(
             "A Portkey alternative for teams that can't store prompt content. "
@@ -292,6 +303,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "confidential-computing-llm": PublicPage(
         template="public/seo_confidential_computing_llm.html",
+        og_card="confidential-computing-llm.png",
         title="Confidential Computing for LLMs — TrustedRouter",
         description=(
             "Run LLM inference behind hardware attestation across every provider. "
@@ -300,6 +312,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "tinfoil-alternative": PublicPage(
         template="public/seo_tinfoil_alternative.html",
+        og_card="tinfoil-alternative.png",
         title="Tinfoil Alternative — Verifiable Privacy, Every Provider",
         description=(
             "Same verifiable-privacy bet as Tinfoil, applied as a router. "
@@ -384,6 +397,16 @@ def dashboard_html(settings: Settings) -> str:
     )
 
 
+def _og_image_url(settings: Settings, og_card: str | None) -> str:
+    """Resolve the social-card URL for a page. Returns the tailored card
+    only when its PNG exists under static/og/; otherwise the default
+    brand card. Lets us declare per-page cards before the images are
+    generated without ever serving a 404 unfurl."""
+    if og_card and (STATIC_DIR / "og" / og_card).is_file():
+        return f"https://{settings.trusted_domain}/static/og/{og_card}"
+    return f"https://{settings.trusted_domain}/og.png"
+
+
 def public_page_html(settings: Settings, page_key: str) -> str:
     page = PUBLIC_PAGES[page_key]
     return _env().get_template(page.template).render(
@@ -392,10 +415,12 @@ def public_page_html(settings: Settings, page_key: str) -> str:
         title=f"{page.title} | TrustedRouter",
         heading=page.title,
         description=page.description,
-        # Absolute, environment-correct card URL so link unfurls work
-        # in staging/preview too; _base.html falls back to the prod
-        # card if this isn't passed.
-        og_image=f"https://{settings.trusted_domain}/og.png",
+        # Absolute, environment-correct card URL so link unfurls work in
+        # staging/preview too. Uses the page's tailored card only once the
+        # PNG actually exists on disk — so we can declare og_card now and
+        # each card auto-activates the moment its image is generated into
+        # static/og/, with zero risk of a 404 unfurl in the meantime.
+        og_image=_og_image_url(settings, page.og_card),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
