@@ -1,0 +1,83 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Portkey alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">Portkey alternative</span>
+    <h2>Portkey logs every request. TrustedRouter logs none of them — and proves it.</h2>
+    <p>Portkey is built around observability: it captures every request, response, and trace so you can monitor and govern AI usage. That's exactly what you want for some workloads — and exactly what you can't have for sensitive ones.</p>
+    <p>TrustedRouter takes the opposite stance. Prompt and output bodies are never persisted, the gateway is hardware-attested, and the whole thing is open source. You get routing, fallback, and usage metering without a copy of every prompt sitting in a logging backend.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try the playground</a>
+      <a class="btn" href="/security">Trust surface</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Metadata only — the full log schema</span><span>open source</span></div>
+    <pre><code>{
+  "model_id": "anthropic/claude-sonnet-4.6",
+  "input_tokens": 12,
+  "output_tokens": 84,
+  "cost_microdollars": 218,
+  "provider": "anthropic",
+  "region": "us-central1"
+}
+# No prompt body. No response body. No content.
+# Verify the schema in the open-source code.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Usage tracking</span>
+    <h3>Metering without content.</h3>
+    <p>Token counts, cost, latency, model, region — everything you need for billing and capacity, none of the prompt content.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">No content logs</span>
+    <h3>By construction, not config.</h3>
+    <p>The attested binary never writes request or response bodies. It isn't a toggle you can forget to set; it's a property of the code you can verify.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Routing + fallback</span>
+    <h3>The gateway features you came for.</h3>
+    <p>30+ providers, automatic rollover on failure, BYOK, prepaid credits — the control-plane conveniences, minus the surveillance.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="Portkey vs TrustedRouter">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Portkey</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Core stance</span><span>Log everything for control</span><span>Log nothing, prove it</span>
+  </div>
+  <div class="matrix-row">
+    <span>Prompt content</span><span>Captured + stored</span><span>Never persisted</span>
+  </div>
+  <div class="matrix-row">
+    <span>Source</span><span>Closed</span><span>Open</span>
+  </div>
+  <div class="matrix-row">
+    <span>Runtime trust</span><span>Hosted policy</span><span>Hardware attestation</span>
+  </div>
+  <div class="matrix-row">
+    <span>Usage metering</span><span>Yes (full content)</span><span>Yes (metadata only)</span>
+  </div>
+  <div class="matrix-row">
+    <span>Best fit</span><span>Teams that want full request observability</span><span>Teams that can't keep prompt copies</span>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">Two valid philosophies</span>
+    <h2>Pick by what you're allowed to store.</h2>
+  </div>
+  <div>
+    <p>If you need to replay and inspect every request, an observability-first gateway is the right tool. If a stored copy of a prompt is a liability — PHI, privileged material, proprietary code — you need the opposite: a path that provably keeps nothing.</p>
+    <p>Why we built around proof: <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
+  </div>
+</section>
+
+{% endblock %}

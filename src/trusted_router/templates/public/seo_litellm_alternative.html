@@ -1,0 +1,80 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="LiteLLM alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">LiteLLM alternative</span>
+    <h2>LiteLLM lets you self-host. TrustedRouter lets you self-host <em>and</em> prove it.</h2>
+    <p>LiteLLM is a great open-source proxy: one OpenAI-compatible API across 100+ models, runs in your own infra. The gap is verification — once it's deployed, nobody outside your ops team can confirm what the running proxy actually does with a prompt.</p>
+    <p>TrustedRouter closes that gap. The gateway runs in hardware enclaves and signs the exact binary it's running, so the no-logging guarantee is cryptographically checkable — by you, your auditors, or your customers.</p>
+    <p>
+      <a class="btn primary" href="/chat">Try the playground</a>
+      <a class="btn" href="/security">How verification works</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Same OpenAI-compatible shape</span><span>Python</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+# Drop-in for any LiteLLM proxy integration.
+# Self-host TR too — your built image hash is the
+# hash your enclave reports, so attestation holds.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Self-host</span>
+    <h3>Run it in your own VPC.</h3>
+    <p>Like LiteLLM, the full stack is open source and self-hostable. Unlike LiteLLM, the deployment is attestable end to end.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Verifiable</span>
+    <h3>Prove the no-log claim.</h3>
+    <p>Build the image, deploy to a confidential VM, and the attestation reports your hash. Your security team verifies instead of trusting your runbook.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Hosted option</span>
+    <h3>Or skip the ops entirely.</h3>
+    <p>Don't want to run a proxy? Use the hosted attested gateway at api.quillrouter.com — same verification, zero infra.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="LiteLLM vs TrustedRouter">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>LiteLLM</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Open source</span><span>Yes</span><span>Yes</span>
+  </div>
+  <div class="matrix-row">
+    <span>Self-host</span><span>Yes</span><span>Yes</span>
+  </div>
+  <div class="matrix-row">
+    <span>Hosted option</span><span>LiteLLM Cloud</span><span>Attested hosted gateway</span>
+  </div>
+  <div class="matrix-row">
+    <span>Verifiable runtime</span><span>No — trust your deploy</span><span>Yes — hardware attestation</span>
+  </div>
+  <div class="matrix-row">
+    <span>No-log guarantee</span><span>Configurable</span><span>Structural + verifiable in source</span>
+  </div>
+  <div class="matrix-row">
+    <span>Best fit</span><span>Teams that want a self-hosted proxy</span><span>Teams that must <em>prove</em> what the proxy does</span>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">When to choose TR over LiteLLM</span>
+    <h2>When "trust our deployment" isn't enough.</h2>
+  </div>
+  <div>
+    <p>If your security review, your customers, or your regulator needs evidence — not assurances — that prompts aren't logged, a self-hosted proxy alone doesn't get you there. Attestation does.</p>
+    <p>Read the full argument: <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
+  </div>
+</section>
+
+{% endblock %}

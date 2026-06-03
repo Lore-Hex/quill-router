@@ -71,6 +71,10 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/hipaa-llm-api",
     "/llm-zero-data-retention",
     "/claude-api-privacy",
+    "/litellm-alternative",
+    "/portkey-alternative",
+    "/confidential-computing-llm",
+    "/tinfoil-alternative",
     "/docs/migrate-from-openrouter",
 )
 _BENCHMARK_INDEX_LINKS: tuple[dict[str, str], ...] = (
@@ -269,6 +273,39 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Anthropic's privacy posture plus a routing path you can verify."
         ),
     ),
+    # Competitor-alternative + category SEO pages (round 2).
+    "litellm-alternative": PublicPage(
+        template="public/seo_litellm_alternative.html",
+        title="LiteLLM Alternative — Self-Host and Verify It",
+        description=(
+            "A LiteLLM alternative that's self-hostable AND verifiable. "
+            "Hardware-attested gateway proves the no-logging guarantee."
+        ),
+    ),
+    "portkey-alternative": PublicPage(
+        template="public/seo_portkey_alternative.html",
+        title="Portkey Alternative — Routing Without Logging Every Prompt",
+        description=(
+            "A Portkey alternative for teams that can't store prompt content. "
+            "Usage metering without content logs, verifiable in source."
+        ),
+    ),
+    "confidential-computing-llm": PublicPage(
+        template="public/seo_confidential_computing_llm.html",
+        title="Confidential Computing for LLMs — TrustedRouter",
+        description=(
+            "Run LLM inference behind hardware attestation across every provider. "
+            "AWS Nitro Enclaves and GCP Confidential VMs, with remote attestation."
+        ),
+    ),
+    "tinfoil-alternative": PublicPage(
+        template="public/seo_tinfoil_alternative.html",
+        title="Tinfoil Alternative — Verifiable Privacy, Every Provider",
+        description=(
+            "Same verifiable-privacy bet as Tinfoil, applied as a router. "
+            "Attested, no-log gateway across 30+ providers with one API."
+        ),
+    ),
 }
 
 
@@ -355,6 +392,10 @@ def public_page_html(settings: Settings, page_key: str) -> str:
         title=f"{page.title} | TrustedRouter",
         heading=page.title,
         description=page.description,
+        # Absolute, environment-correct card URL so link unfurls work
+        # in staging/preview too; _base.html falls back to the prod
+        # card if this isn't passed.
+        og_image=f"https://{settings.trusted_domain}/og.png",
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),

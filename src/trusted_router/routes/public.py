@@ -172,6 +172,22 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_claude_api_privacy() -> str:
         return public_page_html(settings, "claude-api-privacy")
 
+    @public_html_route("/litellm-alternative")
+    async def seo_litellm_alternative() -> str:
+        return public_page_html(settings, "litellm-alternative")
+
+    @public_html_route("/portkey-alternative")
+    async def seo_portkey_alternative() -> str:
+        return public_page_html(settings, "portkey-alternative")
+
+    @public_html_route("/confidential-computing-llm")
+    async def seo_confidential_computing_llm() -> str:
+        return public_page_html(settings, "confidential-computing-llm")
+
+    @public_html_route("/tinfoil-alternative")
+    async def seo_tinfoil_alternative() -> str:
+        return public_page_html(settings, "tinfoil-alternative")
+
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")

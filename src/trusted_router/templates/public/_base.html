@@ -6,6 +6,27 @@
   <title>{{ title }}</title>
   <meta name="description" content="{{ description }}">
   <link rel="canonical" href="{{ site_url }}">
+  {# Open Graph + Twitter card so every public/SEO page unfurls with its
+     own title + description and the branded card image, instead of a
+     blank link preview on X / LinkedIn / Slack / iMessage. Uses the
+     per-page `title`/`description`/`site_url` already passed to every
+     template; `og_image` is threaded from public_page_html and falls
+     back to the prod card. #}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TrustedRouter">
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ site_url }}">
+  <meta property="og:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="TrustedRouter — verifiable, attested AI routing">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@jperla">
+  <meta name="twitter:title" content="{{ title }}">
+  <meta name="twitter:description" content="{{ description }}">
+  <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   {% if json_ld_blob %}
   {# Page-specific structured data (e.g. Product/Offer schema on the

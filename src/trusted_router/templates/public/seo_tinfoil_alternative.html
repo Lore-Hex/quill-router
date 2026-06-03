@@ -1,0 +1,86 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Tinfoil alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">Tinfoil alternative</span>
+    <h2>Same verifiable-privacy bet. TrustedRouter routes across every provider.</h2>
+    <p>Tinfoil pioneered verifiable confidential inference, and the thesis is right: attestation beats a privacy policy. TrustedRouter shares it — and applies it as a <em>router</em>, not a single inference endpoint.</p>
+    <p>That means you keep model choice. Route the same attested, no-log gateway to Claude, GPT, Gemini, DeepSeek, Kimi, Llama, Mistral and 20+ more, with automatic fallback, one OpenAI-compatible API, and one key.</p>
+    <p>
+      <a class="btn primary" href="/chat">Compare models in the playground</a>
+      <a class="btn" href="/security">How attestation works</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>One API, every provider</span><span>Python</span></div>
+    <pre><code>client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-v1-..."
+)
+
+# Same attested gateway, any model:
+for model in ["anthropic/claude-sonnet-4.6",
+              "openai/gpt-5.5",
+              "deepseek/deepseek-v4-flash"]:
+    client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": "hi"}],
+    )</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Shared thesis</span>
+    <h3>Verify, don't trust.</h3>
+    <p>Hardware attestation + open source. We agree with Tinfoil on the principle — privacy you can check beats privacy you're promised.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Router, not endpoint</span>
+    <h3>30+ providers, one key.</h3>
+    <p>Don't pick a single confidential model — route the attested gateway to the best model for each job, with fallback when one is down.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Drop-in</span>
+    <h3>OpenAI-compatible.</h3>
+    <p>Change one base_url and keep your existing SDK, model IDs, and code. Migrate an existing OpenRouter or OpenAI integration in minutes.</p>
+  </div>
+</section>
+
+<section class="compare-matrix" aria-label="Tinfoil vs TrustedRouter">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Tinfoil</strong><strong>TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Attestation</span><span>Yes</span><span>Yes</span>
+  </div>
+  <div class="matrix-row">
+    <span>Open source</span><span>Yes</span><span>Yes</span>
+  </div>
+  <div class="matrix-row">
+    <span>Shape</span><span>Confidential inference</span><span>Multi-provider router</span>
+  </div>
+  <div class="matrix-row">
+    <span>Model choice</span><span>Hosted model set</span><span>30+ providers, switchable per call</span>
+  </div>
+  <div class="matrix-row">
+    <span>Provider fallback</span><span>n/a</span><span>Automatic rollover</span>
+  </div>
+  <div class="matrix-row">
+    <span>Best fit</span><span>A confidential endpoint for chosen models</span><span>Verifiable routing across the whole model market</span>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">Same destination, wider road</span>
+    <h2>Attestation should cover the whole market, not one endpoint.</h2>
+  </div>
+  <div>
+    <p>The future where every prompt goes through an attested path shouldn't require giving up model choice. TrustedRouter is the bet that you can have both: verifiable privacy <em>and</em> the full provider market behind one API.</p>
+    <p>The argument in full: <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
+  </div>
+</section>
+
+{% endblock %}

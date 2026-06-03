@@ -22,6 +22,11 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
         "/llm-zero-data-retention": "Zero data retention as a verifiable property",
         "/claude-api-privacy": "Call Claude through a prompt path you can verify.",
+        # Round-2 competitor-alternative + category pages.
+        "/litellm-alternative": "LiteLLM lets you self-host.",
+        "/portkey-alternative": "Portkey logs every request.",
+        "/confidential-computing-llm": "Run LLM inference behind hardware attestation",
+        "/tinfoil-alternative": "Same verifiable-privacy bet.",
     }
 
     for path, marker in markers.items():
@@ -32,6 +37,10 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text
         assert "Continue with MetaMask" in response.text
+        # Every public page must unfurl: og:title + a card image.
+        assert 'property="og:title"' in response.text, f"{path} missing og:title"
+        assert 'property="og:image"' in response.text, f"{path} missing og:image"
+        assert 'name="twitter:card"' in response.text, f"{path} missing twitter:card"
 
 
 def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
