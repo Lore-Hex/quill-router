@@ -9,19 +9,75 @@
 [![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-TrustedRouter is an OpenRouter-compatible production LLM router with an
-attested API plane and a regular SaaS control plane.
+**Every LLM provider tells you they don't log your prompts. None of them lets
+you check. TrustedRouter does.**
 
-- Product: `trustedrouter.com`
-- API base: `https://api.quillrouter.com/v1`
-- Trust: `trust.trustedrouter.com`
-- Quill app: `https://quill.lorehex.co`
-- Source: `https://github.com/Lore-Hex/quill-router`
+TrustedRouter is an open-source, OpenAI-compatible LLM router whose gateway
+runs inside hardware enclaves (AWS Nitro Enclaves + GCP Confidential VMs). The
+CPU signs the running binary; you compare that hash to this repo. If they
+match, you *know* — not assume — the code handling your prompts is the code
+you can read here, and that it never writes your prompts to disk.
 
-This repo intentionally implements the control-plane contract first: route
-coverage, auth/key management, billing ledger semantics, usage metadata, no
-prompt/output storage, Sentry scrubbers, and provider abstractions. The attested
-gateway implementation lives in `quill-cloud-proxy`.
+Same API shape as OpenRouter. Change one base URL, keep your model IDs. 30+
+providers behind one key.
+
+- **Try it (no signup):** https://trustedrouter.com/chat
+- **Verify it:** https://trustedrouter.com/security
+- **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
+- Product: `trustedrouter.com` · API base: `https://api.quillrouter.com/v1` · Trust: `trust.trustedrouter.com`
+
+### Use it (one line changes)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.quillrouter.com/v1",  # ← the only change
+    api_key="sk-tr-v1-...",
+)
+resp = client.chat.completions.create(
+    model="anthropic/claude-sonnet-4.6",
+    messages=[{"role": "user", "content": "hello"}],
+)
+```
+
+### Verify the gateway (60 seconds, no account)
+
+```bash
+# Nonce-bound attestation, signed by the cloud's hardware root key
+NONCE=$(openssl rand -hex 16)
+curl -s "https://api.quillrouter.com/attestation?nonce=$NONCE" | jq .
+#   eat_nonce     your nonce  (replay-protected)
+#   image_digest  SHA-256 of the running container
+#   pcrs          boot-time platform measurements
+# Compare image_digest to the published artifact at
+# https://trustedrouter.com/security — match = the running code is this repo.
+```
+
+### Why this is different
+
+| | trust model |
+|---|---|
+| OpenRouter, hosted providers | "We don't log." A policy you can't check. |
+| Portkey, Cloudflare AI Gateway | Log everything for observability. |
+| LiteLLM | Self-host, but the running proxy is unverified. |
+| **TrustedRouter** | **Open source + hardware attestation. Verify the code path; it logs nothing.** |
+
+Honest scope: attestation proves the running binary is the published binary on
+hardware you can challenge with a nonce. It does not defeat a nation-state with
+physical host access, and it does not prove the open-source binary is bug-free.
+The trust anchor is the chip vendor's root key; cross-cloud (AWS + GCP) narrows
+that dependency without eliminating it. Upstream providers handle prompts per
+their own policies — each provider's posture is published on the model pages.
+
+---
+
+## Repository layout
+
+This repo implements the control-plane contract: route coverage, auth/key
+management, billing ledger semantics, usage metadata, no prompt/output storage,
+Sentry scrubbers, and provider abstractions. The attested gateway
+implementation lives in `quill-cloud-proxy`.
 
 Trust boundary: `api.quillrouter.com` is the attested prompt path and must
 terminate TLS inside Confidential Space. `trustedrouter.com` is the control
