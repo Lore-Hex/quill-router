@@ -39,7 +39,10 @@ PROBES: list[tuple[str, str]] = [
     ("zai",         "z-ai/glm-4.6"),
     ("together",    "moonshotai/kimi-k2.6"),
     ("grok",        "x-ai/grok-4.20"),
-    ("novita",      "deepseek/deepseek-v4-flash"),
+    # Probe the provider-native Qwen route, not only a shared DeepSeek route:
+    # this catches Novita-specific catalog/pricing drift and proves the
+    # supplemental Novita manifest is routable through the gateway.
+    ("novita",      "qwen/qwen3-235b-a22b-instruct-2507"),
     ("phala",       "qwen/qwen3.5-27b"),
     ("siliconflow", "deepseek/deepseek-v4-flash"),
     ("tinfoil",     "moonshotai/kimi-k2.6"),
