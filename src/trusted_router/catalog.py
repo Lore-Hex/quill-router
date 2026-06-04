@@ -35,6 +35,56 @@ class Provider:
     provider_policy_url: str | None = None
 
 
+# Privacy-posture tiers, lowest → highest. A request can demand a minimum
+# tier (provider.min_privacy in the routing prefs); the router then only
+# considers providers whose posture clears that bar. The tiers are nested:
+# every confidential provider is also zero-retention; every zero-retention
+# provider is also no-store.
+PRIVACY_TIER_STANDARD = 0   # no tracked posture (would store content)
+PRIVACY_TIER_NO_STORE = 1   # does not store request/response content
+PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
+PRIVACY_TIER_CONFIDENTIAL = 3    # confidential compute + provider-side e2ee
+
+# Friendly names a client can pass as provider.min_privacy. All map to a
+# minimum tier rank above. "standard"/"any" is the default (no filter).
+PRIVACY_TIER_ALIASES: dict[str, int] = {
+    "standard": PRIVACY_TIER_STANDARD,
+    "any": PRIVACY_TIER_STANDARD,
+    "no_store": PRIVACY_TIER_NO_STORE,
+    "no-store": PRIVACY_TIER_NO_STORE,
+    "nostore": PRIVACY_TIER_NO_STORE,
+    "zdr": PRIVACY_TIER_ZERO_RETENTION,
+    "zero_retention": PRIVACY_TIER_ZERO_RETENTION,
+    "zero-retention": PRIVACY_TIER_ZERO_RETENTION,
+    "confidential": PRIVACY_TIER_CONFIDENTIAL,
+    "e2ee": PRIVACY_TIER_CONFIDENTIAL,
+    "max": PRIVACY_TIER_CONFIDENTIAL,
+    "maximum": PRIVACY_TIER_CONFIDENTIAL,
+}
+
+
+PRIVACY_TIER_LABELS: dict[int, str] = {
+    PRIVACY_TIER_STANDARD: "Standard",
+    PRIVACY_TIER_NO_STORE: "No-store",
+    PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
+    PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
+}
+
+
+def provider_privacy_tier(provider: Provider) -> int:
+    """The highest privacy bar a provider clears. Used to enforce a
+    request's minimum-privacy routing preference. Note the TR gateway hop
+    is always attested regardless of tier — this rank is about the
+    UPSTREAM provider's posture, which is what varies."""
+    if provider.provider_confidential_compute and provider.provider_e2ee:
+        return PRIVACY_TIER_CONFIDENTIAL
+    if provider.provider_zero_data_retention:
+        return PRIVACY_TIER_ZERO_RETENTION
+    if provider.stores_content is False:
+        return PRIVACY_TIER_NO_STORE
+    return PRIVACY_TIER_STANDARD
+
+
 @dataclass(frozen=True)
 class PriceTier:
     """One tier of context-conditional pricing. A request whose prompt
@@ -1278,6 +1328,33 @@ def _meta_price_range(
     return (min(values), max(values))
 
 
+def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int:
+    """Highest privacy tier this model can be routed through. For meta
+    models (auto/free/cheap), that's the best tier across the candidate
+    pool — NOT the 'trustedrouter' pseudo-provider, which would falsely
+    claim confidential for Auto. For regular models, the max across the
+    model's own provider plus any serving endpoints."""
+    providers: set[str] = set()
+    if model.id in META_MODEL_IDS:
+        for candidate in meta_candidate_models(model.id):
+            providers.add(candidate.provider)
+    else:
+        providers.add(model.provider)
+        for endpoint in endpoints:
+            providers.add(endpoint.provider)
+    tiers = [
+        provider_privacy_tier(PROVIDERS[p]) for p in providers if p in PROVIDERS
+    ]
+    return max(tiers) if tiers else PRIVACY_TIER_STANDARD
+
+
+def model_max_privacy_tier(model: Model) -> int:
+    """Public wrapper: highest privacy tier `model` can be routed through,
+    resolving its serving endpoints internally. Used by the router's
+    min_privacy filter."""
+    return _model_max_privacy_tier(model, endpoints_for_model(model.id))
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -1338,6 +1415,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
         "provider_policy_url": provider.provider_policy_url,
+        # Highest privacy tier reachable for this model — the max across
+        # every provider that serves it (a request can route to the best
+        # one). Lets the picker / SEO pages show "this model can run
+        # confidential" without re-deriving from raw posture flags.
+        "privacy_tier": _model_max_privacy_tier(model, endpoints),
+        "privacy_tier_label": PRIVACY_TIER_LABELS[
+            _model_max_privacy_tier(model, endpoints)
+        ],
         "prompt_price_microdollars_per_million_tokens": prompt_min,
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,

@@ -7,12 +7,15 @@ from typing import Any
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     MODELS,
+    PRIVACY_TIER_ALIASES,
     PROVIDERS,
     Model,
     ModelEndpoint,
     auto_candidate_models,
     endpoints_for_model,
     meta_candidate_models,
+    model_max_privacy_tier,
+    provider_privacy_tier,
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -28,6 +31,9 @@ class RoutePreferences:
     data_collection: str | None = None
     sort: str | None = None
     usage_type: str | None = None
+    # Minimum upstream-provider privacy tier (see catalog.PRIVACY_TIER_*).
+    # 0 = no filter (default). Set via provider.min_privacy in the body.
+    min_privacy_rank: int = 0
 
 
 _PROVIDER_ALIASES = {
@@ -161,12 +167,29 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     sort = _sort_mode(raw.get("sort"))
     usage_type = _usage_type(raw.get("usage") or raw.get("usage_type") or raw.get("billing"))
 
+    # provider.min_privacy: route only to providers whose posture clears
+    # this bar. Accepts friendly names ("zdr", "confidential", "no_store",
+    # "any"). Unknown values are a 400 so a typo can't silently downgrade
+    # the privacy a caller asked for.
+    min_privacy_rank = 0
+    min_privacy = raw.get("min_privacy")
+    if min_privacy is not None:
+        key = str(min_privacy).strip().lower()
+        if key not in PRIVACY_TIER_ALIASES:
+            raise api_error(
+                400,
+                "provider.min_privacy must be one of: any, no_store, zdr, confidential",
+                ErrorType.BAD_REQUEST,
+            )
+        min_privacy_rank = PRIVACY_TIER_ALIASES[key]
+
     return RoutePreferences(
         order=order,
         only=only,
         ignore=ignore,
         allow_fallbacks=allow_fallbacks_bool,
         data_collection=data_collection,
+        min_privacy_rank=min_privacy_rank,
         sort=sort,
         usage_type=usage_type,
     )
@@ -245,6 +268,13 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if prefs.data_collection == "deny" and provider.stores_content:
             continue
+        # Keep a model if ANY provider that serves it can meet the
+        # requested privacy bar — a model like deepseek-v3.2 is no-store
+        # via deepseek but confidential via phala, so it stays in a
+        # confidential request. The endpoint-level filter then narrows to
+        # the qualifying provider when the gateway picks an endpoint.
+        if prefs.min_privacy_rank and model_max_privacy_tier(model) < prefs.min_privacy_rank:
+            continue
         out.append(model)
     return out
 
@@ -282,6 +312,8 @@ def _apply_endpoint_provider_filters(
         if endpoint.provider in prefs.ignore:
             continue
         if prefs.data_collection == "deny" and provider.stores_content:
+            continue
+        if prefs.min_privacy_rank and provider_privacy_tier(provider) < prefs.min_privacy_rank:
             continue
         if prefs.usage_type is not None and endpoint.usage_type != prefs.usage_type:
             continue
