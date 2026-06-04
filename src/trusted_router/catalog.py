@@ -1274,18 +1274,18 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 #              /models); the snapshot's chat-v3.1 and v3.2 routes 502.
 #   nebius   — retired two older models still in the snapshot (gemma-2-2b-it,
 #              Meta-Llama-3.1-8B-Instruct); its current /models has neither.
-#   zai      — does not serve glm-4-32b (absent from its /models). NB: zai's
-#              glm-4.7 / glm-4.7-flash ALSO 502, but those are an ENCLAVE
-#              model-id-map bug (zai serves them under BARE ids like "glm-4.7";
-#              the enclave sends "zai-glm-4.7", which zai rejects) — NOT a
-#              catalog miss, so they are deliberately NOT dropped here.
+#   zai      — does not serve glm-4-32b or glm-4.7-flash (both absent from its
+#              /models). NB: zai's glm-4.7 ALSO 502'd, but that was an ENCLAVE
+#              model-id-map bug (zai serves glm-4.7 under the BARE id; the
+#              enclave was sending "zai-glm-4.7") — fixed in quill-cloud-proxy
+#              (zaiModelMap), so glm-4.7 is deliberately NOT dropped here.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset(
         {"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}
     ),
-    "zai": frozenset({"z-ai/glm-4-32b"}),
+    "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
 }
 
 
