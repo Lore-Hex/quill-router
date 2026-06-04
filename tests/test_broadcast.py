@@ -211,7 +211,7 @@ def test_gateway_authorize_only_returns_content_enabled_encrypted_destinations(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-5.5",
             "estimated_input_tokens": 100,
             "max_output_tokens": 20,
         },
@@ -249,7 +249,7 @@ def test_metadata_broadcast_omits_prompt_and_output(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-5.5",
             "estimated_input_tokens": 12,
             "max_output_tokens": 8,
             "trace": {"trace_id": "trace-123", "experiment": "alpha"},
@@ -282,7 +282,7 @@ def test_metadata_broadcast_omits_prompt_and_output(
     assert payload["event"] == "$ai_generation"
     assert payload["distinct_id"] == "user-1"
     assert payload["properties"]["$ai_trace_id"] == "trace-123"
-    assert payload["properties"]["$ai_model"] == "openai/gpt-5.4-nano"
+    assert payload["properties"]["$ai_model"] == "openai/gpt-5.5"
     assert "$ai_input" not in payload["properties"]
     assert "$ai_output_choices" not in payload["properties"]
     assert "prompt" not in json.dumps(payload).lower()
@@ -312,7 +312,7 @@ def test_metadata_broadcast_queues_and_retries_failures(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-5.5",
             "estimated_input_tokens": 12,
             "max_output_tokens": 8,
         },
@@ -363,7 +363,7 @@ def test_metadata_broadcast_claims_jobs_with_short_lease(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-5.5",
             "estimated_input_tokens": 12,
             "max_output_tokens": 8,
         },
@@ -412,7 +412,7 @@ def test_metadata_broadcast_expired_lease_can_be_reclaimed(
         "/v1/internal/gateway/authorize",
         json={
             "api_key_hash": key["hash"],
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-5.5",
             "estimated_input_tokens": 12,
             "max_output_tokens": 8,
         },
