@@ -29,6 +29,7 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.config import Settings
+from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.regions import configured_regions, region_map_payload
@@ -572,6 +573,7 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
         ),
         provider=_provider_detail_view(provider, served_models=served_models),
         served_models=served_models,
+        measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -650,6 +652,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
         section_label=label,
         benchmark_links=_benchmark_links(model),
         benchmark_scores=scores_for_model(model.id),
+        measured=measured_for_model(model.id, test_mode=settings.environment == "test"),
         json_ld_blob=_model_json_ld(settings, model, f"https://{settings.trusted_domain}/models/{model_id}"),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
