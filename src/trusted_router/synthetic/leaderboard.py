@@ -15,8 +15,9 @@ aggregation here is the reusable core either way.)
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from trusted_router.storage_models import ProviderBenchmarkSample
@@ -56,6 +57,7 @@ class ProviderModelStats:
     p95_ttfb_ms: int | None = None
     p50_tokens_per_second: float | None = None
     last_seen: str | None = None
+    errors: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -65,6 +67,11 @@ class ProviderModelStats:
     def error_rate(self) -> float:
         return self.error_count / self.sample_count if self.sample_count else 0.0
 
+    @property
+    def top_error(self) -> str | None:
+        common = self.errors.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -72,6 +79,8 @@ class ProviderModelStats:
             "sample_count": self.sample_count,
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
+            "top_error": self.top_error,
+            "errors": dict(self.errors),
             "p50_ttft_ms": self.p50_ttft_ms,
             "p95_ttft_ms": self.p95_ttft_ms,
             "p50_ttfb_ms": self.p50_ttfb_ms,
@@ -94,6 +103,7 @@ class ProviderStats:
     error_count: int = 0
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
+    errors: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -103,6 +113,11 @@ class ProviderStats:
     def error_rate(self) -> float:
         return self.error_count / self.sample_count if self.sample_count else 0.0
 
+    @property
+    def top_error(self) -> str | None:
+        common = self.errors.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -110,6 +125,8 @@ class ProviderStats:
             "sample_count": self.sample_count,
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
+            "top_error": self.top_error,
+            "errors": dict(self.errors),
             "p50_ttft_ms": self.p50_ttft_ms,
             "p50_tokens_per_second": (
                 round(self.p50_tokens_per_second, 2)
@@ -151,6 +168,10 @@ def aggregate_leaderboard(
             stats.success_count += 1
         else:
             stats.error_count += 1
+            label = sample.error_type or (
+                f"http_{sample.error_status}" if sample.error_status else "error"
+            )
+            stats.errors[label] += 1
         if sample.first_token_milliseconds is not None:
             ttft[key].append(sample.first_token_milliseconds)
         if sample.ttfb_milliseconds is not None:
@@ -195,6 +216,7 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.sample_count += stats.sample_count
         agg.success_count += stats.success_count
         agg.error_count += stats.error_count
+        agg.errors.update(stats.errors)
         # Weight each model's p50 by its sample count for the provider median.
         if stats.p50_ttft_ms is not None:
             ttft[stats.provider].extend([stats.p50_ttft_ms] * stats.sample_count)
