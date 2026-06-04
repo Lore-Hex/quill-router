@@ -9,42 +9,57 @@
 [![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
-**Every LLM provider tells you they don't log your prompts. None of them lets
-you check. TrustedRouter does.**
+# End-to-end encrypted LLMs. One API. Provable privacy.
 
-TrustedRouter is an open-source, OpenAI-compatible LLM router whose gateway
-runs inside hardware enclaves (AWS Nitro Enclaves + GCP Confidential VMs). The
-CPU signs the running binary; you compare that hash to this repo. If they
-match, you *know* — not assume — the code handling your prompts is the code
-you can read here, and that it never writes your prompts to disk.
+Point your coding agent — Codex, Claude Code, Cursor, anything OpenAI- or
+Anthropic-compatible — at TrustedRouter and stop worrying about who can see
+your prompts. Same API, 30+ models, one key. The gateway runs in hardware
+enclaves and you can cryptographically verify it never logs you.
 
-Same API shape as OpenRouter. Change one base URL, keep your model IDs. 30+
-providers behind one key.
+### Switch your coding agent (10 seconds)
 
-- **Try it (no signup):** https://trustedrouter.com/chat
-- **Verify it:** https://trustedrouter.com/security
-- **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
-- Product: `trustedrouter.com` · API base: `https://api.quillrouter.com/v1` · Trust: `trust.trustedrouter.com`
+**Codex**
+```bash
+export OPENAI_BASE_URL="https://api.quillrouter.com/v1"
+export OPENAI_API_KEY="sk-tr-v1-..."     # get one at trustedrouter.com
+```
 
-### Use it (one line changes)
+**Claude Code**
+```bash
+export ANTHROPIC_BASE_URL="https://api.quillrouter.com"
+export ANTHROPIC_API_KEY="sk-tr-v1-..."  # get one at trustedrouter.com
+```
 
+**Anything else (OpenAI SDK)**
 ```python
-from openai import OpenAI
-
 client = OpenAI(
     base_url="https://api.quillrouter.com/v1",  # ← the only change
     api_key="sk-tr-v1-...",
 )
-resp = client.chat.completions.create(
-    model="anthropic/claude-sonnet-4.6",
-    messages=[{"role": "user", "content": "hello"}],
-)
 ```
 
-### Verify the gateway (60 seconds, no account)
+That's it. Your agent keeps working; your prompts now run through an attested,
+no-log path across every major provider.
+
+- **Get a key / take my money:** https://trustedrouter.com
+- **Try it first (no signup):** https://trustedrouter.com/chat
+- **The technical details (for the nerds):** https://trustedrouter.com/security
+- **Why we built it:** https://jperla.com/blog/attestation-is-all-you-need
+
+---
+
+<details>
+<summary><strong>For the nerds: how the privacy is provable</strong></summary>
+
+TrustedRouter's gateway runs inside hardware enclaves (AWS Nitro Enclaves + GCP
+Confidential VMs). The CPU signs a measurement of the running binary; you
+compare that hash to this repo. If they match, you *know* — not assume — that
+the code handling your prompts is the code you can read here, and that it never
+writes your prompts to disk.
+
+Verify it yourself in 60 seconds, no account:
 
 ```bash
-# Nonce-bound attestation, signed by the cloud's hardware root key
 NONCE=$(openssl rand -hex 16)
 curl -s "https://api.quillrouter.com/attestation?nonce=$NONCE" | jq .
 #   eat_nonce     your nonce  (replay-protected)
@@ -53,8 +68,6 @@ curl -s "https://api.quillrouter.com/attestation?nonce=$NONCE" | jq .
 # Compare image_digest to the published artifact at
 # https://trustedrouter.com/security — match = the running code is this repo.
 ```
-
-### Why this is different
 
 | | trust model |
 |---|---|
@@ -69,6 +82,8 @@ physical host access, and it does not prove the open-source binary is bug-free.
 The trust anchor is the chip vendor's root key; cross-cloud (AWS + GCP) narrows
 that dependency without eliminating it. Upstream providers handle prompts per
 their own policies — each provider's posture is published on the model pages.
+
+</details>
 
 ---
 

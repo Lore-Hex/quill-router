@@ -51,12 +51,12 @@
           <strong>Open source router</strong>
           <span class="oss-sub">Control plane and attested gateway on GitHub. Audit it, fork it, or run it yourself.</span>
         </a>
-        <span class="eyebrow">End to end encrypted router for production AI apps</span>
-        <h1>Route every model through a prompt path you can verify.</h1>
-        <p class="lead">One OpenAI compatible API for hundreds of models across Anthropic, OpenAI, Google, DeepSeek, Mistral, Cerebras, MiniMax, Kimi, Z.AI and more. Use prepaid credits, bring provider keys, or let <span class="mono">trustedrouter/auto</span> choose a healthy route.</p>
+        <span class="eyebrow">End-to-end encrypted AI</span>
+        <h1>End-to-end encrypted LLMs.<br>One API. Provable privacy.</h1>
+        <p class="lead">Point your coding agent — Codex, Claude Code, Cursor, or any OpenAI- or Anthropic-compatible app — at TrustedRouter and stop worrying about who can see your prompts. Same API, hundreds of models, one key. The gateway runs in hardware enclaves and you can cryptographically verify it never logs you.</p>
         <div class="hero-actions">
-          <button class="btn primary" type="button" data-action="open-signin">Create key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+          <button class="btn primary" type="button" data-action="open-signin">Get a key</button>
+          <a class="btn" href="/chat">Try it free</a>
         </div>
         <p class="signup-foot">Add a card to unlock trial credit. Wallet accounts start at $0. Migration credits are available by approval for teams already spending more than $100 per month on LLMs. Open source SDKs are available for Python and TypeScript.</p>
         <div class="proof">
@@ -76,20 +76,25 @@
     </div>
   </section>
   <main class="wrap">
-    <section class="code-strip" aria-label="OpenAI SDK compatible example">
+    <section class="code-strip" aria-label="Switch your coding agent">
       <div>
-        <span class="eyebrow">Small migration</span>
-        <h2>Change <span class="mono">base_url</span>. Keep your client.</h2>
+        <span class="eyebrow">Switch in 10 seconds</span>
+        <h2>Point Codex or Claude Code at TrustedRouter.</h2>
       </div>
-      <pre><code>client = OpenAI(
-    base_url="{{ api_base_url }}",
-    api_key="sk-tr-v1-..."
-)
-resp = client.chat.completions.create(
-    model="trustedrouter/auto",
-    messages=messages,
-)</code></pre>
+      <pre><code># Codex
+export OPENAI_BASE_URL="{{ api_base_url }}"
+export OPENAI_API_KEY="sk-tr-v1-..."
+
+# Claude Code
+export ANTHROPIC_BASE_URL="https://api.quillrouter.com"
+export ANTHROPIC_API_KEY="sk-tr-v1-..."
+
+# Any OpenAI SDK
+client = OpenAI(base_url="{{ api_base_url }}",
+                api_key="sk-tr-v1-...")</code></pre>
       <div class="sdk-links">
+        <button class="btn primary" type="button" data-action="open-signin">Get a key</button>
+        <a class="pill" href="/security">Technical details</a>
         <a class="pill" href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a>
         <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
       </div>

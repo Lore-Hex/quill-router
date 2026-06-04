@@ -4,10 +4,11 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter | End to end encrypted AI router"
+OG_TITLE = "TrustedRouter — End-to-end encrypted LLMs. One API. Provable privacy."
 OG_DESCRIPTION = (
-    "Hosted OpenAI compatible router for hundreds of models. Use prepaid credits "
-    "or BYOK. TLS terminates inside the attested gateway, not the dashboard."
+    "Point Codex, Claude Code, or any OpenAI/Anthropic app at TrustedRouter and "
+    "stop worrying about who sees your prompts. Hundreds of models, one key, an "
+    "attested gateway you can cryptographically verify never logs you."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630
@@ -59,11 +60,11 @@ def og_image_svg(_settings: Settings) -> str:
 
   <!-- Headline -->
   <g font-family="{_SANS}">
-    <text x="80" y="244" font-size="70" font-weight="800" fill="#ffffff" letter-spacing="-1.2">Route every model.</text>
-    <text x="80" y="332" font-size="70" font-weight="800" fill="#ffffff" letter-spacing="-1.2">Verify the gateway.</text>
-    <text x="80" y="424" font-size="56" font-weight="800" letter-spacing="-1.0">
-      <tspan fill="#7be0b1">No prompt logs</tspan>
-      <tspan fill="#ffffff" dx="14">by default.</tspan>
+    <text x="80" y="244" font-size="64" font-weight="800" fill="#ffffff" letter-spacing="-1.2">End-to-end</text>
+    <text x="80" y="320" font-size="64" font-weight="800" fill="#ffffff" letter-spacing="-1.2">encrypted LLMs.</text>
+    <text x="80" y="412" font-size="52" font-weight="800" letter-spacing="-1.0">
+      <tspan fill="#ffffff">One API.</tspan>
+      <tspan fill="#7be0b1" dx="14">Provable privacy.</tspan>
     </text>
   </g>
 

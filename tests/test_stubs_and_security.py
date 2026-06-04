@@ -172,7 +172,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     dashboard = client.get("/")
     assert dashboard.status_code == 200
     # Marketing page hero copy stays.
-    assert "Create key" in dashboard.text
+    assert "Get a key" in dashboard.text
     assert "Stablecoin" in dashboard.text
     assert "$25 USDC" not in dashboard.text
     assert "Stripe Crypto" not in dashboard.text
