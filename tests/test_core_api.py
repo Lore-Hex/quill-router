@@ -414,7 +414,11 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
     ]
     assert {item["provider"] for item in kimi.json()["data"]} >= {"kimi", "together"}
 
-    openai = client.get("/v1/models/openai/gpt-5.4-nano/endpoints")
+    # gpt-5.5 is OpenAI's served flagship (Credits + BYOK on the openai
+    # provider). NB: the GPT-5.4 line and the "-pro" tiers are dropped from
+    # Credits (closed models OpenAI doesn't serve us — see
+    # catalog._UNSERVED_CREDITS_MODELS), so they'd assert BYOK-only.
+    openai = client.get("/v1/models/openai/gpt-5.5/endpoints")
     assert openai.status_code == 200
     openai_endpoints = openai.json()["data"]
     # Pin only the canonical first-party provider. Secondary serving

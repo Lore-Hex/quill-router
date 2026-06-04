@@ -171,6 +171,27 @@ def _row_tiers(row: dict) -> list[tuple[float, float]]:
     ]
 
 
+def test_novita_fixture_keeps_qwen_235b_prices_in_true_microdollars() -> None:
+    """Novita's `/models` feed reports prices 100x smaller than its public
+    pricing table. The parser source of truth must preserve true
+    microdollars/M so the catalog does not collapse these rows to the
+    global $0.01/M floor.
+    """
+    fixture = FIXTURE_DIR / "novita.html"
+    html = fixture.read_text(encoding="utf-8")
+    module = importlib.import_module("scripts.pricing.parsers.novita")
+    result = module.parse(html)
+
+    assert result["qwen/qwen3-235b-a22b-instruct-2507"] == {
+        "prompt_micro_per_m": 90_000,
+        "completion_micro_per_m": 580_000,
+    }
+    assert result["qwen/qwen3-235b-a22b-fp8"] == {
+        "prompt_micro_per_m": 200_000,
+        "completion_micro_per_m": 800_000,
+    }
+
+
 @pytest.mark.parametrize(
     "slug",
     ["anthropic", "cerebras", "gemini", "mistral", "deepseek", "openai", "kimi", "zai"],

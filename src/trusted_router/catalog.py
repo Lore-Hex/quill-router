@@ -686,15 +686,15 @@ META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITO
 # snapshot — OR-only models can no longer reach the catalog (see
 # scripts/pricing/refresh.py:_merge_snapshot).
 #
-# 2026-05 update: replaced openai/gpt-4o-mini with openai/gpt-5.4-nano.
-# OpenAI's current pricing page only lists GPT-5.5/5.4 family + pro
-# variants; the older 4o family is still served but absent from the
-# canonical pricing surface, so we route auto callers to the current
-# headline mid-tier model instead.
+# 2026-06 update: OpenAI's GPT-5.4 line (incl. gpt-5.4-nano) and the "-pro"
+# tiers 502 on our key — verified via the gateway probe; see
+# _PROVIDER_UNSERVED_CREDITS_MODELS. Route auto/monitor callers to
+# openai/gpt-4.1-mini, which is served (verified OK) and is the current cheap
+# mid-tier model. (gpt-5.5 works too but is the pricey flagship.)
 DEFAULT_AUTO_MODEL_ORDER = [
     "anthropic/claude-opus-4.7",
     "anthropic/claude-sonnet-4.6",
-    "openai/gpt-5.4-nano",
+    "openai/gpt-4.1-mini",
     "google/gemini-2.5-flash",
     "deepseek/deepseek-v4-flash",
     "minimax/minimax-m3",
@@ -979,11 +979,33 @@ def _as_positive_int(value: object) -> int:
     return max(parsed, 0)
 
 
+def _provider_manifest_price_scale(raw: dict[str, Any]) -> int:
+    """Return the multiplier needed to turn provider-manifest price fields
+    into microdollars per million tokens.
+
+    Most manifests store true microdollars/M. Novita's `/models` feed stores
+    prices 100x smaller than its public `$ /Mt` table, so its manifest carries
+    an explicit scale to prevent the catalog from falling through to the
+    global $0.01/M floor.
+    """
+    scale = _as_positive_int(raw.get("price_scale_to_microdollars_per_million_tokens"))
+    return max(scale, 1)
+
+
+def _provider_manifest_price_cost(value: object, *, price_scale: int) -> int:
+    parsed = _as_positive_int(value)
+    if parsed <= 0:
+        return 0
+    return parsed * price_scale
+
+
 def _provider_manifest_price_tiers(
     raw_model: dict[str, Any],
     default_prompt_price: int,
     default_completion_price: int,
     default_cached_prompt_price: int | None,
+    *,
+    price_scale: int = 1,
 ) -> tuple[PriceTier, ...]:
     raw_tiers = raw_model.get("price_tiers")
     if not isinstance(raw_tiers, list) or not raw_tiers:
@@ -1019,15 +1041,24 @@ def _provider_manifest_price_tiers(
                 prompt_cached=default_cached_prompt_price,
             )
 
-        prompt_cost = _as_positive_int(raw_tier.get("input_token_price_per_m"))
-        completion_cost = _as_positive_int(raw_tier.get("output_token_price_per_m"))
+        prompt_cost = _provider_manifest_price_cost(
+            raw_tier.get("input_token_price_per_m"),
+            price_scale=price_scale,
+        )
+        completion_cost = _provider_manifest_price_cost(
+            raw_tier.get("output_token_price_per_m"),
+            price_scale=price_scale,
+        )
         if prompt_cost <= 0 or completion_cost <= 0:
             return _flat_tier(
                 default_prompt_price,
                 default_completion_price,
                 prompt_cached=default_cached_prompt_price,
             )
-        cached_cost = _as_positive_int(raw_tier.get("cached_input_token_price_per_m"))
+        cached_cost = _provider_manifest_price_cost(
+            raw_tier.get("cached_input_token_price_per_m"),
+            price_scale=price_scale,
+        )
         cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
         tiers.append(
             PriceTier(
@@ -1060,11 +1091,14 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
 
     Novita, Nebius, and MiniMax currently use this path because their
     live `/models` feeds expose working provider-direct routes before
-    OpenRouter's public endpoint catalog catches up.
+    OpenRouter's public endpoint catalog catches up. Anthropic uses it for
+    Claude Opus 4.8, which shipped after the snapshot — the attested gateway
+    maps `anthropic/claude-opus-4.8` -> `claude-opus-4-8` algorithmically
+    (internal/llm/anthropic.go), so the route works with no enclave change.
     """
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
-    for provider_slug in ("novita", "nebius", "minimax"):
+    for provider_slug in ("novita", "nebius", "minimax", "anthropic"):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
             continue
@@ -1073,6 +1107,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         if not isinstance(raw_models, list):
             continue
         provider = PROVIDERS[provider_slug]
+        price_scale = _provider_manifest_price_scale(raw)
         for raw_model in raw_models:
             if not isinstance(raw_model, dict):
                 continue
@@ -1087,9 +1122,18 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             if "chat/completions" not in {str(item) for item in (raw_model.get("endpoints") or [])}:
                 continue
 
-            prompt_cost = _as_positive_int(raw_model.get("input_token_price_per_m"))
-            completion_cost = _as_positive_int(raw_model.get("output_token_price_per_m"))
-            cached_cost = _as_positive_int(raw_model.get("cached_input_token_price_per_m"))
+            prompt_cost = _provider_manifest_price_cost(
+                raw_model.get("input_token_price_per_m"),
+                price_scale=price_scale,
+            )
+            completion_cost = _provider_manifest_price_cost(
+                raw_model.get("output_token_price_per_m"),
+                price_scale=price_scale,
+            )
+            cached_cost = _provider_manifest_price_cost(
+                raw_model.get("cached_input_token_price_per_m"),
+                price_scale=price_scale,
+            )
             prompt_price = _customer_price(prompt_cost)
             completion_price = _customer_price(completion_cost)
             cached_price = _customer_price(cached_cost) if cached_cost > 0 else None
@@ -1098,6 +1142,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 prompt_price,
                 completion_price,
                 cached_price,
+                price_scale=price_scale,
             )
             publisher = (
                 _author_provider(model_id, [{"tr_provider_slug": provider_slug}]) or provider_slug
@@ -1192,6 +1237,40 @@ _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
     "cerebras": frozenset({"openai/gpt-oss-120b", "z-ai/glm-4.7"}),
 }
 
+# Inverse of the allowlist, but keyed by MODEL across ALL providers: specific
+# prepaid (Credits) model ids that 502 on every provider that lists them, while
+# every other model is kept. Use this for dead-everywhere models (an allowlist
+# would force us to enumerate each provider's whole working set instead).
+#
+# OpenAI's GPT-5.4 line and the "-pro" tiers are closed models OpenAI does not
+# serve on our key — verified 2026-06-04 via the gateway probe pinned to openai
+# (gpt-5.5 => OK; gpt-5.4 / gpt-5.4-nano / gpt-5.4-pro / gpt-5.5-pro => 502).
+# Because they are closed, no third-party prepaid host can serve them either:
+# the snapshot's gmi endpoint for gpt-5.4-nano 502s too (verified). So drop
+# their Credits routes on EVERY provider. (gpt-5.5 works and stays; BYOK routes
+# are left intact as the customer's own responsibility.)
+_UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
+    {
+        "openai/gpt-5.4",
+        "openai/gpt-5.4-nano",
+        "openai/gpt-5.4-pro",
+        "openai/gpt-5.5-pro",
+    }
+)
+
+# Provider-keyed denylist: a closed model a SPECIFIC provider can't serve even
+# though its native provider can. gmi is an open-weights GPU host, but the
+# OpenRouter snapshot lists it as a prepaid endpoint for two closed models it
+# cannot actually run — anthropic/claude-opus-4.7 and openai/gpt-5.5 (both
+# verified 502 pinned to gmi, 2026-06-04). Drop only gmi's route; the models
+# still serve correctly on anthropic/openai direct. (A catalog-wide survey
+# found gmi is the ONLY provider with bogus closed-model Credits routes — the
+# gemini/grok routes that look cross-provider are actually the native serving
+# slugs for the google/* and x-ai/* publishers.)
+_PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
+    "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
+}
+
 
 def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],
@@ -1200,14 +1279,31 @@ def _filter_unserved_provider_endpoints(
     serve on our account. Only Credits routes use OUR provider key, so only
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
+
+    Three complementary filters apply, all Credits-only:
+      * allowlist        — keep ONLY the listed models for a provider (Cerebras).
+      * model denylist    — drop the listed models on EVERY provider (GPT-5.4/pro).
+      * provider denylist — drop a model on ONE provider only (gmi closed models).
     """
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST
+
+    def _keep(endpoint: ModelEndpoint) -> bool:
+        if endpoint.usage_type != "Credits":
+            return True
+        if endpoint.provider in allow and endpoint.model_id not in allow[endpoint.provider]:
+            return False
+        if endpoint.model_id in _UNSERVED_CREDITS_MODELS:
+            return False
+        if endpoint.model_id in _PROVIDER_UNSERVED_CREDITS_MODELS.get(
+            endpoint.provider, frozenset()
+        ):
+            return False
+        return True
+
     return {
         endpoint_id: endpoint
         for endpoint_id, endpoint in endpoints.items()
-        if endpoint.usage_type != "Credits"
-        or endpoint.provider not in allow
-        or endpoint.model_id in allow[endpoint.provider]
+        if _keep(endpoint)
     }
 
 
@@ -1299,7 +1395,7 @@ def monitor_candidate_models(limit: int = 12) -> list[Model]:
     #   deepseek/deepseek-v3.2        0.308 / 0.495   ← same-family backup
     #   deepseek/deepseek-v4-pro      0.478 / 0.957   ← +tinfoil +gmi
     #   mistralai/mistral-small-2603  0.165 / 0.660   ← cross-provider
-    #   openai/gpt-5.4-nano           0.176 / 1.100
+    #   openai/gpt-4.1-mini           0.440 / 1.760
     #   z-ai/glm-4.5-air              0.220 / 1.210
     #   google/gemini-2.5-flash       0.330 / 2.750
     #   z-ai/glm-4.6                  0.660 / 2.420   ← reasoning, tail
@@ -1310,7 +1406,7 @@ def monitor_candidate_models(limit: int = 12) -> list[Model]:
         "deepseek/deepseek-v3.2",
         "deepseek/deepseek-v4-pro",
         "mistralai/mistral-small-2603",
-        "openai/gpt-5.4-nano",
+        "openai/gpt-4.1-mini",
         "z-ai/glm-4.5-air",
         "google/gemini-2.5-flash",
         "z-ai/glm-4.6",

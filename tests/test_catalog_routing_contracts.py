@@ -24,7 +24,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
     for model_id, provider in [
         ("anthropic/claude-sonnet-4.6", "anthropic"),
-        ("openai/gpt-5.4-nano", "openai"),
+        ("openai/gpt-4.1-mini", "openai"),
         ("google/gemini-2.5-flash", "gemini"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
@@ -197,10 +197,10 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
 def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     candidates = chat_route_candidates(
         {
-            "model": "openai/gpt-5.4-nano",
+            "model": "openai/gpt-4.1-mini",
             "models": [
                 "mistralai/mistral-small-2603",
-                "openai/gpt-5.4-nano",
+                "openai/gpt-4.1-mini",
                 "deepseek/deepseek-v4-flash",
             ],
             "provider": {
@@ -218,7 +218,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     assert [model.id for model in candidates] == [
         "deepseek/deepseek-v4-flash",
         "mistralai/mistral-small-2603",
-        "openai/gpt-5.4-nano",
+        "openai/gpt-4.1-mini",
     ]
 
 
@@ -226,7 +226,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     ("model_id", "provider"),
     [
         ("moonshotai/kimi-k2.6", "kimi"),
-        ("openai/gpt-5.4-nano", "openai"),
+        ("openai/gpt-4.1-mini", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),

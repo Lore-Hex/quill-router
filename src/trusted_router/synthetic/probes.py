@@ -16,6 +16,7 @@ from trusted_router.config import Settings
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.types import UsageType
 
 
 @dataclass(frozen=True)
@@ -725,7 +726,7 @@ async def provider_rotation_probe(
         provider=served_provider,
         provider_name=_provider_display_name(served_provider),
         status="success",
-        usage_type="Credits",
+        usage_type=UsageType.CREDITS,
         streamed=True,
         elapsed_milliseconds=elapsed_ms,
         first_token_milliseconds=ttft_ms,
@@ -751,7 +752,7 @@ def _rotation_error_sample(
         provider=provider,
         provider_name=_provider_display_name(provider),
         status="error",
-        usage_type="Credits",
+        usage_type=UsageType.CREDITS,
         streamed=True,
         elapsed_milliseconds=elapsed_ms,
         first_token_milliseconds=None,

@@ -1,0 +1,21 @@
+{
+  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. Claude Opus 4.8 is the latest Claude (verified live via the Anthropic /v1/models API as claude-opus-4-8). The attested gateway maps anthropic/claude-opus-4.8 -> claude-opus-4-8 algorithmically (internal/llm/anthropic.go mapModelID), so no enclave change is needed. Pricing matches the Opus 4.7 tier: provider cost x1.10 -> $4.95/$24.75 per M customer.",
+  "models": [
+    {
+      "id": "anthropic/claude-opus-4.8",
+      "display_name": "Claude Opus 4.8",
+      "title": "anthropic/claude-opus-4.8",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 4500000,
+      "output_token_price_per_m": 22500000,
+      "model_type": "chat",
+      "features": ["function-calling"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "upstream_id": "anthropic/claude-opus-4.8",
+      "status": 1
+    }
+  ]
+}
