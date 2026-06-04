@@ -85,7 +85,10 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
             "nebius",
             30,
             [
-                "google/gemma-2-2b-it",
+                # Nebius retired Meta-Llama-3.1-8B + gemma-2-2b-it (dropped from
+                # Credits via _PROVIDER_UNSERVED_CREDITS_MODELS); Llama-3.3-70B
+                # is its current live Llama route.
+                "meta-llama/Llama-3.3-70B-Instruct",
                 "Qwen/Qwen3.5-397B-A17B",
                 "deepseek-ai/DeepSeek-V4-Pro",
                 "MiniMaxAI/MiniMax-M2.5",

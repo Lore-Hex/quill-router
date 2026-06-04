@@ -1258,17 +1258,34 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
     }
 )
 
-# Provider-keyed denylist: a closed model a SPECIFIC provider can't serve even
-# though its native provider can. gmi is an open-weights GPU host, but the
-# OpenRouter snapshot lists it as a prepaid endpoint for two closed models it
-# cannot actually run — anthropic/claude-opus-4.7 and openai/gpt-5.5 (both
-# verified 502 pinned to gmi, 2026-06-04). Drop only gmi's route; the models
-# still serve correctly on anthropic/openai direct. (A catalog-wide survey
-# found gmi is the ONLY provider with bogus closed-model Credits routes — the
-# gemini/grok routes that look cross-provider are actually the native serving
-# slugs for the google/* and x-ai/* publishers.)
+# Provider-keyed denylist: specific (provider, model) prepaid routes the
+# OpenRouter snapshot lists but the provider's live API doesn't actually serve
+# on our account — every one verified 502 pinned to that provider via the
+# gateway probe, then cross-checked against the provider's own /models feed,
+# 2026-06-04. Drop ONLY that provider's Credits route; the model still serves
+# fine wherever it's real (its native provider and/or other hosts). Unlike the
+# all-provider _UNSERVED_CREDITS_MODELS set, this is per provider, so a model
+# that's dead on one host but healthy elsewhere keeps its working routes.
+#
+#   gmi      — open-weights GPU host; can't run the two closed models the
+#              snapshot lists for it (anthropic/claude-opus-4.7, openai/gpt-5.5),
+#              both of which serve fine on their native provider.
+#   deepseek — DeepSeek-direct serves only deepseek-v4-flash/-v4-pro (its real
+#              /models); the snapshot's chat-v3.1 and v3.2 routes 502.
+#   nebius   — retired two older models still in the snapshot (gemma-2-2b-it,
+#              Meta-Llama-3.1-8B-Instruct); its current /models has neither.
+#   zai      — does not serve glm-4-32b (absent from its /models). NB: zai's
+#              glm-4.7 / glm-4.7-flash ALSO 502, but those are an ENCLAVE
+#              model-id-map bug (zai serves them under BARE ids like "glm-4.7";
+#              the enclave sends "zai-glm-4.7", which zai rejects) — NOT a
+#              catalog miss, so they are deliberately NOT dropped here.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
+    "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
+    "nebius": frozenset(
+        {"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}
+    ),
+    "zai": frozenset({"z-ai/glm-4-32b"}),
 }
 
 
