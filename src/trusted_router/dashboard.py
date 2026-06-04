@@ -852,7 +852,13 @@ def _model_view(model: Model) -> dict[str, object]:
         "context_length": f"{model.context_length:,}",
         "prompt_price": prompt,
         "completion_price": completion,
-        "prepaid": model.prepaid_available,
+        # Derive from endpoints (not the raw Model flag): supplemental
+        # provider-native models carry prepaid_available=False as a catalog
+        # dedup marker, but DO have a priced Credits endpoint and are fully
+        # prepaid-routable. Mirror model_to_openrouter_shape so the public
+        # catalog/detail page matches /v1/models.
+        "prepaid": any(endpoint.usage_type == "Credits" for endpoint in endpoints)
+        or model.prepaid_available,
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
         "stores_content": provider.stores_content,
@@ -993,7 +999,13 @@ def _model_detail_view(model: Model, *, active_section: str | None = None) -> di
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
-        "prepaid": model.prepaid_available,
+        # Derive from endpoints (not the raw Model flag): supplemental
+        # provider-native models carry prepaid_available=False as a catalog
+        # dedup marker, but DO have a priced Credits endpoint and are fully
+        # prepaid-routable. Mirror model_to_openrouter_shape so the public
+        # catalog/detail page matches /v1/models.
+        "prepaid": any(endpoint.usage_type == "Credits" for endpoint in endpoints)
+        or model.prepaid_available,
         "byok": model.byok_available,
     }
 
