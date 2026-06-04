@@ -243,3 +243,85 @@ def test_provider_route_preferences_data_collection_validates_enum() -> None:
 def test_provider_route_preferences_rejects_unknown_sort_mode() -> None:
     with pytest.raises(HTTPException):
         provider_route_preferences({"provider": {"sort": "popularity"}})
+
+
+# ── provider.min_privacy (privacy-tier routing) ─────────────────────────
+
+
+def test_min_privacy_parses_friendly_aliases() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_ZERO_RETENTION,
+    )
+
+    p = provider_route_preferences(
+        {"model": "x", "provider": {"min_privacy": "zdr"}}
+    )
+    assert p.min_privacy_rank == PRIVACY_TIER_ZERO_RETENTION
+    p2 = provider_route_preferences(
+        {"model": "x", "provider": {"min_privacy": "maximum"}}
+    )
+    assert p2.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
+    # Default: no filter.
+    assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
+
+
+def test_min_privacy_rejects_unknown_value() -> None:
+    with pytest.raises(HTTPException) as exc:
+        provider_route_preferences(
+            {"model": "x", "provider": {"min_privacy": "kinda-private"}}
+        )
+    assert exc.value.status_code == 400
+
+
+def test_min_privacy_zdr_on_auto_keeps_only_zdr_reachable() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_ZERO_RETENTION,
+        model_max_privacy_tier,
+    )
+
+    candidates = chat_route_candidates(
+        {"model": "trustedrouter/auto", "provider": {"min_privacy": "zdr"}},
+        _settings(),
+    )
+    assert candidates, "expected ZDR-reachable candidates in the Auto pool"
+    for model in candidates:
+        assert model_max_privacy_tier(model) >= PRIVACY_TIER_ZERO_RETENTION
+
+
+def test_min_privacy_confidential_keeps_confidential_reachable_model() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        model_max_privacy_tier,
+    )
+
+    # no-store via deepseek, confidential via phala — must still route.
+    candidates = chat_route_candidates(
+        {"model": "deepseek/deepseek-v3.2", "provider": {"min_privacy": "confidential"}},
+        _settings(),
+    )
+    assert candidates
+    assert all(model_max_privacy_tier(m) >= PRIVACY_TIER_CONFIDENTIAL for m in candidates)
+
+
+def test_min_privacy_too_high_for_model_raises() -> None:
+    # A no-store-only model demanded at confidential tier has no route —
+    # fail closed rather than silently downgrade.
+    with pytest.raises(HTTPException) as exc:
+        chat_route_candidates(
+            {"model": "openai/gpt-5.4-nano", "provider": {"min_privacy": "confidential"}},
+            _settings(),
+        )
+    assert exc.value.status_code == 400
+
+
+def test_model_shape_exposes_privacy_tier() -> None:
+    from trusted_router.catalog import MODELS, model_to_openrouter_shape
+
+    # Anthropic is zero-retention → tier label present and >= ZDR.
+    anth = next(m for m in MODELS.values() if m.provider == "anthropic")
+    shape = model_to_openrouter_shape(anth)
+    tr = shape["trustedrouter"]
+    assert "privacy_tier" in tr
+    assert "privacy_tier_label" in tr
+    assert tr["privacy_tier"] >= 2  # zero retention or better

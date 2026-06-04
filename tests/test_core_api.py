@@ -406,7 +406,11 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
     openai = client.get("/v1/models/openai/gpt-5.4-nano/endpoints")
     assert openai.status_code == 200
     openai_endpoints = openai.json()["data"]
-    assert {item["provider"] for item in openai_endpoints} >= {"openai", "gmi"}
+    # Pin only the canonical first-party provider. Secondary serving
+    # providers (gmi, etc.) churn with each OpenRouter snapshot refresh,
+    # so asserting their exact membership makes this test flaky against
+    # the hourly price-refresh bot.
+    assert "openai" in {item["provider"] for item in openai_endpoints}
     assert [
         item["trustedrouter"]["usage_type"]
         for item in openai_endpoints
