@@ -393,7 +393,18 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
 
     endpoint = client.get("/v1/models/meta-llama/llama-3.1-8b-instruct/endpoints")
     assert endpoint.status_code == 200
-    assert endpoint.json()["data"][0]["provider_name"] == "Cerebras"
+    endpoint_rows = endpoint.json()["data"]
+    # Cerebras no longer serves Llama via Credits on our account (catalog
+    # corrected after the dashboard showed it only hosts gpt-oss-120b +
+    # glm-4.7). It may still appear as a BYOK route (customer's own key), but
+    # must NOT be a prepaid option our key would 502 on.
+    assert not [
+        row
+        for row in endpoint_rows
+        if row["provider_name"] == "Cerebras" and row["trustedrouter"]["prepaid_available"]
+    ]
+    # The model still has working prepaid providers.
+    assert any(row["trustedrouter"]["prepaid_available"] for row in endpoint_rows)
 
     kimi = client.get("/v1/models/moonshotai/kimi-k2.6/endpoints")
     assert kimi.status_code == 200

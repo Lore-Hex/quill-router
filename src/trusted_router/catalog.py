@@ -1174,6 +1174,45 @@ MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 
+# --- Provider served-model allowlist -------------------------------------
+# Our upstream accounts don't always match OpenRouter's provider→model map.
+# Routing a model a provider doesn't actually host on our account returns an
+# upstream error (the gateway surfaces it as a 502). When an allowlist is set
+# for a provider, ONLY its listed models keep that provider's endpoints; routes
+# for any other model on that provider are dropped before serving/routing.
+#
+# Cerebras (the key wired into the enclave) serves only gpt-oss-120b and
+# glm-4.7 on our account — verified 2026-06-04 from the Cerebras dashboard —
+# NOT the Llama models OpenRouter lists for Cerebras's GA tier. Without this
+# filter every Llama-via-Cerebras route 502s, and because Cerebras is rank-0
+# ("fastest") it gets tried first for those models. (Adding Cerebras endpoints
+# for the two served models with verified Cerebras pricing is a follow-up; for
+# now those model ids simply have no Cerebras endpoint to keep.)
+_PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
+    "cerebras": frozenset({"openai/gpt-oss-120b", "z-ai/glm-4.7"}),
+}
+
+
+def _filter_unserved_provider_endpoints(
+    endpoints: dict[str, ModelEndpoint],
+) -> dict[str, ModelEndpoint]:
+    """Drop a provider's prepaid (Credits) endpoints for models it doesn't
+    serve on our account. Only Credits routes use OUR provider key, so only
+    those 502 on an account mismatch — BYOK routes use the customer's own key
+    (their account may serve a different model set), so they're left intact.
+    """
+    allow = _PROVIDER_SERVED_MODEL_ALLOWLIST
+    return {
+        endpoint_id: endpoint
+        for endpoint_id, endpoint in endpoints.items()
+        if endpoint.usage_type != "Credits"
+        or endpoint.provider not in allow
+        or endpoint.model_id in allow[endpoint.provider]
+    }
+
+
+MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(MODEL_ENDPOINTS)
+
 
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
     return [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id == model_id]

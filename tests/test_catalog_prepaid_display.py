@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from trusted_router.catalog import MODELS, endpoints_for_model
+from trusted_router.catalog import (
+    _PROVIDER_SERVED_MODEL_ALLOWLIST,
+    MODEL_ENDPOINTS,
+    MODELS,
+    endpoints_for_model,
+)
 from trusted_router.dashboard import _model_detail_view
 
 
@@ -36,3 +41,30 @@ def test_byok_only_model_stays_not_prepaid() -> None:
             return
     # If every non-prepaid model has a Credits endpoint, there's nothing to
     # assert — not a failure.
+
+
+def test_cerebras_only_credits_serves_allowlisted_models() -> None:
+    # The Cerebras account serves only a small set of models on OUR key;
+    # routing a Credits request for any other model 502s. Credits endpoints
+    # must never include a non-allowlisted model. (BYOK uses the customer's
+    # own key and is intentionally left untouched.)
+    allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["cerebras"]
+    cerebras_credits = {
+        e.model_id
+        for e in MODEL_ENDPOINTS.values()
+        if e.provider == "cerebras" and e.usage_type == "Credits"
+    }
+    assert cerebras_credits <= allow
+
+
+def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:
+    # Regression for the cerebras 502s: this model's Credits route used to
+    # include cerebras (which can't serve it) and fail. Its prepaid routing
+    # must now use only providers that actually serve it.
+    credits_providers = {
+        e.provider
+        for e in endpoints_for_model("meta-llama/llama-3.3-70b-instruct")
+        if e.usage_type == "Credits"
+    }
+    assert "cerebras" not in credits_providers
+    assert credits_providers & {"novita", "parasail", "tinfoil", "together"}
