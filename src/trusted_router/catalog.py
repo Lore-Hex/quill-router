@@ -1279,6 +1279,12 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 #              model-id-map bug (zai serves glm-4.7 under the BARE id; the
 #              enclave was sending "zai-glm-4.7") — fixed in quill-cloud-proxy
 #              (zaiModelMap), so glm-4.7 is deliberately NOT dropped here.
+#   gemini   — Google's Gemini API (closed gemini-* models) does NOT serve the
+#              open-weights Gemma models on our key: every google/gemma-* route
+#              pinned to gemini 502s (upstream_4xx), verified 2026-06-04. Gemma
+#              is hosted by the open-weights providers (deepinfra/novita/parasail/
+#              gmi/lightning), which work. gemini was ranked first for these, so
+#              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
@@ -1286,6 +1292,15 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         {"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}
     ),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
+    "gemini": frozenset(
+        {
+            "google/gemma-3-4b-it",
+            "google/gemma-3-12b-it",
+            "google/gemma-3-27b-it",
+            "google/gemma-4-26b-a4b-it",
+            "google/gemma-4-31b-it",
+        }
+    ),
 }
 
 
