@@ -16,6 +16,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
@@ -648,6 +649,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
         section=section,
         section_label=label,
         benchmark_links=_benchmark_links(model),
+        benchmark_scores=scores_for_model(model.id),
         json_ld_blob=_model_json_ld(settings, model, f"https://{settings.trusted_domain}/models/{model_id}"),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
