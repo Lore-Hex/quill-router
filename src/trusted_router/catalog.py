@@ -322,9 +322,12 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Marked ZDR for direct Anthropic Messages API routing. Anthropic documents "
-            "zero data retention for appropriately configured API usage; non-message "
-            "features may have separate retention behavior."
+            "Marked ZDR via TrustedRouter's arrangement — zero retention is NOT "
+            "Anthropic's public default; it applies to contracted / approved API "
+            "usage, which TrustedRouter's deployed account is configured for. "
+            "Anthropic does not train on API content. (Flagged content may be "
+            "retained longer for Usage-Policy enforcement; non-Messages features "
+            "may differ.)"
         ),
         provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
     ),
@@ -419,9 +422,10 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Tracked as provider ZDR for TrustedRouter prepaid routes because the "
-            "deployed Together account has ZDR enabled. Together documents ZDR as "
-            "an account/privacy setting."
+            "Marked ZDR via TrustedRouter's arrangement — Together's ZDR is an "
+            "opt-in account/privacy setting, NOT the public default, and the "
+            "deployed Together account has it enabled. Together does not train "
+            "on content without opt-in."
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
     ),
@@ -506,11 +510,13 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         stores_content=False,
         provider_zero_data_retention=True,
-        provider_confidential_compute=False,
-        provider_e2ee=False,
+        provider_confidential_compute=True,
+        provider_e2ee=True,
         provider_policy=(
-            "Tracked as a no-logs provider claim. This is not the same as "
-            "attested confidential compute."
+            "Tracked as confidential — Venice documents no logging or storage of "
+            "prompts/responses plus TEE-isolated, end-to-end-encrypted inference. "
+            "(Caveat: requests Venice proxies to external frontier models inherit "
+            "those providers' policies; TR routes Venice-native open models here.)"
         ),
         provider_policy_url="https://docs.venice.ai/overview/privacy",
     ),
@@ -554,10 +560,11 @@ PROVIDERS: dict[str, Provider] = {
         slug="gmi",
         name="GMI Cloud",
         supports_prepaid=True,
-        provider_confidential_compute=True,
         provider_policy=(
-            "Tracked as confidential-GPU provider compute. Zero-retention "
-            "and provider-side E2EE are not marked unless separately verified."
+            "GMI runs isolated/VPC GPU inference, but that is network isolation, "
+            "NOT an attested TEE — so no confidential-compute, zero-retention, or "
+            "E2EE claim is marked. Retention/training terms are unverified (the "
+            "published policy page is JavaScript-only and would not render)."
         ),
         provider_policy_url="https://gmicloud.ai/legal/privacy",
     ),
@@ -569,9 +576,13 @@ PROVIDERS: dict[str, Provider] = {
         slug="deepinfra",
         name="DeepInfra",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "DeepInfra documents inference data handling and no training on submitted "
-            "API data, with provider-specific exceptions for some upstream model owners."
+            "Tracked as provider ZDR — DeepInfra documents memory-only handling "
+            "with no storage of API content and no training on submitted API data. "
+            "(Exception: requests to Google/Anthropic-backed models inherit those "
+            "vendors' policies.)"
         ),
         provider_policy_url="https://docs.deepinfra.com/account/data-privacy",
     ),
@@ -586,9 +597,10 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Tracked as provider ZDR for TrustedRouter prepaid routes because the "
-            "deployed Nebius account has ZDR enabled. Nebius documents no model "
-            "training on customer data and optional ZDR controls."
+            "Marked ZDR via TrustedRouter's arrangement — Nebius RETAINS inputs/"
+            "outputs by default (for speculative decoding); zero retention is an "
+            "opt-in control, which the deployed Nebius account has enabled. Nebius "
+            "does not train on customer data."
         ),
         provider_policy_url="https://docs.studio.nebius.com/legal/legal-quick-guide",
     ),
