@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.routes.public import _status_page_html
 from trusted_router.storage import STORE, ProviderBenchmarkSample
 
 
@@ -60,3 +61,26 @@ def test_leaderboard_in_sitemap() -> None:
     resp = client.get("/sitemap.xml")
     assert resp.status_code == 200
     assert "/leaderboard" in resp.text
+
+
+def test_status_page_surfaces_upstream_provider_errors() -> None:
+    # The rotation-probe error data feeds an informational provider-health
+    # section on /status (separate from the router-core SLO). Render the page
+    # function directly to bypass the HTTP response cache.
+    STORE.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id="bench-status-err-1",
+            model="meta/some-model",
+            provider="cerebras",
+            provider_name="Cerebras",
+            status="error",
+            usage_type="Credits",
+            streamed=True,
+            error_type="http_404",
+            source="synthetic",
+        )
+    )
+    html = _status_page_html(_settings(), host="trustedrouter.com")
+    assert "Upstream provider health" in html
+    assert "cerebras" in html
+    assert "http_404" in html  # the captured error type is surfaced

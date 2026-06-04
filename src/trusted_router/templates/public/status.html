@@ -59,6 +59,33 @@
     {% endfor %}
   </section>
 
+  {% if provider_health %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Upstream provider health</h2>
+        <p>Continuously measured per provider from the rotation probe and real traffic. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead><tr><th>Provider</th><th>Success</th><th>Error rate</th><th>Top error</th><th>Samples</th></tr></thead>
+        <tbody>
+          {% for p in provider_health %}
+          <tr>
+            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
+            <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{% if p.error_rate and p.error_rate > 0 %}<span class="pill warn">{{ '%.1f'|format(p.error_rate * 100) }}%</span>{% else %}0%{% endif %}</td>
+            <td>{% if p.top_error %}<code>{{ p.top_error }}</code>{% else %}—{% endif %}</td>
+            <td>{{ p.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
   {% if snapshot.burn_rate_alerts %}
   <section class="status-section">
     <div class="status-section-head">

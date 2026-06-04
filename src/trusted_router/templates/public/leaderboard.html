@@ -40,7 +40,7 @@
         <thead>
           <tr>
             <th>#</th><th>Provider</th><th>Models</th>
-            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Samples</th>
+            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Errors</th><th>Samples</th>
           </tr>
         </thead>
         <tbody>
@@ -52,6 +52,7 @@
             <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{{ p.sample_count }}</td>
           </tr>
           {% endfor %}

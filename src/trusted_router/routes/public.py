@@ -735,6 +735,15 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         else f"https://{settings.trusted_domain}/status"
     )
     snapshot = _status_snapshot(settings)
+    # Measured upstream-provider health from the rotation-probe / organic
+    # benchmark samples. Informational provider watch — intentionally NOT part
+    # of the router-core paging SLO above (a flaky upstream model must not page
+    # router health), but surfaced here so provider errors are visible.
+    leaderboard = _leaderboard_snapshot(settings)
+    provider_health = sorted(
+        leaderboard.get("providers", []),
+        key=lambda p: (-p.get("error_rate", 0.0), p.get("provider", "")),
+    )
     return render_template(
         "public/status.html",
         api_base_url=settings.api_base_url,
@@ -746,4 +755,5 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         github_enabled=settings.github_oauth_enabled,
         static_version=settings.release,
         snapshot=snapshot,
+        provider_health=provider_health,
     )

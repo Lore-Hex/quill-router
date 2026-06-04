@@ -12,6 +12,7 @@ def _sample(
     ttft: int | None = None,
     ttfb: int | None = None,
     tps: float | None = None,
+    error_type: str | None = None,
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
@@ -25,6 +26,7 @@ def _sample(
         first_token_milliseconds=ttft,
         ttfb_milliseconds=ttfb,
         speed_tokens_per_second=tps,
+        error_type=error_type,
         created_at=created_at,
     )
 
@@ -94,3 +96,20 @@ def test_empty_samples_produce_empty_leaderboard() -> None:
     assert result["models"] == []
     assert result["providers"] == []
     assert result["total_samples"] == 0
+
+
+def test_aggregate_tracks_error_types_per_model_and_provider() -> None:
+    samples = [
+        _sample(provider="cerebras", model="c/m", status="error", error_type="http_404"),
+        _sample(provider="cerebras", model="c/m", status="error", error_type="http_404"),
+        _sample(provider="cerebras", model="c/m", status="error", error_type="ConnectError"),
+        _sample(provider="cerebras", model="c/m", status="success", ttft=100),
+    ]
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    assert model["error_rate"] == round(3 / 4, 4)
+    assert model["top_error"] == "http_404"
+    assert model["errors"] == {"http_404": 2, "ConnectError": 1}
+    provider = result["providers"][0]
+    assert provider["top_error"] == "http_404"
+    assert provider["errors"]["http_404"] == 2
