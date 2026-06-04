@@ -14,6 +14,27 @@
     </nav>
 
     {% if section == "benchmarks" %}
+    {% if benchmark_scores %}
+    <h3>Published benchmark scores</h3>
+    <p class="muted-copy">First-party model-card and open-leaderboard scores for {{ model.name }} — every row links to its primary source. TrustedRouter does not run these evals; we cite them, and only attach a score to the exact checkpoint it was measured on.</p>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead>
+          <tr><th>Benchmark</th><th>Category</th><th>Score</th><th>Source</th></tr>
+        </thead>
+        <tbody>
+          {% for s in benchmark_scores %}
+          <tr>
+            <td><a href="{{ s.about_url }}">{{ s.label }}</a>{% if s.config_note %}<div class="lb-note">{{ s.config_note }}</div>{% endif %}</td>
+            <td>{{ s.category }}</td>
+            <td>{{ s.display }}</td>
+            <td><a href="{{ s.source_url }}" rel="nofollow noopener">{{ s.source_name }}</a>{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
     <div class="seo-two-col">
       <div>
         <h3>TrustedRouter measurements</h3>

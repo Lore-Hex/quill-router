@@ -1,0 +1,148 @@
+{
+  "_about": "Sourced external benchmark scores shown on /models/{id}/benchmarks. Every row carries a real source_url and is class A (vendor model card/paper) or B (open leaderboard, permissive license). Numbers are verified against the cited primary source and attached only to the exact model checkpoint measured. Class C aggregators (Artificial Analysis, LMArena, LiveBench) are link-only and intentionally absent. Grow this file by curation + the open-feed ingestion script (Aider/BFCL/MMLU-Pro).",
+  "scores": [
+    {
+      "model_id": "anthropic/claude-sonnet-4.5",
+      "benchmark_key": "swe_bench_verified",
+      "score": 77.2,
+      "unit": "percent",
+      "source_name": "Anthropic — Claude Sonnet 4.5",
+      "source_url": "https://www.anthropic.com/news/claude-sonnet-4-5",
+      "source_class": "A",
+      "as_of_date": "2025-09-29",
+      "config_note": "avg of 10 trials, 200K thinking budget; no test-time compute"
+    },
+    {
+      "model_id": "anthropic/claude-sonnet-4.5",
+      "benchmark_key": "osworld",
+      "score": 61.4,
+      "unit": "percent",
+      "source_name": "Anthropic — Claude Sonnet 4.5",
+      "source_url": "https://www.anthropic.com/news/claude-sonnet-4-5",
+      "source_class": "A",
+      "as_of_date": "2025-09-29",
+      "config_note": "computer use"
+    },
+    {
+      "model_id": "anthropic/claude-opus-4.1",
+      "benchmark_key": "swe_bench_verified",
+      "score": 74.5,
+      "unit": "percent",
+      "source_name": "Anthropic — Claude Opus 4.1",
+      "source_url": "https://www.anthropic.com/news/claude-opus-4-1",
+      "source_class": "A",
+      "as_of_date": "2025-08-05",
+      "config_note": null
+    },
+    {
+      "model_id": "google/gemini-2.5-pro",
+      "benchmark_key": "livecodebench",
+      "score": 74.2,
+      "unit": "percent",
+      "source_name": "Google DeepMind — Gemini 2.5 technical report",
+      "source_url": "https://storage.googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf",
+      "source_class": "A",
+      "as_of_date": "2025-06-17",
+      "config_note": null
+    },
+    {
+      "model_id": "google/gemini-2.5-pro",
+      "benchmark_key": "aider_polyglot",
+      "score": 82.2,
+      "unit": "percent",
+      "source_name": "Google DeepMind — Gemini 2.5 technical report",
+      "source_url": "https://storage.googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf",
+      "source_class": "A",
+      "as_of_date": "2025-06-17",
+      "config_note": null
+    },
+    {
+      "model_id": "google/gemini-2.5-pro",
+      "benchmark_key": "swe_bench_verified",
+      "score": 67.2,
+      "unit": "percent",
+      "source_name": "Google DeepMind — Gemini 2.5 technical report",
+      "source_url": "https://storage.googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf",
+      "source_class": "A",
+      "as_of_date": "2025-06-17",
+      "config_note": null
+    },
+    {
+      "model_id": "google/gemini-2.5-pro",
+      "benchmark_key": "hle",
+      "score": 26.9,
+      "unit": "percent",
+      "source_name": "Google DeepMind — Gemini 2.5 technical report",
+      "source_url": "https://storage.googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf",
+      "source_class": "A",
+      "as_of_date": "2025-06-17",
+      "config_note": "32.4% with higher compute"
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "mmlu",
+      "score": 86.0,
+      "unit": "percent",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": "0-shot, CoT"
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "mmlu_pro",
+      "score": 68.9,
+      "unit": "percent",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": "CoT"
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "ifeval",
+      "score": 92.1,
+      "unit": "percent",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": null
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "humaneval",
+      "score": 88.4,
+      "unit": "pass@1",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": null
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "gpqa_diamond",
+      "score": 50.5,
+      "unit": "percent",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": "0-shot, CoT"
+    },
+    {
+      "model_id": "meta-llama/llama-3.3-70b-instruct",
+      "benchmark_key": "math",
+      "score": 77.0,
+      "unit": "percent",
+      "source_name": "Meta — Llama 3.3 70B model card",
+      "source_url": "https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/MODEL_CARD.md",
+      "source_class": "A",
+      "as_of_date": "2024-12-06",
+      "config_note": "0-shot, CoT"
+    }
+  ]
+}
