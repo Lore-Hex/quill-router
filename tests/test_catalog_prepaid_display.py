@@ -4,6 +4,7 @@ from trusted_router.catalog import (
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
     MODEL_ENDPOINTS,
     MODELS,
+    ModelEndpoint,
     endpoints_for_model,
 )
 from trusted_router.dashboard import _model_detail_view
@@ -68,3 +69,22 @@ def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:
     }
     assert "cerebras" not in credits_providers
     assert credits_providers & {"novita", "parasail", "tinfoil", "together"}
+
+
+def _endpoint_for(model_id: str, provider: str, usage_type: str) -> ModelEndpoint:
+    for endpoint in endpoints_for_model(model_id):
+        if endpoint.provider == provider and endpoint.usage_type == usage_type:
+            return endpoint
+    raise AssertionError(f"missing {provider} {usage_type} endpoint for {model_id}")
+
+
+def test_novita_supplemental_prices_apply_manifest_scale() -> None:
+    endpoint = _endpoint_for(
+        "qwen/qwen3-235b-a22b-instruct-2507",
+        provider="novita",
+        usage_type="Credits",
+    )
+
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 99_000
+    assert endpoint.completion_price_microdollars_per_million_tokens == 638_000
+    assert endpoint.prompt_price_microdollars_per_million_tokens > 10_000
