@@ -28,7 +28,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("google/gemini-2.5-flash", "gemini"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
-        ("meta-llama/llama-3.1-8b-instruct", "cerebras"),
+        ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("moonshotai/kimi-k2.6", "kimi"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -60,7 +60,6 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
         "anthropic",
         "openai",
         "gemini",
-        "cerebras",
         "deepseek",
         "mistral",
         "kimi",
@@ -230,7 +229,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
         ("openai/gpt-5.4-nano", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
-        ("meta-llama/llama-3.1-8b-instruct", "cerebras"),
+        ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("google/gemini-2.5-flash", "gemini"),
         ("anthropic/claude-sonnet-4.6", "anthropic"),
     ],
@@ -240,18 +239,23 @@ def test_endpoint_candidates_make_dual_mode_models_explicit(model_id: str, provi
         {"model": model_id},
         Settings(environment="test"),
     )
-    expected = [
-        f"{model_id}@{provider}/prepaid",
-        f"{model_id}@{provider}/byok",
-    ]
-    assert [endpoint.id for _model, endpoint in endpoints][:2] == expected
+    prepaid = f"{model_id}@{provider}/prepaid"
+    byok = f"{model_id}@{provider}/byok"
+    # Dual-mode is explicit: a provider's prepaid endpoint is immediately
+    # followed by its BYOK twin. We check adjacency rather than absolute
+    # position, since the full candidate list is ordered by provider rank and
+    # a BYOK-only provider (e.g. Cerebras for Llama) can sort ahead.
+    route_ids = [endpoint.id for _model, endpoint in endpoints]
+    assert prepaid in route_ids
+    assert route_ids[route_ids.index(prepaid) + 1] == byok
 
     byok_only = chat_route_endpoint_candidates(
         {"model": model_id, "provider": {"usage": "byok"}},
         Settings(environment="test"),
     )
     assert [endpoint.usage_type for _model, endpoint in byok_only] == ["BYOK"] * len(byok_only)
-    assert [endpoint.id for endpoint in endpoints_for_model(model_id)][:2] == expected
+    catalog_ids = [endpoint.id for endpoint in endpoints_for_model(model_id)]
+    assert catalog_ids[catalog_ids.index(prepaid) + 1] == byok
 
 
 @pytest.mark.parametrize(
