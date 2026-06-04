@@ -1,0 +1,102 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="status-hero">
+  <div>
+    <span class="eyebrow">Measured performance</span>
+    <h1>{{ heading }}</h1>
+    <p class="lead">{{ description }}</p>
+  </div>
+  <div class="status-updated">
+    <span>Last updated</span>
+    <strong>{{ snapshot.generated_at }}</strong>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="status-page leaderboard-page">
+  <div class="status-note">
+    Continuously sampled from TrustedRouter's monitor regions — time-to-first-token (TTFT),
+    time-to-first-byte (TTFB), throughput, and success rate measured on real streaming
+    requests, not vendor-claimed. No prompt or output content is ever stored.
+  </div>
+
+  {% if not snapshot.models %}
+  <div class="status-note status-note-warning">
+    Measurements are warming up — performance data will appear here shortly. Check back soon.
+  </div>
+  {% else %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Providers</h2>
+        <p>Ranked by measured p50 time-to-first-token across all of a provider's models
+          ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} samples).</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Provider</th><th>Models</th>
+            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Samples</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in snapshot.providers %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
+            <td>{{ p.model_count }}</td>
+            <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
+            <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{{ p.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Models</h2>
+        <p>Every model TrustedRouter routes to, fastest measured TTFT first.
+          Rows with few samples are marked — more data sharpens the numbers.</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Model</th><th>Provider</th>
+            <th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th>
+            <th>Throughput</th><th>Uptime</th><th>Samples</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in snapshot.models %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a>
+              {% if m.sample_count < 20 %}<span class="lb-badge">limited data</span>{% endif %}
+            </td>
+            <td>{{ m.provider }}</td>
+            <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
+            <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{{ m.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

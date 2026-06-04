@@ -25,6 +25,7 @@ from trusted_router.dashboard import (
     llms_txt,
     public_benchmarks_html,
     public_chat_html,
+    public_leaderboard_html,
     public_model_compare_html,
     public_model_detail_html,
     public_model_not_found_html,
@@ -40,6 +41,7 @@ from trusted_router.dashboard import (
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
 from trusted_router.storage_models import utcnow
+from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
 from trusted_router.trust import gcp_release, trust_html
 from trusted_router.views import render_template
@@ -55,7 +57,12 @@ STATUS_RESPONSE_CACHE_SECONDS = 60
 STATUS_RESPONSE_STALE_SECONDS = 600
 STATUS_HISTORY_CACHE_SECONDS = 300
 STATUS_HISTORY_STALE_SECONDS = 1_800
+LEADERBOARD_SAMPLE_LIMIT = 8_000
+LEADERBOARD_MIN_SAMPLES = 1
+LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
+LEADERBOARD_RESPONSE_STALE_SECONDS = 900
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
+_LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _STATUS_RESPONSE_CACHE: dict[str, _CachedPublicBody] = {}
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
@@ -246,6 +253,20 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             settings,
             host=request.headers.get("host", ""),
             background_tasks=background_tasks,
+        )
+
+    @public_html_route("/leaderboard")
+    async def leaderboard_page(request: Request, background_tasks: BackgroundTasks) -> Response:
+        return _cached_public_response(
+            settings,
+            key=f"leaderboard:page:{request.headers.get('host', '')}",
+            media_type="text/html",
+            ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
+            stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: public_leaderboard_html(
+                settings, _leaderboard_snapshot(settings)
+            ).encode(),
         )
 
     @app.get("/status.json")
@@ -594,6 +615,21 @@ def _status_history_page_html(
         window=window,
         json_url=f"/status/history?window={window}&format=json",
     )
+
+
+def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
+    global _LEADERBOARD_CACHE
+    now = time.monotonic()
+    if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
+        cached_at, payload = _LEADERBOARD_CACHE
+        if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
+            return payload
+    samples = STORE.provider_benchmark_samples(date=None, limit=LEADERBOARD_SAMPLE_LIMIT)
+    payload = aggregate_leaderboard(samples, min_samples=LEADERBOARD_MIN_SAMPLES)
+    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    if settings.environment != "test":
+        _LEADERBOARD_CACHE = (now, payload)
+    return payload
 
 
 def _status_snapshot(settings: Settings) -> dict[str, Any]:

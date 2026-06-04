@@ -59,6 +59,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/providers",
     "/benchmarks",
     "/rankings",
+    "/leaderboard",
     "/status",
     "/security",
     "/chat",
@@ -454,6 +455,30 @@ def public_benchmarks_html(settings: Settings) -> str:
         models=_seo_model_rows(),
         providers=[_provider_view(provider) for provider in providers_for_display()],
         benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> str:
+    """Render the public performance leaderboard from a precomputed snapshot.
+
+    `snapshot` is the output of `aggregate_leaderboard()` plus a `generated_at`
+    timestamp — built (and cached) by the route so this stays render-only.
+    """
+    return _env().get_template("public/leaderboard.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/leaderboard",
+        title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
+        heading="Provider & model performance",
+        description=(
+            "Measured time-to-first-token, time-to-first-byte, throughput, and "
+            "uptime for every LLM provider and model TrustedRouter routes to — "
+            "continuously sampled, not vendor-claimed."
+        ),
+        page_kind="leaderboard",
+        snapshot=snapshot,
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),

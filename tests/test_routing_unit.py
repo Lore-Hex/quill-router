@@ -331,7 +331,7 @@ def test_data_collection_deny_keeps_zdr_drops_standard() -> None:
     # deny == "no data collection" → require >= no-store tier. ZDR
     # providers (anthropic) carry the conservative stores_content=True
     # default but must NOT be dropped; standard providers must be.
-    from trusted_router.catalog import model_max_privacy_tier, PRIVACY_TIER_NO_STORE
+    from trusted_router.catalog import PRIVACY_TIER_NO_STORE, model_max_privacy_tier
 
     kept = chat_route_candidates(
         {"model": "anthropic/claude-sonnet-4.6", "provider": {"data_collection": "deny"}},
@@ -350,7 +350,7 @@ def test_data_collection_deny_keeps_zdr_drops_standard() -> None:
 def test_unverified_provider_defaults_to_stores_content() -> None:
     # Conservative default: a provider with no explicit posture is assumed
     # to store content (tier STANDARD), never silently "no-store".
-    from trusted_router.catalog import PROVIDERS, provider_privacy_tier, PRIVACY_TIER_STANDARD
+    from trusted_router.catalog import PRIVACY_TIER_STANDARD, PROVIDERS, provider_privacy_tier
 
     assert provider_privacy_tier(PROVIDERS["openai"]) == PRIVACY_TIER_STANDARD
     assert PROVIDERS["openai"].stores_content is True
