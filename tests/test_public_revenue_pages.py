@@ -114,10 +114,11 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "Public status separates router health from provider health" in response.text
     assert "/static/hero-router-scene.js" in response.text
     assert "data-router-scene" in response.text
-    # Hero leads with the coding-agent switch (Codex + Claude Code).
-    assert "Point Codex or Claude Code at TrustedRouter" in response.text
-    assert "OPENAI_BASE_URL" in response.text
-    assert "ANTHROPIC_BASE_URL" in response.text
+    # Hero leads with the "tell your agent to move you over" prompt flow.
+    assert "Move over in one prompt" in response.text
+    assert "Migrate this project to TrustedRouter" in response.text
+    assert "data_collection" in response.text  # privacy-level routing pref
+    assert "Sign up &amp; get a key" in response.text
 
 
 def test_console_credit_note_is_manual(client: TestClient) -> None:

@@ -78,6 +78,10 @@ code, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospa
 .code-strip pre { background:#0b121a; border:1px solid #263644; border-radius:8px; color:#d8e6f3; }
 .code-strip pre code { white-space:pre-wrap; overflow-wrap:anywhere; }
 .code-strip .pill { background:rgba(255,255,255,.08); color:#c8d7e5; border-color:rgba(255,255,255,.16); }
+.code-strip .sdk-links { display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+.switch-steps { margin:12px 0 0; padding-left:20px; display:grid; gap:7px; color:#c3d2df; font-size:13px; line-height:1.4; }
+.switch-steps li { padding-left:2px; }
+.switch-steps li::marker { color:#7be0b1; font-weight:750; }
 .wrap { max-width:1180px; margin:0 auto; padding:20px 22px 42px; display:grid; gap:18px; }
 .public-wrap { padding-top:28px; }
 .public-hero { background:#fff; border:1px solid var(--line); border-radius:8px; padding:28px; }
