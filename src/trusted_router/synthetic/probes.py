@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import secrets
 import time
 import uuid
@@ -14,7 +15,7 @@ import httpx
 from trusted_router.config import Settings
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
-from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 
 
 @dataclass(frozen=True)
@@ -577,6 +578,190 @@ async def gateway_fallback_probe(
                 model=model,
             )
         ]
+
+
+# ---------------------------------------------------------------------------
+# Provider/model rotation probe — a synthetic "user" that exercises every
+# provider+model reachable via a prepaid endpoint, measuring TTFB (first byte)
+# and TTFT (first content token) from real streaming responses. Feeds the SAME
+# ProviderBenchmarkSample store as organic production traffic (tagged
+# source="synthetic"), so the public leaderboard and the measured-routing
+# snapshot get coverage for models with little/no organic traffic yet — and we
+# get a daily API-drift signal. Deliberately NOT a SyntheticProbeSample: it
+# never touches the /status router-health SLO or its burn-rate alerts.
+# ---------------------------------------------------------------------------
+
+
+def rotation_candidates() -> dict[str, list[str]]:
+    """Map each provider to the model IDs it serves via a prepaid (Credits)
+    endpoint. Iterates ENDPOINTS rather than Model.prepaid_available (a catalog
+    dedup marker) so supplemental provider-native models are covered too."""
+    from trusted_router.catalog import MODEL_ENDPOINTS
+
+    pool: dict[str, list[str]] = {}
+    for endpoint in MODEL_ENDPOINTS.values():
+        if endpoint.usage_type != "Credits":
+            continue
+        models = pool.setdefault(endpoint.provider, [])
+        if endpoint.model_id not in models:
+            models.append(endpoint.model_id)
+    return pool
+
+
+def choose_rotation_target(
+    pool: dict[str, list[str]], rng: random.Random
+) -> tuple[str, str] | None:
+    """Two-stage random pick: uniform over providers, then uniform over that
+    provider's models — equal airtime per provider regardless of catalog size."""
+    providers = sorted(provider for provider, models in pool.items() if models)
+    if not providers:
+        return None
+    provider = rng.choice(providers)
+    return provider, rng.choice(sorted(set(pool[provider])))
+
+
+def _provider_display_name(provider: str) -> str:
+    from trusted_router.catalog import PROVIDERS
+
+    entry = PROVIDERS.get(provider)
+    return entry.name if entry is not None else provider
+
+
+def _sse_line_has_content(line: str) -> bool:
+    """True if an SSE `data:` line carries a visible content/reasoning delta."""
+    line = line.strip()
+    if not line.startswith("data:"):
+        return False
+    payload = line[len("data:") :].strip()
+    if not payload or payload == "[DONE]":
+        return False
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return False
+    for choice in data.get("choices") or []:
+        delta = choice.get("delta") or {}
+        if delta.get("content") or delta.get("reasoning_content"):
+            return True
+        message = choice.get("message") or {}
+        if message.get("content"):
+            return True
+    return False
+
+
+async def provider_rotation_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+    provider: str,
+    model: str,
+) -> ProviderBenchmarkSample:
+    """Stream a tiny request to one provider+model and measure TTFB (first
+    byte) and TTFT (first content token). Pins `provider.only` so the sample is
+    attributed to the intended upstream; records the actually-served
+    provider/model from the provenance headers when present. max_tokens stays
+    tiny and we never assert the content — we measure token *flow*, not text."""
+    url = _api_url(target.api_base_url, "/chat/completions")
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": "reply exactly PONG"}],
+        "max_tokens": 16,
+        "temperature": 0,
+        "stream": True,
+        "provider": {"only": [provider]},
+        "metadata": {"trustedrouter_synthetic": "true"},
+    }
+    started = time.perf_counter()
+    ttfb_ms: int | None = None
+    ttft_ms: int | None = None
+    served_provider = provider
+    served_model = model
+    try:
+        async with client.stream(
+            "POST", url, json=body, headers=_auth_headers(api_key)
+        ) as response:
+            served_provider = response.headers.get("x-trustedrouter-provider") or provider
+            served_model = response.headers.get("x-trustedrouter-served-model") or model
+            if response.status_code != 200:
+                await response.aread()
+                return _rotation_error_sample(
+                    served_provider,
+                    served_model,
+                    region=monitor_region,
+                    elapsed_ms=_elapsed_ms(started),
+                    error_status=response.status_code,
+                    error_type=f"http_{response.status_code}",
+                )
+            tail = ""
+            async for chunk in response.aiter_bytes():
+                if not chunk:
+                    continue
+                now = _elapsed_ms(started)
+                if ttfb_ms is None:
+                    ttfb_ms = now
+                if ttft_ms is None:
+                    tail += chunk.decode("utf-8", "ignore")
+                    lines = tail.split("\n")
+                    tail = lines.pop()
+                    for line in lines:
+                        if _sse_line_has_content(line):
+                            ttft_ms = now
+                            break
+            elapsed_ms = _elapsed_ms(started)
+    except (httpx.HTTPError, ValueError) as exc:
+        return _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=_elapsed_ms(started),
+            error_status=None,
+            error_type=exc.__class__.__name__,
+        )
+    return ProviderBenchmarkSample(
+        id=f"bench-{uuid.uuid4().hex}",
+        model=served_model,
+        provider=served_provider,
+        provider_name=_provider_display_name(served_provider),
+        status="success",
+        usage_type="Credits",
+        streamed=True,
+        elapsed_milliseconds=elapsed_ms,
+        first_token_milliseconds=ttft_ms,
+        ttfb_milliseconds=ttfb_ms,
+        finish_reason="stop",
+        region=monitor_region,
+        source="synthetic",
+    )
+
+
+def _rotation_error_sample(
+    provider: str,
+    model: str,
+    *,
+    region: str,
+    elapsed_ms: int,
+    error_status: int | None,
+    error_type: str,
+) -> ProviderBenchmarkSample:
+    return ProviderBenchmarkSample(
+        id=f"bench-{uuid.uuid4().hex}",
+        model=model,
+        provider=provider,
+        provider_name=_provider_display_name(provider),
+        status="error",
+        usage_type="Credits",
+        streamed=True,
+        elapsed_milliseconds=elapsed_ms,
+        first_token_milliseconds=None,
+        ttfb_milliseconds=None,
+        finish_reason="error",
+        error_type=error_type,
+        error_status=error_status,
+        region=region,
+        source="synthetic",
+    )
 
 
 def _sample(

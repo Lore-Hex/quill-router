@@ -243,6 +243,9 @@ class Generation:
     provider: str | None = None
     elapsed_milliseconds: int | None = None
     first_token_milliseconds: int | None = None
+    # Time to first response BYTE (headers / first SSE frame), distinct from
+    # first_token_milliseconds which is time to first CONTENT token (TTFT).
+    ttfb_milliseconds: int | None = None
     region: str | None = None
 
     def __post_init__(self) -> None:
@@ -266,6 +269,7 @@ class Generation:
     ) -> Generation:
         elapsed_ms = _seconds_to_milliseconds(getattr(result, "elapsed_seconds", 0.001))
         first_token_seconds = getattr(result, "first_token_seconds", None)
+        first_byte_seconds = getattr(result, "first_byte_seconds", None)
         return cls(
             id=f"gen-{uuid.uuid4().hex}",
             request_id=result.request_id,
@@ -288,6 +292,9 @@ class Generation:
             first_token_milliseconds=(
                 _seconds_to_milliseconds(first_token_seconds) if first_token_seconds is not None else None
             ),
+            ttfb_milliseconds=(
+                _seconds_to_milliseconds(first_byte_seconds) if first_byte_seconds is not None else None
+            ),
             region=region,
         )
 
@@ -308,6 +315,8 @@ class Generation:
         elapsed = max(float(body.get("elapsed_seconds") or 0.001), 0.001)
         first_token_raw = body.get("first_token_seconds") or body.get("time_to_first_token_seconds")
         first_token = max(float(first_token_raw), 0.001) if first_token_raw is not None else None
+        first_byte_raw = body.get("first_byte_seconds") or body.get("time_to_first_byte_seconds")
+        first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
         return cls(
             id=f"gen-{uuid.uuid4().hex}",
             request_id=str(body.get("request_id") or f"req-{uuid.uuid4()}"),
@@ -329,6 +338,9 @@ class Generation:
             elapsed_milliseconds=_seconds_to_milliseconds(elapsed),
             first_token_milliseconds=(
                 _seconds_to_milliseconds(first_token) if first_token is not None else None
+            ),
+            ttfb_milliseconds=(
+                _seconds_to_milliseconds(first_byte) if first_byte is not None else None
             ),
             region=authorization.region,
         )
@@ -391,10 +403,16 @@ class ProviderBenchmarkSample:
     speed_tokens_per_second: float | None = None
     elapsed_milliseconds: int | None = None
     first_token_milliseconds: int | None = None
+    ttfb_milliseconds: int | None = None
     finish_reason: str | None = None
     error_type: str | None = None
     error_status: int | None = None
     region: str | None = None
+    # Internal-only provenance: "organic" (real production traffic) or
+    # "synthetic" (rotation-probe sample). Lets internal queries separate the
+    # two; public ranking pages intentionally combine them without surfacing
+    # this field.
+    source: str = "organic"
     created_at: str = field(default_factory=iso_now)
 
     def __post_init__(self) -> None:
@@ -417,6 +435,7 @@ class ProviderBenchmarkSample:
             speed_tokens_per_second=generation.speed_tokens_per_second,
             elapsed_milliseconds=generation.elapsed_milliseconds,
             first_token_milliseconds=generation.first_token_milliseconds,
+            ttfb_milliseconds=generation.ttfb_milliseconds,
             finish_reason=generation.finish_reason,
             region=generation.region,
             created_at=generation.created_at,
