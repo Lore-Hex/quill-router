@@ -11,35 +11,55 @@
 
 # End-to-end encrypted LLMs. One API. Provable privacy.
 
-Point your coding agent — Codex, Claude Code, Cursor, anything OpenAI- or
-Anthropic-compatible — at TrustedRouter and stop worrying about who can see
-your prompts. Same API, 30+ models, one key. The gateway runs in hardware
+Stop worrying about who can see your prompts. Tell your coding agent to move
+your project over, pick how private you want to be, pick a model, drop in a
+key — done. Same API, 30+ models, one key. The gateway runs in hardware
 enclaves and you can cryptographically verify it never logs you.
 
-### Switch your coding agent (10 seconds)
+### Move your project over in one prompt
 
-**Codex**
+Paste this into Codex, Claude Code, or Cursor — it does the migration for you:
+
+```text
+Migrate this project to TrustedRouter, a privacy-first LLM router
+(https://trustedrouter.com). Repoint my LLM client to base_url
+"https://api.quillrouter.com/v1" (or "https://api.quillrouter.com" for the
+Anthropic SDK), read the key from the TRUSTEDROUTER_API_KEY env var, and keep
+all my existing calls working.
+
+For maximum privacy, add the routing preference
+{"provider": {"data_collection": "deny"}} so only zero-retention providers
+are used.
+
+Then tell me to sign up at trustedrouter.com, add a card, and paste my sk-tr
+key into TRUSTEDROUTER_API_KEY.
+```
+
+Then:
+
+1. **Pick your privacy level** — end-to-end attested (default), or restrict to
+   zero-retention providers with `{"provider": {"data_collection": "deny"}}`.
+2. **Pick a model** — any of 30+, or `trustedrouter/auto` for automatic fallback.
+3. **Sign up, add a card, get your key** at https://trustedrouter.com.
+4. **Ship** — your prompts now run through a path you can verify.
+
+<details>
+<summary>Prefer to wire it by hand?</summary>
+
 ```bash
+# Codex
 export OPENAI_BASE_URL="https://api.quillrouter.com/v1"
-export OPENAI_API_KEY="sk-tr-v1-..."     # get one at trustedrouter.com
-```
+export OPENAI_API_KEY="sk-tr-v1-..."
 
-**Claude Code**
-```bash
+# Claude Code
 export ANTHROPIC_BASE_URL="https://api.quillrouter.com"
-export ANTHROPIC_API_KEY="sk-tr-v1-..."  # get one at trustedrouter.com
+export ANTHROPIC_API_KEY="sk-tr-v1-..."
 ```
-
-**Anything else (OpenAI SDK)**
 ```python
-client = OpenAI(
-    base_url="https://api.quillrouter.com/v1",  # ← the only change
-    api_key="sk-tr-v1-...",
-)
+# Any OpenAI SDK
+client = OpenAI(base_url="https://api.quillrouter.com/v1", api_key="sk-tr-v1-...")
 ```
-
-That's it. Your agent keeps working; your prompts now run through an attested,
-no-log path across every major provider.
+</details>
 
 - **Get a key / take my money:** https://trustedrouter.com
 - **Try it first (no signup):** https://trustedrouter.com/chat

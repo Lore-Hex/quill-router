@@ -76,24 +76,34 @@
     </div>
   </section>
   <main class="wrap">
-    <section class="code-strip" aria-label="Switch your coding agent">
+    <section class="code-strip" aria-label="Move your project over in one prompt">
       <div>
-        <span class="eyebrow">Switch in 10 seconds</span>
-        <h2>Point Codex or Claude Code at TrustedRouter.</h2>
+        <span class="eyebrow">Move over in one prompt</span>
+        <h2>Tell your agent. Pick privacy + model. Get a key.</h2>
+        <ol class="switch-steps">
+          <li>Paste the prompt into Codex, Claude Code, or Cursor — it migrates your project.</li>
+          <li>Pick your privacy level: end-to-end attested (default) or zero-retention providers only.</li>
+          <li>Pick a model, or use <span class="mono">trustedrouter/auto</span> for automatic fallback.</li>
+          <li>Sign up, add a card, get your <span class="mono">sk-tr</span> key.</li>
+        </ol>
       </div>
-      <pre><code># Codex
-export OPENAI_BASE_URL="{{ api_base_url }}"
-export OPENAI_API_KEY="sk-tr-v1-..."
+      <pre><code># Paste into your coding agent:
+Migrate this project to TrustedRouter, a privacy-first
+LLM router (https://trustedrouter.com). Repoint my LLM
+client to base_url "{{ api_base_url }}" (or
+"https://api.quillrouter.com" for the Anthropic SDK),
+read the key from TRUSTEDROUTER_API_KEY, and keep all
+my existing calls working.
 
-# Claude Code
-export ANTHROPIC_BASE_URL="https://api.quillrouter.com"
-export ANTHROPIC_API_KEY="sk-tr-v1-..."
+For maximum privacy, add the routing preference
+{"provider": {"data_collection": "deny"}} so only
+zero-retention providers are used.
 
-# Any OpenAI SDK
-client = OpenAI(base_url="{{ api_base_url }}",
-                api_key="sk-tr-v1-...")</code></pre>
+Then tell me to sign up at trustedrouter.com, add a
+card, and paste my sk-tr key into TRUSTEDROUTER_API_KEY.</code></pre>
       <div class="sdk-links">
-        <button class="btn primary" type="button" data-action="open-signin">Get a key</button>
+        <button class="btn primary" type="button" data-action="open-signin">Sign up &amp; get a key</button>
+        <a class="pill" href="/chat">Try it free</a>
         <a class="pill" href="/security">Technical details</a>
         <a class="pill" href="https://github.com/Lore-Hex/trusted-router-py">trusted-router-py</a>
         <a class="pill" href="https://github.com/Lore-Hex/trusted-router-js">trusted-router-js</a>
