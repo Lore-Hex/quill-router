@@ -8,6 +8,7 @@ from trusted_router.catalog import (
     AUTO_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
+    PRIVACY_TIER_NO_STORE,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -266,7 +267,14 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if model.provider in prefs.ignore:
             continue
-        if prefs.data_collection == "deny" and provider.stores_content:
+        # "deny" = no data collection — require at least the no-store
+        # tier. Keyed off the privacy tier (not raw stores_content) so
+        # ZDR/confidential providers, which carry the conservative
+        # stores_content=True default, are correctly kept.
+        if (
+            prefs.data_collection == "deny"
+            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+        ):
             continue
         # Keep a model if ANY provider that serves it can meet the
         # requested privacy bar — a model like deepseek-v3.2 is no-store
@@ -311,7 +319,14 @@ def _apply_endpoint_provider_filters(
             continue
         if endpoint.provider in prefs.ignore:
             continue
-        if prefs.data_collection == "deny" and provider.stores_content:
+        # "deny" = no data collection — require at least the no-store
+        # tier. Keyed off the privacy tier (not raw stores_content) so
+        # ZDR/confidential providers, which carry the conservative
+        # stores_content=True default, are correctly kept.
+        if (
+            prefs.data_collection == "deny"
+            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+        ):
             continue
         if prefs.min_privacy_rank and provider_privacy_tier(provider) < prefs.min_privacy_rank:
             continue
