@@ -567,13 +567,10 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         heading=model.name,
         description=f"All providers serving {model.name} via TrustedRouter.",
         model=_model_detail_view(model),
-        # Product/Offer JSON-LD. Google auto-classifies the model detail
-        # pages as Merchant Listings because of the visible per-million-
-        # token prices; without an authoritative schema block Search
-        # Console warns about missing image / invalid brand /
-        # missing hasMerchantReturnPolicy / missing shippingDetails.
-        # Emitting Product schema with the 4 fields turns the warning
-        # off + opens up the shopping-carousel surface.
+        # Service/Offer JSON-LD. The page sells API access to a hosted
+        # routing service, not a retail product with customer ratings.
+        # Avoid Product schema so Search Console doesn't expect review
+        # or aggregateRating fields that we cannot honestly provide yet.
         json_ld_blob=_model_json_ld(settings, model, site_url),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
@@ -1106,22 +1103,13 @@ _BRAND_DISPLAY_NAMES: dict[str, str] = {
 
 
 def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
-    """Build the Product/Offer JSON-LD blob for the model detail page.
+    """Build the Service/Offer JSON-LD blob for the model detail page.
 
     Returns a JSON string ready to be injected into a
     `<script type="application/ld+json">` tag.
 
-    Fields populated to satisfy Search Console's Merchant Listings
-    schema checks:
-      - `image`               — required (critical)
-      - `brand`               — Brand object (not a string)
-      - `offers.hasMerchantReturnPolicy` — non-returnable digital service
-      - `offers.shippingDetails`         — zero-cost zero-time delivery
-
     Price: cheapest prompt rate across this model's endpoints, expressed
-    as USD per million tokens (the unit the page itself displays). The
-    `description` field calls out the unit so a shopping-carousel viewer
-    isn't surprised by the float.
+    as USD per million tokens, matching the unit the page itself displays.
     """
     endpoints = endpoints_for_model(model.id)
     prompt_prices = [
@@ -1144,7 +1132,7 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
 
     payload = {
         "@context": "https://schema.org",
-        "@type": "Product",
+        "@type": "Service",
         "name": model.name,
         "description": (
             f"{model.name} via TrustedRouter. Pay-per-token API; pricing "
@@ -1152,11 +1140,17 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
             f"Output tokens billed separately at the endpoint's published rate."
         ),
         "url": site_url,
-        "image": f"https://{settings.trusted_domain}/og.png",
+        "serviceType": "AI model routing API",
+        "provider": {
+            "@type": "Organization",
+            "name": "TrustedRouter",
+            "url": f"https://{settings.trusted_domain}/",
+        },
         "brand": {
             "@type": "Brand",
             "name": brand_name,
         },
+        "areaServed": "Worldwide",
         "offers": {
             "@type": "Offer",
             "price": f"{cheapest_usd_per_m:.6f}",
@@ -1169,46 +1163,6 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
                 "priceCurrency": "USD",
                 "unitCode": "E37",  # UN/CEFACT code for "kilo" — closest
                 "unitText": "per million prompt tokens",
-            },
-            # Tokens aren't returnable, so a no-returns policy is the
-            # honest answer. MerchantReturnNotPermitted is the
-            # schema.org enum for "we don't accept returns".
-            "hasMerchantReturnPolicy": {
-                "@type": "MerchantReturnPolicy",
-                "applicableCountry": "US",
-                "returnPolicyCategory": (
-                    "https://schema.org/MerchantReturnNotPermitted"
-                ),
-            },
-            # Digital delivery: no shipping cost, no transit time.
-            # Google requires both shippingRate and deliveryTime to be
-            # present even when zero.
-            "shippingDetails": {
-                "@type": "OfferShippingDetails",
-                "shippingRate": {
-                    "@type": "MonetaryAmount",
-                    "value": "0",
-                    "currency": "USD",
-                },
-                "shippingDestination": {
-                    "@type": "DefinedRegion",
-                    "addressCountry": "US",
-                },
-                "deliveryTime": {
-                    "@type": "ShippingDeliveryTime",
-                    "handlingTime": {
-                        "@type": "QuantitativeValue",
-                        "minValue": 0,
-                        "maxValue": 0,
-                        "unitCode": "DAY",
-                    },
-                    "transitTime": {
-                        "@type": "QuantitativeValue",
-                        "minValue": 0,
-                        "maxValue": 0,
-                        "unitCode": "DAY",
-                    },
-                },
             },
         },
     }

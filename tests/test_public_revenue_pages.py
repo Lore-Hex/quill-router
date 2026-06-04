@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -79,6 +81,25 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
     assert "Endpoints</th>" in response.text
     for provider in ["kimi", "parasail", "phala", "together", "tinfoil", "novita"]:
         assert f'title="{provider}"' in response.text
+
+
+def test_public_model_detail_uses_service_structured_data(client: TestClient) -> None:
+    response = client.get("/models/moonshotai/kimi-k2.6")
+
+    assert response.status_code == 200
+    match = re.search(
+        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        response.text,
+    )
+    assert match is not None
+    payload = json.loads(match.group("payload"))
+    assert payload["@type"] == "Service"
+    assert payload["offers"]["@type"] == "Offer"
+    assert payload["serviceType"] == "AI model routing API"
+    assert "aggregateRating" not in payload
+    assert "review" not in payload
+    assert "hasMerchantReturnPolicy" not in payload["offers"]
+    assert "shippingDetails" not in payload["offers"]
 
 
 def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClient) -> None:

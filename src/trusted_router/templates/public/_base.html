@@ -29,7 +29,7 @@
   <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   {% if json_ld_blob %}
-  {# Page-specific structured data (e.g. Product/Offer schema on the
+  {# Page-specific structured data (e.g. Service/Offer schema on the
      per-model detail pages). Rendered as already-serialized JSON to
      keep escaping simple; the producer in dashboard.py is the source
      of truth for the schema. #}
