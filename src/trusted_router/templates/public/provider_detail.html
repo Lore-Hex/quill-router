@@ -22,6 +22,45 @@
   </div>
 </section>
 
+{% if measured.provider_row %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Measured performance</h2>
+    <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
+  </div>
+  <div class="panel-body">
+    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models — p50 TTFT, throughput, and success rate. No prompt or output content stored.</p>
+    <table>
+      <tbody>
+        <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
+        <tr><th>Throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td></tr>
+        <tr><th>Uptime</th><td>{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%</td></tr>
+      </tbody>
+    </table>
+    {% if measured.models %}
+    <div class="leaderboard-table-wrap" style="margin-top:12px">
+      <table class="leaderboard-table">
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Samples</th></tr></thead>
+        <tbody>
+          {% for m in measured.models %}
+          <tr>
+            <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
+            <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
+            <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{{ m.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    <p class="muted-copy" style="margin-top:10px"><a href="/leaderboard">Full provider &amp; model leaderboard</a>.</p>
+  </div>
+</section>
+{% endif %}
+
 <section class="model-catalog">
   <div class="model-catalog-head">
     <div>
