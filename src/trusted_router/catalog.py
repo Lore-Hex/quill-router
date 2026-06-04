@@ -24,7 +24,13 @@ class Provider:
     supports_prepaid: bool = False
     supports_byok: bool = True
     attested_gateway: bool = True
-    stores_content: bool = False
+    # Conservative default: assume an upstream provider stores request /
+    # response content unless we've VERIFIED otherwise from its published
+    # policy. Overclaiming privacy (labelling a storing/training provider
+    # as "no-store") is the one thing a verifiable-privacy product must
+    # never do — so the floor is "assume stored", and providers earn a
+    # higher tier only with an explicit, cited flag below.
+    stores_content: bool = True
     provider_zero_data_retention: bool | None = None
     provider_confidential_compute: bool | None = None
     provider_e2ee: bool | None = None
