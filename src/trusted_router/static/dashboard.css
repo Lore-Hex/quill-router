@@ -482,3 +482,14 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   .regions-map-stage { grid-template-columns:1fr; }
   .region-list { max-height:none; }
 }
+
+/* Performance leaderboard tables */
+.leaderboard-page .status-section + .status-section { margin-top:18px; }
+.leaderboard-table-wrap { overflow-x:auto; }
+.leaderboard-table { width:100%; border-collapse:collapse; font-size:13px; }
+.leaderboard-table th, .leaderboard-table td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line2); white-space:nowrap; }
+.leaderboard-table th { color:var(--muted); font-weight:650; background:#fbfcfd; }
+.leaderboard-table tbody tr:hover { background:var(--soft); }
+.leaderboard-table td a { color:var(--blue); text-decoration:none; }
+.leaderboard-table td a:hover { text-decoration:underline; }
+.lb-badge { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:999px; font-size:11px; color:var(--muted); background:var(--line2); border:1px solid var(--line); }
