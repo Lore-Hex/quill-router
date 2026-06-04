@@ -452,6 +452,67 @@ def test_gcp_provider_benchmark_write_uses_privacy_safe_indexes() -> None:
     assert b"key_" not in b"".join(table.committed)
 
 
+def test_gcp_provider_benchmark_round_trips_ttfb_and_source() -> None:
+    sample = ProviderBenchmarkSample(
+        id="bench_ttfb",
+        model="openai/gpt-5.4-nano",
+        provider="openai",
+        provider_name="OpenAI",
+        status="success",
+        usage_type="Credits",
+        streamed=True,
+        elapsed_milliseconds=300,
+        first_token_milliseconds=180,
+        ttfb_milliseconds=120,
+        source="synthetic",
+        created_at="2026-05-02T12:00:00Z",
+    )
+    table = _FakeBigtable([_FakeReadRow(sample)])
+
+    rows = _bt_provider_benchmark_samples(
+        table, "m", date="2026-05-02", provider="openai", model="openai/gpt-5.4-nano", limit=10
+    )
+
+    assert len(rows) == 1
+    # TTFB (first byte) is distinct from TTFT (first content token) and both
+    # survive the serialize/deserialize round trip, as does the internal source.
+    assert rows[0].ttfb_milliseconds == 120
+    assert rows[0].first_token_milliseconds == 180
+    assert rows[0].source == "synthetic"
+
+
+def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> None:
+    generation = Generation(
+        id="gen_1",
+        request_id="req_1",
+        workspace_id="ws_1",
+        key_hash="key_1",
+        model="anthropic/claude-opus-4.7",
+        provider_name="Anthropic",
+        app="TestApp",
+        tokens_prompt=10,
+        tokens_completion=5,
+        total_cost_microdollars=100,
+        usage_type="Credits",
+        speed_tokens_per_second=20.0,
+        finish_reason="stop",
+        status="success",
+        streamed=True,
+        provider="anthropic",
+        elapsed_milliseconds=250,
+        first_token_milliseconds=140,
+        ttfb_milliseconds=90,
+        region="us-east-1",
+    )
+
+    sample = ProviderBenchmarkSample.from_generation(generation)
+
+    assert sample.ttfb_milliseconds == 90
+    assert sample.first_token_milliseconds == 140
+    # Organic production traffic is the default provenance.
+    assert sample.source == "organic"
+
+
 def test_gcp_provider_benchmark_read_filters_without_workspace_scope() -> None:
     openai = ProviderBenchmarkSample(
         id="bench_openai",

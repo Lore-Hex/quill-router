@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import sys
 import time
+from dataclasses import asdict
 
 import httpx
 
 from trusted_router.config import Settings, get_settings
-from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.synthetic.probes import (
+    SyntheticTarget,
+    choose_rotation_target,
     gateway_billing_probe,
     gateway_fallback_probe,
+    provider_rotation_probe,
+    rotation_candidates,
     run_synthetic_once,
 )
 
@@ -31,6 +37,11 @@ from trusted_router.synthetic.probes import (
 # Override via TR_SYNTHETIC_RUNS_PER_INVOCATION (1 = old behaviour).
 _DEFAULT_RUNS_PER_INVOCATION = 2
 _DEFAULT_RUN_SPACING_SECONDS = 30.0
+
+# Provider/model rotation probe — how many random provider+model samples to
+# take per pass. Dark-launched: only runs when TR_SYNTHETIC_ROTATION_ENABLED is
+# truthy, so we can watch real token spend for ~24h before ramping.
+_DEFAULT_ROTATION_PER_PASS = 4
 
 
 async def _one_probe_pass(
@@ -66,6 +77,32 @@ async def _one_probe_pass(
     return samples
 
 
+async def _rotation_pass(
+    *, settings: Settings, monitor_region: str, api_key: str,
+    timeout: httpx.Timeout, count: int, rng: random.Random,
+) -> list[ProviderBenchmarkSample]:
+    pool = rotation_candidates()
+    target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
+    samples: list[ProviderBenchmarkSample] = []
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for _ in range(max(0, count)):
+            picked = choose_rotation_target(pool, rng)
+            if picked is None:
+                break
+            provider, model = picked
+            samples.append(
+                await provider_rotation_probe(
+                    client,
+                    target,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    provider=provider,
+                    model=model,
+                )
+            )
+    return samples
+
+
 async def run() -> int:
     settings = get_settings()
     monitor_region = (
@@ -92,8 +129,20 @@ async def run() -> int:
             str(_DEFAULT_RUN_SPACING_SECONDS),
         )
     )
+    rotation_enabled = os.environ.get("TR_SYNTHETIC_ROTATION_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    rotation_per_pass = max(
+        0,
+        int(os.environ.get("TR_SYNTHETIC_ROTATION_PER_PASS", str(_DEFAULT_ROTATION_PER_PASS))),
+    )
+    rotation_rng = random.Random()  # noqa: S311 - picks which model to probe, not cryptographic
 
     all_samples: list[SyntheticProbeSample] = []
+    rotation_samples: list[ProviderBenchmarkSample] = []
     pass_start_monotonic = time.monotonic()
     for pass_idx in range(runs_per_invocation):
         all_samples.extend(
@@ -106,6 +155,17 @@ async def run() -> int:
                 timeout=timeout,
             )
         )
+        if rotation_enabled and api_key:
+            rotation_samples.extend(
+                await _rotation_pass(
+                    settings=settings,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    timeout=timeout,
+                    count=rotation_per_pass,
+                    rng=rotation_rng,
+                )
+            )
         # Sleep until the next probe pass should start, but only if
         # there IS a next pass. Compensates for the time the probe
         # itself took so the spacing is between pass-starts, not
@@ -132,8 +192,21 @@ async def run() -> int:
             headers={"x-trustedrouter-internal-token": internal_token},
             json={"samples": [sample.public_dict() for sample in all_samples]},
         )
-    print(response.text)
-    return 0 if response.status_code == 200 else 1
+        print(response.text)
+        ok = response.status_code == 200
+        if rotation_samples:
+            benchmark_url = os.environ.get(
+                "TR_SYNTHETIC_BENCHMARK_INGEST_URL",
+                f"{control_plane.rstrip('/')}/v1/internal/synthetic/benchmark",
+            )
+            bench_response = await client.post(
+                benchmark_url,
+                headers={"x-trustedrouter-internal-token": internal_token},
+                json={"samples": [asdict(sample) for sample in rotation_samples]},
+            )
+            print(bench_response.text)
+            ok = ok and bench_response.status_code == 200
+    return 0 if ok else 1
 
 
 def main() -> int:

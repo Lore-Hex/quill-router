@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import random
 from dataclasses import asdict
 from typing import Any
 
@@ -37,9 +38,13 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
+    _sse_line_has_content,
     attestation_nonce_probe,
+    choose_rotation_target,
     openai_chat_pong_probe,
+    provider_rotation_probe,
     responses_pong_probe,
+    rotation_candidates,
     tls_health_probe,
 )
 from trusted_router.synthetic.rollups import (
@@ -1434,3 +1439,173 @@ class _FakeBigtable:
 
     def direct_row(self, key: bytes) -> _FakeDirectRow:
         return _FakeDirectRow(key, self)
+
+
+# ---------------------------------------------------------------------------
+# Provider/model rotation probe (Phase 1 of the performance-dataset effort).
+# ---------------------------------------------------------------------------
+
+
+def test_rotation_candidates_cover_credits_endpoints() -> None:
+    pool = rotation_candidates()
+    assert pool, "expected at least one provider with a prepaid endpoint"
+    for provider, models in pool.items():
+        assert models, f"{provider} has no models"
+        assert len(models) == len(set(models)), f"{provider} has duplicate models"
+    # Both a snapshot provider and a supplemental-manifest provider are
+    # reachable — coverage is endpoint-driven, not the prepaid_available flag.
+    assert "openai" in pool
+    assert "novita" in pool
+
+
+def test_choose_rotation_target_two_stage_pick() -> None:
+    pool = {"openai": ["openai/gpt-5.4-nano"], "novita": ["novita/a", "novita/b"]}
+    rng = random.Random(0)  # noqa: S311 - deterministic test selection, not cryptographic
+    picks = {choose_rotation_target(pool, rng) for _ in range(50)}
+    for provider, model in picks:
+        assert model in pool[provider]
+    # Both providers get sampled despite novita having more models — equal
+    # airtime per provider, not per model.
+    assert {provider for provider, _ in picks} == {"openai", "novita"}
+
+
+def test_choose_rotation_target_empty_pool_is_none() -> None:
+    assert choose_rotation_target({}, random.Random(0)) is None  # noqa: S311 - test rng
+    assert (
+        choose_rotation_target({"openai": []}, random.Random(0)) is None  # noqa: S311 - test rng
+    )
+
+
+def test_sse_line_has_content_detects_visible_deltas() -> None:
+    assert _sse_line_has_content('data: {"choices":[{"delta":{"content":"PONG"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"delta":{"reasoning_content":"x"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"message":{"content":"PONG"}}]}')
+    # role-only opener, [DONE], and non-data lines are NOT first content.
+    assert not _sse_line_has_content('data: {"choices":[{"delta":{"role":"assistant"}}]}')
+    assert not _sse_line_has_content("data: [DONE]")
+    assert not _sse_line_has_content(": keep-alive")
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
+    body = (
+        b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(
+            200,
+            headers={
+                "x-trustedrouter-provider": "openai",
+                "x-trustedrouter-served-model": "openai/gpt-5.4-nano",
+            },
+            content=body,
+        )
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+        )
+
+    assert sample.status == "success"
+    assert sample.source == "synthetic"
+    assert sample.provider == "openai"
+    assert sample.model == "openai/gpt-5.4-nano"
+    assert sample.streamed is True
+    assert sample.ttfb_milliseconds is not None
+    assert sample.first_token_milliseconds is not None
+    assert sample.elapsed_milliseconds is not None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_records_http_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "boom"})
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+        )
+
+    assert sample.status == "error"
+    assert sample.error_type == "http_500"
+    assert sample.error_status == 500
+    assert sample.first_token_milliseconds is None
+    assert sample.source == "synthetic"
+
+
+def _benchmark_ingest_settings() -> Settings:
+    return Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="test-internal-secret",  # noqa: S106 - test fixture.
+        stripe_secret_key=None,
+        stripe_webhook_secret=None,
+        google_client_id=None,
+        google_client_secret=None,
+        google_oauth_redirect_url=None,
+        github_client_id=None,
+        github_client_secret=None,
+        github_oauth_redirect_url=None,
+    )
+
+
+def test_internal_benchmark_ingest_records_sample() -> None:
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+    payload = {
+        "samples": [
+            {
+                "id": "bench-ingest-test-1",
+                "model": "openai/gpt-5.4-nano",
+                "provider": "openai",
+                "provider_name": "OpenAI",
+                "status": "success",
+                "usage_type": "Credits",
+                "streamed": True,
+                "elapsed_milliseconds": 300,
+                "first_token_milliseconds": 150,
+                "ttfb_milliseconds": 90,
+                "source": "synthetic",
+                "created_at": "2026-06-04T00:00:00Z",
+            }
+        ]
+    }
+    resp = client.post(
+        "/v1/internal/synthetic/benchmark",
+        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+        json=payload,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["recorded"] == 1
+    rows = STORE.provider_benchmark_samples(
+        date=None, provider="openai", model="openai/gpt-5.4-nano", limit=50
+    )
+    matched = [row for row in rows if row.id == "bench-ingest-test-1"]
+    assert matched, "ingested benchmark sample not found in store"
+    assert matched[0].ttfb_milliseconds == 90
+    assert matched[0].source == "synthetic"
+
+
+def test_internal_benchmark_ingest_requires_token() -> None:
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+    resp = client.post(
+        "/v1/internal/synthetic/benchmark",
+        headers={"x-trustedrouter-internal-token": "wrong"},
+        json={"samples": []},
+    )
+    assert resp.status_code in (401, 403)

@@ -9,7 +9,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
-from trusted_router.storage import STORE, SyntheticProbeSample
+from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
@@ -39,6 +39,22 @@ def register(router: APIRouter) -> None:
         samples = [_sample_from_body(item) for item in raw_samples]
         for sample in samples:
             STORE.record_synthetic_probe_sample(sample)
+        return {"data": {"recorded": len(samples)}}
+
+    @router.post("/internal/synthetic/benchmark")
+    async def synthetic_benchmark(request: Request, settings: SettingsDep) -> dict[str, Any]:
+        # Ingest for provider/model rotation-probe samples. Distinct from
+        # /samples (which feeds the /status router-health SLO): these are
+        # ProviderBenchmarkSamples that join the same per-provider/model
+        # performance store as organic production traffic.
+        require_internal_gateway(request, settings)
+        body = await json_body(request)
+        raw_samples = body.get("samples", [body])
+        if not isinstance(raw_samples, list):
+            raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
+        samples = [_benchmark_from_body(item) for item in raw_samples]
+        for sample in samples:
+            STORE.record_provider_benchmark(sample)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/run")
@@ -118,6 +134,40 @@ def _sample_from_body(body: Any) -> SyntheticProbeSample:
     return SyntheticProbeSample(**kwargs)
 
 
+def _benchmark_from_body(body: Any) -> ProviderBenchmarkSample:
+    if not isinstance(body, dict):
+        raise api_error(400, "sample must be an object", ErrorType.BAD_REQUEST)
+    kwargs: dict[str, Any] = {
+        "id": str(body.get("id") or ""),
+        "model": str(body.get("model") or ""),
+        "provider": str(body.get("provider") or ""),
+        "provider_name": str(body.get("provider_name") or ""),
+        "status": str(body.get("status") or ""),
+        "usage_type": str(body.get("usage_type") or "Credits"),
+        "streamed": bool(body.get("streamed", False)),
+        "input_tokens": int(body.get("input_tokens") or 0),
+        "output_tokens": int(body.get("output_tokens") or 0),
+        "total_cost_microdollars": int(body.get("total_cost_microdollars") or 0),
+        "speed_tokens_per_second": _optional_float(body.get("speed_tokens_per_second")),
+        "elapsed_milliseconds": _optional_int(body.get("elapsed_milliseconds")),
+        "first_token_milliseconds": _optional_int(body.get("first_token_milliseconds")),
+        "ttfb_milliseconds": _optional_int(body.get("ttfb_milliseconds")),
+        "finish_reason": _optional_str(body.get("finish_reason")),
+        "error_type": _optional_str(body.get("error_type")),
+        "error_status": _optional_int(body.get("error_status")),
+        "region": _optional_str(body.get("region")),
+        # This ingest is the synthetic rotation path; default provenance is
+        # synthetic (the probe also sets it explicitly).
+        "source": str(body.get("source") or "synthetic"),
+    }
+    if body.get("created_at"):
+        kwargs["created_at"] = str(body["created_at"])
+    for field in ("id", "model", "provider", "provider_name", "status"):
+        if not kwargs[field]:
+            raise api_error(400, f"{field} is required", ErrorType.BAD_REQUEST)
+    return ProviderBenchmarkSample(**kwargs)
+
+
 def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -129,3 +179,9 @@ def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
     return int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
