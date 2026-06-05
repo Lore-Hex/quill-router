@@ -1301,11 +1301,20 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
+    "openai": frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset(
         {"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}
     ),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
+    "together": frozenset(
+        {
+            "meta-llama/llama-3.1-8b-instruct",
+            "meta-llama/llama-3.1-70b-instruct",
+            "qwen/qwen-2.5-72b-instruct",
+        }
+    ),
+    "grok": frozenset({"x-ai/grok-4.20-multi-agent"}),
     "gemini": frozenset(
         {
             "google/gemma-3-4b-it",

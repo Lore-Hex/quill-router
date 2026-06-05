@@ -38,6 +38,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
+    _sse_line_error,
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
@@ -1557,6 +1558,17 @@ def test_sse_line_has_content_detects_visible_deltas() -> None:
     assert not _sse_line_has_content(": keep-alive")
 
 
+def test_sse_line_error_detects_openai_error_frames() -> None:
+    assert _sse_line_error(
+        'data: {"error":{"message":"provider error","type":"provider_error"}}'
+    ) == ("provider_error", None)
+    assert _sse_line_error(
+        'data: {"error":{"message":"rate limited","type":"rate_limit","status":429}}'
+    ) == ("rate_limit", 429)
+    assert _sse_line_error('data: {"choices":[{"delta":{"content":"PONG"}}]}') is None
+    assert _sse_line_error("data: [DONE]") is None
+
+
 @pytest.mark.asyncio
 async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
     body = (
@@ -1595,6 +1607,107 @@ async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
     assert sample.ttfb_milliseconds is not None
     assert sample.first_token_milliseconds is not None
     assert sample.elapsed_milliseconds is not None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_records_sse_error_frame() -> None:
+    body = (
+        b'data: {"error":{"message":"provider error","type":"provider_error"}}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "x-trustedrouter-provider": "kimi",
+                "x-trustedrouter-served-model": "moonshotai/kimi-k2.6",
+            },
+            content=body,
+        )
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="kimi",
+            model="moonshotai/kimi-k2.6",
+        )
+
+    assert sample.status == "error"
+    assert sample.source == "synthetic"
+    assert sample.provider == "kimi"
+    assert sample.model == "moonshotai/kimi-k2.6"
+    assert sample.error_type == "provider_error"
+    assert sample.error_status == 502
+    assert sample.first_token_milliseconds is None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_records_empty_stream() -> None:
+    body = b'data: {"choices":[{"delta":{},"finish_reason":"length","index":0}]}\n\n'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="cerebras",
+            model="cerebras/gpt-oss-120b",
+        )
+
+    assert sample.status == "error"
+    assert sample.error_type == "empty_stream"
+    assert sample.error_status is None
+    assert sample.source == "synthetic"
+    assert sample.first_token_milliseconds is None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_uses_provider_safe_request_shape() -> None:
+    captured: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"choices":[{"delta":{"content":"PONG"}}]}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+        )
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="kimi",
+            model="moonshotai/kimi-k2.6",
+        )
+        await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-4o-mini",
+        )
+
+    assert captured[0]["max_tokens"] == 64
+    assert "temperature" not in captured[0]
+    assert captured[1]["max_tokens"] == 16
+    assert captured[1]["temperature"] == 0
 
 
 @pytest.mark.asyncio

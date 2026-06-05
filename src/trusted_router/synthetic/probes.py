@@ -650,6 +650,31 @@ def _sse_line_has_content(line: str) -> bool:
     return False
 
 
+def _sse_line_error(line: str) -> tuple[str, int | None] | None:
+    """Return an OpenAI-style SSE error if the data line carries one."""
+    line = line.strip()
+    if not line.startswith("data:"):
+        return None
+    payload = line[len("data:") :].strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return None
+    error = data.get("error")
+    if not isinstance(error, dict):
+        return None
+    error_type = str(error.get("type") or "provider_error")
+    status_raw = error.get("status") or error.get("code") or error.get("status_code")
+    status: int | None
+    try:
+        status = int(status_raw) if status_raw is not None else None
+    except (TypeError, ValueError):
+        status = None
+    return error_type, status
+
+
 async def provider_rotation_probe(
     client: httpx.AsyncClient,
     target: SyntheticTarget,
@@ -662,18 +687,21 @@ async def provider_rotation_probe(
     """Stream a tiny request to one provider+model and measure TTFB (first
     byte) and TTFT (first content token). Pins `provider.only` so the sample is
     attributed to the intended upstream; records the actually-served
-    provider/model from the provenance headers when present. max_tokens stays
-    tiny and we never assert the content — we measure token *flow*, not text."""
+    provider/model from the provenance headers when present. Output caps stay
+    small, with a higher cap only for reasoning-heavy models that otherwise
+    consume the whole budget before emitting visible content. We never assert
+    the content — we measure token *flow*, not text."""
     url = _api_url(target.api_base_url, "/chat/completions")
     body = {
         "model": model,
         "messages": [{"role": "user", "content": "reply exactly PONG"}],
-        "max_tokens": 16,
-        "temperature": 0,
+        "max_tokens": _rotation_max_tokens(provider, model),
         "stream": True,
         "provider": {"only": [provider]},
         "metadata": {"trustedrouter_synthetic": "true"},
     }
+    if not _rotation_omits_temperature(provider, model):
+        body["temperature"] = 0
     started = time.perf_counter()
     ttfb_ms: int | None = None
     ttft_ms: int | None = None
@@ -696,21 +724,35 @@ async def provider_rotation_probe(
                     error_type=f"http_{response.status_code}",
                 )
             tail = ""
+            stream_error: tuple[str, int | None] | None = None
             async for chunk in response.aiter_bytes():
                 if not chunk:
                     continue
                 now = _elapsed_ms(started)
                 if ttfb_ms is None:
                     ttfb_ms = now
-                if ttft_ms is None:
-                    tail += chunk.decode("utf-8", "ignore")
-                    lines = tail.split("\n")
-                    tail = lines.pop()
-                    for line in lines:
-                        if _sse_line_has_content(line):
-                            ttft_ms = now
-                            break
+                tail += chunk.decode("utf-8", "ignore")
+                lines = tail.split("\n")
+                tail = lines.pop()
+                for line in lines:
+                    stream_error = _sse_line_error(line)
+                    if stream_error is not None:
+                        break
+                    if ttft_ms is None and _sse_line_has_content(line):
+                        ttft_ms = now
+                if stream_error is not None:
+                    break
             elapsed_ms = _elapsed_ms(started)
+            if stream_error is not None:
+                error_type, status = stream_error
+                return _rotation_error_sample(
+                    served_provider,
+                    served_model,
+                    region=monitor_region,
+                    elapsed_ms=elapsed_ms,
+                    error_status=status or 502,
+                    error_type=error_type,
+                )
     except (httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
             served_provider,
@@ -719,6 +761,15 @@ async def provider_rotation_probe(
             elapsed_ms=_elapsed_ms(started),
             error_status=None,
             error_type=exc.__class__.__name__,
+        )
+    if ttft_ms is None:
+        return _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=elapsed_ms,
+            error_status=None,
+            error_type="empty_stream",
         )
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
@@ -734,6 +785,33 @@ async def provider_rotation_probe(
         finish_reason="stop",
         region=monitor_region,
         source="synthetic",
+    )
+
+
+def _rotation_max_tokens(provider: str, model: str) -> int:
+    provider_l = provider.lower()
+    model_l = model.lower()
+    if provider_l == "openai" and (
+        "/o1" in model_l
+        or "/o3" in model_l
+        or "/o4" in model_l
+        or "/gpt-5" in model_l
+    ):
+        return 128
+    if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
+        return 64
+    return 16
+
+
+def _rotation_omits_temperature(provider: str, model: str) -> bool:
+    provider_l = provider.lower()
+    model_l = model.lower()
+    return (
+        (provider_l == "kimi" and "kimi-k2." in model_l)
+        or (
+            provider_l == "anthropic"
+            and ("claude-opus-4.7" in model_l or "claude-opus-4.8" in model_l)
+        )
     )
 
 
