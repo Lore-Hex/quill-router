@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from trusted_router.benchmark_samples import public_benchmark_samples
 from trusted_router.storage_models import ProviderBenchmarkSample
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 
@@ -16,7 +19,7 @@ def _sample(
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
-        id="b",
+        id=f"b-{provider}-{model}-{status}-{created_at}",
         model=model,
         provider=provider,
         provider_name=provider,
@@ -96,6 +99,45 @@ def test_empty_samples_produce_empty_leaderboard() -> None:
     assert result["models"] == []
     assert result["providers"] == []
     assert result["total_samples"] == 0
+
+
+def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
+    deepseek = _sample(provider="deepseek", model="deepseek/deepseek-v4-flash", ttft=300)
+    openai = _sample(provider="openai", model="openai/gpt-5.4-nano", ttft=120)
+    calls: list[tuple[str | None, int]] = []
+
+    def fake_provider_benchmark_samples(
+        *,
+        date: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        limit: int = 1000,
+    ) -> list[ProviderBenchmarkSample]:
+        del date, model
+        calls.append((provider, limit))
+        if provider == "deepseek":
+            return [deepseek]
+        if provider == "openai":
+            return [openai]
+        return [deepseek]
+
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.providers_for_display",
+        lambda: (SimpleNamespace(slug="deepseek"), SimpleNamespace(slug="openai")),
+    )
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.STORE",
+        SimpleNamespace(provider_benchmark_samples=fake_provider_benchmark_samples),
+    )
+
+    rows = public_benchmark_samples(limit=10, per_provider_limit=2)
+
+    assert {row.model for row in rows} == {
+        "deepseek/deepseek-v4-flash",
+        "openai/gpt-5.4-nano",
+    }
+    assert ("deepseek", 2) in calls
+    assert ("openai", 2) in calls
 
 
 def test_aggregate_tracks_error_types_per_model_and_provider() -> None:

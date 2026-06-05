@@ -25,6 +25,15 @@ def _is_byok(usage_type: str | UsageType) -> bool:
     return UsageType.coerce(usage_type).is_byok()
 
 
+def _is_synthetic_metadata(metadata: Any) -> bool:
+    return isinstance(metadata, dict) and str(metadata.get("trustedrouter_synthetic")).lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def _is_expired(expires_at: str | None) -> bool:
     """Treat unparseable ISO timestamps as already expired so a malformed
     cookie can't replay forever."""
@@ -317,6 +326,9 @@ class Generation:
         first_token = max(float(first_token_raw), 0.001) if first_token_raw is not None else None
         first_byte_raw = body.get("first_byte_seconds") or body.get("time_to_first_byte_seconds")
         first_byte = max(float(first_byte_raw), 0.001) if first_byte_raw is not None else None
+        app = str(body.get("app") or "TrustedRouter Gateway")
+        if _is_synthetic_metadata(body.get("metadata")):
+            app = "TrustedRouter Synthetic"
         return cls(
             id=f"gen-{uuid.uuid4().hex}",
             request_id=str(body.get("request_id") or f"req-{uuid.uuid4()}"),
@@ -324,7 +336,7 @@ class Generation:
             key_hash=authorization.key_hash,
             model=model_id or authorization.model_id,
             provider_name=provider_name,
-            app=str(body.get("app") or "TrustedRouter Gateway"),
+            app=app,
             tokens_prompt=input_tokens,
             tokens_completion=output_tokens,
             total_cost_microdollars=actual_cost_microdollars,

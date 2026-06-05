@@ -1267,6 +1267,77 @@ def test_synthetic_gateway_settlement_does_not_pollute_provider_benchmarks(
     assert STORE.provider_benchmark_samples() == []
 
 
+def test_synthetic_gateway_settlement_metadata_does_not_pollute_provider_benchmarks(
+    client: TestClient,
+    inference_key: str,
+) -> None:
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": lookup_hash_api_key(inference_key),
+            "model": CHEAP_MODEL_ID,
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    fallback = data["route_candidates"][0]
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": data["authorization_id"],
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "request_id": "req_synthetic_metadata",
+            "model": fallback["model"],
+            "selected_endpoint": fallback["endpoint_id"],
+            "metadata": {"trustedrouter_synthetic": "true"},
+        },
+    )
+
+    assert settle.status_code == 200, settle.text
+    assert STORE.activity_events(data["workspace_id"], limit=10)
+    assert STORE.provider_benchmark_samples() == []
+
+
+def test_synthetic_gateway_refund_metadata_does_not_pollute_provider_benchmarks(
+    client: TestClient,
+    inference_key: str,
+) -> None:
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_lookup_hash": lookup_hash_api_key(inference_key),
+            "model": CHEAP_MODEL_ID,
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    selected = data["route_candidates"][0]
+
+    refund = client.post(
+        "/v1/internal/gateway/refund",
+        json={
+            "authorization_id": data["authorization_id"],
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "request_id": "req_synthetic_refund_metadata",
+            "model": selected["model"],
+            "selected_endpoint": selected["endpoint_id"],
+            "metadata": {"trustedrouter_synthetic": "true"},
+            "error_status": 502,
+            "error_type": "provider_error",
+        },
+    )
+
+    assert refund.status_code == 200, refund.text
+    assert STORE.provider_benchmark_samples() == []
+
+
 def test_internal_generation_activity_reconciliation_endpoint_is_guarded_and_callable(
     client: TestClient,
 ) -> None:

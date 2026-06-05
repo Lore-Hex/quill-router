@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
+from trusted_router.benchmark_samples import public_benchmark_samples
 from trusted_router.catalog import provider_to_openrouter_shape, providers_for_display
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
@@ -60,7 +61,7 @@ STATUS_HISTORY_STALE_SECONDS = 1_800
 LEADERBOARD_SAMPLE_LIMIT = 8_000
 LEADERBOARD_MIN_SAMPLES = 1
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
-LEADERBOARD_RESPONSE_STALE_SECONDS = 900
+LEADERBOARD_RESPONSE_STALE_SECONDS = 0
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _STATUS_RESPONSE_CACHE: dict[str, _CachedPublicBody] = {}
@@ -624,7 +625,7 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _LEADERBOARD_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
-    samples = STORE.provider_benchmark_samples(date=None, limit=LEADERBOARD_SAMPLE_LIMIT)
+    samples = public_benchmark_samples(limit=LEADERBOARD_SAMPLE_LIMIT)
     payload = aggregate_leaderboard(samples, min_samples=LEADERBOARD_MIN_SAMPLES)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     if settings.environment != "test":

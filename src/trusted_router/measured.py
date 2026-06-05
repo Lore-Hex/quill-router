@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from trusted_router.storage import STORE
+from trusted_router.benchmark_samples import public_benchmark_samples
 from trusted_router.storage_models import utcnow
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 
@@ -28,7 +28,7 @@ def measured_snapshot(*, test_mode: bool = False) -> dict[str, Any]:
     now = time.monotonic()
     if not test_mode and _CACHE is not None and now - _CACHE[0] < _TTL_SECONDS:
         return _CACHE[1]
-    samples = STORE.provider_benchmark_samples(date=None, limit=_SAMPLE_LIMIT)
+    samples = public_benchmark_samples(limit=_SAMPLE_LIMIT)
     payload = aggregate_leaderboard(samples, min_samples=1)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     if not test_mode:

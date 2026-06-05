@@ -507,7 +507,7 @@ def _settle_gateway_authorization(
             )
         elif should_drain_inline(settings):
             drain_broadcast_queue(settings=settings)
-    if not success:
+    if not success and not _is_synthetic_settlement(body):
         STORE.record_provider_benchmark(
             ProviderBenchmarkSample.from_provider_error(
                 model=model,
@@ -536,6 +536,20 @@ def _settle_gateway_authorization(
             "provider": selected_endpoint.provider,
             "region": authorization.region,
         }
+    }
+
+
+def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:
+    if body.app == "TrustedRouter Synthetic":
+        return True
+    metadata = body.metadata
+    if not isinstance(metadata, dict):
+        return False
+    return str(metadata.get("trustedrouter_synthetic")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
