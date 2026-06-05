@@ -695,6 +695,25 @@ def _sse_line_error(line: str) -> tuple[str, int | None, str | None] | None:
     return _rotation_error_type(error_type, status, message), status, message
 
 
+def _sse_line_finish_reason(line: str) -> str | None:
+    """Return the first choice finish reason from an SSE data line, if any."""
+    line = line.strip()
+    if not line.startswith("data:"):
+        return None
+    payload = line[len("data:") :].strip()
+    if not payload or payload == "[DONE]":
+        return None
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return None
+    for choice in data.get("choices") or []:
+        reason = choice.get("finish_reason")
+        if reason:
+            return str(reason)
+    return None
+
+
 def _response_error(response: httpx.Response) -> tuple[str, int | None, str | None]:
     try:
         payload = response.json()
@@ -834,6 +853,7 @@ async def provider_rotation_probe(
                     error_type=error_type,
                 )
             tail = ""
+            finish_reason: str | None = None
             stream_error: tuple[str, int | None, str | None] | None = None
             async for chunk in response.aiter_bytes():
                 if not chunk:
@@ -845,6 +865,9 @@ async def provider_rotation_probe(
                 lines = tail.split("\n")
                 tail = lines.pop()
                 for line in lines:
+                    line_finish_reason = _sse_line_finish_reason(line)
+                    if line_finish_reason is not None:
+                        finish_reason = line_finish_reason
                     stream_error = _sse_line_error(line)
                     if stream_error is not None:
                         break
@@ -873,13 +896,14 @@ async def provider_rotation_probe(
             error_type=exc.__class__.__name__,
         )
     if ttft_ms is None:
+        error_type = "probe_config_error" if finish_reason == "length" else "empty_stream"
         return _rotation_error_sample(
             served_provider,
             served_model,
             region=monitor_region,
             elapsed_ms=elapsed_ms,
             error_status=None,
-            error_type="empty_stream",
+            error_type=error_type,
         )
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
@@ -892,7 +916,7 @@ async def provider_rotation_probe(
         elapsed_milliseconds=elapsed_ms,
         first_token_milliseconds=ttft_ms,
         ttfb_milliseconds=ttfb_ms,
-        finish_reason="stop",
+        finish_reason=finish_reason or "stop",
         region=monitor_region,
         source="synthetic",
     )
@@ -907,7 +931,7 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
         or "/o4" in model_l
         or "/gpt-5" in model_l
     ):
-        return 128
+        return 512
     if (
         "kimi-k2" in model_l
         or "grok" in model_l

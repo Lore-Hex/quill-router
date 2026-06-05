@@ -70,12 +70,13 @@ BASE_ENV_VARS=(
   "TR_SYNTHETIC_RUN_SPACING_SECONDS=30"
   # Provider/model rotation probe — LAUNCHED (2026-06-04). Each pass takes
   # TR_SYNTHETIC_ROTATION_PER_PASS random provider+model samples (two-stage),
-  # streams a tiny max_tokens=16 request, and records measured TTFB/TTFT into
-  # the benchmark store that feeds /leaderboard + the per-model/provider pages
-  # + API-drift detection. To control spend: lower PER_PASS or set ENABLED to
-  # false. Watch the monitor workspace's credit burn (these spend prepaid
-  # credits on the synthetic-monitor key). At 4/pass × 2 passes × 2 regions
-  # that's ~16 probes/min (~$30-50/mo at max_tokens=16).
+  # streams a tiny request, and records measured TTFB/TTFT into the benchmark
+  # store that feeds /leaderboard + the per-model/provider pages + API-drift
+  # detection. Most probes use max_tokens=16; reasoning-heavy models use a
+  # larger cap so hidden reasoning does not falsely look like provider
+  # downtime. To control spend: lower PER_PASS or set ENABLED to false. Watch
+  # the monitor workspace's credit burn (these spend prepaid credits on the
+  # synthetic-monitor key).
   "TR_SYNTHETIC_ROTATION_ENABLED=true"
   "TR_SYNTHETIC_ROTATION_PER_PASS=4"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"

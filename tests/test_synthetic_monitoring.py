@@ -41,6 +41,7 @@ from trusted_router.synthetic.probes import (
     _rotation_max_tokens,
     _rotation_omits_temperature,
     _sse_line_error,
+    _sse_line_finish_reason,
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
@@ -1578,11 +1579,28 @@ def test_sse_line_error_detects_openai_error_frames() -> None:
     assert _sse_line_error("data: [DONE]") is None
 
 
+def test_sse_line_finish_reason_detects_length_stop() -> None:
+    assert (
+        _sse_line_finish_reason(
+            'data: {"choices":[{"delta":{},"finish_reason":"length","index":0}]}'
+        )
+        == "length"
+    )
+    assert (
+        _sse_line_finish_reason(
+            'data: {"choices":[{"delta":{"content":"PONG"},"finish_reason":null}]}'
+        )
+        is None
+    )
+    assert _sse_line_finish_reason("data: [DONE]") is None
+
+
 def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert _rotation_max_tokens("cerebras", "cerebras/gpt-oss-120b") == 128
     assert _rotation_max_tokens("cerebras", "z-ai/glm-4.7") == 128
     assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 128
-    assert _rotation_max_tokens("openai", "openai/o3") == 128
+    assert _rotation_max_tokens("openai", "openai/o3") == 512
+    assert _rotation_max_tokens("openai", "openai/gpt-5.5") == 512
     assert _rotation_omits_temperature("openai", "openai/o3")
     assert _rotation_omits_temperature("openai", "openai/gpt-5.5")
     assert not _rotation_omits_temperature("openai", "openai/gpt-4.1-mini")
@@ -1666,8 +1684,33 @@ async def test_provider_rotation_probe_records_sse_error_frame() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_rotation_probe_records_empty_stream() -> None:
+async def test_provider_rotation_probe_excludes_length_only_stream() -> None:
     body = b'data: {"choices":[{"delta":{},"finish_reason":"length","index":0}]}\n\n'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="cerebras",
+            model="cerebras/gpt-oss-120b",
+        )
+
+    assert sample.status == "unsupported"
+    assert sample.error_type == "probe_config_error"
+    assert sample.error_status is None
+    assert sample.source == "synthetic"
+    assert sample.first_token_milliseconds is None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_records_empty_stream() -> None:
+    body = b'data: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\n'
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=body)

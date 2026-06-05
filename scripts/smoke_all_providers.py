@@ -32,7 +32,7 @@ PROBES: list[tuple[str, str]] = [
     # — same OpenAI auth path, same TTFB envelope, still routable.
     ("openai",      "openai/gpt-4.1-mini"),
     ("gemini",      "google/gemini-2.5-flash"),
-    ("cerebras",    "meta-llama/llama-3.1-8b-instruct"),
+    ("cerebras",    "openai/gpt-oss-120b"),
     ("deepseek",    "deepseek/deepseek-v4-flash"),
     ("mistral",     "mistralai/mistral-small-2603"),
     ("kimi",        "moonshotai/kimi-k2.6"),
