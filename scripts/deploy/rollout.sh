@@ -269,6 +269,38 @@ if [ "$deploy_failed" -ne 0 ]; then
   exit 1
 fi
 
+latest_ready_revision_for_region() {
+  local target="$1"
+  # `status.latestReadyRevisionName` can lag behind when a deploy reuses a
+  # mutable tag or when we immediately force a nonce-only redeploy. Prefer the
+  # newest revision from the revision list whose Ready condition is True.
+  gc run revisions list --service "$SERVICE" --region "$target" \
+    --limit=10 \
+    --sort-by='~metadata.creationTimestamp' \
+    --format='value(metadata.name,status.conditions[0].status)' 2>/dev/null \
+    | awk '$2 == "True" { print $1; exit }'
+}
+
+if [ "${TR_DEPLOY_NO_TRAFFIC:-0}" != "1" ]; then
+  # Defense against a real 2026-06-05 rollout bug: Cloud Run created Ready
+  # revisions in us-east4/europe-west4, but service traffic remained pinned
+  # to older revisions, so prod served a mixed catalog. Make the intended
+  # no-staging path explicit: after every successful regional deploy, route
+  # 100% to the newest Ready revision in that region.
+  for traffic_region in "${TARGETS[@]}"; do
+    latest_rev="$(latest_ready_revision_for_region "$traffic_region")"
+    if [ -z "$latest_rev" ]; then
+      echo "ERROR: could not find newest Ready revision for ${traffic_region}" >&2
+      exit 1
+    fi
+    log "routing ${traffic_region} traffic to newest Ready revision ${latest_rev}"
+    gc run services update-traffic "$SERVICE" \
+      --region="$traffic_region" \
+      --to-revisions="${latest_rev}=100" \
+      --quiet >/dev/null
+  done
+fi
+
 log "Cloud Run URLs:"
 for url_region in "${TARGETS[@]}"; do
   url="$(gc run services describe "$SERVICE" --region "$url_region" --format='value(status.url)' 2>/dev/null || true)"
