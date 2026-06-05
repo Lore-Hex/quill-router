@@ -183,6 +183,21 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
         assert f"{model_id}@minimax/byok" in MODEL_ENDPOINTS
 
 
+@pytest.mark.parametrize(
+    ("provider", "model_ids"),
+    [
+        ("parasail", ("qwen/qwen3-235b-a22b-2507", "z-ai/glm-5")),
+        ("novita", ("qwen/qwen2.5-vl-72b-instruct", "qwen/qwen3-4b-fp8")),
+    ],
+)
+def test_operator_unavailable_provider_routes_are_not_prepaid(
+    provider: str, model_ids: tuple[str, ...]
+) -> None:
+    for model_id in model_ids:
+        assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
+        assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+
+
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
     prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
 

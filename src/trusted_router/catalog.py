@@ -1316,6 +1316,16 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         }
     ),
     "grok": frozenset({"x-ai/grok-4.20-multi-agent"}),
+    # parasail — listed in the upstream snapshot, but Parasail's own chat API
+    # returns 403 "deployment ... doesn't exist or isn't accessible" for these
+    # routes on our operator key (direct API probe 2026-06-05). Keep BYOK
+    # visible for customer accounts, but do not route prepaid traffic here.
+    "parasail": frozenset({"qwen/qwen3-235b-a22b-2507", "z-ai/glm-5"}),
+    # novita — Novita's /models currently lists these ids, but chat returns
+    # MODEL_NOT_AVAILABLE for the two exact routes below on our operator key
+    # (direct API probe 2026-06-05). Other Novita failures observed the same
+    # hour were overload/timeouts, so those stay counted as provider health.
+    "novita": frozenset({"qwen/qwen2.5-vl-72b-instruct", "qwen/qwen3-4b-fp8"}),
     # minimax — first-party MiniMax-M2.1 and MiniMax-M2.5 return a 200 stream
     # containing only finish_reason=stop and no content on our operator key
     # (verified via pinned gateway probes 2026-06-05). Highspeed variants,

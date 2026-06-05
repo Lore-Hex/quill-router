@@ -1533,6 +1533,10 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert "novita" in pool
     assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
     assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
+    assert "qwen/qwen3-235b-a22b-2507" not in pool.get("parasail", [])
+    assert "z-ai/glm-5" not in pool.get("parasail", [])
+    assert "qwen/qwen2.5-vl-72b-instruct" not in pool.get("novita", [])
+    assert "qwen/qwen3-4b-fp8" not in pool.get("novita", [])
 
 
 def test_choose_rotation_target_two_stage_pick() -> None:
