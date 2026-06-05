@@ -116,12 +116,12 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "minimax",
-            8,
+            6,
             [
                 "minimax/minimax-m3",
                 "minimax/minimax-m2.7",
                 "minimax/minimax-m2.7-highspeed",
-                "minimax/minimax-m2.5",
+                "minimax/minimax-m2.5-highspeed",
             ],
         ),
         (
@@ -175,6 +175,12 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
         MODEL_ENDPOINTS["minimax/minimax-m2.7-highspeed@minimax/byok"].upstream_id
         == "MiniMax-M2.7-highspeed"
     )
+
+
+def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
+    for model_id in ("minimax/minimax-m2.1", "minimax/minimax-m2.5"):
+        assert f"{model_id}@minimax/prepaid" not in MODEL_ENDPOINTS
+        assert f"{model_id}@minimax/byok" in MODEL_ENDPOINTS
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:

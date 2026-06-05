@@ -1316,6 +1316,13 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         }
     ),
     "grok": frozenset({"x-ai/grok-4.20-multi-agent"}),
+    # minimax — first-party MiniMax-M2.1 and MiniMax-M2.5 return a 200 stream
+    # containing only finish_reason=stop and no content on our operator key
+    # (verified via pinned gateway probes 2026-06-05). Highspeed variants,
+    # M2, M2.7, and M3 stream content correctly, so only suppress these two
+    # Credits routes. BYOK remains available because customer accounts can
+    # have different model behavior/entitlements.
+    "minimax": frozenset({"minimax/minimax-m2.1", "minimax/minimax-m2.5"}),
     "gemini": frozenset(
         {
             "google/gemma-3-4b-it",

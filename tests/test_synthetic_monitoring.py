@@ -1531,6 +1531,8 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     # reachable — coverage is endpoint-driven, not the prepaid_available flag.
     assert "openai" in pool
     assert "novita" in pool
+    assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
+    assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
 
 
 def test_choose_rotation_target_two_stage_pick() -> None:
