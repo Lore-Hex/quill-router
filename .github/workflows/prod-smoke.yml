@@ -1,9 +1,12 @@
 name: Prod Smoke
 
 on:
-  # Run after every push to main (post-commit hook on the deployed service).
-  push:
-    branches: [main]
+  # Run after the control-plane deploy completes. Running directly on push can
+  # race the deploy workflow and test the previous production revision against
+  # new smoke expectations.
+  workflow_run:
+    workflows: ["Deploy TR control plane"]
+    types: [completed]
   # Periodic uptime + drift check between deploys.
   schedule:
     - cron: "*/30 * * * *"
@@ -16,9 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     # Don't fail PRs on prod issues — only main + scheduled + manual runs
     # touch the live service. PRs run the offline suite via ci.yml.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       - uses: astral-sh/setup-uv@v3
         with:
           version: "latest"
