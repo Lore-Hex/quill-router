@@ -53,6 +53,10 @@ BASE_ENV_VARS=(
   "TR_REGIONS=${TR_REGIONS}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
   "TR_SYNTHETIC_MONITOR_MODEL=trustedrouter/monitor"
+  # Provider-effective checks exercise real LLM responses. Keep this above
+  # the p95 of the cheap monitor pool so slow successes don't become false
+  # downtime, while still bounding true hangs.
+  "TR_SYNTHETIC_MONITOR_TIMEOUT_SECONDS=20"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
   # 30-second sub-cadence (2 passes/invocation). The 10s/6-passes
   # plan from a prior iteration exceeded the Cloud Run Job CPU budget
