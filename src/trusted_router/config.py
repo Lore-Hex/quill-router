@@ -154,8 +154,8 @@ class Settings(BaseSettings):
     # `mistral/...`, `meta-llama/...` for Cerebras-served Llama, etc.
     auto_model_order: str = (
         "anthropic/claude-opus-4.7,anthropic/claude-sonnet-4.6,"
-        "openai/gpt-5.4-nano,google/gemini-2.5-flash,"
-        "deepseek/deepseek-v4-flash,moonshotai/kimi-k2.6,"
+        "openai/gpt-4.1-mini,google/gemini-2.5-flash,"
+        "deepseek/deepseek-v4-flash,minimax/minimax-m3,moonshotai/kimi-k2.6,"
         "mistralai/mistral-small-2603,z-ai/glm-4.6"
     )
 

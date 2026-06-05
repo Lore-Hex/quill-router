@@ -306,6 +306,7 @@ PROVIDERS: dict[str, Provider] = {
         supports_embeddings=False,
         supports_prepaid=True,
         supports_byok=True,
+        stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
         provider_e2ee=True,

@@ -180,9 +180,10 @@ def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -
     auto = models["trustedrouter/auto"]
     candidates = auto["trustedrouter"]["auto_candidates"]
     assert "anthropic/claude-opus-4.7" in candidates
-    assert "openai/gpt-5.4-nano" in candidates
+    assert "openai/gpt-4.1-mini" in candidates
     assert "google/gemini-2.5-flash" in candidates
     assert "deepseek/deepseek-v4-flash" in candidates
+    assert "minimax/minimax-m3" in candidates
     assert "moonshotai/kimi-k2.6" in candidates
     assert "mistralai/mistral-small-2603" in candidates
     assert "z-ai/glm-4.6" in candidates
