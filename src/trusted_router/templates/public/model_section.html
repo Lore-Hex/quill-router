@@ -86,10 +86,10 @@
     {% elif section == "performance" %}
     {% if measured %}
     <h3>Measured performance</h3>
-    <p class="muted-copy">Continuously sampled p50/p95 time-to-first-token (TTFT), time-to-first-byte (TTFB), throughput, and success rate for {{ model.name }} — real measurements from TrustedRouter's monitor, no prompt or output content stored.</p>
+    <p class="muted-copy">Continuously sampled p50/p95 time-to-first-token (TTFT), time-to-first-byte (TTFB), throughput, and success rate for {{ model.name }} — unsupported route and probe-configuration rows are separated from provider downtime, and no prompt or output content is stored.</p>
     <div class="leaderboard-table-wrap">
       <table class="leaderboard-table">
-        <thead><tr><th>Provider</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Provider</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th></tr></thead>
         <tbody>
           {% for r in measured %}
           <tr>
@@ -99,6 +99,7 @@
             <td>{% if r.p50_ttfb_ms is not none %}{{ r.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if r.p50_tokens_per_second is not none %}{{ '%.0f'|format(r.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{{ '%.2f'|format(r.uptime * 100) }}%</td>
+            <td>{% if r.excluded_count %}{{ r.excluded_count }}{% if r.top_excluded %} <code>{{ r.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ r.sample_count }}</td>
           </tr>
           {% endfor %}

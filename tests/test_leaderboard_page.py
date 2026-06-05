@@ -42,6 +42,23 @@ def _seed(provider: str, model: str, ttft: int, ttfb: int) -> None:
         )
 
 
+def _seed_excluded(provider: str, model: str) -> None:
+    STORE.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id=f"bench-page-excluded-{provider}-{model}",
+            model=model,
+            provider=provider,
+            provider_name=provider.title(),
+            status="unsupported",
+            usage_type="Credits",
+            streamed=True,
+            error_type="unsupported_route",
+            error_status=400,
+            source="synthetic",
+        )
+    )
+
+
 def test_leaderboard_page_renders_measurements() -> None:
     client = TestClient(create_app(_settings(), init_observability=False))
     # Seed after app creation: the route reads STORE at request time, and app
@@ -54,6 +71,19 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "p50 TTFT" in body  # table header
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
+
+
+def test_leaderboard_page_separates_config_exclusions_from_errors() -> None:
+    client = TestClient(create_app(_settings(), init_observability=False))
+    _seed("openai", "openai/o4-mini", ttft=150, ttfb=100)
+    _seed_excluded("openai", "openai/o4-mini")
+
+    resp = client.get("/leaderboard")
+
+    assert resp.status_code == 200
+    assert "Config excluded" in resp.text
+    assert "unsupported_route" in resp.text
+    assert "Unsupported route and probe-configuration rows" in resp.text
 
 
 def test_leaderboard_in_sitemap() -> None:
@@ -84,3 +114,14 @@ def test_status_page_surfaces_upstream_provider_errors() -> None:
     assert "Upstream provider health" in html
     assert "cerebras" in html
     assert "http_404" in html  # the captured error type is surfaced
+
+
+def test_status_page_separates_config_exclusions_from_provider_errors() -> None:
+    _seed("openai", "openai/o4-mini", ttft=150, ttfb=100)
+    _seed_excluded("openai", "openai/o4-mini")
+
+    html = _status_page_html(_settings(), host="trustedrouter.com")
+
+    assert "Config excluded" in html
+    assert "unsupported_route" in html
+    assert "Unsupported route and probe-configuration rows" in html

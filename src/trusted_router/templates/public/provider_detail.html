@@ -29,7 +29,7 @@
     <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
   </div>
   <div class="panel-body">
-    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models — p50 TTFT, throughput, and success rate. No prompt or output content stored.</p>
+    <p class="muted-copy">Continuously sampled across {{ provider.name }}'s routed models — p50 TTFT, throughput, and success rate. Unsupported route and probe-configuration rows are separated from provider downtime. No prompt or output content stored.</p>
     <table>
       <tbody>
         <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
@@ -40,7 +40,7 @@
     {% if measured.models %}
     <div class="leaderboard-table-wrap" style="margin-top:12px">
       <table class="leaderboard-table">
-        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th></tr></thead>
         <tbody>
           {% for m in measured.models %}
           <tr>
@@ -49,6 +49,7 @@
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
           </tr>
           {% endfor %}

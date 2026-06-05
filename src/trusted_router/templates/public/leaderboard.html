@@ -19,7 +19,9 @@
   <div class="status-note">
     Continuously sampled from TrustedRouter's monitor regions — time-to-first-token (TTFT),
     time-to-first-byte (TTFB), throughput, and success rate measured on real streaming
-    requests, not vendor-claimed. No prompt or output content is ever stored.
+    requests, not vendor-claimed. Unsupported route and probe-configuration rows are
+    reported separately and do not count as provider downtime. No prompt or output
+    content is ever stored.
   </div>
 
   {% if not snapshot.models %}
@@ -40,7 +42,7 @@
         <thead>
           <tr>
             <th>#</th><th>Provider</th><th>Models</th>
-            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Errors</th><th>Samples</th>
+            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Samples</th>
           </tr>
         </thead>
         <tbody>
@@ -53,6 +55,7 @@
             <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ p.sample_count }}</td>
           </tr>
           {% endfor %}
@@ -75,7 +78,7 @@
           <tr>
             <th>#</th><th>Model</th><th>Provider</th>
             <th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th>
-            <th>Throughput</th><th>Uptime</th><th>Samples</th>
+            <th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th>
           </tr>
         </thead>
         <tbody>
@@ -91,6 +94,7 @@
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
           </tr>
           {% endfor %}

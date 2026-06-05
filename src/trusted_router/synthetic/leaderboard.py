@@ -67,6 +67,7 @@ class ProviderModelStats:
     p50_tokens_per_second: float | None = None
     last_seen: str | None = None
     errors: Counter[str] = field(default_factory=Counter)
+    excluded_reasons: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -81,6 +82,11 @@ class ProviderModelStats:
         common = self.errors.most_common(1)
         return common[0][0] if common else None
 
+    @property
+    def top_excluded(self) -> str | None:
+        common = self.excluded_reasons.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -90,7 +96,9 @@ class ProviderModelStats:
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "top_error": self.top_error,
+            "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
+            "excluded_reasons": dict(self.excluded_reasons),
             "p50_ttft_ms": self.p50_ttft_ms,
             "p95_ttft_ms": self.p95_ttft_ms,
             "p50_ttfb_ms": self.p50_ttfb_ms,
@@ -115,6 +123,7 @@ class ProviderStats:
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
     errors: Counter[str] = field(default_factory=Counter)
+    excluded_reasons: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -129,6 +138,11 @@ class ProviderStats:
         common = self.errors.most_common(1)
         return common[0][0] if common else None
 
+    @property
+    def top_excluded(self) -> str | None:
+        common = self.excluded_reasons.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
@@ -138,7 +152,9 @@ class ProviderStats:
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "top_error": self.top_error,
+            "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
+            "excluded_reasons": dict(self.excluded_reasons),
             "p50_ttft_ms": self.p50_ttft_ms,
             "p50_tokens_per_second": (
                 round(self.p50_tokens_per_second, 2)
@@ -180,7 +196,7 @@ def aggregate_leaderboard(
         )
         if _excluded_from_uptime(sample):
             stats.excluded_count += 1
-            stats.errors[label] += 1
+            stats.excluded_reasons[label] += 1
             continue
         stats.sample_count += 1
         if sample.status == "success":
@@ -235,6 +251,7 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.error_count += stats.error_count
         agg.excluded_count += stats.excluded_count
         agg.errors.update(stats.errors)
+        agg.excluded_reasons.update(stats.excluded_reasons)
         # Weight each model's p50 by its sample count for the provider median.
         if stats.p50_ttft_ms is not None:
             ttft[stats.provider].extend([stats.p50_ttft_ms] * stats.sample_count)

@@ -186,8 +186,49 @@ def test_aggregate_excludes_unsupported_routes_from_uptime() -> None:
     assert model["excluded_count"] == 1
     assert model["uptime"] == 0.5
     assert model["error_rate"] == 0.5
-    assert model["errors"]["unsupported_route"] == 1
+    assert model["top_error"] == "provider_error"
+    assert model["top_excluded"] == "unsupported_route"
+    assert model["errors"] == {"provider_error": 1}
+    assert model["excluded_reasons"] == {"unsupported_route": 1}
     assert provider["sample_count"] == 2
     assert provider["excluded_count"] == 1
+    assert provider["top_error"] == "provider_error"
+    assert provider["top_excluded"] == "unsupported_route"
     assert result["total_samples"] == 2
     assert result["excluded_samples"] == 1
+
+
+def test_aggregate_excluded_only_rows_do_not_surface_as_provider_errors() -> None:
+    samples = [
+        _sample(provider="openai", model="openai/o4-mini", ttft=100),
+        _sample(
+            provider="openai",
+            model="openai/o4-mini",
+            status="unsupported",
+            error_type="probe_config_error",
+            error_status=400,
+        ),
+        _sample(
+            provider="openai",
+            model="openai/o4-mini",
+            status="error",
+            error_type="provider_auth_config",
+            error_status=401,
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    provider = result["providers"][0]
+
+    assert model["sample_count"] == 1
+    assert model["uptime"] == 1.0
+    assert model["error_rate"] == 0.0
+    assert model["top_error"] is None
+    assert model["top_excluded"] == "probe_config_error"
+    assert model["excluded_count"] == 2
+    assert provider["sample_count"] == 1
+    assert provider["uptime"] == 1.0
+    assert provider["error_rate"] == 0.0
+    assert provider["top_error"] is None
+    assert provider["excluded_count"] == 2
