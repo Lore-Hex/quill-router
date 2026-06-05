@@ -10,6 +10,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     auto_candidate_models,
     endpoints_for_model,
+    model_to_openrouter_shape,
 )
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
@@ -67,6 +68,23 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
         "kimi",
         "zai",
     } <= credits_providers
+
+
+def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped() -> None:
+    shape = model_to_openrouter_shape(MODELS["openai/gpt-4.1-mini"])
+    meta = shape["trustedrouter"]
+
+    # Top-level trustedrouter.stores_content is the router's own retention
+    # contract: the attested gateway does not persist prompts or outputs.
+    assert meta["stores_content"] is False
+
+    # Endpoint rows still expose upstream-provider posture separately, so
+    # dashboards can distinguish TR no-retention from provider ZDR/unknown.
+    openai_endpoint = next(
+        endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
+    )
+    assert openai_endpoint["stores_content"] is True
+    assert openai_endpoint["provider_zero_data_retention"] is None
 
 
 @pytest.mark.parametrize(

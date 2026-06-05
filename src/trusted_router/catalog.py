@@ -1618,7 +1618,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prepaid_available": prepaid_available,
         "byok_available": byok_available,
         "attested_gateway": provider.attested_gateway,
-        "stores_content": provider.stores_content,
+        # Gateway-scoped OpenRouter-compat flag: TrustedRouter does not
+        # retain prompt/output content. Upstream provider retention still
+        # varies and is exposed per endpoint below plus provider_* fields.
+        "stores_content": False,
         "provider_zero_data_retention": provider.provider_zero_data_retention,
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
