@@ -52,7 +52,11 @@ _NATIVE_TO_OR_ID = {
     "google/gemma-3-27b-it": "google/gemma-3-27b-it",
     "google/gemma-3-12b-it": "google/gemma-3-12b-it",
     "google/gemma-3-4b-it": "google/gemma-3-4b-it",
+    # DeepInfra deprecates the base id on 2026-06-11 and redirects it to
+    # the Turbo id. Keep both native names mapped so the price refresh stays
+    # stable before and after their upstream cutover.
     "meta-llama/Meta-Llama-3.1-70B-Instruct": "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo": "meta-llama/llama-3.1-70b-instruct",
     "meta-llama/Llama-3.3-70B-Instruct": "meta-llama/llama-3.3-70b-instruct",
     "deepseek-ai/DeepSeek-V3.1": "deepseek/deepseek-v3.1",
     "Qwen/Qwen3.5-27B": "qwen/qwen3.5-27b",
