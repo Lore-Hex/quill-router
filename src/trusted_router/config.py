@@ -139,26 +139,11 @@ class Settings(BaseSettings):
     synthetic_monitor_region: str | None = None
     synthetic_monitor_api_key: str | None = None
     synthetic_monitor_model: str = "trustedrouter/monitor"
-    # 10s per-probe HTTP timeout. Was 30s historically to absorb 5-9s
-    # cold-starts during regional Cloud Run revision swaps — but that
-    # window became a liability during the 2026-06-02 throttling
-    # incident: probe latency spiked to 12-13s and individual probe
-    # calls hung for the full 30s, blowing past the Cloud Run Job
-    # task-timeout and stacking executions behind the cron tick.
-    #
-    # 10s is well above the current baseline (p50 ~1.5s, p95 ~2.5s
-    # post-fix) and matches the new per-invocation cadence (2 passes
-    # × 30s spacing means each pass has 30s budget total — a 10s
-    # probe timeout fits naturally). If a probe takes >10s now,
-    # it's either upstream is genuinely down or TLS/network is
-    # broken — both worth recording as a clean "down" rather than
-    # blocking the whole pass.
-    #
-    # Cold-start concern: revisited and not material at current
-    # traffic — the regional Cloud Run revisions stay warm under
-    # production load, so the 5-9s cold-start tail the previous
-    # comment described doesn't show up in current p95 latency.
-    synthetic_monitor_timeout_seconds: float = 10.0
+    # Per-probe HTTP timeout for real provider-effective synthetic checks.
+    # Keep this aligned with the gateway's first-byte budget. A successful
+    # /responses probe in europe-west4 can legitimately take >10s on slow
+    # cheap monitor routes, so 10s creates false downtime.
+    synthetic_monitor_timeout_seconds: float = 20.0
     synthetic_status_sample_limit: int = 5000
     synthetic_status_raw_retention_days: int = 14
     synthetic_status_rollup_retention_months: int = 24
