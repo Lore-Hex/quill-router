@@ -17,7 +17,7 @@
 {% block body %}
 <section class="status-page leaderboard-page">
   <div class="status-note">
-    Continuously sampled from TrustedRouter's monitor regions — time-to-first-token (TTFT),
+    Continuously sampled from TrustedRouter's monitor regions over the {{ snapshot.window_label or "recent live window" }} — time-to-first-token (TTFT),
     time-to-first-byte (TTFB), throughput, and success rate measured on real streaming
     requests, not vendor-claimed. Unsupported route and probe-configuration rows are
     reported separately and do not count as provider downtime. No prompt or output
@@ -33,7 +33,7 @@
     <div class="status-section-head">
       <div>
         <h2>Providers</h2>
-        <p>Ranked by measured p50 time-to-first-token across all of a provider's models
+        <p>Ranked by measured p50 time-to-first-token across all of a provider's models in the {{ snapshot.window_label or "recent live window" }}
           ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} samples).</p>
       </div>
     </div>
@@ -68,7 +68,7 @@
     <div class="status-section-head">
       <div>
         <h2>Models</h2>
-        <p>Every model TrustedRouter routes to, fastest measured TTFT first.
+        <p>Models sampled in the {{ snapshot.window_label or "recent live window" }}, fastest measured TTFT first.
           Rows with few samples are marked — more data sharpens the numbers.</p>
       </div>
     </div>

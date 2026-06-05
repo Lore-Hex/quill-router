@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from types import SimpleNamespace
 
 from trusted_router.benchmark_samples import public_benchmark_samples
@@ -140,6 +141,50 @@ def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
     }
     assert ("deepseek", 2) in calls
     assert ("openai", 2) in calls
+
+
+def test_public_benchmark_samples_filters_to_recent_window(monkeypatch) -> None:
+    recent = _sample(
+        provider="openai",
+        model="openai/gpt-4.1-mini",
+        ttft=120,
+        created_at="2026-06-05T19:10:00Z",
+    )
+    stale = _sample(
+        provider="openai",
+        model="openai/o3-mini",
+        status="error",
+        error_type="empty_stream",
+        created_at="2026-06-05T18:30:00Z",
+    )
+
+    def fake_provider_benchmark_samples(
+        *,
+        date: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        limit: int = 1000,
+    ) -> list[ProviderBenchmarkSample]:
+        del date, provider, model, limit
+        return [recent, stale]
+
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.providers_for_display",
+        lambda: (SimpleNamespace(slug="openai"),),
+    )
+    monkeypatch.setattr(
+        "trusted_router.benchmark_samples.STORE",
+        SimpleNamespace(provider_benchmark_samples=fake_provider_benchmark_samples),
+    )
+
+    rows = public_benchmark_samples(
+        limit=10,
+        per_provider_limit=10,
+        recent_minutes=15,
+        now=dt.datetime(2026, 6, 5, 19, 15, tzinfo=dt.UTC),
+    )
+
+    assert [row.model for row in rows] == ["openai/gpt-4.1-mini"]
 
 
 def test_aggregate_tracks_error_types_per_model_and_provider() -> None:

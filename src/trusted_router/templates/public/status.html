@@ -64,7 +64,7 @@
     <div class="status-section-head">
       <div>
         <h2>Upstream provider health</h2>
-        <p>Continuously measured per provider from the rotation probe and real traffic. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
+        <p>Continuously measured per provider from the rotation probe and real traffic over the {{ provider_health_window or "recent live window" }}. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">

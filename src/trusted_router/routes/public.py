@@ -60,6 +60,7 @@ STATUS_HISTORY_CACHE_SECONDS = 300
 STATUS_HISTORY_STALE_SECONDS = 1_800
 LEADERBOARD_SAMPLE_LIMIT = 8_000
 LEADERBOARD_MIN_SAMPLES = 1
+LEADERBOARD_RECENT_WINDOW_MINUTES = 15
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
@@ -625,9 +626,13 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _LEADERBOARD_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
-    samples = public_benchmark_samples(limit=LEADERBOARD_SAMPLE_LIMIT)
+    samples = public_benchmark_samples(
+        limit=LEADERBOARD_SAMPLE_LIMIT,
+        recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
+    )
     payload = aggregate_leaderboard(samples, min_samples=LEADERBOARD_MIN_SAMPLES)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    payload["window_label"] = f"last {LEADERBOARD_RECENT_WINDOW_MINUTES} minutes"
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -757,4 +762,5 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
         static_version=settings.release,
         snapshot=snapshot,
         provider_health=provider_health,
+        provider_health_window=leaderboard.get("window_label"),
     )
