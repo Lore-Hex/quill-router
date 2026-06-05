@@ -127,11 +127,10 @@ ensure_project_role() {
   local max_attempts=6
   local last_stderr=""
   while [ "$attempt" -lt "$max_attempts" ]; do
-    last_stderr="$(gc projects add-iam-policy-binding "$PROJECT_ID" \
+    if last_stderr="$(gc projects add-iam-policy-binding "$PROJECT_ID" \
         --member="$member" \
         --role="$role" \
-        --quiet 2>&1 >/dev/null)"
-    if [ "$?" -eq 0 ]; then
+        --quiet 2>&1 >/dev/null)"; then
       return 0
     fi
     attempt=$((attempt + 1))
