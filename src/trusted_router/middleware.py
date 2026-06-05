@@ -31,6 +31,14 @@ from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
 
+OAUTH_KEY_EXCHANGE_PATHS = frozenset({"/auth/keys", "/v1/auth/keys"})
+OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+    "Access-Control-Max-Age": "600",
+}
+
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     """Wire all three middlewares onto `app` in the right order.
@@ -68,6 +76,27 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
+        return response
+
+    @app.middleware("http")
+    async def oauth_key_exchange_cors_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Allow static browser apps to complete OAuth/PKCE key delegation.
+
+        The authorization page is a top-level navigation and does not need
+        CORS. The callback page does need to exchange a one-time code for a
+        delegated key without sending the app's existing bearer key through a
+        Lore-owned server. Restrict CORS to the unauthenticated code-exchange
+        endpoint; inference and management APIs remain non-CORS surfaces.
+        """
+        if request.url.path in OAUTH_KEY_EXCHANGE_PATHS and request.method.upper() == "OPTIONS":
+            return Response(status_code=204, headers=OAUTH_KEY_EXCHANGE_CORS_HEADERS)
+        response = await call_next(request)
+        if request.url.path in OAUTH_KEY_EXCHANGE_PATHS:
+            for name, value in OAUTH_KEY_EXCHANGE_CORS_HEADERS.items():
+                response.headers.setdefault(name, value)
         return response
 
     @app.middleware("http")

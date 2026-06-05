@@ -181,6 +181,34 @@ def test_oauth_code_exchange_rejects_unknown_code(client: TestClient) -> None:
     assert response.json()["error"]["message"] == "Invalid or expired authorization code"
 
 
+def test_oauth_key_exchange_has_browser_cors_preflight(client: TestClient) -> None:
+    response = client.options(
+        "/v1/auth/keys",
+        headers={
+            "origin": "https://web.lorehex.co",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "content-type",
+        },
+    )
+
+    assert response.status_code == 204
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert response.headers["access-control-allow-methods"] == "POST, OPTIONS"
+    assert response.headers["access-control-allow-headers"] == "content-type"
+
+
+def test_oauth_key_exchange_errors_are_browser_cors_readable(client: TestClient) -> None:
+    response = client.post(
+        "/v1/auth/keys",
+        headers={"origin": "https://web.lorehex.co"},
+        json={"code": "auth_code-missing"},
+    )
+
+    assert response.status_code == 403
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert response.json()["error"]["message"] == "Invalid or expired authorization code"
+
+
 def test_oauth_code_exchange_rejects_expired_code(
     client: TestClient,
     user_headers: dict[str, str],
