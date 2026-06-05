@@ -16,6 +16,7 @@ def _sample(
     ttfb: int | None = None,
     tps: float | None = None,
     error_type: str | None = None,
+    error_status: int | None = None,
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
@@ -30,6 +31,7 @@ def _sample(
         ttfb_milliseconds=ttfb,
         speed_tokens_per_second=tps,
         error_type=error_type,
+        error_status=error_status,
         created_at=created_at,
     )
 
@@ -155,3 +157,37 @@ def test_aggregate_tracks_error_types_per_model_and_provider() -> None:
     provider = result["providers"][0]
     assert provider["top_error"] == "http_404"
     assert provider["errors"]["http_404"] == 2
+
+
+def test_aggregate_excludes_unsupported_routes_from_uptime() -> None:
+    samples = [
+        _sample(provider="openai", model="openai/gpt-4.1-mini", ttft=100),
+        _sample(
+            provider="openai",
+            model="openai/gpt-4.1-mini",
+            status="unsupported",
+            error_type="unsupported_route",
+            error_status=400,
+        ),
+        _sample(
+            provider="openai",
+            model="openai/gpt-4.1-mini",
+            status="error",
+            error_type="provider_error",
+            error_status=502,
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    provider = result["providers"][0]
+
+    assert model["sample_count"] == 2
+    assert model["excluded_count"] == 1
+    assert model["uptime"] == 0.5
+    assert model["error_rate"] == 0.5
+    assert model["errors"]["unsupported_route"] == 1
+    assert provider["sample_count"] == 2
+    assert provider["excluded_count"] == 1
+    assert result["total_samples"] == 2
+    assert result["excluded_samples"] == 1

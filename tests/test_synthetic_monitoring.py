@@ -38,6 +38,8 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 from trusted_router.storage_models import iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
+    _rotation_max_tokens,
+    _rotation_omits_temperature,
     _sse_line_error,
     _sse_line_has_content,
     attestation_nonce_probe,
@@ -1551,7 +1553,11 @@ def test_choose_rotation_target_empty_pool_is_none() -> None:
 def test_sse_line_has_content_detects_visible_deltas() -> None:
     assert _sse_line_has_content('data: {"choices":[{"delta":{"content":"PONG"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"delta":{"reasoning_content":"x"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"delta":{"reasoning":"x"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"delta":{"text":"x"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"message":{"content":"PONG"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"message":{"reasoning":"PONG"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"text":"PONG"}]}')
     # role-only opener, [DONE], and non-data lines are NOT first content.
     assert not _sse_line_has_content('data: {"choices":[{"delta":{"role":"assistant"}}]}')
     assert not _sse_line_has_content("data: [DONE]")
@@ -1561,12 +1567,25 @@ def test_sse_line_has_content_detects_visible_deltas() -> None:
 def test_sse_line_error_detects_openai_error_frames() -> None:
     assert _sse_line_error(
         'data: {"error":{"message":"provider error","type":"provider_error"}}'
-    ) == ("provider_error", None)
+    ) == ("provider_error", None, "provider error")
     assert _sse_line_error(
         'data: {"error":{"message":"rate limited","type":"rate_limit","status":429}}'
-    ) == ("rate_limit", 429)
+    ) == ("rate_limit", 429, "rate limited")
+    assert _sse_line_error(
+        'data: {"error":{"message":"model does not exist","type":"provider_error","status":404}}'
+    ) == ("unsupported_route", 404, "model does not exist")
     assert _sse_line_error('data: {"choices":[{"delta":{"content":"PONG"}}]}') is None
     assert _sse_line_error("data: [DONE]") is None
+
+
+def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
+    assert _rotation_max_tokens("cerebras", "cerebras/gpt-oss-120b") == 128
+    assert _rotation_max_tokens("cerebras", "z-ai/glm-4.7") == 128
+    assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 128
+    assert _rotation_max_tokens("openai", "openai/o3") == 128
+    assert _rotation_omits_temperature("openai", "openai/o3")
+    assert _rotation_omits_temperature("openai", "openai/gpt-5.5")
+    assert not _rotation_omits_temperature("openai", "openai/gpt-4.1-mini")
 
 
 @pytest.mark.asyncio
@@ -1704,7 +1723,7 @@ async def test_provider_rotation_probe_uses_provider_safe_request_shape() -> Non
             model="openai/gpt-4o-mini",
         )
 
-    assert captured[0]["max_tokens"] == 64
+    assert captured[0]["max_tokens"] == 128
     assert "temperature" not in captured[0]
     assert captured[1]["max_tokens"] == 16
     assert captured[1]["temperature"] == 0
@@ -1731,6 +1750,31 @@ async def test_provider_rotation_probe_records_http_error() -> None:
     assert sample.error_status == 500
     assert sample.first_token_milliseconds is None
     assert sample.source == "synthetic"
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_classifies_unsupported_routes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"type": "provider_error", "message": "model does not exist"}},
+        )
+
+    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+        )
+
+    assert sample.status == "unsupported"
+    assert sample.error_type == "unsupported_route"
+    assert sample.error_status == 400
+    assert sample.finish_reason == "unsupported"
 
 
 def _benchmark_ingest_settings() -> Settings:

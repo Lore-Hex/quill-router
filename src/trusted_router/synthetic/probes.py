@@ -597,11 +597,17 @@ def rotation_candidates() -> dict[str, list[str]]:
     """Map each provider to the model IDs it serves via a prepaid (Credits)
     endpoint. Iterates ENDPOINTS rather than Model.prepaid_available (a catalog
     dedup marker) so supplemental provider-native models are covered too."""
-    from trusted_router.catalog import MODEL_ENDPOINTS
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
 
     pool: dict[str, list[str]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
         if endpoint.usage_type != "Credits":
+            continue
+        model = MODELS.get(endpoint.model_id)
+        provider = PROVIDERS.get(endpoint.provider)
+        if model is None or provider is None:
+            continue
+        if not model.supports_chat or not provider.supports_chat:
             continue
         models = pool.setdefault(endpoint.provider, [])
         if endpoint.model_id not in models:
@@ -642,15 +648,28 @@ def _sse_line_has_content(line: str) -> bool:
         return False
     for choice in data.get("choices") or []:
         delta = choice.get("delta") or {}
-        if delta.get("content") or delta.get("reasoning_content"):
+        if (
+            delta.get("content")
+            or delta.get("reasoning_content")
+            or delta.get("reasoning")
+            or delta.get("text")
+            or delta.get("output_text")
+        ):
             return True
         message = choice.get("message") or {}
-        if message.get("content"):
+        if (
+            message.get("content")
+            or message.get("reasoning_content")
+            or message.get("reasoning")
+            or message.get("text")
+        ):
+            return True
+        if choice.get("text"):
             return True
     return False
 
 
-def _sse_line_error(line: str) -> tuple[str, int | None] | None:
+def _sse_line_error(line: str) -> tuple[str, int | None, str | None] | None:
     """Return an OpenAI-style SSE error if the data line carries one."""
     line = line.strip()
     if not line.startswith("data:"):
@@ -666,13 +685,103 @@ def _sse_line_error(line: str) -> tuple[str, int | None] | None:
     if not isinstance(error, dict):
         return None
     error_type = str(error.get("type") or "provider_error")
+    message = str(error.get("message") or "") or None
     status_raw = error.get("status") or error.get("code") or error.get("status_code")
     status: int | None
     try:
         status = int(status_raw) if status_raw is not None else None
     except (TypeError, ValueError):
         status = None
-    return error_type, status
+    return _rotation_error_type(error_type, status, message), status, message
+
+
+def _response_error(response: httpx.Response) -> tuple[str, int | None, str | None]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"http_{response.status_code}", response.status_code, None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return f"http_{response.status_code}", response.status_code, None
+    error_type = str(error.get("type") or f"http_{response.status_code}")
+    message = str(error.get("message") or "") or None
+    status_raw = error.get("status") or error.get("code") or error.get("status_code")
+    try:
+        status = int(status_raw) if status_raw is not None else response.status_code
+    except (TypeError, ValueError):
+        status = response.status_code
+    return _rotation_error_type(error_type, status, message), status, message
+
+
+_UNSUPPORTED_ROUTE_ERROR_TYPES = frozenset(
+    {
+        "model_not_found",
+        "model_not_available",
+        "not_found",
+        "not_supported",
+        "unsupported",
+        "unsupported_model",
+        "unsupported_provider",
+        "unsupported_route",
+    }
+)
+
+_PROBE_CONFIG_ERROR_TYPES = frozenset(
+    {
+        "bad_request",
+        "invalid_request",
+        "invalid_request_error",
+        "invalid_request_error_type",
+    }
+)
+
+_UNSUPPORTED_ROUTE_MESSAGE_MARKERS = (
+    "model not found",
+    "model_not_found",
+    "unknown model",
+    "invalid model",
+    "no such model",
+    "model does not exist",
+    "does not exist",
+    "not available",
+    "unavailable",
+    "not enabled",
+    "not authorized",
+    "not permitted",
+    "does not support",
+    "not supported",
+    "unsupported",
+    "no endpoint",
+    "no route",
+)
+
+_PROBE_CONFIG_MESSAGE_MARKERS = (
+    "temperature",
+    "max_tokens",
+    "max_completion_tokens",
+    "top_p",
+)
+
+
+def _rotation_error_type(
+    error_type: str,
+    status: int | None,
+    message: str | None,
+) -> str:
+    raw_type = error_type.casefold()
+    raw_message = (message or "").casefold()
+    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or any(
+        marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS
+    ):
+        return "unsupported_route"
+    if raw_type in _PROBE_CONFIG_ERROR_TYPES or (
+        status in {400, 422}
+        and any(marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS)
+    ):
+        return "probe_config_error"
+    if status in {401, 403}:
+        return "provider_auth_config"
+    return error_type
 
 
 async def provider_rotation_probe(
@@ -715,16 +824,17 @@ async def provider_rotation_probe(
             served_model = response.headers.get("x-trustedrouter-served-model") or model
             if response.status_code != 200:
                 await response.aread()
+                error_type, error_status, _message = _response_error(response)
                 return _rotation_error_sample(
                     served_provider,
                     served_model,
                     region=monitor_region,
                     elapsed_ms=_elapsed_ms(started),
-                    error_status=response.status_code,
-                    error_type=f"http_{response.status_code}",
+                    error_status=error_status,
+                    error_type=error_type,
                 )
             tail = ""
-            stream_error: tuple[str, int | None] | None = None
+            stream_error: tuple[str, int | None, str | None] | None = None
             async for chunk in response.aiter_bytes():
                 if not chunk:
                     continue
@@ -744,7 +854,7 @@ async def provider_rotation_probe(
                     break
             elapsed_ms = _elapsed_ms(started)
             if stream_error is not None:
-                error_type, status = stream_error
+                error_type, status, _message = stream_error
                 return _rotation_error_sample(
                     served_provider,
                     served_model,
@@ -798,8 +908,18 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
         or "/gpt-5" in model_l
     ):
         return 128
-    if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
-        return 64
+    if (
+        "kimi-k2" in model_l
+        or "grok" in model_l
+        or "claude-opus" in model_l
+        or "gpt-oss" in model_l
+        or "glm-4.6" in model_l
+        or "glm-4.7" in model_l
+        or "glm-5" in model_l
+        or "reasoning" in model_l
+        or "thinking" in model_l
+    ):
+        return 128
     return 16
 
 
@@ -808,6 +928,15 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
     model_l = model.lower()
     return (
         (provider_l == "kimi" and "kimi-k2." in model_l)
+        or (
+            provider_l == "openai"
+            and (
+                "/o1" in model_l
+                or "/o3" in model_l
+                or "/o4" in model_l
+                or "/gpt-5" in model_l
+            )
+        )
         or (
             provider_l == "anthropic"
             and ("claude-opus-4.7" in model_l or "claude-opus-4.8" in model_l)
@@ -824,23 +953,32 @@ def _rotation_error_sample(
     error_status: int | None,
     error_type: str,
 ) -> ProviderBenchmarkSample:
+    status = "unsupported" if _rotation_error_excluded_from_uptime(error_type) else "error"
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
         model=model,
         provider=provider,
         provider_name=_provider_display_name(provider),
-        status="error",
+        status=status,
         usage_type=UsageType.CREDITS,
         streamed=True,
         elapsed_milliseconds=elapsed_ms,
         first_token_milliseconds=None,
         ttfb_milliseconds=None,
-        finish_reason="error",
+        finish_reason=status,
         error_type=error_type,
         error_status=error_status,
         region=region,
         source="synthetic",
     )
+
+
+def _rotation_error_excluded_from_uptime(error_type: str | None) -> bool:
+    return error_type in {
+        "unsupported_route",
+        "probe_config_error",
+        "provider_auth_config",
+    }
 
 
 def _sample(

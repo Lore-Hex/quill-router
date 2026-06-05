@@ -22,6 +22,14 @@ from typing import Any
 
 from trusted_router.storage_models import ProviderBenchmarkSample
 
+NON_DOWNTIME_ERROR_TYPES = frozenset(
+    {
+        "unsupported_route",
+        "probe_config_error",
+        "provider_auth_config",
+    }
+)
+
 
 def _percentile(values: Sequence[int], percentile: int) -> int | None:
     if not values:
@@ -51,6 +59,7 @@ class ProviderModelStats:
     sample_count: int = 0
     success_count: int = 0
     error_count: int = 0
+    excluded_count: int = 0
     p50_ttft_ms: int | None = None
     p95_ttft_ms: int | None = None
     p50_ttfb_ms: int | None = None
@@ -79,6 +88,7 @@ class ProviderModelStats:
             "sample_count": self.sample_count,
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
+            "excluded_count": self.excluded_count,
             "top_error": self.top_error,
             "errors": dict(self.errors),
             "p50_ttft_ms": self.p50_ttft_ms,
@@ -101,6 +111,7 @@ class ProviderStats:
     sample_count: int = 0
     success_count: int = 0
     error_count: int = 0
+    excluded_count: int = 0
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
     errors: Counter[str] = field(default_factory=Counter)
@@ -125,6 +136,7 @@ class ProviderStats:
             "sample_count": self.sample_count,
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
+            "excluded_count": self.excluded_count,
             "top_error": self.top_error,
             "errors": dict(self.errors),
             "p50_ttft_ms": self.p50_ttft_ms,
@@ -163,14 +175,18 @@ def aggregate_leaderboard(
             ttft[key] = []
             ttfb[key] = []
             tps[key] = []
+        label = sample.error_type or (
+            f"http_{sample.error_status}" if sample.error_status else "error"
+        )
+        if _excluded_from_uptime(sample):
+            stats.excluded_count += 1
+            stats.errors[label] += 1
+            continue
         stats.sample_count += 1
         if sample.status == "success":
             stats.success_count += 1
         else:
             stats.error_count += 1
-            label = sample.error_type or (
-                f"http_{sample.error_status}" if sample.error_status else "error"
-            )
             stats.errors[label] += 1
         if sample.first_token_milliseconds is not None:
             ttft[key].append(sample.first_token_milliseconds)
@@ -198,6 +214,7 @@ def aggregate_leaderboard(
         "model_count": len(models),
         "provider_count": len(providers),
         "total_samples": sum(s.sample_count for s in models),
+        "excluded_samples": sum(s.excluded_count for s in by_model.values()),
     }
 
 
@@ -216,6 +233,7 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.sample_count += stats.sample_count
         agg.success_count += stats.success_count
         agg.error_count += stats.error_count
+        agg.excluded_count += stats.excluded_count
         agg.errors.update(stats.errors)
         # Weight each model's p50 by its sample count for the provider median.
         if stats.p50_ttft_ms is not None:
@@ -228,3 +246,7 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.p50_tokens_per_second = _median_float(tps[agg.provider])
     providers.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
     return providers
+
+
+def _excluded_from_uptime(sample: ProviderBenchmarkSample) -> bool:
+    return sample.status == "unsupported" or sample.error_type in NON_DOWNTIME_ERROR_TYPES
