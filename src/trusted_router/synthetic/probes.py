@@ -933,16 +933,15 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
     ):
         return 512
     if (
-        "kimi-k2" in model_l
-        or "grok" in model_l
-        or "claude-opus" in model_l
-        or "gpt-oss" in model_l
+        "gpt-oss" in model_l
         or "glm-4.6" in model_l
         or "glm-4.7" in model_l
         or "glm-5" in model_l
         or "reasoning" in model_l
         or "thinking" in model_l
     ):
+        return 512
+    if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
         return 128
     return 16
 
