@@ -6,7 +6,8 @@ from scripts.pricing.base import ProviderPricingResult, fetch_provider
 SLUG = "cerebras"
 URL = "https://www.cerebras.ai/pricing"
 EXPECTED_MODELS = [
-    "meta-llama/llama-3.1-8b-instruct",
+    "openai/gpt-oss-120b",
+    "z-ai/glm-4.7",
 ]
 
 

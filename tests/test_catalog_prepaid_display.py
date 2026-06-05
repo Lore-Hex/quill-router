@@ -56,6 +56,43 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
         if e.provider == "cerebras" and e.usage_type == "Credits"
     }
     assert cerebras_credits <= allow
+    assert {
+        "openai/gpt-oss-120b",
+        "cerebras/gpt-oss-120b",
+        "z-ai/glm-4.7",
+        "cerebras/zai-glm-4.7",
+    } <= cerebras_credits
+
+
+def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
+    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
+        "gpt-oss-120b"
+    )
+    assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/byok"].upstream_id == (
+        "gpt-oss-120b"
+    )
+    assert MODEL_ENDPOINTS["cerebras/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
+        "gpt-oss-120b"
+    )
+    assert MODEL_ENDPOINTS["z-ai/glm-4.7@cerebras/prepaid"].upstream_id == (
+        "zai-glm-4.7"
+    )
+    assert MODEL_ENDPOINTS["cerebras/zai-glm-4.7@cerebras/prepaid"].upstream_id == (
+        "zai-glm-4.7"
+    )
+
+
+def test_gemini_native_supplement_publishes_missing_text_models() -> None:
+    gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
+    gemini_lite_preview = MODEL_ENDPOINTS[
+        "google/gemini-3.1-flash-lite-preview@gemini/prepaid"
+    ]
+
+    assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
+    assert gemini_35.upstream_id == "gemini-3.5-flash"
+    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_650_000
+    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_900_000
+    assert gemini_lite_preview.upstream_id == "gemini-3.1-flash-lite-preview"
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:

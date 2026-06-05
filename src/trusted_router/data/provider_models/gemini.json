@@ -1,0 +1,43 @@
+{
+  "_about": "Provider-native supplement for Gemini text chat models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct generateContent smoke on 2026-06-05. Pro preview models that returned quota errors are intentionally not exposed here.",
+  "provider": "gemini",
+  "source": "https://generativelanguage.googleapis.com/v1beta/models",
+  "generated_at": "2026-06-05T00:00:00Z",
+  "model_count": 2,
+  "models": [
+    {
+      "id": "google/gemini-3.5-flash",
+      "upstream_id": "gemini-3.5-flash",
+      "display_name": "Gemini 3.5 Flash",
+      "title": "google/gemini-3.5-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 9000000,
+      "cached_input_token_price_per_m": 150000,
+      "model_type": "chat",
+      "features": ["reasoning"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "google/gemini-3.1-flash-lite-preview",
+      "upstream_id": "gemini-3.1-flash-lite-preview",
+      "display_name": "Gemini 3.1 Flash-Lite Preview",
+      "title": "google/gemini-3.1-flash-lite-preview",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000,
+      "model_type": "chat",
+      "features": [],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}

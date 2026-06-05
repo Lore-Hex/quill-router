@@ -1,0 +1,73 @@
+{
+  "_about": "Provider-native supplement for the Cerebras models enabled on the TrustedRouter Cerebras account. Verified from Cerebras /v1/models and direct chat completions on 2026-06-05. The canonical OpenRouter-style model IDs remain openai/gpt-oss-120b and z-ai/glm-4.7; cerebras/* aliases are included so users can request the Cerebras-specific route directly.",
+  "provider": "cerebras",
+  "source": "https://api.cerebras.ai/v1/models",
+  "generated_at": "2026-06-05T00:00:00Z",
+  "model_count": 4,
+  "models": [
+    {
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "display_name": "GPT OSS 120B on Cerebras",
+      "title": "openai/gpt-oss-120b",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 750000,
+      "model_type": "chat",
+      "features": ["reasoning", "high-throughput"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "cerebras/gpt-oss-120b",
+      "upstream_id": "gpt-oss-120b",
+      "display_name": "Cerebras GPT OSS 120B",
+      "title": "cerebras/gpt-oss-120b",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 350000,
+      "output_token_price_per_m": 750000,
+      "model_type": "chat",
+      "features": ["reasoning", "high-throughput"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "zai-glm-4.7",
+      "display_name": "Z.AI GLM 4.7 on Cerebras",
+      "title": "z-ai/glm-4.7",
+      "context_length": 202752,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 2250000,
+      "output_token_price_per_m": 2750000,
+      "model_type": "chat",
+      "features": ["reasoning", "high-throughput"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "cerebras/zai-glm-4.7",
+      "upstream_id": "zai-glm-4.7",
+      "display_name": "Cerebras Z.AI GLM 4.7",
+      "title": "cerebras/zai-glm-4.7",
+      "context_length": 202752,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 2250000,
+      "output_token_price_per_m": 2750000,
+      "model_type": "chat",
+      "features": ["reasoning", "high-throughput"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}

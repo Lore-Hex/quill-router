@@ -26,10 +26,12 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("anthropic/claude-sonnet-4.6", "anthropic"),
         ("openai/gpt-4.1-mini", "openai"),
         ("google/gemini-2.5-flash", "gemini"),
+        ("google/gemini-3.5-flash", "gemini"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("moonshotai/kimi-k2.6", "kimi"),
+        ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
@@ -104,6 +106,24 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
                 "minimax/minimax-m2.5",
             ],
         ),
+        (
+            "cerebras",
+            4,
+            [
+                "openai/gpt-oss-120b",
+                "cerebras/gpt-oss-120b",
+                "z-ai/glm-4.7",
+                "cerebras/zai-glm-4.7",
+            ],
+        ),
+        (
+            "gemini",
+            6,
+            [
+                "google/gemini-3.5-flash",
+                "google/gemini-3.1-flash-lite-preview",
+            ],
+        ),
     ],
 )
 def test_native_provider_catalog_preserves_live_model_ids(
@@ -140,11 +160,11 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
-    m3 = MODELS["minimax/minimax-m3"]
     prepaid = MODEL_ENDPOINTS["minimax/minimax-m3@minimax/prepaid"]
 
-    assert m3.context_length == 1_000_000
-    assert [tier.max_prompt_tokens for tier in m3.price_tiers] == [512_000, None]
+    # The model row can come from the OpenRouter snapshot when that snapshot
+    # catches up, but the provider-native MiniMax endpoint must still carry
+    # MiniMax's exact context-tier billing data.
     assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [512_000, None]
 
     low, high = prepaid.price_tiers

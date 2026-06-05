@@ -1089,7 +1089,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Novita, Nebius, and MiniMax currently use this path because their
+    Novita, Nebius, MiniMax, Cerebras, and Gemini currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
     Claude Opus 4.8, which shipped after the snapshot — the attested gateway
@@ -1098,7 +1098,14 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     """
     models: dict[str, Model] = {}
     endpoints: dict[str, ModelEndpoint] = {}
-    for provider_slug in ("novita", "nebius", "minimax", "anthropic"):
+    for provider_slug in (
+        "novita",
+        "nebius",
+        "minimax",
+        "anthropic",
+        "cerebras",
+        "gemini",
+    ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
             continue
@@ -1230,11 +1237,18 @@ MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 # glm-4.7 on our account — verified 2026-06-04 from the Cerebras dashboard —
 # NOT the Llama models OpenRouter lists for Cerebras's GA tier. Without this
 # filter every Llama-via-Cerebras route 502s, and because Cerebras is rank-0
-# ("fastest") it gets tried first for those models. (Adding Cerebras endpoints
-# for the two served models with verified Cerebras pricing is a follow-up; for
-# now those model ids simply have no Cerebras endpoint to keep.)
+# ("fastest") it gets tried first for those models. The provider-native
+# Cerebras manifest publishes the two verified canonical routes plus
+# cerebras/* convenience aliases that map to the same upstream IDs.
 _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
-    "cerebras": frozenset({"openai/gpt-oss-120b", "z-ai/glm-4.7"}),
+    "cerebras": frozenset(
+        {
+            "openai/gpt-oss-120b",
+            "cerebras/gpt-oss-120b",
+            "z-ai/glm-4.7",
+            "cerebras/zai-glm-4.7",
+        }
+    ),
 }
 
 # Inverse of the allowlist, but keyed by MODEL across ALL providers: specific

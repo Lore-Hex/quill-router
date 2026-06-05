@@ -44,7 +44,8 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
         (
             "cerebras",
             {
-                "meta-llama/llama-3.1-8b-instruct",
+                "openai/gpt-oss-120b",
+                "z-ai/glm-4.7",
             },
             (0.05, 5.00),
         ),
@@ -53,6 +54,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
             {
                 "google/gemini-2.5-flash",
                 "google/gemini-2.5-pro",
+                "google/gemini-3.5-flash",
             },
             (0.05, 20.00),
         ),
