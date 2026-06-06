@@ -1356,13 +1356,24 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     # novita — Novita's /models currently lists these ids, but chat returns
     # MODEL_NOT_AVAILABLE / SERVICE_NOT_AVAILABLE for the exact routes below
     # on our operator key (direct API probes 2026-06-05/06). Other Novita
-    # failures observed the same hour were overload/timeouts, so those stay
-    # counted as provider health.
+    # failures observed the same hour were overload/timeouts (ttfb_exceeded),
+    # so THOSE stay counted as provider health and are NOT dropped here — they
+    # work when Novita isn't overloaded. Second batch (2026-06-06) added after a
+    # verified sweep cross-checked each failing route's error class.
     "novita": frozenset(
         {
             "meta-llama/llama-3-8b-instruct",
             "qwen/qwen2.5-vl-72b-instruct",
             "qwen/qwen3-4b-fp8",
+            # 2026-06-06: persistent MODEL_NOT_AVAILABLE / SERVICE_NOT_AVAILABLE
+            "baidu/ernie-4.5-21B-a3b-thinking",
+            "baidu/ernie-4.5-300b-a47b-paddle",
+            "baidu/ernie-4.5-vl-28b-a3b-thinking",
+            "deepseek/deepseek-r1-0528-qwen3-8b",
+            "nousresearch/hermes-2-pro-llama-3-8b",
+            "qwen/qwen2.5-7b-instruct",
+            "qwen/qwen3-30b-a3b-fp8",
+            "qwen/qwen3-32b-fp8",
         }
     ),
     # minimax — first-party MiniMax-M2.1 and MiniMax-M2.5 return a 200 stream
