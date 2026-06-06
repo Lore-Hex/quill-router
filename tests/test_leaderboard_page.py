@@ -68,7 +68,7 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert resp.status_code == 200
     body = resp.text
     assert "Measured performance" in body  # hero eyebrow
-    assert "last 15 minutes" in body
+    assert "5,000-sample benchmark set" in body
     assert "p50 TTFT" in body  # table header
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
@@ -113,7 +113,7 @@ def test_status_page_surfaces_upstream_provider_errors() -> None:
     )
     html = _status_page_html(_settings(), host="trustedrouter.com")
     assert "Upstream provider health" in html
-    assert "last 15 minutes" in html
+    assert "5,000-sample benchmark set" in html
     assert "cerebras" in html
     assert "http_404" in html  # the captured error type is surfaced
 

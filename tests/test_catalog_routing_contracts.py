@@ -4,13 +4,19 @@ import pytest
 
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
+    E2E_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     MODELS,
+    PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
+    ZDR_MODEL_ID,
     auto_candidate_models,
     endpoints_for_model,
+    meta_candidate_models,
     model_to_openrouter_shape,
+    provider_privacy_tier,
 )
 from trusted_router.config import Settings
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
@@ -84,7 +90,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
     )
     assert openai_endpoint["stores_content"] is True
-    assert openai_endpoint["provider_zero_data_retention"] is None
+    assert openai_endpoint["provider_zero_data_retention"] is True
 
 
 @pytest.mark.parametrize(
@@ -261,6 +267,52 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
         "mistralai/mistral-small-2603",
         "deepseek/deepseek-v4-flash",
     ]
+
+
+def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
+    assert ZDR_MODEL_ID in MODELS
+    assert E2E_MODEL_ID in MODELS
+
+    zdr = meta_candidate_models(ZDR_MODEL_ID)
+    e2e = meta_candidate_models(E2E_MODEL_ID)
+
+    assert zdr
+    assert e2e
+    assert zdr[0].provider == "anthropic"
+    assert any(model.provider == "openai" for model in zdr)
+    assert any(model.provider == "gemini" for model in zdr)
+    assert all(model.supports_chat for model in zdr + e2e)
+
+    zdr_shape = model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])
+    e2e_shape = model_to_openrouter_shape(MODELS[E2E_MODEL_ID])
+    assert zdr_shape["trustedrouter"]["route_kind"] == "zdr_pool"
+    assert e2e_shape["trustedrouter"]["route_kind"] == "e2e_pool"
+    assert zdr_shape["trustedrouter"]["auto_candidates"]
+    assert e2e_shape["trustedrouter"]["auto_candidates"]
+
+
+def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
+    zdr_endpoints = chat_route_endpoint_candidates(
+        {"model": ZDR_MODEL_ID},
+        Settings(environment="test"),
+    )
+    e2e_endpoints = chat_route_endpoint_candidates(
+        {"model": E2E_MODEL_ID},
+        Settings(environment="test"),
+    )
+
+    assert zdr_endpoints
+    assert e2e_endpoints
+    assert zdr_endpoints[0][1].provider == "anthropic"
+    assert e2e_endpoints[0][1].provider == "tinfoil"
+    assert all(
+        provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_ZERO_RETENTION
+        for _model, endpoint in zdr_endpoints
+    )
+    assert all(
+        provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_CONFIDENTIAL
+        for _model, endpoint in e2e_endpoints
+    )
 
 
 def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:

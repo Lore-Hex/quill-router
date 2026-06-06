@@ -60,7 +60,7 @@
         </div>
         <p class="signup-foot">Add a card to unlock trial credit. Wallet accounts start at $0. Migration credits are available by approval for teams already spending more than $100 per month on LLMs. Open source SDKs are available for Python and TypeScript.</p>
         <div class="proof">
-          <div class="proof-card" id="uptime"><b>Provider failover</b><span><span class="mono">trustedrouter/auto</span> ranks healthy routes and rolls over around 429 and 5xx failures.</span></div>
+          <div class="proof-card" id="uptime"><b>Provider failover</b><span><span class="mono">trustedrouter/auto</span> ranks healthy routes. Use <span class="mono">trustedrouter/zdr</span> for legal and sensitive workloads.</span></div>
           <div class="proof-card"><b>Encrypted prompt path</b><span>TLS terminates inside the attested gateway. The dashboard does not receive prompts.</span></div>
           <div class="proof-card"><b>No subscriptions</b><span>Prepaid credits, BYOK, and usage based billing. No monthly plan required.</span></div>
           <div class="proof-card"><b>Open source hosting</b><span>Run the router yourself or inspect the code used by the hosted service.</span></div>
@@ -82,8 +82,8 @@
         <h2>Tell your agent. Pick privacy + model. Get a key.</h2>
         <ol class="switch-steps">
           <li>Paste the prompt into Codex, Claude Code, or Cursor — it migrates your project.</li>
-          <li>Pick your privacy level: end-to-end attested (default) or zero-retention providers only.</li>
-          <li>Pick a model, or use <span class="mono">trustedrouter/auto</span> for automatic fallback.</li>
+          <li>Pick your privacy level: <span class="mono">trustedrouter/zdr</span>, <span class="mono">trustedrouter/e2e</span>, or a specific model.</li>
+          <li>Use <span class="mono">trustedrouter/auto</span> when provider diversity matters more than the strictest privacy filter.</li>
           <li>Sign up, add a card, get your <span class="mono">sk-tr</span> key.</li>
         </ol>
       </div>

@@ -64,7 +64,7 @@
   <div class="marketing-card">
     <span class="card-label">Routing</span>
     <h3>Choose privacy posture explicitly.</h3>
-    <p>Use provider routing filters when you want only confidential or no-retention providers. Otherwise <span class="mono">trustedrouter/auto</span> optimizes fallback and health.</p>
+    <p>Use <span class="mono">trustedrouter/zdr</span> for zero-retention providers first, <span class="mono">trustedrouter/e2e</span> for confidential + E2EE routes, or provider routing filters for custom policy. Use <span class="mono">trustedrouter/auto</span> when breadth and health are the priority.</p>
   </div>
 </section>
 {% endblock %}

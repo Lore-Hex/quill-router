@@ -341,7 +341,7 @@ def test_data_collection_deny_keeps_zdr_drops_standard() -> None:
 
     with pytest.raises(HTTPException) as exc:
         chat_route_candidates(
-            {"model": "openai/gpt-5.4-nano", "provider": {"data_collection": "deny"}},
+            {"model": "mistralai/mistral-small-2603", "provider": {"data_collection": "deny"}},
             _settings(),
         )
     assert exc.value.status_code == 400
@@ -352,5 +352,5 @@ def test_unverified_provider_defaults_to_stores_content() -> None:
     # to store content (tier STANDARD), never silently "no-store".
     from trusted_router.catalog import PRIVACY_TIER_STANDARD, PROVIDERS, provider_privacy_tier
 
-    assert provider_privacy_tier(PROVIDERS["openai"]) == PRIVACY_TIER_STANDARD
-    assert PROVIDERS["openai"].stores_content is True
+    assert provider_privacy_tier(PROVIDERS["mistral"]) == PRIVACY_TIER_STANDARD
+    assert PROVIDERS["mistral"].stores_content is True

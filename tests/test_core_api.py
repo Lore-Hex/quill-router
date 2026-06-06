@@ -589,6 +589,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models = client.get("/v1/models").json()["data"]
     model_ids = {model["id"] for model in models}
     assert models
+    assert {"trustedrouter/auto", "trustedrouter/zdr", "trustedrouter/e2e"}.issubset(
+        model_ids
+    )
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
     # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.
@@ -625,11 +628,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["venice"]["provider_e2ee"] is True
     # DeepInfra is memory-only / no-training — earns ZDR with a citation.
     assert provider_flags["deepinfra"]["provider_zero_data_retention"] is True
+    assert provider_flags["openai"]["provider_zero_data_retention"] is True
+    assert provider_flags["gemini"]["provider_zero_data_retention"] is True
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
     assert "train or improve" in provider_flags["deepseek"]["provider_policy"]
-    assert provider_flags["openai"]["provider_zero_data_retention"] is None
     providers_without_policy_source = [
         provider["id"] for provider in providers if not provider.get("provider_policy_url")
     ]
@@ -655,14 +659,15 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter",
         "anthropic",
         "cerebras",
+        "gemini",
         "deepinfra",
         "nebius",
+        "openai",
         "phala",
         "tinfoil",
         "together",
         "venice",
     }.issubset(zdr_providers)
-    assert "openai" not in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
     credits = client.get("/v1/credits", headers=user_headers)

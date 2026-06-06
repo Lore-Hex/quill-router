@@ -6,10 +6,12 @@ from typing import Any
 
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
+    E2E_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
     PROVIDERS,
+    ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
     auto_candidate_models,
@@ -40,6 +42,8 @@ class RoutePreferences:
 _PROVIDER_ALIASES = {
     "google": "gemini",
     "google-ai-studio": "gemini",
+    "chatgpt": "openai",
+    "chat-gpt": "openai",
     "mistralai": "mistral",
     "mistral-ai": "mistral",
     "moonshot": "kimi",
@@ -217,6 +221,23 @@ def _routing_for_body(
     prefs = provider_route_preferences(body)
     if "sort" in overrides:
         prefs = dataclasses.replace(prefs, sort=overrides["sort"])
+    if "order" in overrides:
+        prefs = dataclasses.replace(
+            prefs,
+            order=tuple(
+                _provider_slug(provider)
+                for provider in overrides["order"].split(",")
+                if provider.strip()
+            ),
+        )
+    if "min_privacy" in overrides:
+        prefs = dataclasses.replace(
+            prefs,
+            min_privacy_rank=max(
+                prefs.min_privacy_rank,
+                PRIVACY_TIER_ALIASES[overrides["min_privacy"]],
+            ),
+        )
     return ids, prefs
 
 
@@ -230,6 +251,12 @@ def _requested_model_ids(
         stripped, ovr = _strip_variant_suffix(raw)
         if ovr:
             overrides.update(ovr)
+        if stripped == ZDR_MODEL_ID:
+            overrides["min_privacy"] = "zdr"
+            overrides["order"] = "anthropic,openai,gemini,tinfoil,venice,phala"
+        elif stripped == E2E_MODEL_ID:
+            overrides["min_privacy"] = "e2ee"
+            overrides["order"] = "tinfoil,venice,phala,gmi"
         ids.extend(_expand_model_id(stripped, settings))
 
     model_id = str(body.get("model") or "").strip()

@@ -337,10 +337,11 @@ PROVIDERS: dict[str, Provider] = {
         name="OpenAI",
         supports_embeddings=True,
         supports_prepaid=True,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "OpenAI API data is not marked as provider-ZDR here unless a zero-retention "
-            "agreement is explicitly configured. Treat default direct routing as "
-            "non-ZDR for privacy filtering."
+            "Marked ZDR for TrustedRouter's configured OpenAI / ChatGPT API account. "
+            "This is not the public OpenAI API default for every account or endpoint; "
+            "ZDR depends on eligible endpoint usage and account configuration."
         ),
         provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
     ),
@@ -349,9 +350,11 @@ PROVIDERS: dict[str, Provider] = {
         name="Gemini",
         supports_embeddings=True,
         supports_prepaid=True,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Google/Gemini routes are not marked provider-ZDR by default. Use explicit "
-            "region/provider policy controls for sensitive workloads."
+            "Marked ZDR for TrustedRouter's Google Gemini / Vertex generative-AI "
+            "routes under Google's data-governance commitments for customer prompts "
+            "and outputs."
         ),
         provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
     ),
@@ -679,8 +682,19 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
 AUTO_MODEL_ID = "trustedrouter/auto"
 FREE_MODEL_ID = "trustedrouter/free"
 CHEAP_MODEL_ID = "trustedrouter/cheap"
+ZDR_MODEL_ID = "trustedrouter/zdr"
+E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
-META_MODEL_IDS = frozenset({AUTO_MODEL_ID, FREE_MODEL_ID, CHEAP_MODEL_ID, MONITOR_MODEL_ID})
+META_MODEL_IDS = frozenset(
+    {
+        AUTO_MODEL_ID,
+        FREE_MODEL_ID,
+        CHEAP_MODEL_ID,
+        ZDR_MODEL_ID,
+        E2E_MODEL_ID,
+        MONITOR_MODEL_ID,
+    }
+)
 # IDs follow snapshot naming exactly. The picks span the 8 keyed
 # providers so `trustedrouter/auto` rolls over across providers if any
 # one is down. Each entry must have a provider-direct price in the
@@ -742,6 +756,24 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
+    ),
+    ZDR_MODEL_ID: Model(
+        id=ZDR_MODEL_ID,
+        name="TrustedRouter ZDR",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    E2E_MODEL_ID: Model(
+        id=E2E_MODEL_ID,
+        name="TrustedRouter E2E",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     MONITOR_MODEL_ID: Model(
         id=MONITOR_MODEL_ID,
@@ -1509,6 +1541,84 @@ def monitor_candidate_models(limit: int = 12) -> list[Model]:
     return candidates[:limit]
 
 
+def _privacy_candidate_models(
+    *,
+    min_tier: int,
+    preferred_providers: tuple[str, ...] = (),
+    limit: int = 12,
+) -> list[Model]:
+    """Unique chat models with at least one endpoint clearing min_tier.
+
+    This builds the model-level rollover ladder. The routing layer forces the
+    same privacy floor, so the gateway still picks only qualifying endpoints.
+    """
+    provider_rank = {provider: index for index, provider in enumerate(preferred_providers)}
+    eligible: list[tuple[int, int, int, str, Model]] = []
+    per_provider: dict[str, list[tuple[int, int, Model]]] = {}
+    for endpoint in MODEL_ENDPOINTS.values():
+        provider = PROVIDERS.get(endpoint.provider)
+        model = MODELS.get(endpoint.model_id)
+        if (
+            provider is None
+            or model is None
+            or not _is_regular_chat_model(model)
+            or model.id.endswith(":free")
+            or provider_privacy_tier(provider) < min_tier
+        ):
+            continue
+        price = (
+            endpoint.prompt_price_microdollars_per_million_tokens
+            + endpoint.completion_price_microdollars_per_million_tokens
+        )
+        usage_rank = 0 if endpoint.usage_type == "Credits" else 1
+        rank = provider_rank.get(endpoint.provider, len(provider_rank))
+        eligible.append((rank, usage_rank, price, endpoint.provider, model))
+        per_provider.setdefault(endpoint.provider, []).append((usage_rank, price, model))
+
+    result: list[Model] = []
+    seen: set[str] = set()
+    for provider_slug in preferred_providers:
+        options = sorted(
+            per_provider.get(provider_slug, []),
+            key=lambda item: (item[0], item[1], item[2].provider, item[2].id),
+        )
+        for _usage_rank, _price, model in options:
+            if model.id not in seen:
+                result.append(model)
+                seen.add(model.id)
+                break
+        if len(result) >= limit:
+            return result
+
+    for _rank, _usage_rank, _price, _provider, model in sorted(
+        eligible,
+        key=lambda item: (item[0], item[1], item[2], item[3], item[4].provider, item[4].id),
+    ):
+        if model.id in seen:
+            continue
+        result.append(model)
+        seen.add(model.id)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def zdr_candidate_models(limit: int = 12) -> list[Model]:
+    return _privacy_candidate_models(
+        min_tier=PRIVACY_TIER_ZERO_RETENTION,
+        preferred_providers=("anthropic", "openai", "gemini", "tinfoil", "venice", "phala"),
+        limit=limit,
+    )
+
+
+def e2e_candidate_models(limit: int = 12) -> list[Model]:
+    return _privacy_candidate_models(
+        min_tier=PRIVACY_TIER_CONFIDENTIAL,
+        preferred_providers=("tinfoil", "venice", "phala", "gmi"),
+        limit=limit,
+    )
+
+
 def meta_candidate_models(model_id: str) -> list[Model]:
     if model_id == AUTO_MODEL_ID:
         return auto_candidate_models()
@@ -1516,6 +1626,10 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return free_candidate_models()
     if model_id == CHEAP_MODEL_ID:
         return cheap_candidate_models()
+    if model_id == ZDR_MODEL_ID:
+        return zdr_candidate_models()
+    if model_id == E2E_MODEL_ID:
+        return e2e_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
     return []
@@ -1526,6 +1640,10 @@ def _meta_route_kind(model_id: str) -> str:
         return "free_pool"
     if model_id == CHEAP_MODEL_ID:
         return "cheap_pool"
+    if model_id == ZDR_MODEL_ID:
+        return "zdr_pool"
+    if model_id == E2E_MODEL_ID:
+        return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
     if model_id == AUTO_MODEL_ID:

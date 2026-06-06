@@ -37,9 +37,12 @@ key into TRUSTEDROUTER_API_KEY.
 
 Then:
 
-1. **Pick your privacy level** — end-to-end attested (default), or restrict to
-   zero-retention providers with `{"provider": {"data_collection": "deny"}}`.
-2. **Pick a model** — any of 30+, or `trustedrouter/auto` for automatic fallback.
+1. **Pick your privacy level** — start sensitive workloads with
+   `trustedrouter/zdr`, use `trustedrouter/e2e` for confidential + E2EE
+   routes, or set `{"provider": {"data_collection": "deny"}}` yourself.
+2. **Pick a model** — any of hundreds, or `trustedrouter/auto` for automatic
+   fallback when provider breadth matters more than the strictest privacy
+   filter.
 3. **Sign up, add a card, get your key** at https://trustedrouter.com.
 4. **Ship** — your prompts now run through a path you can verify.
 
@@ -250,8 +253,10 @@ the router-core error budget when fallback remains available.
   floating point dollars, so tiny token costs remain auditable in the ledger.
 - Uptime target: `trustedrouter/auto` is a real chat model alias in local/test
   control-plane inference and rolls to the next configured provider on upstream
-  provider failures. Chat requests also honor OpenRouter-style `models` and
-  `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
+  provider failures. `trustedrouter/zdr` forces a zero-retention provider floor
+  with Anthropic first, and `trustedrouter/e2e` forces confidential + E2EE
+  routes with Tinfoil first. Chat requests also honor OpenRouter-style `models`
+  and `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
   `data_collection`, and `sort`) so clients can request explicit fallback
   chains or provider preferences.
 - Billing: prepaid credits and BYOK first; no subscription is required.

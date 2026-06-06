@@ -14,9 +14,11 @@ from fastapi.testclient import TestClient
 
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
+    E2E_MODEL_ID,
     FREE_MODEL_ID,
     MODELS,
     MONITOR_MODEL_ID,
+    ZDR_MODEL_ID,
     meta_candidate_models,
     model_to_openrouter_shape,
 )
@@ -62,20 +64,32 @@ from trusted_router.synthetic.status import history_payload, status_snapshot
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert FREE_MODEL_ID in MODELS
     assert CHEAP_MODEL_ID in MODELS
+    assert ZDR_MODEL_ID in MODELS
+    assert E2E_MODEL_ID in MODELS
     assert MONITOR_MODEL_ID in MODELS
 
     free = meta_candidate_models(FREE_MODEL_ID)
     cheap = meta_candidate_models(CHEAP_MODEL_ID)
+    zdr = meta_candidate_models(ZDR_MODEL_ID)
+    e2e = meta_candidate_models(E2E_MODEL_ID)
     monitor = meta_candidate_models(MONITOR_MODEL_ID)
 
     assert any(model.id == "z-ai/glm-4.5-air:free" for model in free)
     assert free
     assert all(model.id.endswith(":free") for model in free)
     assert len({model.provider for model in cheap}) >= 2
+    assert zdr and zdr[0].provider == "anthropic"
+    assert e2e and any(model.provider == "deepseek" for model in e2e)
     assert len({model.provider for model in monitor}) >= 2
     assert all(not model.id.endswith(":free") for model in cheap + monitor)
 
     monitor_shape = model_to_openrouter_shape(MODELS[MONITOR_MODEL_ID])
+    assert model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])["trustedrouter"][
+        "route_kind"
+    ] == "zdr_pool"
+    assert model_to_openrouter_shape(MODELS[E2E_MODEL_ID])["trustedrouter"][
+        "route_kind"
+    ] == "e2e_pool"
     assert monitor_shape["trustedrouter"]["route_kind"] == "synthetic_monitor_pool"
     assert monitor_shape["trustedrouter"]["synthetic_monitor"] is True
     assert monitor_shape["trustedrouter"]["auto_candidates"]
@@ -128,6 +142,8 @@ def test_monitor_alias_is_hidden_from_public_v1_models(client: TestClient) -> No
     # The other meta-models stay user-visible.
     assert FREE_MODEL_ID in ids
     assert CHEAP_MODEL_ID in ids
+    assert ZDR_MODEL_ID in ids
+    assert E2E_MODEL_ID in ids
 
 
 def test_models_count_excludes_internal_only(client: TestClient) -> None:

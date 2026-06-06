@@ -3,7 +3,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Auto rollover</h2><span class="pill good">active</span></div>
   <div class="panel-body">
-    <p>Set <code>model="trustedrouter/auto"</code> to route across multiple providers with automatic failover. The current order:</p>
+    <p>Set <code>model="trustedrouter/auto"</code> to route across multiple providers with automatic failover. Use <code>trustedrouter/zdr</code> for zero-retention providers first, or <code>trustedrouter/e2e</code> for confidential + E2EE routes. The current auto order:</p>
     <ol>
       {% for model_id in auto_order %}
       <li><code>{{ model_id }}</code></li>
