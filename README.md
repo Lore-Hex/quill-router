@@ -23,7 +23,7 @@ Paste this into Codex, Claude Code, or Cursor — it does the migration for you:
 ```text
 Migrate this project to TrustedRouter, a privacy-first LLM router
 (https://trustedrouter.com). Repoint my LLM client to base_url
-"https://api.quillrouter.com/v1" (or "https://api.quillrouter.com" for the
+"https://api.trustedrouter.com/v1" (or "https://api.trustedrouter.com" for the
 Anthropic SDK), read the key from the TRUSTEDROUTER_API_KEY env var, and keep
 all my existing calls working.
 
@@ -51,16 +51,16 @@ Then:
 
 ```bash
 # Codex
-export OPENAI_BASE_URL="https://api.quillrouter.com/v1"
+export OPENAI_BASE_URL="https://api.trustedrouter.com/v1"
 export OPENAI_API_KEY="sk-tr-v1-..."
 
 # Claude Code
-export ANTHROPIC_BASE_URL="https://api.quillrouter.com"
+export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
 export ANTHROPIC_API_KEY="sk-tr-v1-..."
 ```
 ```python
 # Any OpenAI SDK
-client = OpenAI(base_url="https://api.quillrouter.com/v1", api_key="sk-tr-v1-...")
+client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-...")
 ```
 </details>
 
@@ -84,7 +84,7 @@ Verify it yourself in 60 seconds, no account:
 
 ```bash
 NONCE=$(openssl rand -hex 16)
-curl -s "https://api.quillrouter.com/attestation?nonce=$NONCE" | jq .
+curl -s "https://api.trustedrouter.com/attestation?nonce=$NONCE" | jq .
 #   eat_nonce     your nonce  (replay-protected)
 #   image_digest  SHA-256 of the running container
 #   pcrs          boot-time platform measurements
@@ -117,9 +117,12 @@ management, billing ledger semantics, usage metadata, no prompt/output storage,
 Sentry scrubbers, and provider abstractions. The attested gateway
 implementation lives in `quill-cloud-proxy`.
 
-Trust boundary: `api.quillrouter.com` is the attested prompt path and must
+Trust boundary: `api.trustedrouter.com` is the attested prompt path and must
 terminate TLS inside Confidential Space. `trustedrouter.com` is the control
 plane and must never serve a production inference fallback.
+
+`api.quillrouter.com` remains a permanent working alias (same attested
+gateway and cert), so existing integrations keep working with no migration.
 
 ## Local
 
@@ -135,7 +138,7 @@ End-to-end smoke against a running instance:
 TR_SMOKE_BASE_URL=http://127.0.0.1:18080/v1 uv run python scripts/smoke_e2e.py
 ```
 
-For production, set `TR_SMOKE_BASE_URL=https://api.quillrouter.com/v1` and
+For production, set `TR_SMOKE_BASE_URL=https://api.trustedrouter.com/v1` and
 `TR_SMOKE_INTERNAL_TOKEN` if the internal gateway routes are token-protected.
 
 Set local operator/provider keys in:
@@ -321,7 +324,7 @@ custom global edge immediately.
 The production path is designed to scale by keeping the prompt gateway
 stateless:
 
-- `api.quillrouter.com` instances can be replicated behind TCP passthrough.
+- `api.trustedrouter.com` instances can be replicated behind TCP passthrough.
   They authorize, reserve, and settle through the control plane, but prompt
   bytes never leave the attested path.
 - Spanner stores strongly consistent control-plane and billing state: users,
@@ -357,7 +360,7 @@ done carefully:
   `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and the
   future `api-aws-us-west-2.quillrouter.com` for deterministic attestation,
   smoke tests, and SDK failover.
-- Put `api.quillrouter.com` behind latency/geo DNS or TCP passthrough that does
+- Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
 - Authorize through regional quota leases, not a synchronous global Spanner

@@ -154,7 +154,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
 def _control_plane_inference_enabled(settings: Settings) -> bool:
     """Inference handlers run in the *control plane* only in local/test
     environments — production inference goes through the attested
-    enclave (api.quillrouter.com) and never touches this service. This
+    enclave (api.trustedrouter.com) and never touches this service. This
     gate keeps the local dev loop fast (no enclave dependency) while
     making it impossible to accidentally serve prompts from the non-
     attested control plane in production."""

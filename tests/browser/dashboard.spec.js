@@ -107,7 +107,7 @@ test("homepage exposes stablecoin, open-source, and trust claims", async ({ page
   await expect(page.getByText("Stablecoin")).toBeVisible();
   await expect(page.getByText("No subscriptions")).toBeVisible();
   await expect(page.getByText("Open source hosting")).toBeVisible();
-  await expect(page.locator(".panel-body .mono", { hasText: "api.quillrouter.com" })).toBeVisible();
+  await expect(page.locator(".panel-body .mono", { hasText: "api.trustedrouter.com" })).toBeVisible();
   await expect(page.getByRole("link", { name: "trusted-router-py" })).toHaveAttribute(
     "href",
     "https://github.com/Lore-Hex/trusted-router-py",
@@ -121,7 +121,7 @@ test("homepage exposes stablecoin, open-source, and trust claims", async ({ page
 test("local trust page links the public source repositories and release files", async ({ page }) => {
   await page.goto("/trust");
 
-  await expect(page.getByRole("paragraph").filter({ hasText: "api.quillrouter.com is the prompt path" })).toBeVisible();
+  await expect(page.getByRole("paragraph").filter({ hasText: "api.trustedrouter.com is the prompt path" })).toBeVisible();
   for (const repo of [
     "Lore-Hex/quill-router",
     "Lore-Hex/quill-cloud-proxy",

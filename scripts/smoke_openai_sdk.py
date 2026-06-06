@@ -21,7 +21,7 @@ def main() -> int:
             print("Set TR_SMOKE_API_KEY or create ~/.quill-gcp-q-001-bearer.txt", file=sys.stderr)
             return 2
 
-    base_url = os.environ.get("TR_SMOKE_BASE_URL", "https://api.quillrouter.com/v1")
+    base_url = os.environ.get("TR_SMOKE_BASE_URL", "https://api.trustedrouter.com/v1")
     model = os.environ.get("TR_SMOKE_MODEL", "anthropic/claude-opus-4.7")
     client = OpenAI(api_key=api_key, base_url=base_url)
     stream = client.chat.completions.create(

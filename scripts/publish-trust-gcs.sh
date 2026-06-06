@@ -57,7 +57,7 @@ release = json.loads(trust_file.read_text())
 <body>
   <main>
     <h1>TrustedRouter Trust</h1>
-    <p><code>api.quillrouter.com</code> terminates TLS inside the attested Confidential Space workload. Prompt and output content are not stored by the control plane.</p>
+    <p><code>api.trustedrouter.com</code> terminates TLS inside the attested Confidential Space workload. Prompt and output content are not stored by the control plane.</p>
     <section><h2>Current GCP workload</h2><p><code>{release["image_reference"]}</code></p><p><code>{release["image_digest"]}</code></p></section>
     <section><h2>Files</h2><p><a href="/gcp-release.json">gcp-release.json</a></p><p><a href="/image-digest-gcp.txt">image-digest-gcp.txt</a></p><p><a href="/image-reference-gcp.txt">image-reference-gcp.txt</a></p></section>
     <section><h2>Release JSON</h2><pre>{json.dumps(release, indent=2, sort_keys=True)}</pre></section>

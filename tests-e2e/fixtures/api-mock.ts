@@ -4,9 +4,9 @@
  * the top of each test (or via beforeEach) to install the mocks.
  *
  * Mocked surfaces:
- *   * GET  api.quillrouter.com/v1/models — returns the static catalog
+ *   * GET  api.trustedrouter.com/v1/models — returns the static catalog
  *     from sse.modelsCatalog()
- *   * POST api.quillrouter.com/v1/chat/completions — returns a
+ *   * POST api.trustedrouter.com/v1/chat/completions — returns a
  *     "Hello world" SSE stream by default; tests can override via
  *     setChatCompletionResponse(page, body) before invoking Send.
  *   * POST /internal/chat/issue-browser-key — returns a fake

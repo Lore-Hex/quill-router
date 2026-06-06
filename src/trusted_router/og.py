@@ -95,7 +95,7 @@ def og_image_svg(_settings: Settings) -> str:
   <!-- Bottom row: API endpoint and trust attestation pill -->
   <g transform="translate(80 568)" font-family="{_MONO}">
     <rect x="-12" y="-26" width="384" height="42" rx="10" fill="#0d1f33" stroke="#22436a"/>
-    <text x="8" y="3" font-size="18" fill="#9bbcd8">api.quillrouter.com</text>
+    <text x="8" y="3" font-size="18" fill="#9bbcd8">api.trustedrouter.com</text>
   </g>
   <g transform="translate({OG_IMAGE_WIDTH - 80} 568)" font-family="{_SANS}" text-anchor="end">
     <rect x="-330" y="-26" width="330" height="42" rx="21" fill="#0e2a1d" stroke="#1f6447"/>

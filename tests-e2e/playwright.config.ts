@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
  * Strategy:
  *   * Tests run against a LOCAL TR server (uvicorn on :8765) with the
  *     memory storage backend. CI doesn't need GCP/AWS auth to run them.
- *   * Outbound calls to api.quillrouter.com are mocked via page.route()
+ *   * Outbound calls to api.trustedrouter.com are mocked via page.route()
  *     in each spec — see fixtures/api-mock.ts for the canonical handlers.
  *   * Tests are sharded by browser engine: Chromium (primary), WebKit
  *     (Safari/iOS surrogate), Firefox (sanity).

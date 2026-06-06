@@ -34,7 +34,7 @@ def gcp_release(settings: Settings) -> dict[str, Any]:
         "api_base_url": settings.api_base_url,
         "tls": {
             "mode": "acme-inside-confidential-space",
-            "hostname": "api.quillrouter.com",
+            "hostname": "api.trustedrouter.com",
         },
         "data_policy": {
             "prompt_output_storage": False,
@@ -120,7 +120,7 @@ def trust_html(settings: Settings) -> str:
       <div class="panel">
         <p class="status"><span class="dot"></span>Trust boundary</p>
         <h1>Verify that the hosted API runs the published open-source workload.</h1>
-        <p><code>api.quillrouter.com</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
+        <p><code>api.trustedrouter.com</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
         <p>Clients can fetch the live attestation, verify issuer/audience/digest, and compare the measured image digest with the release data published here.</p>
       </div>
       <aside class="panel">
@@ -138,7 +138,7 @@ def trust_html(settings: Settings) -> str:
       <div class="panel">
         <h2>Client Verification</h2>
         <ul class="checks">
-          <li><span class="check">OK</span><span>Fetch <code>https://api.quillrouter.com/attestation</code> over normal public TLS.</span></li>
+          <li><span class="check">OK</span><span>Fetch <code>https://api.trustedrouter.com/attestation</code> over normal public TLS.</span></li>
           <li><span class="check">OK</span><span>Verify the JWT issuer is <code>https://confidentialcomputing.googleapis.com</code>.</span></li>
           <li><span class="check">OK</span><span>Verify the audience is <code>quill-cloud</code>.</span></li>
           <li><span class="check">OK</span><span>Compare the attested image digest with this page.</span></li>
@@ -153,7 +153,7 @@ def trust_html(settings: Settings) -> str:
       </div>
       <div class="panel warn">
         <h2>DNS Requirement</h2>
-        <p><code>api.quillrouter.com</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
+        <p><code>api.trustedrouter.com</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
       </div>
     </section>
     <section class="grid">

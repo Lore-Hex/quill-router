@@ -183,7 +183,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "https://quill.lorehex.co" in dashboard.text
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
-    assert "api.quillrouter.com" in dashboard.text
+    assert "api.trustedrouter.com" in dashboard.text
     assert 'href="/providers"' in dashboard.text
     # The model catalog mentions the providers we serve.
     assert "DeepSeek" in dashboard.text

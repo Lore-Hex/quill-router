@@ -69,7 +69,7 @@ Attestation is that primitive for inference privacy.
 
 ## How we do it at TrustedRouter
 
-`api.quillrouter.com` runs inside an attested gateway.
+`api.trustedrouter.com` runs inside an attested gateway.
 
 AWS Nitro Enclaves in us-east-1.
 GCP Confidential VMs in us-central1 and europe-west4.

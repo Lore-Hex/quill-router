@@ -5,17 +5,17 @@ Background
 TR's control plane (trustedrouter.com) intentionally does NOT serve
 the inference routes in production — `_control_plane_inference_enabled`
 in main.py restricts that to local/test, so prompts can only execute
-through the attested enclave at api.quillrouter.com.
+through the attested enclave at api.trustedrouter.com.
 
 That's the right policy for SDK / production traffic, but it breaks
 the browser chat playground at trustedrouter.com/chat: cross-origin
-fetch from trustedrouter.com → api.quillrouter.com is hard-blocked by
+fetch from trustedrouter.com → api.trustedrouter.com is hard-blocked by
 CORS (the attested gateway returns 401 to OPTIONS preflight with no
 ACAO headers).
 
 This module adds a minimal same-origin streaming pipe at
 ``/chat-proxy/v1/{path:path}`` that forwards the request body bytes-
-for-bytes to api.quillrouter.com and streams the response bytes back.
+for-bytes to api.trustedrouter.com and streams the response bytes back.
 The proxy:
 
   * NEVER deserializes / inspects / logs the request or response body.
@@ -158,7 +158,7 @@ async def _forward(
 
 
 def _upstream_base_url(settings: Settings) -> str:
-    # settings.api_base_url is "https://api.quillrouter.com/v1" in
+    # settings.api_base_url is "https://api.trustedrouter.com/v1" in
     # production. Strip the trailing /v1 so we can rebuild it from the
     # {path} parameter in the route — also future-proofs against
     # non-/v1 paths (e.g. /openai/v1/responses).

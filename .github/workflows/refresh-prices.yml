@@ -51,7 +51,7 @@ jobs:
       # Inference API (NOT the trustedrouter.com marketing/control-plane
       # domain). TLS terminates inside the attested enclave; this is
       # what /v1/chat/completions calls reach.
-      TR_API_BASE: https://api.quillrouter.com
+      TR_API_BASE: https://api.trustedrouter.com
     steps:
       - uses: actions/checkout@v4
         with:
