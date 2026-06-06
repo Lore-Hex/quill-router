@@ -1,8 +1,8 @@
 """Tests for /chat-proxy/v1/* — the same-origin streaming pipe the
-chat playground uses to reach api.quillrouter.com without tripping
+chat playground uses to reach api.trustedrouter.com without tripping
 browser CORS.
 
-These tests use httpx.MockTransport to stand in for api.quillrouter.com
+These tests use httpx.MockTransport to stand in for api.trustedrouter.com
 and assert that the proxy is a transparent bytes-for-bytes pipe:
 request body forwarded verbatim, response body streamed back verbatim,
 upstream status + headers (minus hop-by-hop) preserved.
@@ -23,7 +23,7 @@ def settings() -> Settings:
     # strips /v1 and rebuilds the URL from the route parameter.
     return Settings(
         environment="test",
-        api_base_url="https://api.quillrouter.com/v1",
+        api_base_url="https://api.trustedrouter.com/v1",
     )
 
 
@@ -32,7 +32,7 @@ def _install_upstream(
     handler,
 ) -> None:
     """Replace httpx.AsyncClient.send with a transport that calls the
-    given handler. Used to stub api.quillrouter.com from the proxy.
+    given handler. Used to stub api.trustedrouter.com from the proxy.
 
     The handler's returned Response is wrapped so its content is
     delivered through a ByteStream — required for the proxy's
@@ -111,7 +111,7 @@ def test_chat_proxy_forwards_body_and_returns_response(
     assert response.headers["x-trustedrouter-provider"] == "anthropic"
     assert response.headers["x-trustedrouter-served-model"] == "anthropic/claude-sonnet-4.6"
     # Forwarded URL hits the attested gateway
-    assert captured["url"] == "https://api.quillrouter.com/v1/chat/completions"
+    assert captured["url"] == "https://api.trustedrouter.com/v1/chat/completions"
     assert captured["method"] == "POST"
     # Authorization preserved verbatim
     assert captured["authorization"] == "Bearer sk-tr-test-fakekey"

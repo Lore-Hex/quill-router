@@ -93,7 +93,7 @@
 Migrate this project to TrustedRouter, a privacy-first
 LLM router (https://trustedrouter.com). Repoint my LLM
 client to base_url "{{ api_base_url }}" (or
-"https://api.quillrouter.com" for the Anthropic SDK),
+"https://api.trustedrouter.com" for the Anthropic SDK),
 read the key from TRUSTEDROUTER_API_KEY, and keep all
 my existing calls working.
 
@@ -130,7 +130,7 @@ card, and paste my sk-tr key into TRUSTEDROUTER_API_KEY.</code></pre>
       <div class="panel">
         <div class="panel-head"><h2>Trust boundary</h2><span class="pill good">no prompt logs</span></div>
         <div class="panel-body">
-          <p>Production inference belongs on <span class="mono">api.quillrouter.com</span>. The control plane stores metadata and billing records only. Prompt traffic runs through the attested gateway before it reaches Anthropic, OpenAI, Google, DeepSeek, Mistral, Cerebras and other providers.</p>
+          <p>Production inference belongs on <span class="mono">api.trustedrouter.com</span>. The control plane stores metadata and billing records only. Prompt traffic runs through the attested gateway before it reaches Anthropic, OpenAI, Google, DeepSeek, Mistral, Cerebras and other providers.</p>
           <a class="btn" href="https://trust.trustedrouter.com">Open trust page</a>
         </div>
       </div>

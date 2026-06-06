@@ -11,7 +11,7 @@
  *     never see the conversation.
  *   * Send button gated client-side on hasSignedInHint() from
  *     dashboard.js. Signed-out clicks pop the existing #signinModal
- *     and fire ZERO requests to api.quillrouter.com.
+ *     and fire ZERO requests to api.trustedrouter.com.
  *   * Browser-side API key auto-issued via
  *     POST /internal/chat/issue-browser-key on first signed-in Send.
  *     Server returns the raw key in a one-shot tr_chat_key cookie;
@@ -31,7 +31,7 @@
         (window.__TR_CHAT__ && window.__TR_CHAT__.keyCookieName) || "tr_chat_key";
     // Inference endpoints (chat/completions, messages, responses) go
     // through the same-origin chat-proxy because direct cross-origin
-    // fetch to api.quillrouter.com is CORS-blocked by the attested
+    // fetch to api.trustedrouter.com is CORS-blocked by the attested
     // gateway. Server-side template renders this as "/chat-proxy/v1".
     const API_BASE =
         (window.__TR_CHAT__ && window.__TR_CHAT__.apiBaseUrl) ||

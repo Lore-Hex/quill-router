@@ -535,7 +535,7 @@ def public_chat_html(settings: Settings) -> str:
     return _env().get_template("public/chat.html").render(
         # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
         # streaming pipe in routes/chat_proxy.py) to forward to
-        # api.quillrouter.com. Direct browser fetch to api.quillrouter.com
+        # api.trustedrouter.com. Direct browser fetch to api.trustedrouter.com
         # is blocked by CORS (the attested gateway 401s preflight
         # with no ACAO headers). The proxy pipes raw bytes without
         # inspecting / logging them — privacy posture matches the
@@ -746,7 +746,7 @@ def llms_txt(settings: Settings) -> str:
         "# TrustedRouter",
         "",
         "TrustedRouter is an OpenAI compatible AI router with an attested prompt path.",
-        "The control plane does not terminate prompt traffic; prompts belong on api.quillrouter.com.",
+        "The control plane does not terminate prompt traffic; prompts belong on api.trustedrouter.com.",
         "",
         "## Primary Links",
         f"- Homepage: https://{domain}/",
@@ -761,7 +761,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
         "## API",
-        "- OpenAI compatible base URL: https://api.quillrouter.com/v1",
+        "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
         "- Chat completions: POST /v1/chat/completions",
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
@@ -795,7 +795,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Public status: https://status.trustedrouter.com/",
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
-            "Use https://api.quillrouter.com/v1 as the OpenAI compatible API base URL.",
+            "Use https://api.trustedrouter.com/v1 as the OpenAI compatible API base URL.",
             "",
         ]
     )
@@ -813,7 +813,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "",
         "## Canonical URLs",
         f"- Homepage: https://{domain}/",
-        "- API base: https://api.quillrouter.com/v1",
+        "- API base: https://api.trustedrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
         "- Status: https://status.trustedrouter.com/",
         f"- Agent setup: https://{domain}/docs/agent-setup",

@@ -45,7 +45,7 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "id": "canonical_api",
         "name": "Canonical API",
-        "description": "api.quillrouter.com chat, Responses, TLS, and attestation checks.",
+        "description": "api.trustedrouter.com chat, Responses, TLS, and attestation checks.",
     },
     {
         "id": "eu_regional_api",

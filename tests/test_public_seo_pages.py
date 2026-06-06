@@ -34,7 +34,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         response = client.get(path)
         assert response.status_code == 200
         assert "TrustedRouter" in response.text
-        assert "api.quillrouter.com/v1" in response.text
+        assert "api.trustedrouter.com/v1" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text
 
@@ -79,7 +79,7 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
 
     api = client.get("/models/minimax/minimax-m3/api")
     assert 'model="minimax/minimax-m3"' in api.text
-    assert 'base_url="https://api.quillrouter.com/v1"' in api.text
+    assert 'base_url="https://api.trustedrouter.com/v1"' in api.text
 
 
 def test_model_comparison_pages_are_public(client: TestClient) -> None:

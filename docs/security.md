@@ -45,7 +45,7 @@ it is not the secret verifier.
 
 ## Production Boundary
 
-`api.quillrouter.com` is the attested prompt path. The FastAPI control plane
+`api.trustedrouter.com` is the attested prompt path. The FastAPI control plane
 does not register chat, messages, responses, or embeddings routes in production,
 so an outage cannot silently degrade prompt traffic to a non-attested handler.
 
@@ -86,7 +86,7 @@ an incident, set
 
 ## Cloudflare
 
-`trustedrouter.com` can be Cloudflare proxied. `api.quillrouter.com` must be
+`trustedrouter.com` can be Cloudflare proxied. `api.trustedrouter.com` must be
 DNS-only so TLS reaches the attested Confidential Space workload.
 
 `trust.trustedrouter.com` should point at the control-plane/trust hosting, not

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     environment: str = "local"
     release: str = "local"
     service_name: str = "trusted-router"
-    api_base_url: str = "https://api.quillrouter.com/v1"
+    api_base_url: str = "https://api.trustedrouter.com/v1"
     trusted_domain: str = "trustedrouter.com"
 
     enable_live_providers: bool = False

@@ -7,7 +7,7 @@ Why a dedicated endpoint instead of asking the user to copy a key
 manually:
 
   * Cross-origin: /chat is on trustedrouter.com; /v1/chat/completions
-    is on api.quillrouter.com (different registrable domain).
+    is on api.trustedrouter.com (different registrable domain).
     `tr_session` cookie is host-only on trustedrouter.com so cross-
     origin session auth is impossible. Browser MUST send
     Authorization: Bearer sk-tr-… .

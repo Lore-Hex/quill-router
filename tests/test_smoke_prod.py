@@ -21,7 +21,7 @@ import pytest
 PROD_BASE_URL = os.environ.get("TR_PROD_BASE_URL", "https://trustedrouter.com")
 PROD_STATUS_URL = os.environ.get("TR_PROD_STATUS_URL", "https://status.trustedrouter.com")
 PROD_TRUST_URL = os.environ.get("TR_PROD_TRUST_URL", "https://trust.trustedrouter.com")
-PROD_API_BASE_URL = os.environ.get("TR_PROD_API_BASE_URL", "https://api.quillrouter.com/v1")
+PROD_API_BASE_URL = os.environ.get("TR_PROD_API_BASE_URL", "https://api.trustedrouter.com/v1")
 ENABLED = os.environ.get("TR_PROD_SMOKE") == "1"
 
 pytestmark = pytest.mark.skipif(not ENABLED, reason="TR_PROD_SMOKE=1 to enable")
@@ -96,14 +96,14 @@ def test_static_assets_cacheable(client: httpx.Client) -> None:
 
 
 def test_public_dns_resolves_expected_hosts() -> None:
-    for host in ["trustedrouter.com", "trust.trustedrouter.com", "api.quillrouter.com"]:
+    for host in ["trustedrouter.com", "trust.trustedrouter.com", "api.trustedrouter.com"]:
         assert socket.getaddrinfo(host, 443), host
 
 
 def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) -> None:
     """The catalog (models / providers / regions) lives on the control
     plane and must be readable without auth — SDKs call these BEFORE the
-    user has a key. The attested gateway at api.quillrouter.com only
+    user has a key. The attested gateway at api.trustedrouter.com only
     handles chat; it has no catalog routes."""
     models = client.get("/v1/models")
     providers = client.get("/v1/providers")
@@ -157,7 +157,7 @@ def test_status_pages_are_publicly_reachable(
 
 
 def test_attested_gateway_rejects_unauthenticated_chat(api_client: httpx.Client) -> None:
-    """api.quillrouter.com is the attested chat gateway. Every path other
+    """api.trustedrouter.com is the attested chat gateway. Every path other
     than /attestation must require a bearer token; if it ever serves an
     unauthenticated 200, billing and key-limit gating are bypassed."""
     response = api_client.post(
@@ -205,10 +205,10 @@ def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:
     primary_regions = [r for r in regions.values() if r.get("primary")]
     assert len(primary_regions) == 1, f"expected exactly one primary region, got {primary_regions}"
     primary = primary_regions[0]
-    # The primary region uses the canonical api.quillrouter.com, NOT
+    # The primary region uses the canonical api.trustedrouter.com, NOT
     # api-{primary}.quillrouter.com — that alias would TLS-fail because
     # the enclave's ACME cert covers the canonical name only.
-    assert primary["api_base_url"] == "https://api.quillrouter.com/v1", primary
+    assert primary["api_base_url"] == "https://api.trustedrouter.com/v1", primary
     for region in regions.values():
         assert region.get("enabled") is True, region
         if region["id"] == primary["id"]:
@@ -371,7 +371,7 @@ def test_world_map_svg_is_served_with_cache(client: httpx.Client) -> None:
 def test_per_region_api_hostnames_complete_tls_handshake(client: httpx.Client) -> None:
     """Every advertised api_base_url has to actually serve TLS — DNS
     resolution alone isn't enough. A SAN-mismatched cert (e.g. the
-    enclave's ACME cert covers `api.quillrouter.com` only but DNS for
+    enclave's ACME cert covers `api.trustedrouter.com` only but DNS for
     `api-us-central1.quillrouter.com` lands at the same IP) fails the
     handshake silently and breaks every SDK that pins the per-region
     hostname. /attestation is anonymous, so we can confirm TLS + a real
@@ -550,7 +550,7 @@ def test_trust_page_and_release_files_are_published(trust_client: httpx.Client) 
     ]:
         assert repo in body
     data = release.json()
-    assert data["tls"]["hostname"] == "api.quillrouter.com"
+    assert data["tls"]["hostname"] == "api.trustedrouter.com"
     assert data["source_repositories"]["control_plane"].endswith("/quill-router")
     assert digest.text.strip() == data["image_digest"]
     assert image.text.strip() == data["image_reference"]

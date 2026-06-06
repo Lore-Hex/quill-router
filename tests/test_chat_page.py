@@ -11,7 +11,7 @@ Chunk 1 covers:
 
 The Send-button gating itself is a JS-runtime behavior covered by
 manual verification (test plan: anonymous user clicks Send → modal
-opens, no network request to api.quillrouter.com fires). pytest can
+opens, no network request to api.trustedrouter.com fires). pytest can
 only assert that the right hooks are in place; we don't run JS in
 the test suite.
 """

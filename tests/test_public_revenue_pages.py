@@ -107,7 +107,7 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
 
     assert response.status_code == 200
     assert 'href="/models"' in response.text
-    assert 'href="https://api.quillrouter.com/v1/models"' not in response.text
+    assert 'href="https://api.trustedrouter.com/v1/models"' not in response.text
     assert "Migration credits" in response.text
     assert "spending more than $100 per month on LLMs" in response.text
     assert "Provider failover" in response.text

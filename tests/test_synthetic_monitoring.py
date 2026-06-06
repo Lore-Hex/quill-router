@@ -1062,7 +1062,7 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
         return httpx.Response(404)
 
     transport = httpx.MockTransport(handler)
-    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=transport) as client:
         health = await tls_health_probe(client, target, monitor_region="us-central1")
         attestation = await attestation_nonce_probe(client, target, monitor_region="us-central1")
@@ -1162,7 +1162,7 @@ async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
             )
         return httpx.Response(404)
 
-    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(chat_handler)) as client:
         chat = await openai_chat_pong_probe(
             client,
@@ -1214,7 +1214,7 @@ async def test_pong_probe_still_catches_real_mismatches() -> None:
             )
         return httpx.Response(404)
 
-    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         chat = await openai_chat_pong_probe(
             client,
@@ -1240,7 +1240,7 @@ async def test_synthetic_http_probes_accept_gateway_auth_health_and_gcp_nonce() 
         return httpx.Response(404)
 
     transport = httpx.MockTransport(handler)
-    target = SyntheticTarget("canonical", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=transport) as client:
         health = await tls_health_probe(client, target, monitor_region="us-central1")
         attestation = await attestation_nonce_probe(client, target, monitor_region="us-central1")
@@ -1457,7 +1457,7 @@ def _sample(
         id=id,
         probe_type=probe_type,
         target=target,
-        target_url="https://api.quillrouter.com/v1",
+        target_url="https://api.trustedrouter.com/v1",
         monitor_region=monitor_region,
         target_region=target_region,
         status=status,
@@ -1648,7 +1648,7 @@ async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
             content=body,
         )
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
@@ -1686,7 +1686,7 @@ async def test_provider_rotation_probe_records_sse_error_frame() -> None:
             content=body,
         )
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
@@ -1713,7 +1713,7 @@ async def test_provider_rotation_probe_excludes_length_only_stream() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=body)
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
@@ -1738,7 +1738,7 @@ async def test_provider_rotation_probe_records_empty_stream() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=body)
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
@@ -1770,7 +1770,7 @@ async def test_provider_rotation_probe_uses_provider_safe_request_shape() -> Non
             ),
         )
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         await provider_rotation_probe(
             client,
@@ -1800,7 +1800,7 @@ async def test_provider_rotation_probe_records_http_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, json={"error": "boom"})
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
@@ -1826,7 +1826,7 @@ async def test_provider_rotation_probe_classifies_unsupported_routes() -> None:
             json={"error": {"type": "provider_error", "message": "model does not exist"}},
         )
 
-    target = SyntheticTarget("rotation", "https://api.quillrouter.com/v1", "us-central1")
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         sample = await provider_rotation_probe(
             client,
