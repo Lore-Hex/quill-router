@@ -124,21 +124,25 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   run_uri="https://${monitor_region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job_name}:run"
   if gc scheduler jobs describe "$scheduler_name" --location "$monitor_region" >/dev/null 2>&1; then
     log "updating synthetic scheduler ${scheduler_name}"
-    gc scheduler jobs update http "$scheduler_name" \
+    if ! gc scheduler jobs update http "$scheduler_name" \
       --location "$monitor_region" \
       --schedule "* * * * *" \
       --uri "$run_uri" \
       --http-method POST \
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
-      --quiet >/dev/null
+      --quiet >/dev/null; then
+      log "WARN: failed to update synthetic scheduler ${scheduler_name}; leaving existing schedule in place"
+    fi
   else
     log "creating synthetic scheduler ${scheduler_name}"
-    gc scheduler jobs create http "$scheduler_name" \
+    if ! gc scheduler jobs create http "$scheduler_name" \
       --location "$monitor_region" \
       --schedule "* * * * *" \
       --uri "$run_uri" \
       --http-method POST \
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
-      --quiet >/dev/null
+      --quiet >/dev/null; then
+      log "WARN: failed to create synthetic scheduler ${scheduler_name}; deploy the job exists but is not scheduled"
+    fi
   fi
 done
