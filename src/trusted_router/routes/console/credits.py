@@ -24,7 +24,9 @@ from trusted_router.services.stripe_billing import (
     create_billing_portal_session,
     create_checkout_session,
     create_payment_method_session,
+    describe_saved_payment_method,
     list_workspace_payments,
+    remove_saved_payment_method,
 )
 from trusted_router.storage import STORE
 
@@ -45,6 +47,10 @@ def register(app: FastAPI) -> None:
             workspace_id=ctx.workspace.id,
             settings=settings,
             limit=20,
+        )
+        saved_payment_method = describe_saved_payment_method(
+            payment_method_id=credit.stripe_payment_method_id if credit else None,
+            settings=settings,
         )
         return HTMLResponse(render(
             "console/credits.html",
@@ -76,6 +82,7 @@ def register(app: FastAPI) -> None:
             last_auto_refill_status=credit.last_auto_refill_status if credit else None,
             paypal_enabled=settings.paypal_enabled or settings.environment.lower() in {"local", "test"},
             payments=payments,
+            saved_payment_method=saved_payment_method,
             api_base_url=settings.api_base_url,
         ))
 
@@ -186,6 +193,21 @@ def register(app: FastAPI) -> None:
         if data["mode"] == "mock":
             return RedirectResponse(url="/console/credits?payment_method=mock-portal", status_code=303)
         return RedirectResponse(url=data["url"], status_code=303)
+
+    @app.post("/console/credits/payment-methods/remove")
+    async def console_remove_payment_method(
+        ctx: ConsoleDep,
+        settings: SettingsDep,
+    ) -> Response:
+        try:
+            result = remove_saved_payment_method(
+                workspace_id=ctx.workspace.id,
+                settings=settings,
+            )
+        except HTTPException:
+            return RedirectResponse(url="/console/credits?error=payment_method_remove_failed", status_code=303)
+        suffix = "removed" if result.get("removed") else "none"
+        return RedirectResponse(url=f"/console/credits?payment_method={suffix}", status_code=303)
 
     @app.post("/console/credits/auto-refill")
     async def console_save_auto_refill(

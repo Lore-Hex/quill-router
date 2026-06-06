@@ -1037,6 +1037,8 @@ def test_console_add_payment_method_mock_saves_method(
     page = client.get("/console/credits")
     assert "Replace card" in page.text
     assert "Manage in Stripe" in page.text
+    assert "Test card" in page.text
+    assert "Remove" in page.text
 
 
 def test_console_add_payment_method_redirects_to_stripe_setup_session(monkeypatch) -> None:
@@ -1128,6 +1130,147 @@ def test_console_manage_payment_methods_redirects_to_stripe_portal(monkeypatch) 
     assert resp.headers["location"] == "https://billing.stripe.test/portal"
     assert captured["customer"] == "cus_console_portal"
     assert captured["return_url"].endswith("/console/credits")
+
+
+def test_console_credits_lists_saved_stripe_card(monkeypatch) -> None:
+    settings = Settings(
+        environment="local",
+        stripe_secret_key="sk_test_console_card",  # noqa: S106 - test fixture.
+    )
+    app = create_app(settings, init_observability=False)
+    client = TestClient(app)
+    user = STORE.ensure_user("card-list@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_console_card",
+        payment_method_id="pm_console_card",
+    )
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="email",
+        label="card-list@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+
+    def retrieve(payment_method_id: str) -> dict[str, Any]:
+        assert payment_method_id == "pm_console_card"
+        return {
+            "id": payment_method_id,
+            "type": "card",
+            "card": {
+                "brand": "visa",
+                "last4": "4242",
+                "exp_month": 12,
+                "exp_year": 2031,
+            },
+        }
+
+    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.retrieve", retrieve)
+
+    page = client.get("/console/credits")
+
+    assert page.status_code == 200
+    assert "Visa card" in page.text
+    assert "ending in 4242" in page.text
+    assert "expires 12/2031" in page.text
+    assert "id ...e_card" in page.text
+    assert "Remove" in page.text
+
+
+def test_console_remove_payment_method_detaches_and_clears(monkeypatch) -> None:
+    settings = Settings(
+        environment="local",
+        stripe_secret_key="sk_test_console_remove",  # noqa: S106 - test fixture.
+    )
+    app = create_app(settings, init_observability=False)
+    client = TestClient(app)
+    user = STORE.ensure_user("card-remove@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_console_remove",
+        payment_method_id="pm_console_remove",
+    )
+    STORE.update_auto_refill_settings(
+        workspace.id,
+        enabled=True,
+        threshold_microdollars=10_000_000,
+        amount_microdollars=25_000_000,
+    )
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="email",
+        label="card-remove@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+    detached: list[str] = []
+
+    def detach(payment_method_id: str) -> dict[str, str]:
+        detached.append(payment_method_id)
+        return {"id": payment_method_id}
+
+    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach)
+
+    resp = client.post(
+        "/console/credits/payment-methods/remove",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/console/credits?payment_method=removed"
+    assert detached == ["pm_console_remove"]
+    account = STORE.get_credit_account(workspace.id)
+    assert account is not None
+    assert account.stripe_customer_id == "cus_console_remove"
+    assert account.stripe_payment_method_id is None
+    assert account.auto_refill_enabled is False
+    assert account.last_auto_refill_status == "disabled:payment_method_removed"
+
+
+def test_console_remove_payment_method_keeps_local_state_when_stripe_fails(monkeypatch) -> None:
+    settings = Settings(
+        environment="local",
+        stripe_secret_key="sk_test_console_remove_fail",  # noqa: S106 - test fixture.
+    )
+    app = create_app(settings, init_observability=False)
+    client = TestClient(app)
+    user = STORE.ensure_user("card-remove-fail@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.set_stripe_customer(
+        workspace.id,
+        customer_id="cus_console_remove_fail",
+        payment_method_id="pm_console_remove_fail",
+    )
+    raw_token, _ = STORE.create_auth_session(
+        user_id=user.id,
+        provider="email",
+        label="card-remove-fail@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+
+    def detach(_payment_method_id: str) -> None:
+        raise RuntimeError("stripe unavailable")
+
+    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.PaymentMethod.detach", detach)
+
+    resp = client.post(
+        "/console/credits/payment-methods/remove",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/console/credits?error=payment_method_remove_failed"
+    account = STORE.get_credit_account(workspace.id)
+    assert account is not None
+    assert account.stripe_customer_id == "cus_console_remove_fail"
+    assert account.stripe_payment_method_id == "pm_console_remove_fail"
 
 
 def test_logout_clears_cookie(console_session: tuple[TestClient, str]) -> None:

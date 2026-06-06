@@ -42,6 +42,36 @@
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}
     </p>
+    {% if saved_payment_method %}
+    <div class="payment-method-card">
+      <div>
+        <strong>
+          {% if saved_payment_method.brand %}
+            {{ saved_payment_method.brand|capitalize }} card
+          {% else %}
+            Stripe card
+          {% endif %}
+        </strong>
+        <span>
+          {% if saved_payment_method.last4 %}
+            ending in {{ saved_payment_method.last4 }}
+          {% else %}
+            saved payment method
+          {% endif %}
+          {% if saved_payment_method.exp_month and saved_payment_method.exp_year %}
+            · expires {{ saved_payment_method.exp_month }}/{{ saved_payment_method.exp_year }}
+          {% endif %}
+          · id ...{{ saved_payment_method.id_tail }}
+        </span>
+        {% if not saved_payment_method.details_available %}
+        <span>Stripe card details are temporarily unavailable. Removal still uses the saved Stripe id.</span>
+        {% endif %}
+      </div>
+      <form method="post" action="/console/credits/payment-methods/remove">
+        <button class="btn danger" type="submit">Remove</button>
+      </form>
+    </div>
+    {% endif %}
     <div class="button-row">
       <form method="post" action="/console/credits/payment-methods/add">
         <button class="btn primary" type="submit">

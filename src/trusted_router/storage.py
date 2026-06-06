@@ -580,6 +580,17 @@ class InMemoryStore:
                 account.stripe_payment_method_id = payment_method_id
             return account
 
+    def clear_stripe_payment_method(self, workspace_id: str) -> CreditAccount | None:
+        with self._lock:
+            account = self.credits.get(workspace_id)
+            if account is None:
+                return None
+            account.stripe_payment_method_id = None
+            account.auto_refill_enabled = False
+            account.last_auto_refill_at = iso_now()
+            account.last_auto_refill_status = "disabled:payment_method_removed"
+            return account
+
     def record_auto_refill_outcome(
         self,
         workspace_id: str,

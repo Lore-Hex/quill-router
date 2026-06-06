@@ -730,6 +730,20 @@ class SpannerBigtableStore:
 
         return self._database.run_in_transaction(txn)
 
+    def clear_stripe_payment_method(self, workspace_id: str) -> CreditAccount | None:
+        def txn(transaction: Any) -> CreditAccount | None:
+            account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            account.stripe_payment_method_id = None
+            account.auto_refill_enabled = False
+            account.last_auto_refill_at = iso_now()
+            account.last_auto_refill_status = "disabled:payment_method_removed"
+            self._write_entity_tx(transaction, "credit", workspace_id, account)
+            return account
+
+        return self._database.run_in_transaction(txn)
+
     def record_auto_refill_outcome(
         self,
         workspace_id: str,

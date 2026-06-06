@@ -163,6 +163,80 @@ def create_billing_portal_session(
     return {"url": f"https://{settings.trusted_domain}/billing/mock-portal", "mode": "mock"}
 
 
+def describe_saved_payment_method(
+    *,
+    payment_method_id: str | None,
+    settings: Settings,
+) -> dict[str, Any] | None:
+    if not payment_method_id:
+        return None
+    fallback = {
+        "id_tail": payment_method_id[-6:],
+        "brand": None,
+        "last4": None,
+        "exp_month": None,
+        "exp_year": None,
+        "details_available": False,
+    }
+    if not settings.stripe_secret_key:
+        if payment_method_id.startswith("pm_mock_"):
+            return {
+                **fallback,
+                "brand": "test",
+                "last4": payment_method_id[-4:],
+            }
+        return fallback
+    stripe.api_key = settings.stripe_secret_key
+    try:
+        payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+    except Exception:
+        return fallback
+
+    data = (
+        cast(dict[str, Any], payment_method)
+        if isinstance(payment_method, dict)
+        else cast(Any, payment_method)._to_dict_recursive()
+    )
+    card = data.get("card") if data.get("type") == "card" else None
+    if not isinstance(card, dict):
+        return fallback
+    return {
+        **fallback,
+        "brand": card.get("brand"),
+        "last4": card.get("last4"),
+        "exp_month": card.get("exp_month"),
+        "exp_year": card.get("exp_year"),
+        "details_available": True,
+    }
+
+
+def remove_saved_payment_method(
+    *,
+    workspace_id: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    account = STORE.get_credit_account(workspace_id)
+    if account is None:
+        raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
+    payment_method_id = account.stripe_payment_method_id
+    if not payment_method_id:
+        return {"removed": False, "reason": "no_payment_method"}
+
+    if settings.stripe_secret_key:
+        stripe.api_key = settings.stripe_secret_key
+        try:
+            stripe.PaymentMethod.detach(payment_method_id)
+        except Exception as exc:
+            raise api_error(
+                503,
+                "Could not remove Stripe payment method",
+                ErrorType.SERVICE_UNAVAILABLE,
+            ) from exc
+
+    STORE.clear_stripe_payment_method(workspace_id)
+    return {"removed": True, "payment_method_id_tail": payment_method_id[-6:]}
+
+
 def list_workspace_payments(
     *,
     workspace_id: str,
