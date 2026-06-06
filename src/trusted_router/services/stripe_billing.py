@@ -99,6 +99,18 @@ def create_payment_method_session(
 
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
+        checkout_customer_id = customer_id
+        if checkout_customer_id is None:
+            customer_args: dict[str, Any] = {
+                "metadata": {
+                    "workspace_id": workspace_id,
+                    "purpose": "payment_method_setup",
+                }
+            }
+            if customer_email:
+                customer_args["email"] = customer_email
+            customer = stripe.Customer.create(**customer_args)
+            checkout_customer_id = str(customer["id"])
         session_args: dict[str, Any] = {
             "mode": "setup",
             "payment_method_types": ["card"],
@@ -108,11 +120,8 @@ def create_payment_method_session(
             "setup_intent_data": {
                 "metadata": {"workspace_id": workspace_id, "purpose": "payment_method_setup"}
             },
+            "customer": checkout_customer_id,
         }
-        if customer_id:
-            session_args["customer"] = customer_id
-        elif customer_email:
-            session_args["customer_email"] = customer_email
         session = stripe.checkout.Session.create(**session_args)
         return {
             "id": session["id"],

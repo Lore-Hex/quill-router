@@ -1,0 +1,71 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Agent setup</h2><span class="pill good">OpenAI compatible</span></div>
+    <div class="panel-body">
+      <p>Use this when a coding agent needs to switch a project to TrustedRouter without changing the app architecture.</p>
+      <pre><code>export TRUSTEDROUTER_API_KEY="sk-tr-v1-..."
+export OPENAI_API_KEY="$TRUSTEDROUTER_API_KEY"
+export OPENAI_BASE_URL="{{ api_base_url }}"</code></pre>
+      <pre><code># Anthropic SDKs use the non-/v1 base URL.
+export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"
+export ANTHROPIC_BASE_URL="https://api.quillrouter.com"</code></pre>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Smoke test</h2><span class="pill">before editing code</span></div>
+    <div class="panel-body">
+      <pre><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trustedrouter/zdr",
+    "messages": [{"role": "user", "content": "Reply with PONG only."}],
+    "max_tokens": 4
+  }'</code></pre>
+      <p>The response should contain <span class="mono">PONG</span>. Use this check before moving evals or production traffic.</p>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Model aliases</h2><span class="pill good">recommended</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li><span class="mono">trustedrouter/zdr</span>: zero-data-retention routes first. Good default for legal and sensitive work.</li>
+          <li><span class="mono">trustedrouter/e2e</span>: end-to-end encrypted route pool, currently centered on confidential providers.</li>
+          <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
+          <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Agent prompt</h2><span class="pill">copy</span></div>
+      <div class="panel-body">
+        <pre><code>Migrate this project to TrustedRouter.
+Use base_url "{{ api_base_url }}".
+Read the API key from TRUSTEDROUTER_API_KEY.
+Use trustedrouter/zdr by default unless the user asks for broad fallback.
+Run a PONG smoke test before editing app code.</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <section class="cta-band">
+    <div>
+      <h2>Useful references</h2>
+      <p>Agents should read the compact context first, then use the full context when choosing models or providers.</p>
+    </div>
+    <div class="sdk-links">
+      <a class="pill" href="/docs/llms.txt">llms.txt</a>
+      <a class="pill" href="/docs/llms-full.txt">llms-full.txt</a>
+      <a class="pill" href="/models">Models</a>
+      <a class="pill" href="/providers">Providers</a>
+      <a class="pill" href="/leaderboard">Leaderboard</a>
+    </div>
+  </section>
+</section>
+{% endblock %}

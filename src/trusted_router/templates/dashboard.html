@@ -21,6 +21,8 @@
   <meta name="twitter:description" content="{{ og_description }}">
   <meta name="twitter:image" content="{{ og_image }}">
   <meta name="twitter:image:alt" content="TrustedRouter, verifiable hosted AI routing">
+  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
+  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <script>window.__TR__ = {{ tr_config | safe }};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
@@ -115,13 +117,12 @@ card, and paste my sk-tr key into TRUSTEDROUTER_API_KEY.</code></pre>
           <img src="/static/quill-feather.png" alt="Quill Feather device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
         </a>
         <div>
-          <span class="quill-ad-eyebrow">Quill Feather</span>
+          <span class="quill-ad-eyebrow">Sponsored · Quill Feather</span>
           <h2 class="quill-ad-title">A private agent that fits in your hand.</h2>
           <p class="quill-ad-lead">Run the <strong>OpenClaw</strong> or <strong>Hermes</strong> agent around the clock. First customer evaluation kits are shipping now.</p>
         </div>
         <div class="quill-ad-cta">
           <a class="btn primary" href="https://quill.lorehex.co">Buy a Quill Feather</a>
-          <a class="pill" href="https://github.com/Lore-Hex/quill">github.com/Lore-Hex/quill</a>
         </div>
       </div>
     </aside>
@@ -138,7 +139,7 @@ card, and paste my sk-tr key into TRUSTEDROUTER_API_KEY.</code></pre>
         <div class="panel-body">
           <p>
             {% if paypal_enabled %}
-            Stripe Checkout, PayPal, and <strong>Stablecoin</strong> checkout are wired for prepaid credits.
+            Stripe Checkout, PayPal, and Stablecoin checkout are wired for prepaid credits.
             {% else %}
             Stripe Checkout and <strong>Stablecoin</strong> checkout are wired for prepaid credits.
             {% endif %}
@@ -183,6 +184,22 @@ card, and paste my sk-tr key into TRUSTEDROUTER_API_KEY.</code></pre>
       </div>
     </section>
   </main>
+
+  <footer class="site-footer" aria-label="TrustedRouter documentation">
+    <div class="site-footer-inner">
+      <div>
+        <strong>Docs for agents</strong>
+        <span>Short setup paths for coding agents, eval runners, and OpenAI-compatible clients.</span>
+      </div>
+      <nav class="site-footer-links" aria-label="Agent documentation links">
+        <a href="/docs/agent-setup">Agent setup</a>
+        <a href="/docs/evals">Evals</a>
+        <a href="/docs/migrate-from-openrouter">Migrate</a>
+        <a href="/docs/llms.txt">llms.txt</a>
+        <a href="/docs/llms-full.txt">llms-full.txt</a>
+      </nav>
+    </div>
+  </footer>
 
   <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
     <form method="dialog">

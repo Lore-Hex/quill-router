@@ -27,6 +27,8 @@
   <meta name="twitter:title" content="{{ title }}">
   <meta name="twitter:description" content="{{ description }}">
   <meta name="twitter:image" content="{{ og_image|default('https://trustedrouter.com/og.png') }}">
+  <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
+  <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   {% if json_ld_blob %}
   {# Page-specific structured data (e.g. Service/Offer schema on the
@@ -76,6 +78,21 @@
     {% endblock %}
     {% block body %}{% endblock %}
   </main>
+  <footer class="site-footer" aria-label="TrustedRouter documentation">
+    <div class="site-footer-inner">
+      <div>
+        <strong>Docs for agents</strong>
+        <span>Short setup paths for coding agents, eval runners, and OpenAI-compatible clients.</span>
+      </div>
+      <nav class="site-footer-links" aria-label="Agent documentation links">
+        <a href="/docs/agent-setup">Agent setup</a>
+        <a href="/docs/evals">Evals</a>
+        <a href="/docs/migrate-from-openrouter">Migrate</a>
+        <a href="/docs/llms.txt">llms.txt</a>
+        <a href="/docs/llms-full.txt">llms-full.txt</a>
+      </nav>
+    </div>
+  </footer>
   <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
     <form method="dialog">
       <button class="signin-close" type="submit" aria-label="Close">x</button>

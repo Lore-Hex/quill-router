@@ -7,7 +7,6 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage import STORE
 
@@ -72,11 +71,17 @@ def test_billing_checkout_and_portal_mock_without_stripe_secret(user_headers: di
 def test_payment_method_setup_uses_stripe_setup_mode(monkeypatch, user_headers: dict[str, str]) -> None:
     app = create_app(Settings(environment="test", stripe_secret_key="sk_test_setup"))  # noqa: S106
     captured: dict[str, Any] = {}
+    created_customer: dict[str, Any] = {}
+
+    def create_customer(**kwargs: Any) -> dict[str, str]:
+        created_customer.update(kwargs)
+        return {"id": "cus_setup_created"}
 
     def create_session(**kwargs: Any) -> dict[str, str]:
         captured.update(kwargs)
         return {"id": "cs_setup", "url": "https://checkout.stripe.test/setup"}
 
+    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.Customer.create", create_customer)
     monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
 
     with TestClient(app) as local_client:
@@ -87,6 +92,10 @@ def test_payment_method_setup_uses_stripe_setup_mode(monkeypatch, user_headers: 
     assert setup.json()["data"]["mode"] == "stripe_setup"
     assert captured["mode"] == "setup"
     assert captured["payment_method_types"] == ["card"]
+    assert captured["customer"] == "cus_setup_created"
+    assert "customer_email" not in captured
+    assert created_customer["metadata"]["workspace_id"] == setup.json()["data"]["workspace_id"]
+    assert created_customer["metadata"]["purpose"] == "payment_method_setup"
     assert captured["setup_intent_data"]["metadata"]["workspace_id"] == setup.json()["data"]["workspace_id"]
     assert captured["metadata"]["purpose"] == "payment_method_setup"
 
@@ -115,13 +124,15 @@ def test_setup_intent_succeeded_webhook_saves_payment_method(user_headers: dict[
     assert account.stripe_payment_method_id == "pm_setup_456"
 
 
-def test_setup_checkout_completed_saves_customer_and_grants_trial_credit(
+def test_setup_checkout_completed_marks_customer_pending_without_granting_trial(
     user_headers: dict[str, str], client
 ) -> None:
     """A successful Stripe Checkout in `mode=setup` (saved-card capture
-    with no charge) is the moment we know the user has a Stripe-validated
-    card. Policy: grant the standard trial credit at this moment, not at
-    signup. The test resets the workspace credit + dedup ledger entry to
+    with no charge) can arrive before `setup_intent.succeeded`. The setup
+    intent is the event that proves the reusable payment method exists.
+    Checkout completion alone may know the customer but must not grant
+    trial credit or mark the card saved. The test resets the workspace credit
+    + dedup ledger entry to
     a pre-card-attach state first to override the conftest
     auto_credit_test_workspaces fixture (which simulates "card already
     attached" for the rest of the suite)."""
@@ -150,12 +161,74 @@ def test_setup_checkout_completed_saves_customer_and_grants_trial_credit(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()["data"]
-    assert body["setup_saved"] is True
-    assert body["trial_credit_granted_microdollars"] == DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+    assert body["setup_pending"] is True
+    assert body["trial_credit_granted_microdollars"] == 0
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert account.total_credits_microdollars == DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+    assert account.total_credits_microdollars == 0
     assert account.stripe_customer_id == "cus_checkout_setup"
+    assert account.stripe_payment_method_id is None
+
+
+def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
+    user_headers: dict[str, str], client
+) -> None:
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.credits[workspace_id].stripe_customer_id = None
+    STORE.credits[workspace_id].stripe_payment_method_id = None
+    STORE.stripe_events.discard(f"trial:{workspace_id}")
+    event = {
+        "id": "evt_setup_intent_missing_customer",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": None,
+                "payment_method": "pm_missing_customer",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["ignored"] is True
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.total_credits_microdollars == 0
+    assert account.stripe_customer_id is None
+    assert account.stripe_payment_method_id is None
+
+
+def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_crediting(
+    user_headers: dict[str, str], client
+) -> None:
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    before = STORE.get_credit_account(workspace_id)
+    assert before is not None
+    before_total = before.total_credits_microdollars
+    event = {
+        "id": "evt_payment_intent_checkout_pm",
+        "type": "payment_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_checkout_pm",
+                "payment_method": "pm_checkout_saved",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["payment_method_saved"] is True
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.total_credits_microdollars == before_total
+    assert account.stripe_customer_id == "cus_checkout_pm"
+    assert account.stripe_payment_method_id == "pm_checkout_saved"
 
 
 def test_billing_portal_uses_saved_customer_without_client_echo(

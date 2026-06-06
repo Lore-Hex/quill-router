@@ -98,12 +98,11 @@ def register(router: APIRouter) -> None:
                 if obj.get("mode") == "setup":
                     if isinstance(customer_id, str):
                         STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                    granted = _grant_trial_credit_on_card_attach(workspace_id)
                     return {
                         "data": {
-                            "setup_saved": True,
+                            "setup_pending": True,
                             "event_id": event_id,
-                            "trial_credit_granted_microdollars": granted,
+                            "trial_credit_granted_microdollars": 0,
                         }
                     }
                 credited = STORE.credit_workspace_once(
@@ -181,6 +180,22 @@ def register(router: APIRouter) -> None:
                         payment_method_id=payment_method,
                     )
                 return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
+            if isinstance(workspace_id, str) and STORE.get_credit_account(workspace_id) is not None:
+                payment_method = obj.get("payment_method")
+                customer_id = obj.get("customer")
+                if isinstance(payment_method, str) and isinstance(customer_id, str):
+                    STORE.set_stripe_customer(
+                        workspace_id,
+                        customer_id=customer_id,
+                        payment_method_id=payment_method,
+                    )
+                    return {
+                        "data": {
+                            "payment_method_saved": True,
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
 
         if event_type == "payment_intent.payment_failed":
             obj = event.get("data", {}).get("object", {})

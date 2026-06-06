@@ -1057,11 +1057,17 @@ def test_console_add_payment_method_redirects_to_stripe_setup_session(monkeypatc
     )
     client.cookies.set("tr_session", raw_token)
     captured: dict[str, Any] = {}
+    created_customer: dict[str, Any] = {}
+
+    def create_customer(**kwargs: Any) -> dict[str, str]:
+        created_customer.update(kwargs)
+        return {"id": "cus_console_created"}
 
     def create_session(**kwargs: Any) -> dict[str, str]:
         captured.update(kwargs)
         return {"id": "cs_setup_console", "url": "https://checkout.stripe.test/setup"}
 
+    monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.Customer.create", create_customer)
     monkeypatch.setattr("trusted_router.services.stripe_billing.stripe.checkout.Session.create", create_session)
 
     resp = client.post(
@@ -1073,7 +1079,11 @@ def test_console_add_payment_method_redirects_to_stripe_setup_session(monkeypatc
     assert resp.headers["location"] == "https://checkout.stripe.test/setup"
     assert captured["mode"] == "setup"
     assert captured["payment_method_types"] == ["card"]
-    assert captured["customer_email"] == "setup@example.com"
+    assert captured["customer"] == "cus_console_created"
+    assert "customer_email" not in captured
+    assert created_customer["email"] == "setup@example.com"
+    assert created_customer["metadata"]["workspace_id"] == workspace.id
+    assert created_customer["metadata"]["purpose"] == "payment_method_setup"
     assert captured["setup_intent_data"]["metadata"]["workspace_id"] == workspace.id
     assert captured["success_url"].endswith("/console/credits?payment_method=success")
     assert captured["cancel_url"].endswith("/console/credits?payment_method=cancel")

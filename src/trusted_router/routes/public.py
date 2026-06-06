@@ -156,6 +156,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def migrate_from_openrouter() -> str:
         return public_page_html(settings, "docs/migrate-from-openrouter")
 
+    @public_html_route("/docs/agent-setup")
+    async def agent_setup() -> str:
+        return public_page_html(settings, "docs/agent-setup")
+
+    @public_html_route("/docs/evals")
+    async def evals() -> str:
+        return public_page_html(settings, "docs/evals")
+
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
     # self-contained sales surface (see PUBLIC_PAGES in dashboard.py).

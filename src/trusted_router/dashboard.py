@@ -78,7 +78,11 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/portkey-alternative",
     "/confidential-computing-llm",
     "/tinfoil-alternative",
+    "/docs/agent-setup",
+    "/docs/evals",
     "/docs/migrate-from-openrouter",
+    "/docs/llms.txt",
+    "/docs/llms-full.txt",
 )
 _BENCHMARK_INDEX_LINKS: tuple[dict[str, str], ...] = (
     {
@@ -229,6 +233,16 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/migrate_from_openrouter.html",
         title="Migrate From OpenRouter",
         description="Change base_url, keep OpenAI compatible clients, and verify the hosted gateway.",
+    ),
+    "docs/agent-setup": PublicPage(
+        template="public/agent_setup.html",
+        title="Agent Setup For TrustedRouter",
+        description="Base URLs, env vars, smoke tests, and model aliases for coding agents.",
+    ),
+    "docs/evals": PublicPage(
+        template="public/evals.html",
+        title="TrustedRouter Evals Guide",
+        description="Run model, provider, privacy, latency, and cost evals through one OpenAI compatible API.",
     ),
     "security": PublicPage(
         template="public/security.html",
@@ -742,6 +756,8 @@ def llms_txt(settings: Settings) -> str:
         f"- Rankings: https://{domain}/rankings",
         "- Status: https://status.trustedrouter.com/",
         "- Trust: https://trust.trustedrouter.com/",
+        f"- Agent setup: https://{domain}/docs/agent-setup",
+        f"- Evals guide: https://{domain}/docs/evals",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
         "## API",
@@ -770,6 +786,8 @@ def docs_llms_txt(settings: Settings) -> str:
         [
             "# TrustedRouter Docs",
             "",
+            f"- Agent setup: https://{domain}/docs/agent-setup",
+            f"- Evals guide: https://{domain}/docs/evals",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Security: https://{domain}/security",
             f"- Model catalog: https://{domain}/models",
@@ -798,6 +816,11 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- API base: https://api.quillrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
         "- Status: https://status.trustedrouter.com/",
+        f"- Agent setup: https://{domain}/docs/agent-setup",
+        f"- Evals guide: https://{domain}/docs/evals",
+        f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
+        f"- Compact LLM docs: https://{domain}/docs/llms.txt",
+        f"- Full LLM docs: https://{domain}/docs/llms-full.txt",
         "",
         "## Models",
     ]

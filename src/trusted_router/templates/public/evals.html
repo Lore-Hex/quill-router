@@ -1,0 +1,69 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Run evals through TrustedRouter</h2><span class="pill good">model switching</span></div>
+    <div class="panel-body">
+      <p>Use TrustedRouter when an agent or eval runner needs to compare models, providers, privacy tiers, and cost without rewriting client code.</p>
+      <pre><code>from openai import OpenAI
+import os
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+def ask(model: str, prompt: str) -> str:
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=300,
+    )
+    return response.choices[0].message.content or ""
+
+for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
+    print(model, ask(model, "Recommend 5 real albums for fans of Talk Talk."))</code></pre>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>What to record</h2><span class="pill">metadata only</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li>Model and provider route selected.</li>
+          <li>Latency, time to first token, and token counts.</li>
+          <li>Cost in integer microdollars, not floats.</li>
+          <li>Evaluator score and blind judge notes.</li>
+          <li>Request ID for debugging. Do not store prompt/output unless the eval owner explicitly opts in.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Default test pools</h2><span class="pill">safe starts</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li><span class="mono">trustedrouter/zdr</span> for legal, medical, financial, and private customer data.</li>
+          <li><span class="mono">trustedrouter/e2e</span> when the eval needs an end-to-end encrypted provider route.</li>
+          <li><span class="mono">trustedrouter/auto</span> for availability and broad fallback testing.</li>
+          <li><span class="mono">trustedrouter/cheap</span> for wide sweeps where cost matters more than top quality.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Cost discipline</h2><span class="pill">before large runs</span></div>
+    <div class="panel-body">
+      <p>Start each eval with a small model set and a hard token cap. Check the public leaderboard and model pages before widening the run.</p>
+      <div class="sdk-links">
+        <a class="pill" href="/leaderboard">Leaderboard</a>
+        <a class="pill" href="/models">Models</a>
+        <a class="pill" href="/providers">Providers</a>
+        <a class="pill" href="/docs/agent-setup">Agent setup</a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
