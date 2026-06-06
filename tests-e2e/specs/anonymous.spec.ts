@@ -4,7 +4,7 @@
  *
  * These tests are the most important in the suite. They lock the
  * invariant that an anonymous click on Send fires ZERO requests to
- * api.quillrouter.com — only the sign-in modal opens.
+ * api.trustedrouter.com — only the sign-in modal opens.
  */
 import { test, expect } from "@playwright/test";
 import { mockExternalApis } from "../fixtures/api-mock";
@@ -24,7 +24,7 @@ test("anonymous load — page renders without auth", async ({ page }) => {
 test("anonymous Send opens the sign-in modal, fires NO inference request", async ({
     page,
 }) => {
-    // Watch for any request to api.quillrouter.com/v1/chat/completions
+    // Watch for any request to api.trustedrouter.com/v1/chat/completions
     // — if it fires while signed-out, the user's constraint is broken.
     const inferenceCalls: string[] = [];
     page.on("request", (req) => {

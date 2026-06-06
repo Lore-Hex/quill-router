@@ -51,7 +51,7 @@ PROBES: list[tuple[str, str]] = [
 
 # Per-region enclave URLs the smoke targets. We deliberately use the
 # regional hostnames (api-<region>.quillrouter.com) instead of letting
-# the global LB on api.quillrouter.com pick a backend, because we
+# the global LB on api.trustedrouter.com pick a backend, because we
 # want to *prove* each warm region's enclave is healthy. The global
 # LB's geolocation routing was flattening all probe traffic into
 # whichever region was geographically closest to the smoke client,
@@ -63,7 +63,7 @@ PROBES: list[tuple[str, str]] = [
 #
 # Caveats per region:
 #   - us-central1: this is the primary region. The canonical hostname
-#     api.quillrouter.com points here; no separate api-us-central1
+#     api.trustedrouter.com points here; no separate api-us-central1
 #     cert exists (would TLS-fail because the enclave's autocert
 #     entry covers only the canonical name in primary, see
 #     regions.py::region_payload).
@@ -81,11 +81,11 @@ PROBES: list[tuple[str, str]] = [
 #     monitor's separate /health probe via Cloud Run direct URLs
 #     covers the control-plane health for them.
 REGIONS = {
-    "us-central1":        "https://api.quillrouter.com",
+    "us-central1":        "https://api.trustedrouter.com",
     "europe-west4":       "https://api-europe-west4.quillrouter.com",
     "us-east4":           "https://api-us-east4.quillrouter.com",
     # Aliases preserved for backward-compat with operator muscle memory.
-    "us":                 "https://api.quillrouter.com",
+    "us":                 "https://api.trustedrouter.com",
     "europe":             "https://api-europe-west4.quillrouter.com",
 }
 
