@@ -1374,6 +1374,21 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             "qwen/qwen2.5-7b-instruct",
             "qwen/qwen3-30b-a3b-fp8",
             "qwen/qwen3-32b-fp8",
+            # 2026-06-06 batch 3: dropped after a SERIALIZED re-test (cooldown +
+            # 25s gaps, so not our own rate-limit). sao10k/xiaomimimo return a
+            # fast explicit NOT_AVAILABLE; the rest queue with no first byte then
+            # 429 (~60s) — i.e. Novita never usefully serves them on our key, so
+            # they only 502 + burn the SLO. (NB: nebius Qwen3.5-397B-A17B-fast,
+            # also slow, is deliberately KEPT — a 397B model legitimately takes
+            # >20s to first token and we want it available.)
+            "deepseek/deepseek-r1-distill-qwen-14b",
+            "deepseek/deepseek-r1-distill-qwen-32b",
+            "qwen/qwen3-8b-fp8",
+            "meta-llama/llama-3.2-3b-instruct",
+            "gryphe/mythomax-l2-13b",
+            "paddlepaddle/paddleocr-vl",
+            "sao10k/l3-70b-euryale-v2.1",
+            "xiaomimimo/mimo-v2-flash",
         }
     ),
     # minimax — first-party MiniMax-M2.1 and MiniMax-M2.5 return a 200 stream
