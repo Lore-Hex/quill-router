@@ -74,18 +74,25 @@ function initRouterScene(container, THREE) {
   const root = new THREE.Group();
   scene.add(root);
 
-  scene.add(new THREE.AmbientLight(0xb9d7ff, 1.7));
-  const keyLight = new THREE.DirectionalLight(0xffffff, 2.8);
+  // Lighting tuned for the dark hero (bg ~#0d1117): a touch less ambient
+  // + key so the metallic core and provider nodes don't blow out to
+  // white against the near-black backdrop, while the green accent light
+  // is lifted slightly so the brand glow still reads.
+  scene.add(new THREE.AmbientLight(0x9fc4ff, 1.35));
+  const keyLight = new THREE.DirectionalLight(0xeaf2ff, 2.2);
   keyLight.position.set(3, 4, 5);
   scene.add(keyLight);
-  const greenLight = new THREE.PointLight(0x19a06d, 18, 9);
+  const greenLight = new THREE.PointLight(0x19a06d, 20, 9);
   greenLight.position.set(-2.5, -1.7, 2.5);
   scene.add(greenLight);
 
+  // Grid lines lifted from dark navy (0x2355a6, near-invisible on the
+  // dark bg) to the brand blue used elsewhere on the dark theme, with a
+  // little more opacity so the "platform" still reads.
   const gridMaterial = new THREE.LineBasicMaterial({
-    color: 0x2355a6,
+    color: 0x4493f8,
     transparent: true,
-    opacity: 0.14,
+    opacity: 0.16,
   });
   const gridGeometry = new THREE.BufferGeometry();
   const gridPoints = [];
@@ -282,7 +289,7 @@ function initRouterScene(container, THREE) {
 
   const shieldRing = new THREE.Mesh(
     new THREE.TorusGeometry(1.22, 0.018, 12, 96),
-    new THREE.MeshBasicMaterial({ color: 0x2355a6, transparent: true, opacity: 0.55 })
+    new THREE.MeshBasicMaterial({ color: 0x4493f8, transparent: true, opacity: 0.55 })
   );
   shieldRing.rotation.x = Math.PI / 2.9;
   root.add(shieldRing);
@@ -348,7 +355,7 @@ function initRouterScene(container, THREE) {
       Math.sin(angle * 1.7) * 0.55
     );
     const curve = curveBetween(THREE, routeStart, end, index % 2 === 0 ? 0.55 : -0.42);
-    const line = makeLine(THREE, curve.getPoints(48), 0x2355a6, 0.28);
+    const line = makeLine(THREE, curve.getPoints(48), 0x4493f8, 0.28);
     root.add(line);
 
     const providerHex = PROVIDER_HEX[index % PROVIDER_HEX.length];
@@ -385,8 +392,9 @@ function initRouterScene(container, THREE) {
       activenessTarget: index === 0 ? 1 : 0,
       // Idle line color is a desaturated tint of the provider color so the
       // route reads as "this provider's lane" even when inactive; active
-      // lerps toward the bright brand color.
-      baseColor: new THREE.Color(providerHex).lerp(new THREE.Color(0x2355a6), 0.65),
+      // lerps toward the bright brand color. Tinted toward the lifted
+      // dark-theme brand blue so idle lanes stay visible on the dark bg.
+      baseColor: new THREE.Color(providerHex).lerp(new THREE.Color(0x4493f8), 0.6),
       activeColor: new THREE.Color(providerHex),
     };
   });

@@ -9,7 +9,7 @@ body.console {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--top);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -31,7 +31,7 @@ body.console {
 }
 
 .console-topnav a {
-  color: #304151;
+  color: var(--ink);
 }
 
 .console-user {
@@ -88,7 +88,7 @@ body.console {
 
 .console-sidebar {
   border-right: 1px solid var(--line);
-  background: #fbfcfd;
+  background: var(--panel2);
   padding: 20px 14px;
   display: flex;
   flex-direction: column;
@@ -115,13 +115,13 @@ body.console {
   display: block;
   padding: 8px 10px;
   font-size: 14px;
-  color: #23313d;
+  color: var(--ink);
   border-radius: 6px;
   text-decoration: none;
 }
 
 .sidebar-link:hover {
-  background: #eef3f8;
+  background: var(--soft);
 }
 
 .sidebar-link.active {
@@ -142,7 +142,7 @@ body.console {
   border: 0;
   padding: 8px 10px;
   font-size: 14px;
-  color: #23313d;
+  color: var(--ink);
   cursor: pointer;
   width: 100%;
   text-align: left;
@@ -150,7 +150,7 @@ body.console {
 }
 
 .sidebar-signout button:hover {
-  background: #eef3f8;
+  background: var(--soft);
 }
 
 .console-main {
@@ -190,8 +190,9 @@ body.console {
 .signup-reveal code {
   display: block;
   padding: 10px 12px;
-  background: #fff;
-  border: 1px solid #c9e3d5;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--good-border);
   border-radius: 7px;
   font-size: 13px;
   word-break: break-all;
@@ -210,13 +211,13 @@ body.console {
 }
 
 .copy-status.error {
-  color: #a04400;
+  color: var(--red);
 }
 
 .warning-note {
-  border: 1px solid #f2d28f;
-  background: #fff8e6;
-  color: #6f4c00;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--amber);
   border-radius: 7px;
   padding: 10px 12px;
   font-size: 13px;

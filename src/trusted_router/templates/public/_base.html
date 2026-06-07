@@ -3,6 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# Apply the saved theme BEFORE any stylesheet loads so there's no
+     flash-of-light. Dark is the unconditional default (no data-theme
+     attribute); only a stored "light" preference adds the attribute.
+     We intentionally do NOT consult prefers-color-scheme — "dark by
+     default" must hold regardless of OS. Mirrored in static/dashboard.js
+     (applyStoredTheme) which the toggle calls at runtime. #}
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("tr-theme") === "light") {
+          document.documentElement.dataset.theme = "light";
+        }
+      } catch (e) { /* localStorage blocked — fall through to dark default */ }
+    })();
+  </script>
   <title>{{ title }}</title>
   <meta name="description" content="{{ description }}">
   <link rel="canonical" href="{{ site_url }}">
@@ -54,6 +69,13 @@
         <a href="/chat">Chat</a>
         <a href="/status">Status</a>
         <a href="https://trust.trustedrouter.com">Trust</a>
+        {# Theme toggle: flips document.documentElement.dataset.theme
+           between unset (dark, the default) and "light", persisting the
+           choice to localStorage. The glyph is set by dashboard.js to
+           reflect the current theme (☾ when dark, ☀ when light).
+           Distinct aria-label so it never collides with the "Sign in"
+           button's accessible name in the browser tests. #}
+        <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
         <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
       </div>
     </nav>

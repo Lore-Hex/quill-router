@@ -25,6 +25,57 @@ function moneyFromMicrodollars(value) {
     const frac = fraction.toString().padStart(6, "0").replace(/0+$/, "");
     return (negative ? "-$" : "$") + whole.toString() + "." + frac;
 }
+// ── Theme toggle ────────────────────────────────────────────────────
+// Dark is the unconditional default (no data-theme attribute). A stored
+// "light" preference is applied as document.documentElement.dataset.theme
+// = "light". The inline <head> script in _base.html applies the saved
+// theme before the stylesheet loads (no flash-of-light); these helpers
+// drive the runtime toggle + keep the nav glyph in sync.
+const THEME_KEY = "tr-theme";
+function currentTheme() {
+    return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+function updateThemeToggleGlyph() {
+    // Show the glyph for the theme you'd switch TO: ☀ while dark, ☾ while
+    // light. Mirrors common dev-tool toggles.
+    const dark = currentTheme() === "dark";
+    document.querySelectorAll('[data-action="toggle-theme"]').forEach((el) => {
+        el.textContent = dark ? "☾" : "☀";
+        el.setAttribute("aria-pressed", String(!dark));
+    });
+}
+function applyStoredTheme() {
+    let stored = null;
+    try {
+        stored = localStorage.getItem(THEME_KEY);
+    }
+    catch {
+        stored = null;
+    }
+    if (stored === "light") {
+        document.documentElement.dataset.theme = "light";
+    }
+    else {
+        delete document.documentElement.dataset.theme;
+    }
+    updateThemeToggleGlyph();
+}
+function toggleTheme() {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    if (next === "light") {
+        document.documentElement.dataset.theme = "light";
+    }
+    else {
+        delete document.documentElement.dataset.theme;
+    }
+    try {
+        localStorage.setItem(THEME_KEY, next);
+    }
+    catch {
+        /* persistence is best-effort */
+    }
+    updateThemeToggleGlyph();
+}
 function openSigninModal() {
     const dialog = document.getElementById("signinModal");
     if (!dialog)
@@ -148,10 +199,17 @@ function applyAuthAwareChrome() {
 }
 function init() {
     applyAuthAwareChrome();
+    applyStoredTheme();
     document.addEventListener("click", (event) => {
         const target = event.target;
         if (!target)
             return;
+        const themeToggle = target.closest('[data-action="toggle-theme"]');
+        if (themeToggle) {
+            event.preventDefault();
+            toggleTheme();
+            return;
+        }
         const opener = target.closest('[data-action="open-signin"]');
         if (opener) {
             event.preventDefault();

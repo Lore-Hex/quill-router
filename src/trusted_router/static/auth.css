@@ -1,12 +1,50 @@
 /* Shared styling for the standalone auth pages — wallet email entry,
    email verify outcome, OAuth sign-in, OAuth consent. The console keeps
    its own stylesheet (console.css) since the auth pages are intentionally
-   bare to look like a step in the sign-in dance, not the app shell. */
+   bare to look like a step in the sign-in dance, not the app shell.
+
+   These pages load ONLY this stylesheet (no dashboard.css), so the theme
+   tokens are self-contained here. Dark is the default to match the rest
+   of the dev-facing product; a `[data-theme="light"]` opt-in restores the
+   original light look (auth/_base.html applies the saved theme via the
+   same flash-prevention script as the marketing chrome). */
+
+:root {
+  color-scheme: dark;
+
+  --auth-bg: #0d1117;
+  --auth-ink: #e6edf3;
+  --auth-muted: #8b949e;
+  --auth-panel: #161b22;
+  --auth-line: #30363d;
+  --auth-line-soft: #21262d;
+  --auth-accent: #4493f8;
+  --auth-accent-ink: #ffffff;
+  --auth-btn-secondary-bg: #21262d;
+  --auth-error: #f85149;
+  --auth-shadow: rgba(1, 4, 9, 0.6);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --auth-bg: #f6f8fb;
+  --auth-ink: #101828;
+  --auth-muted: #475467;
+  --auth-panel: #ffffff;
+  --auth-line: #d9e0ea;
+  --auth-line-soft: #d0d5dd;
+  --auth-accent: #101828;
+  --auth-accent-ink: #ffffff;
+  --auth-btn-secondary-bg: #ffffff;
+  --auth-error: #b00020;
+  --auth-shadow: rgba(16, 24, 40, 0.08);
+}
 
 body.auth {
   margin: 0;
-  background: #f6f8fb;
-  color: #101828;
+  background: var(--auth-bg);
+  color: var(--auth-ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -14,16 +52,16 @@ body.auth {
   max-width: 560px;
   margin: 8vh auto;
   padding: 32px;
-  border: 1px solid #d9e0ea;
-  background: #fff;
+  border: 1px solid var(--auth-line);
+  background: var(--auth-panel);
   border-radius: 8px;
-  box-shadow: 0 20px 60px rgba(16, 24, 40, 0.08);
+  box-shadow: 0 20px 60px var(--auth-shadow);
 }
 
 .auth-card .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #475467;
+  color: var(--auth-muted);
   font-size: 12px;
   font-weight: 700;
 }
@@ -47,9 +85,9 @@ body.auth {
   justify-content: center;
   min-height: 38px;
   padding: 0 14px;
-  border: 1px solid #101828;
-  background: #101828;
-  color: #fff;
+  border: 1px solid var(--auth-accent);
+  background: var(--auth-accent);
+  color: var(--auth-accent-ink);
   text-decoration: none;
   border-radius: 6px;
   font-weight: 700;
@@ -57,9 +95,9 @@ body.auth {
 }
 
 .auth-card .btn.secondary {
-  background: #fff;
-  color: #101828;
-  border-color: #d0d5dd;
+  background: var(--auth-btn-secondary-bg);
+  color: var(--auth-ink);
+  border-color: var(--auth-line-soft);
 }
 
 .auth-card li {
@@ -70,9 +108,11 @@ body.auth {
   width: 100%;
   padding: 10px;
   font-size: 16px;
-  border: 1px solid #d0d5dd;
+  border: 1px solid var(--auth-line-soft);
   border-radius: 6px;
   margin-top: 12px;
+  background: var(--auth-panel);
+  color: var(--auth-ink);
 }
 
 .auth-card form .btn {
@@ -81,7 +121,7 @@ body.auth {
 
 .auth-card .error {
   margin: 12px 0;
-  color: #b00020;
+  color: var(--auth-error);
 }
 
 .auth-card .dev-link {

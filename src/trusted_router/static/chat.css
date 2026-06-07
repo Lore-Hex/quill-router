@@ -9,9 +9,12 @@
  *   * User bubble: rounded except top-right (8px 0 8px 8px)
  *   * Generous whitespace; minimal chrome
  *
- * Light theme only. Mobile breakpoint at 780px (matches dashboard.css).
- * iOS safe-area insets via env(safe-area-inset-*) so the sticky input
- * bar doesn't sit behind the home indicator.
+ * DARK by default (matches the dev-facing product); a `[data-theme="light"]`
+ * opt-in (driven by the marketing chrome's theme toggle, since /chat extends
+ * public/_base.html) restores the original OpenRouter-style light surface.
+ * Mobile breakpoint at 780px (matches dashboard.css). iOS safe-area insets
+ * via env(safe-area-inset-*) so the sticky input bar doesn't sit behind the
+ * home indicator.
  */
 
 /* ── Tokens ─────────────────────────────────────────────────────── */
@@ -19,8 +22,41 @@
 /* Hoisted to :root so overlays appended to document.body (model
  * picker, settings, help, image lightbox, toasts) resolve them.
  * When scoped to .chat-shell, those body-level nodes saw empty
- * var() values and rendered transparent. */
+ * var() values and rendered transparent.
+ *
+ * Default = dark (GitHub-dark surfaces; the purple-blue accent is kept
+ * but lifted so it reads on the dark bg). Status/error use the dark-mode
+ * red tint. The light values live under [data-theme="light"] below. */
 :root {
+    --chat-primary: #7d80f7;
+    --chat-primary-hover: #9396f9;
+    --chat-bg: #0d1117;
+    --chat-text: #e6edf3;
+    --chat-muted: #8b949e;
+    --chat-border: #30363d;
+    --chat-hover: #1c2230;
+    --chat-sidebar-bg: #010409;
+    --chat-assistant-bg: #161b22;
+    --chat-error: #f85149;
+    --chat-error-bg: rgba(248, 81, 73, 0.12);
+    --chat-radius: 6px;
+    --chat-radius-lg: 10px;
+    --chat-shadow-popup: 0 4px 12px rgba(1, 4, 9, 0.5),
+        0 16px 48px rgba(1, 4, 9, 0.7);
+    --chat-tag-free-bg: rgba(63, 185, 80, 0.18);
+    --chat-tag-free-ink: #56d364;
+    --chat-tag-vision-bg: rgba(165, 124, 255, 0.2);
+    --chat-tag-vision-ink: #c0a3ff;
+    --chat-tag-tools-bg: rgba(210, 153, 34, 0.2);
+    --chat-tag-tools-ink: #e3b341;
+    --chat-font:
+        "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
+        "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    --chat-mono:
+        "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+
+:root[data-theme="light"] {
     --chat-primary: #6467f2;
     --chat-primary-hover: #5558dd;
     --chat-bg: #ffffff;
@@ -32,15 +68,14 @@
     --chat-assistant-bg: #ffffff;
     --chat-error: #b91c1c;
     --chat-error-bg: #fef2f2;
-    --chat-radius: 6px;
-    --chat-radius-lg: 10px;
     --chat-shadow-popup: 0 4px 12px rgba(9, 9, 17, 0.08),
         0 16px 48px rgba(9, 9, 17, 0.16);
-    --chat-font:
-        "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
-        "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    --chat-mono:
-        "JetBrains Mono", "Menlo", "Consolas", monospace;
+    --chat-tag-free-bg: #d1fae5;
+    --chat-tag-free-ink: #065f46;
+    --chat-tag-vision-bg: #ede9fe;
+    --chat-tag-vision-ink: #5b21b6;
+    --chat-tag-tools-bg: #fef3c7;
+    --chat-tag-tools-ink: #92400e;
 }
 
 /* ── Shell + layout ────────────────────────────────────────────── */
@@ -475,8 +510,8 @@
 }
 
 .chat-input-btn.is-recording {
-    background: #fef2f2;
-    border-color: #fca5a5;
+    background: var(--chat-error-bg);
+    border-color: color-mix(in srgb, var(--chat-error) 50%, var(--chat-border));
     color: var(--chat-error);
     animation: chat-pulse 1.2s infinite;
 }
@@ -886,7 +921,7 @@
     z-index: 50;
     width: 320px;
     max-width: 90vw;
-    background: #ffffff;
+    background: var(--chat-assistant-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     box-shadow: var(--chat-shadow-popup);
@@ -1415,7 +1450,7 @@
     width: 560px;
     max-width: 92vw;
     max-height: 70vh;
-    background: #ffffff;
+    background: var(--chat-assistant-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     box-shadow: var(--chat-shadow-popup);
@@ -1547,7 +1582,7 @@
 }
 
 .chat-model-picker-footer kbd {
-    background: #ffffff;
+    background: var(--chat-bg);
     border: 1px solid var(--chat-border);
     border-bottom-width: 2px;
     padding: 1px 5px;
@@ -1650,8 +1685,8 @@
 }
 
 .chat-tag-free {
-    background: #d1fae5;
-    color: #065f46;
+    background: var(--chat-tag-free-bg);
+    color: var(--chat-tag-free-ink);
     padding: 1px 6px;
     border-radius: 4px;
     font-weight: 600;
@@ -1732,7 +1767,7 @@
     width: 540px;
     max-width: 92vw;
     max-height: 80vh;
-    background: #ffffff;
+    background: var(--chat-assistant-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     box-shadow: var(--chat-shadow-popup);
@@ -1873,7 +1908,7 @@
 }
 
 .chat-help-panel {
-    background: #ffffff;
+    background: var(--chat-assistant-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     padding: 24px;
@@ -2195,7 +2230,7 @@
     position: relative;
     width: 440px;
     max-width: 92vw;
-    background: #ffffff;
+    background: var(--chat-assistant-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius-lg);
     box-shadow: var(--chat-shadow-popup);
@@ -2248,7 +2283,7 @@
     padding: 10px 12px;
     font-size: 14px;
     color: var(--chat-text);
-    background: #ffffff;
+    background: var(--chat-bg);
     border: 1px solid var(--chat-border);
     border-radius: var(--chat-radius);
     outline: none;
@@ -2292,7 +2327,7 @@
 }
 
 .chat-prompt-cancel {
-    background: #ffffff;
+    background: var(--chat-bg);
     color: var(--chat-muted);
 }
 
@@ -2505,18 +2540,18 @@
 }
 
 .chat-tag-free {
-    background: #d1fae5;
-    color: #065f46;
+    background: var(--chat-tag-free-bg);
+    color: var(--chat-tag-free-ink);
 }
 
 .chat-tag-vision {
-    background: #ede9fe;
-    color: #5b21b6;
+    background: var(--chat-tag-vision-bg);
+    color: var(--chat-tag-vision-ink);
 }
 
 .chat-tag-tools {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--chat-tag-tools-bg);
+    color: var(--chat-tag-tools-ink);
 }
 
 .chat-tag-active {

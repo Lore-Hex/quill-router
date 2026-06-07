@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page_title }} | TrustedRouter</title>
   <meta name="robots" content="noindex">
+  {# Apply the saved theme BEFORE the stylesheets load so the console
+     doesn't flash light. Dark is the default; only a stored "light"
+     preference adds the attribute. See public/_base.html for the matching
+     marketing-chrome script + the toggle that writes localStorage. #}
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("tr-theme") === "light") {
+          document.documentElement.dataset.theme = "light";
+        }
+      } catch (e) { /* localStorage blocked — dark default */ }
+    })();
+  </script>
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/console.css">
   <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
@@ -35,6 +48,9 @@
     {% endif %}
     <div class="console-user">
       <span class="console-user-email">{{ user_email or 'no email' }}</span>
+      {# Same theme toggle as the marketing chrome; console.js handles
+         the click and keeps the glyph in sync. #}
+      <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
       <form class="inline-form" method="post" action="/auth/logout">
         <button class="btn" type="submit">Sign out</button>
       </form>

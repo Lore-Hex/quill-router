@@ -3,6 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# Apply the saved theme BEFORE dashboard.css loads so the landing page
+     doesn't flash light. Dark is the unconditional default (no
+     data-theme attribute); only a stored "light" preference adds it. We
+     do NOT consult prefers-color-scheme — dark-by-default holds
+     regardless of OS. See static/dashboard.js (applyStoredTheme/toggle). #}
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem("tr-theme") === "light") {
+          document.documentElement.dataset.theme = "light";
+        }
+      } catch (e) { /* localStorage blocked — dark default */ }
+    })();
+  </script>
   <title>{{ og_title }}</title>
   <meta name="description" content="{{ og_description }}">
   <link rel="canonical" href="{{ site_url }}">
@@ -42,6 +56,10 @@
         <a href="/status">Status</a>
         <a href="https://quill.lorehex.co">Quill</a>
         <a href="https://trust.trustedrouter.com">Trust</a>
+        {# Theme toggle: flips data-theme between unset (dark default) and
+           "light", persisted to localStorage by dashboard.js. Distinct
+           aria-label so it never collides with "Sign in" in tests. #}
+        <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
         <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
       </div>
     </nav>

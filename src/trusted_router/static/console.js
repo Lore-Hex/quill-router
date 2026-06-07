@@ -37,11 +37,68 @@ function setCopyStatus(button, message, isError) {
   }
 }
 
+// ── Theme toggle ────────────────────────────────────────────────────
+// Mirrors the marketing chrome (static/dashboard.js). Dark is the default
+// (no data-theme attribute); a stored "light" preference is applied as
+// document.documentElement.dataset.theme = "light". The inline script in
+// console/_layout.html applies the saved theme before the stylesheets load
+// to avoid a flash-of-light; these helpers drive the runtime toggle.
+const THEME_KEY = "tr-theme";
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+function updateThemeToggleGlyph() {
+  const dark = currentTheme() === "dark";
+  document.querySelectorAll('[data-action="toggle-theme"]').forEach((el) => {
+    el.textContent = dark ? "☾" : "☀";
+    el.setAttribute("aria-pressed", String(!dark));
+  });
+}
+
+function applyStoredTheme() {
+  let stored = null;
+  try {
+    stored = localStorage.getItem(THEME_KEY);
+  } catch {
+    stored = null;
+  }
+  if (stored === "light") {
+    document.documentElement.dataset.theme = "light";
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  updateThemeToggleGlyph();
+}
+
+function toggleTheme() {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  if (next === "light") {
+    document.documentElement.dataset.theme = "light";
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    /* persistence is best-effort */
+  }
+  updateThemeToggleGlyph();
+}
+
 function initConsole() {
+  applyStoredTheme();
   document.addEventListener("click", (event) => {
     const target = event.target;
     if (!target)
       return;
+    const themeToggle = target.closest('[data-action="toggle-theme"]');
+    if (themeToggle) {
+      event.preventDefault();
+      toggleTheme();
+      return;
+    }
     const button = target.closest("[data-copy-secret]");
     if (!button)
       return;
