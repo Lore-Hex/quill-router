@@ -632,11 +632,12 @@ PROVIDERS: dict[str, Provider] = {
         name="Cohere",
         supports_embeddings=True,
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Cohere documents that data submitted through its API is not used to "
-            "train models without opt-in; no provider-ZDR, confidential-compute, "
-            "or E2EE claim is tracked here. Security/privacy terms are linked for "
-            "retention review."
+            "Marked ZDR — Cohere does not retain prompt/response content for "
+            "TrustedRouter's configured account and does not train on customer "
+            "API data. (Not a confidential-compute/TEE provider.)"
         ),
         provider_policy_url="https://cohere.com/security",
     ),
@@ -1325,10 +1326,12 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "context_length": 2048,
         "cost_dollars_per_million": "0.15",
     },
-    # Together — api.together.xyz/v1/embeddings (OpenAI-shaped). These are the
-    # models Together actually serves on our account as of 2026-06-07 (verified
-    # against Together /v1/models). Together retired m2-bert + bge-large-en
-    # (they 400 "model not available"), so we carry the live replacements.
+    # Together — api.together.xyz/v1/embeddings (OpenAI-shaped). Only the
+    # SERVERLESS embedding model is carried: verified live against Together
+    # on our account 2026-06-07. (m2-bert + bge-large-en are retired;
+    # BAAI/bge-base-en-v1.5 is listed in /v1/models but is dedicated-only —
+    # the serverless endpoint 400s it "create a dedicated endpoint" — so it's
+    # intentionally excluded. multilingual-e5-large-instruct returns 200.)
     {
         "id": "intfloat/multilingual-e5-large-instruct",
         "name": "Multilingual E5 Large Instruct",
@@ -1336,14 +1339,6 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "upstream_id": "intfloat/multilingual-e5-large-instruct",
         "context_length": 512,
         "cost_dollars_per_million": "0.02",
-    },
-    {
-        "id": "BAAI/bge-base-en-v1.5",
-        "name": "BAAI BGE Base EN v1.5",
-        "provider": "together",
-        "upstream_id": "BAAI/bge-base-en-v1.5",
-        "context_length": 512,
-        "cost_dollars_per_million": "0.008",
     },
     # Cohere — api.cohere.com/v2/embed (NATIVE shape; enclave adapts to OpenAI)
     {
