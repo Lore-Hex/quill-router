@@ -267,6 +267,7 @@ def require_authenticated(
 ManagementPrincipal = Annotated[Principal, Depends(require_management)]
 InferencePrincipal = Annotated[Principal, Depends(require_inference_key)]
 AuthenticatedPrincipal = Annotated[Principal, Depends(require_authenticated)]
+AuthenticatedPrincipal = Annotated[Principal, Depends(require_authenticated)]
 
 
 def is_api_key_expired(expires_at: str | None) -> bool:

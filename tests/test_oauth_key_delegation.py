@@ -66,6 +66,53 @@ def test_oauth_code_exchange_creates_delegated_inference_key(
     assert api_key.expires_at == "2099-01-01T00:00:00Z"
 
 
+def test_oauth_code_exchange_returns_signed_in_identity(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    """"Sign in with TrustedRouter" = key + identity: the exchange returns the
+    approving user's identity so the app knows WHO signed in without a second
+    round-trip."""
+    verifier = "identity-verifier-" + "i" * 43
+    code, _ = _create_code(client, user_headers, verifier=verifier)
+
+    exchange = client.post("/v1/auth/keys", json={"code": code, "code_verifier": verifier})
+
+    assert exchange.status_code == 200, exchange.text
+    identity = exchange.json()["identity"]
+    alice = STORE.find_user_by_email("alice@example.com")
+    assert identity["sub"] == alice.id
+    assert identity["email"] == "alice@example.com"
+    assert "email_verified" in identity
+
+
+def test_userinfo_returns_identity_for_delegated_key(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    """A delegated key fetches its own user's identity via /v1/auth/userinfo —
+    the key carries the approving user's id via creator_user_id."""
+    verifier = "userinfo-verifier-" + "j" * 43
+    code, _ = _create_code(client, user_headers, verifier=verifier)
+    key = client.post(
+        "/v1/auth/keys", json={"code": code, "code_verifier": verifier}
+    ).json()["key"]
+
+    resp = client.get("/v1/auth/userinfo", headers={"authorization": f"Bearer {key}"})
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    alice = STORE.find_user_by_email("alice@example.com")
+    assert data["sub"] == alice.id
+    assert data["email"] == "alice@example.com"
+    assert data["workspace_id"]
+
+
+def test_userinfo_requires_authentication(client: TestClient) -> None:
+    resp = client.get("/v1/auth/userinfo")
+    assert resp.status_code in {401, 403}
+
+
 def test_oauth_code_response_matches_openrouter_compat_shape(
     client: TestClient,
     user_headers: dict[str, str],

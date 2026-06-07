@@ -84,10 +84,15 @@ def register_oauth_key_routes(router: APIRouter) -> None:
             limit_reset=code.limit_reset,
             expires_at=code.expires_at,
         )
+        # Return the signed-in user's identity alongside the key so the app
+        # knows WHO signed in without a second /auth/userinfo round-trip
+        # ("Sign in with TrustedRouter" = key + identity).
+        user = STORE.get_user(code.user_id) if code.user_id else None
         return JSONResponse(
             {
                 "key": raw_key,
                 "user_id": code.user_id,
+                "identity": _identity_payload(user),
                 "data": key_shape(key),
             }
         )
@@ -269,6 +274,19 @@ def _optional_str(raw: Any) -> str | None:
     if raw in {None, ""}:
         return None
     return str(raw)
+
+
+def _identity_payload(user: Any) -> dict[str, Any] | None:
+    """The signed-in user's identity returned with the delegated key. None
+    when the approving user can't be resolved (e.g. legacy code rows)."""
+    if user is None:
+        return None
+    return {
+        "sub": user.id,
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "wallet_address": user.wallet_address,
+    }
 
 
 def _signin_html(request: Request, settings: Settings, params: dict[str, Any]) -> str:
