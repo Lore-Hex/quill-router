@@ -1,0 +1,156 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Sign in with TrustedRouter">
+  <div class="marketing-copy">
+    <span class="eyebrow">Sign in with TrustedRouter</span>
+    <h2>Add a button. Your users bring their own AI.</h2>
+    <p>&ldquo;Sign in with TrustedRouter&rdquo; is the &ldquo;Sign in with Google&rdquo; of AI. Add one button to your app. Your users authenticate with their TrustedRouter account and grant you a scoped key &mdash; and now your app can call hundreds of models on <em>their</em> credits, not yours.</p>
+    <p>You ship AI features with <strong>no API keys to manage, no inference bill, and no per-user billing to build</strong>. Every call runs through the open-source, hardware-attested gateway that provably never logs prompts.</p>
+    <p>
+      <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+      <a class="btn" href="#integrate">See the integration</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Two calls, billed to your user</span><span>TypeScript</span></div>
+    <pre><code>import { BrowserOAuthFlow } from "@lore-hex/trusted-router/oauth";
+
+// 1. sign-in button → open consent
+const flow = new BrowserOAuthFlow(`${location.origin}/auth/callback`);
+location.assign((await flow.initiate({ keyLabel: "My App" })).url);
+
+// 2. /auth/callback → user-scoped key + who signed in
+const { key, identity } = await flow.handleCallback();
+// use `key` for /v1/chat/completions — billed to the user</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three" aria-label="How it works">
+  <div class="marketing-card">
+    <span class="card-label">1</span>
+    <h3>Add the button</h3>
+    <p>One import. Render &ldquo;Sign in with TrustedRouter.&rdquo; Python, TypeScript, and Swift SDKs &mdash; all PKCE, no client secret, works in SPAs, native, and CLIs.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">2</span>
+    <h3>Your user approves</h3>
+    <p>They authenticate with TrustedRouter (Google, GitHub, or wallet) and approve a key scoped to your app &mdash; with an optional spend cap and expiry you request.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">3</span>
+    <h3>Use any AI, instantly</h3>
+    <p>Use the returned key for <code>/v1/chat/completions</code>, <code>/responses</code>, or <code>/embeddings</code> across hundreds of models. Usage bills to your user&rsquo;s credits.</p>
+  </div>
+</section>
+
+<section class="marketing-split reverse" aria-label="Built for your coding agent">
+  <div class="marketing-copy">
+    <span class="eyebrow">Built for your coding agent</span>
+    <h2>Integrate in one prompt.</h2>
+    <p>The SDKs and the whole API are agent-readable. Point Cursor, Claude Code, or Codex at the docs and let it wire the flow &mdash; most apps integrate in a single session, not a sprint.</p>
+    <p>The API is published as <a href="/docs/llms.txt">llms.txt</a> and <a href="/docs/llms-full.txt">llms-full.txt</a> so your agent has the full reference in its context.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Paste into your agent</span><span>Prompt</span></div>
+    <pre><code>Add "Sign in with TrustedRouter" to this app.
+
+SDK: @lore-hex/trusted-router (npm) — use BrowserOAuthFlow.
+Full API reference: https://api.trustedrouter.com/docs/llms-full.txt
+
+On the OAuth callback, exchange the PKCE code for the
+user-scoped key and call /v1/chat/completions with it.
+Persist the key + identity.email per signed-in user.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid two" aria-label="What you get and what your users get">
+  <div class="marketing-card">
+    <span class="card-label">You ship</span>
+    <h3>Zero keys, zero inference cost.</h3>
+    <p>No provider API keys to vault or rotate. No inference bill &mdash; tokens bill to the signed-in user. No per-user metering or limits to build; scoped keys carry their own caps. Hundreds of models across every provider, behind one OpenAI-compatible API.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Your users get</span>
+    <h3>One account. Any model. Provable privacy.</h3>
+    <p>One TrustedRouter account that works across every app they sign into. Their own credits and spend cap. Any model they want. And prompts that run through a hardware-attested gateway that never logs them &mdash; verifiable, not promised.</p>
+  </div>
+</section>
+
+<section id="integrate" class="sdk-stack" aria-label="SDK integration">
+  <div class="section-head">
+    <span class="eyebrow">Three SDKs, one flow</span>
+    <h2>Drop it into any stack.</h2>
+  </div>
+
+  <div class="copy-terminal">
+    <div class="code-head"><span>Browser / SPA</span><span>TypeScript</span></div>
+    <pre><code>import { BrowserOAuthFlow } from "@lore-hex/trusted-router/oauth";
+
+const flow = new BrowserOAuthFlow(`${location.origin}/auth/callback`);
+location.assign((await flow.initiate({ keyLabel: "My App", limit: "5" })).url);
+// /auth/callback:
+const { key, user_id, identity } = await flow.handleCallback();</code></pre>
+  </div>
+
+  <div class="copy-terminal">
+    <div class="code-head"><span>Server / backend</span><span>Python</span></div>
+    <pre><code>from trustedrouter import create_oauth_authorization, exchange_oauth_key
+
+auth = create_oauth_authorization(callback_url="https://myapp.com/auth/callback",
+                                  key_label="My App", limit="5", usage_limit_type="monthly")
+redirect_to(auth.url)                       # keep auth.code_verifier in the session
+# in /auth/callback (after verifying state):
+token = exchange_oauth_key(code=request.args["code"], code_verifier=saved_verifier)
+store_for_user(token.key, token.identity)   # identity = {sub, email, ...}</code></pre>
+  </div>
+
+  <div class="copy-terminal">
+    <div class="code-head"><span>Native iOS / macOS</span><span>Swift</span></div>
+    <pre><code>import TrustedRouter
+
+let oauth = TrustedRouterOAuth()
+let token = try await oauth.authenticate(
+    callbackURL: "myapp://auth/callback",
+    presentationContextProvider: self)      // token.key, token.identity</code></pre>
+  </div>
+
+  <p class="sdk-stack-note">PKCE <code>S256</code> on every platform &mdash; no client secret. Desktop and CLI apps use the loopback flow (<code>http://localhost:3000/callback</code>). Full reference: <a href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">Sign in with TrustedRouter docs</a>.</p>
+</section>
+
+<section class="compare-matrix" aria-label="Roll your own vs Sign in with TrustedRouter">
+  <div class="matrix-row matrix-head">
+    <span></span><strong>Roll your own</strong><strong>Sign in with TrustedRouter</strong>
+  </div>
+  <div class="matrix-row">
+    <span>Provider API keys</span><span>You hold and rotate every key</span><span>None &mdash; the user brings their own</span>
+  </div>
+  <div class="matrix-row">
+    <span>Who pays for inference</span><span>You eat every token</span><span>$0 &mdash; billed to the signed-in user</span>
+  </div>
+  <div class="matrix-row">
+    <span>Per-user limits + billing</span><span>Build and run it</span><span>Built in &mdash; spend caps per key</span>
+  </div>
+  <div class="matrix-row">
+    <span>Models available</span><span>Whatever you integrated</span><span>Hundreds, every provider, one API</span>
+  </div>
+  <div class="matrix-row">
+    <span>Prompt privacy</span><span>Trust each provider's logs policy</span><span>Attested no-log gateway, verifiable</span>
+  </div>
+  <div class="matrix-row">
+    <span>Time to ship</span><span>Weeks of auth + billing plumbing</span><span>An afternoon &mdash; or one agent prompt</span>
+  </div>
+</section>
+
+<section class="cta-band" aria-label="Get started">
+  <div>
+    <strong>Let your users bring their own AI.</strong>
+    <span>Add the button today &mdash; no inference bill, no keys, every model.</span>
+  </div>
+  <div class="cta-band-actions">
+    <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+    <a class="btn" href="https://github.com/Lore-Hex/quill-router/blob/main/docs/sign-in-with-trustedrouter.md">Read the docs</a>
+  </div>
+</section>
+
+{% endblock %}

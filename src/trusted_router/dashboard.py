@@ -92,6 +92,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/portkey-alternative",
     "/confidential-computing-llm",
     "/tinfoil-alternative",
+    "/sign-in-with-trustedrouter",
     "/docs/agent-setup",
     "/docs/evals",
     "/docs/migrate-from-openrouter",
@@ -348,6 +349,17 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Same verifiable-privacy bet as Tinfoil, applied as a router. "
             "Attested, no-log gateway across 30+ providers with one API."
+        ),
+    ),
+    "sign-in-with-trustedrouter": PublicPage(
+        template="public/seo_sign_in_with_trustedrouter.html",
+        og_card="sign-in-with-trustedrouter.png",
+        title="Sign in with TrustedRouter — Let Your Users Bring Their Own AI",
+        description=(
+            "Add a sign-in button and your users bring their own TrustedRouter "
+            "account — instant access to hundreds of models, billed to them, "
+            "through an attested no-log gateway. Integrate in minutes with the "
+            "Python, TypeScript, or Swift SDK."
         ),
     ),
 }

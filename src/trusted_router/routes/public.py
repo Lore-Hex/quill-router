@@ -215,6 +215,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_tinfoil_alternative() -> str:
         return public_page_html(settings, "tinfoil-alternative")
 
+    @public_html_route("/sign-in-with-trustedrouter")
+    async def seo_sign_in_with_trustedrouter() -> str:
+        return public_page_html(settings, "sign-in-with-trustedrouter")
+
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
