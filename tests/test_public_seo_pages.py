@@ -52,6 +52,131 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     assert json_response.headers["content-type"].startswith("application/json")
 
 
+def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) -> None:
+    page = client.get("/legal")
+    assert page.status_code == 200
+    assert "Legal and procurement packet" in page.text
+    assert "Lore Hex Corp" in page.text
+    assert "Joseph Perla" in page.text
+    assert "security@trustedrouter.com" in page.text
+    assert "Delaware C Corporation" in page.text
+    assert "41-5339728" in page.text
+    assert "144992055" in page.text
+    assert "Not yet published" not in page.text
+    assert "DPA" in page.text
+    assert "draft_available_requires_signature" in page.text
+    assert "SOC_2" in page.text
+    assert "not_obtained" in page.text
+    assert "trust.trustedrouter.com" in page.text
+
+    packet = client.get("/legal/procurement.json")
+    assert packet.status_code == 200
+    assert packet.headers["content-type"].startswith("application/json")
+    data = packet.json()
+    assert data["legal_entity"]["name"] == "Lore Hex Corp"
+    assert data["legal_entity"]["type"] == "Delaware C Corporation"
+    assert data["legal_entity"]["signatory_name"] == "Joseph Perla"
+    assert data["legal_entity"]["signatory_title"] == "CEO"
+    assert data["legal_entity"]["security_contact_email"] == "security@trustedrouter.com"
+    assert data["legal_defaults"]["sensitive_workload_default_model"] == "trustedrouter/zdr"
+    assert data["legal_defaults"]["content_export_requires_written_approval"] is True
+    assert data["checkpoint"]["named_entity"]["obtained_for_production"] is True
+    assert data["checkpoint"]["subprocessor_list"]["obtained_for_production"] is True
+    assert data["checkpoint"]["DPA"]["obtained_for_production"] is False
+    assert data["checkpoint"]["SOC_2"]["status"] == "not_obtained"
+    assert data["checkpoint"]["SOC_2"]["obtained_for_production"] is False
+    assert data["checkpoint"]["HIPAA"]["status"] == "readiness_package_available_requires_signed_baa"
+    assert data["checkpoint"]["HIPAA"]["obtained_for_production"] is False
+    assert "Do not send privileged attorney work product" in data["production_recommendation"]
+
+
+def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -> None:
+    dpa = client.get("/legal/dpa")
+    assert dpa.status_code == 200
+    assert "Draft DPA" in dpa.text
+    assert "Signature required" in dpa.text
+    assert "Joseph Perla" in dpa.text
+    assert "No prompt/output storage by TrustedRouter" in dpa.text
+    assert "trustedrouter/zdr" in dpa.text
+    assert "written approval" in dpa.text
+
+    baa = client.get("/legal/baa")
+    assert baa.status_code == 200
+    assert "Draft BAA" in baa.text
+    assert "Do not send PHI yet" in baa.text
+    assert "not yet have HIPAA certification" in baa.text
+    assert "Joseph Perla" in baa.text
+    assert "security@trustedrouter.com" in baa.text
+
+    subprocessors = client.get("/legal/subprocessors")
+    assert subprocessors.status_code == 200
+    assert "Platform subprocessors" in subprocessors.text
+    assert "Model provider subprocessors" in subprocessors.text
+    assert "Google Cloud Platform" in subprocessors.text
+    assert "Anthropic" in subprocessors.text
+    assert "OpenAI" in subprocessors.text
+    assert "Policy source" in subprocessors.text
+
+    subprocessors_json = client.get("/legal/subprocessors.json")
+    assert subprocessors_json.status_code == 200
+    payload = subprocessors_json.json()
+    system_names = {row["name"] for row in payload["system_subprocessors"]}
+    model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
+    assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
+    assert {"Anthropic", "OpenAI", "Gemini"}.issubset(model_names)
+    anthropic = next(row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic")
+    assert anthropic["zdr"] is True
+
+
+def test_public_soc2_and_hipaa_readiness_pages_are_explicitly_not_reports(
+    client: TestClient,
+) -> None:
+    soc2 = client.get("/legal/soc2-readiness")
+    assert soc2.status_code == 200
+    assert "SOC 2 readiness" in soc2.text
+    assert "No SOC 2 report yet" in soc2.text
+    assert "not_obtained" in soc2.text
+    assert "docs/compliance/soc2/control-matrix.md" in soc2.text
+    assert "audited, certified, or Type I complete" in soc2.text
+
+    soc2_json = client.get("/legal/soc2-readiness.json")
+    assert soc2_json.status_code == 200
+    assert soc2_json.headers["content-type"].startswith("application/json")
+    soc2_payload = soc2_json.json()
+    assert soc2_payload["soc2_type_1_report"] == "not_obtained"
+    assert soc2_payload["soc2_type_2_report"] == "not_obtained"
+    assert "Security" in soc2_payload["target_report"]["trust_services_categories"]
+    assert len(soc2_payload["documents"]) >= 25
+    assert all(not document["path"].endswith("/") for document in soc2_payload["documents"])
+    assert any(
+        document["path"] == "docs/compliance/soc2/evidence-checklist.md"
+        for document in soc2_payload["documents"]
+    )
+
+    hipaa = client.get("/legal/hipaa-readiness")
+    assert hipaa.status_code == 200
+    assert "HIPAA readiness" in hipaa.text
+    assert "No PHI until signed" in hipaa.text
+    assert "docs/compliance/hipaa/hipaa-readiness-matrix.md" in hipaa.text
+    assert "not an executed BAA" in hipaa.text
+
+    hipaa_json = client.get("/legal/hipaa-readiness.json")
+    assert hipaa_json.status_code == 200
+    assert hipaa_json.headers["content-type"].startswith("application/json")
+    hipaa_payload = hipaa_json.json()
+    assert hipaa_payload["baa"] == "draft_available_requires_signature"
+    assert hipaa_payload["phi_production_approved"] is False
+    assert hipaa_payload["hipaa_certification"] == "not_obtained"
+    assert hipaa_payload["contract_signatory"]["name"] == "Joseph Perla"
+    assert hipaa_payload["security_contact_email"] == "security@trustedrouter.com"
+    assert hipaa_payload["default_route_policy"]["default_sensitive_alias"] == "trustedrouter/zdr"
+    assert hipaa_payload["default_route_policy"]["content_export_requires_written_approval"] is True
+    assert len(hipaa_payload["documents"]) >= 8
+    assert all(not document["path"].endswith("/") for document in hipaa_payload["documents"])
+    assert "Executed BAA" in hipaa_payload["required_before_phi"]
+    assert "signed" in hipaa_payload["agent_instruction"]
+
+
 def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     response = client.get("/providers/minimax")
 

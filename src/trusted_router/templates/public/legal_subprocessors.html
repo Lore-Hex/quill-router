@@ -1,0 +1,76 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Platform vendors</strong><span>{{ subprocessors.system_subprocessors|length }} listed.</span></div>
+  <div><strong>Model providers</strong><span>{{ provider_subprocessors|length }} listed.</span></div>
+  <div><strong>Prompt access</strong><span>Only selected downstream model routes receive prompt content.</span></div>
+  <div><strong>JSON</strong><span><a href="/legal/subprocessors.json">Machine readable list</a>.</span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Routing matters</span>
+  <div>
+    <p>Downstream model providers are subprocessors only when customer traffic is routed to them. For legal work, use <span class="mono">trustedrouter/zdr</span>, <span class="mono">trustedrouter/e2e</span>, or a customer-approved provider allowlist.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Platform subprocessors</span>
+      <h2>Vendors used to operate TrustedRouter.</h2>
+    </div>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Purpose</th><th>Data access</th><th>Policy</th></tr></thead>
+      <tbody>
+        {% for vendor in subprocessors.system_subprocessors %}
+        <tr>
+          <td><strong>{{ vendor.name }}</strong></td>
+          <td>{{ vendor.purpose }}</td>
+          <td>{{ vendor.data_access }}</td>
+          <td><a href="{{ vendor.policy_url }}">Policy</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Model provider subprocessors</span>
+      <h2>Downstream model compute providers.</h2>
+    </div>
+    <p>Unknown means no tracked public or contracted claim is currently published in the TrustedRouter catalog.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>ZDR</th>
+          <th>Confidential compute</th>
+          <th>Provider E2EE</th>
+          <th>Purpose</th>
+          <th>Policy source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for provider in provider_subprocessors %}
+        <tr>
+          <td><a href="/providers/{{ provider.id }}"><strong>{{ provider.name }}</strong></a><br><code>{{ provider.id }}</code></td>
+          <td><span class="pill {% if provider.zdr is sameas true %}good{% endif %}">{% if provider.zdr is sameas true %}yes{% elif provider.zdr is sameas false %}no{% else %}unknown{% endif %}</span></td>
+          <td><span class="pill {% if provider.confidential_compute is sameas true %}good{% endif %}">{% if provider.confidential_compute is sameas true %}yes{% elif provider.confidential_compute is sameas false %}no{% else %}unknown{% endif %}</span></td>
+          <td><span class="pill {% if provider.provider_e2ee is sameas true %}good{% endif %}">{% if provider.provider_e2ee is sameas true %}yes{% elif provider.provider_e2ee is sameas false %}no{% else %}unknown{% endif %}</span></td>
+          <td>{{ provider.data_access }}<br>{{ provider.policy }}</td>
+          <td>{% if provider.policy_url %}<a href="{{ provider.policy_url }}">Policy source</a>{% else %}Not tracked{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

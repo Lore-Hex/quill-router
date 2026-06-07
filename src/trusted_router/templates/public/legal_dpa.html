@@ -1,0 +1,57 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Status</strong><span>Draft for review. Not signed by loading this page.</span></div>
+  <div><strong>Processor</strong><span>{{ entity.name }}</span></div>
+  <div><strong>Signer</strong><span>{{ entity.signatory_name }}, {{ entity.signatory_title }}</span></div>
+  <div><strong>Default retention</strong><span>No prompt/output storage by TrustedRouter.</span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Signature required</span>
+  <div>
+    <p>This DPA is a procurement draft for counsel review. It becomes binding only when executed by the customer and {{ entity.name }} or incorporated into a signed master agreement. Do not treat this page as an executed agreement.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Draft DPA</span>
+      <h2>Data Processing Addendum terms to review.</h2>
+    </div>
+    <p>Written to track GDPR Article 28 style processor obligations and the TrustedRouter zero-content-storage architecture.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <tbody>
+        <tr><th>Processor</th><td>{{ entity.name }}, {{ entity.type }}, {{ entity.address }}. EIN {{ entity.ein }}. DUNS {{ entity.duns }}.</td></tr>
+        <tr><th>Authorized signatory</th><td>{{ entity.signatory_name }}, {{ entity.signatory_title }}, signing as officer of {{ entity.name }}.</td></tr>
+        <tr><th>Security contact</th><td><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>.</td></tr>
+        <tr><th>Customer role</th><td>Customer is controller or processor, depending on the matter. TrustedRouter acts as processor or subprocessor for customer data submitted to the service.</td></tr>
+        <tr><th>Subject matter</th><td>Hosted AI routing, model-provider selection, billing, authentication, abuse prevention, usage reporting, and optional customer-configured observability export.</td></tr>
+        <tr><th>Duration</th><td>For the term of the customer agreement and any legally required wind-down period.</td></tr>
+        <tr><th>Categories of data</th><td>Account data, API key metadata, billing metadata, model request metadata, prompts and outputs in transient processing, and optional customer-enabled observability exports.</td></tr>
+        <tr><th>Data subjects</th><td>Customer personnel, clients, adverse parties, witnesses, experts, vendors, and other people whose data customer elects to submit.</td></tr>
+        <tr><th>Customer instructions</th><td>TrustedRouter processes customer data only to provide and secure the service, comply with customer configuration, route selected requests, satisfy legal obligations, and follow documented customer instructions.</td></tr>
+        <tr><th>Confidentiality</th><td>Personnel and contractors with access to production systems must be bound by confidentiality duties appropriate to their role.</td></tr>
+        <tr><th>Security measures</th><td>Attested prompt gateway, fail-closed production prompt path, TLS, API key hashing, BYOK envelope encryption, KMS-backed secret handling, access control, logging redaction, Sentry exclusion from the enclave path, and metadata-only durable storage by default.</td></tr>
+        <tr><th>Zero-retention commitment</th><td>TrustedRouter does not persist prompt or output content by default. Durable records contain metadata needed for billing, routing, abuse controls, support, and status. Customer can explicitly enable content export to a configured observability destination, but legal workloads require written approval before content export is enabled.</td></tr>
+        <tr><th>Subprocessors</th><td>TrustedRouter may use the listed platform vendors and downstream model providers. Model providers receive prompt/output content only when customer traffic is routed to that provider.</td></tr>
+        <tr><th>Provider routing for legal work</th><td>Privileged attorney work product defaults to <span class="mono">trustedrouter/zdr</span>. <span class="mono">trustedrouter/e2e</span> or a named provider allowlist may be used when approved in writing. Broad fallback aliases may include providers with unknown or non-ZDR posture unless filtered and are not the default for sensitive legal work.</td></tr>
+        <tr><th>Assistance</th><td>TrustedRouter will provide commercially reasonable assistance for security reviews, data subject requests, breach assessment, DPIAs, and deletion or export of metadata under the signed agreement.</td></tr>
+        <tr><th>Deletion and return</th><td>On termination, TrustedRouter will delete or return customer metadata according to the signed agreement, except where retention is required for legal, billing, fraud prevention, or security purposes.</td></tr>
+        <tr><th>Audit</th><td>Until SOC 2 is available, audit evidence consists of public source code, trust/attestation evidence, public subprocessors, security documentation, and reasonable written responses. On-site audits require a signed agreement.</td></tr>
+        <tr><th>Incident notice</th><td>TrustedRouter will notify customer without undue delay after confirming a security incident affecting customer data, with details available at the time and follow-up updates as investigation proceeds.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Counsel note</span>
+  <div>
+    <p>This draft is intended to accelerate review, not replace counsel's negotiated DPA. A legal team should request signature, confirm route restrictions, and confirm whether SOC 2 absence is acceptable before production use.</p>
+  </div>
+</section>
+{% endblock %}

@@ -23,10 +23,16 @@ from trusted_router.dashboard import (
     dashboard_html,
     docs_llms_full_txt,
     docs_llms_txt,
+    hipaa_readiness_json,
     llms_txt,
+    procurement_json,
+    public_baa_html,
     public_benchmarks_html,
     public_chat_html,
+    public_dpa_html,
+    public_hipaa_readiness_html,
     public_leaderboard_html,
+    public_legal_html,
     public_model_compare_html,
     public_model_detail_html,
     public_model_not_found_html,
@@ -36,8 +42,12 @@ from trusted_router.dashboard import (
     public_provider_detail_html,
     public_providers_html,
     public_rankings_html,
+    public_soc2_readiness_html,
+    public_subprocessors_html,
     robots_txt,
     sitemap_xml,
+    soc2_readiness_json,
+    subprocessors_json,
 )
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
@@ -208,6 +218,78 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")
+
+    @public_html_route("/legal")
+    async def legal() -> str:
+        return public_legal_html(settings)
+
+    @public_html_route("/legal/dpa")
+    async def legal_dpa() -> str:
+        return public_dpa_html(settings)
+
+    @public_html_route("/legal/baa")
+    async def legal_baa() -> str:
+        return public_baa_html(settings)
+
+    @public_html_route("/legal/soc2-readiness")
+    async def legal_soc2_readiness() -> str:
+        return public_soc2_readiness_html(settings)
+
+    @public_html_route("/legal/hipaa-readiness")
+    async def legal_hipaa_readiness() -> str:
+        return public_hipaa_readiness_html(settings)
+
+    @public_html_route("/legal/subprocessors")
+    async def legal_subprocessors() -> str:
+        return public_subprocessors_html(settings)
+
+    @app.api_route(
+        "/legal/procurement.json",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+    )
+    async def legal_procurement_json() -> PlainTextResponse:
+        return PlainTextResponse(
+            procurement_json(settings),
+            media_type="application/json",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route(
+        "/legal/soc2-readiness.json",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+    )
+    async def legal_soc2_readiness_json() -> PlainTextResponse:
+        return PlainTextResponse(
+            soc2_readiness_json(settings),
+            media_type="application/json",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route(
+        "/legal/hipaa-readiness.json",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+    )
+    async def legal_hipaa_readiness_json() -> PlainTextResponse:
+        return PlainTextResponse(
+            hipaa_readiness_json(settings),
+            media_type="application/json",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route(
+        "/legal/subprocessors.json",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+    )
+    async def legal_subprocessors_json() -> PlainTextResponse:
+        return PlainTextResponse(
+            subprocessors_json(settings),
+            media_type="application/json",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
 
     @public_html_route("/benchmarks")
     async def benchmarks() -> str:

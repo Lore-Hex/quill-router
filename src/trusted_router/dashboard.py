@@ -29,6 +29,14 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.config import Settings
+from trusted_router.legal import (
+    hipaa_readiness_packet,
+    legal_entity,
+    procurement_packet,
+    provider_subprocessor_rows,
+    soc2_readiness_packet,
+    subprocessor_packet,
+)
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
@@ -64,6 +72,12 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/leaderboard",
     "/status",
     "/security",
+    "/legal",
+    "/legal/dpa",
+    "/legal/baa",
+    "/legal/soc2-readiness",
+    "/legal/hipaa-readiness",
+    "/legal/subprocessors",
     "/chat",
     "/compare/openrouter",
     "/compare/vercel-ai-gateway",
@@ -444,6 +458,128 @@ def public_page_html(settings: Settings, page_key: str) -> str:
     )
 
 
+def public_legal_html(settings: Settings) -> str:
+    packet = procurement_packet(settings)
+    return _env().get_template("public/legal.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal",
+        title="Legal And Procurement Packet | TrustedRouter",
+        heading="Legal and procurement packet",
+        description=(
+            "Read-only procurement packet for legal teams reviewing TrustedRouter for sensitive work."
+        ),
+        packet=packet,
+        entity=legal_entity(settings),
+        subprocessors=subprocessor_packet(),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_dpa_html(settings: Settings) -> str:
+    return _env().get_template("public/legal_dpa.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal/dpa",
+        title="DPA Draft | TrustedRouter",
+        heading="Data Processing Addendum draft",
+        description=(
+            "Draft DPA terms for customer counsel review. Production legal workloads require a signed agreement or written exception."
+        ),
+        entity=legal_entity(settings),
+        subprocessors=subprocessor_packet(),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_baa_html(settings: Settings) -> str:
+    return _env().get_template("public/legal_baa.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal/baa",
+        title="BAA Draft | TrustedRouter",
+        heading="Business Associate Agreement draft",
+        description=(
+            "Draft BAA terms for HIPAA review. PHI workloads require a signed BAA and route restrictions."
+        ),
+        entity=legal_entity(settings),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_soc2_readiness_html(settings: Settings) -> str:
+    packet = soc2_readiness_packet(settings)
+    return _env().get_template("public/legal_soc2_readiness.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal/soc2-readiness",
+        title="SOC 2 Readiness | TrustedRouter",
+        heading="SOC 2 readiness",
+        description=(
+            "SOC 2 Type I readiness package for auditor and procurement review. No SOC 2 report has been obtained yet."
+        ),
+        entity=legal_entity(settings),
+        packet=packet,
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_hipaa_readiness_html(settings: Settings) -> str:
+    packet = hipaa_readiness_packet(settings)
+    return _env().get_template("public/legal_hipaa_readiness.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal/hipaa-readiness",
+        title="HIPAA Readiness | TrustedRouter",
+        heading="HIPAA readiness",
+        description=(
+            "HIPAA readiness package for covered-entity and business-associate review. PHI requires a signed BAA."
+        ),
+        entity=legal_entity(settings),
+        packet=packet,
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_subprocessors_html(settings: Settings) -> str:
+    return _env().get_template("public/legal_subprocessors.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/legal/subprocessors",
+        title="Subprocessors | TrustedRouter",
+        heading="Subprocessors",
+        description=(
+            "Platform vendors and downstream model providers used by TrustedRouter."
+        ),
+        entity=legal_entity(settings),
+        subprocessors=subprocessor_packet(),
+        provider_subprocessors=provider_subprocessor_rows(),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def procurement_json(settings: Settings) -> str:
+    return json.dumps(procurement_packet(settings), sort_keys=True, indent=2)
+
+
+def soc2_readiness_json(settings: Settings) -> str:
+    return json.dumps(soc2_readiness_packet(settings), sort_keys=True, indent=2)
+
+
+def hipaa_readiness_json(settings: Settings) -> str:
+    return json.dumps(hipaa_readiness_packet(settings), sort_keys=True, indent=2)
+
+
+def subprocessors_json(settings: Settings) -> str:
+    return json.dumps(subprocessor_packet(), sort_keys=True, indent=2)
+
+
 def public_models_html(settings: Settings) -> str:
     return _env().get_template("public/models.html").render(
         api_base_url=settings.api_base_url,
@@ -756,6 +892,9 @@ def llms_txt(settings: Settings) -> str:
         f"- Rankings: https://{domain}/rankings",
         "- Status: https://status.trustedrouter.com/",
         "- Trust: https://trust.trustedrouter.com/",
+        f"- Legal/procurement packet: https://{domain}/legal",
+        f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
+        f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -790,6 +929,9 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Security: https://{domain}/security",
+            f"- Legal/procurement packet: https://{domain}/legal",
+            f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
+            f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
             f"- Model catalog: https://{domain}/models",
             f"- Provider transparency: https://{domain}/providers",
             "- Public status: https://status.trustedrouter.com/",
@@ -815,6 +957,9 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Homepage: https://{domain}/",
         "- API base: https://api.trustedrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
+        f"- Legal/procurement packet: https://{domain}/legal",
+        f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
+        f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         "- Status: https://status.trustedrouter.com/",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",

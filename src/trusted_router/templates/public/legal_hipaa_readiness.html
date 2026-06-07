@@ -1,0 +1,107 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Status</strong><span>Readiness package prepared. BAA signature required.</span></div>
+  <div><strong>PHI</strong><span>Not approved until BAA and route approval are complete.</span></div>
+  <div><strong>Controls</strong><span>Administrative, physical, and technical safeguards mapped.</span></div>
+  <div><strong>Contact</strong><span><a href="mailto:{{ packet.security_contact_email }}">{{ packet.security_contact_email }}</a></span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">No PHI until signed</span>
+  <div>
+    <p>{{ packet.production_gate }}</p>
+    <p>This page is readiness documentation for covered-entity and business-associate review. It is not an executed BAA and it is not an HHS determination.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">HIPAA gate</span>
+      <h2>What is ready and what is still blocked.</h2>
+    </div>
+    <p>TrustedRouter can prepare the contractual and operational path for PHI, but production PHI requires explicit customer-specific approval.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <tbody>
+        <tr><th>Operating entity</th><td>{{ entity.name }}, {{ entity.type }}.</td></tr>
+        <tr><th>Status</th><td><span class="pill warn">{{ packet.status }}</span></td></tr>
+        <tr><th>BAA</th><td>{{ packet.baa }}</td></tr>
+        <tr><th>Authorized signatory</th><td>{{ packet.contract_signatory.name }}, {{ packet.contract_signatory.title }}.</td></tr>
+        <tr><th>PHI production approved</th><td>{{ packet.phi_production_approved }}</td></tr>
+        <tr><th>HIPAA certification</th><td>{{ packet.hipaa_certification }}</td></tr>
+        <tr><th>Default PHI route policy</th><td>{{ packet.default_route_policy.meaning }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Safeguards</span>
+      <h2>Readiness control map.</h2>
+    </div>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead><tr><th>Category</th><th>Controls</th></tr></thead>
+      <tbody>
+        {% for category, controls in packet.safeguard_scope.items() %}
+        <tr>
+          <td><strong>{{ category|capitalize }}</strong></td>
+          <td>{{ controls|join("; ") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Binder</span>
+      <h2>HIPAA documents prepared for review.</h2>
+    </div>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead><tr><th>Document</th><th>Status</th><th>Repo path</th></tr></thead>
+      <tbody>
+        {% for document in packet.documents %}
+        <tr>
+          <td><strong>{{ document.name }}</strong></td>
+          <td><span class="pill">{{ document.status }}</span></td>
+          <td><code>{{ document.path }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Before PHI</span>
+      <h2>Customer-specific checklist.</h2>
+    </div>
+  </div>
+  <div class="flow-steps">
+    {% for item in packet.required_before_phi %}
+    <div><span>{{ loop.index }}</span><strong>Required</strong><p>{{ item }}</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Agent instruction</span>
+  <div>
+    <p>{{ packet.agent_instruction }}</p>
+    <p>References: {% for reference in packet.references %}<a href="{{ reference.url }}">{{ reference.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  </div>
+</section>
+{% endblock %}

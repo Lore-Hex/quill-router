@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     service_name: str = "trusted-router"
     api_base_url: str = "https://api.trustedrouter.com/v1"
     trusted_domain: str = "trustedrouter.com"
+    legal_entity_name: str = "Lore Hex Corp"
+    legal_entity_type: str = "Delaware C Corporation"
+    legal_entity_address: str = "1111 Brickell Ave, Floor 10, Miami, FL 33131"
+    legal_entity_phone: str = "+1-305-239-7350"
+    legal_entity_ein: str = "41-5339728"
+    legal_entity_duns: str = "144992055"
+    legal_entity_date_established: str | None = None
+    legal_signatory_name: str = "Joseph Perla"
+    legal_signatory_title: str = "CEO"
+    security_contact_email: str = "security@trustedrouter.com"
 
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()

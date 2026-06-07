@@ -1,0 +1,50 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Status</strong><span>Draft for review. Not an executed BAA.</span></div>
+  <div><strong>Entity</strong><span>{{ entity.name }}</span></div>
+  <div><strong>Signer</strong><span>{{ entity.signatory_name }}, {{ entity.signatory_title }}</span></div>
+  <div><strong>PHI</strong><span>Requires signed BAA before production use.</span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Do not send PHI yet</span>
+  <div>
+    <p>TrustedRouter does not yet have HIPAA certification or a signed BAA by default. PHI workloads require an executed BAA, approved subprocessors, route restrictions, and customer counsel approval.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Draft BAA</span>
+      <h2>Business Associate Agreement terms to review.</h2>
+    </div>
+    <p>Modeled around HHS business associate contract expectations. Final terms must be signed before PHI production traffic.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <tbody>
+        <tr><th>Business associate</th><td>{{ entity.name }}, {{ entity.type }}, {{ entity.address }}.</td></tr>
+        <tr><th>Authorized signatory</th><td>{{ entity.signatory_name }}, {{ entity.signatory_title }}, signing as officer of {{ entity.name }}.</td></tr>
+        <tr><th>Security contact</th><td><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>.</td></tr>
+        <tr><th>Permitted uses</th><td>Provide hosted AI routing, authentication, billing, provider routing, security monitoring, support, and customer-configured observability for the covered service. Content export for PHI requires written approval before activation.</td></tr>
+        <tr><th>Prohibited uses</th><td>No use or disclosure of PHI except as permitted by the signed BAA, required by law, or instructed by customer. No prompt/output persistence by TrustedRouter by default.</td></tr>
+        <tr><th>Safeguards</th><td>Administrative, physical, and technical safeguards appropriate to the service, including attested gateway isolation, encrypted transport, access controls, key hashing, BYOK encryption, and prompt-content logging prohibitions.</td></tr>
+        <tr><th>Subcontractors</th><td>Subcontractors that may access PHI must be approved for PHI workloads in the signed BAA or route policy and bound to equivalent restrictions. Default PHI routing starts with <span class="mono">trustedrouter/zdr</span>, not broad automatic fallback.</td></tr>
+        <tr><th>Reporting</th><td>TrustedRouter will report confirmed unauthorized use or disclosure of PHI and security incidents as required by the signed BAA.</td></tr>
+        <tr><th>Access and amendment</th><td>TrustedRouter will assist with access, amendment, accounting, and restriction requests to the extent the service holds relevant metadata.</td></tr>
+        <tr><th>HHS access</th><td>TrustedRouter will make internal practices, books, and records relating to PHI handling available to HHS as required by HIPAA and the signed BAA.</td></tr>
+        <tr><th>Termination</th><td>On termination, TrustedRouter will return or destroy PHI where feasible and retain only information required by law, billing, security, or dispute preservation.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Required before PHI</span>
+  <div>
+    <p>Before PHI traffic: execute BAA signed by {{ entity.signatory_name }}, {{ entity.signatory_title }}, approve subprocessors, restrict routing to approved ZDR or confidential providers, disable content export unless separately approved in writing, and verify the gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+  </div>
+</section>
+{% endblock %}

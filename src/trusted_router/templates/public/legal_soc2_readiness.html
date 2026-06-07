@@ -1,0 +1,90 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Type I</strong><span>Readiness package prepared. Auditor report not obtained.</span></div>
+  <div><strong>Type II</strong><span>Requires operating-period evidence.</span></div>
+  <div><strong>Criteria</strong><span>Security, availability, confidentiality, privacy, and billing integrity.</span></div>
+  <div><strong>JSON</strong><span><a href="/legal/soc2-readiness.json">Machine readable packet</a>.</span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">No SOC 2 report yet</span>
+  <div>
+    <p>This is a SOC 2 readiness package, not an independent CPA report. Do not describe TrustedRouter as SOC 2 audited, certified, or Type I complete until an auditor issues the report.</p>
+    <p>Use this packet to start Type I readiness, collect evidence, and answer procurement questions while the formal audit is pending.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Audit scope</span>
+      <h2>System boundaries for the first SOC 2.</h2>
+    </div>
+    <p>The first target is Type I readiness for the hosted service and attested API gateway. Type II requires evidence over time after the control set is approved.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <tbody>
+        <tr><th>Operating entity</th><td>{{ entity.name }}, {{ entity.type }}.</td></tr>
+        <tr><th>Status</th><td><span class="pill warn">{{ packet.status }}</span></td></tr>
+        <tr><th>Type I report</th><td>{{ packet.soc2_type_1_report }}</td></tr>
+        <tr><th>Type II report</th><td>{{ packet.soc2_type_2_report }}</td></tr>
+        <tr><th>Target categories</th><td>{{ packet.target_report.trust_services_categories|join(", ") }}</td></tr>
+        <tr><th>In scope</th><td>{{ packet.target_report.scope|join("; ") }}</td></tr>
+        <tr><th>Out of scope</th><td>{{ packet.target_report.out_of_scope|join("; ") }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Binder</span>
+      <h2>Documents prepared for review.</h2>
+    </div>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead><tr><th>Document</th><th>Status</th><th>Repo path</th></tr></thead>
+      <tbody>
+        {% for document in packet.documents %}
+        <tr>
+          <td><strong>{{ document.name }}</strong></td>
+          <td><span class="pill">{{ document.status }}</span></td>
+          <td><code>{{ document.path }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Before report</span>
+      <h2>What remains for Type I and Type II.</h2>
+    </div>
+  </div>
+  <div class="flow-steps">
+    {% for item in packet.type_1_blockers %}
+    <div><span>{{ loop.index }}</span><strong>Type I</strong><p>{{ item }}</p></div>
+    {% endfor %}
+  </div>
+  <div class="flow-steps">
+    {% for item in packet.type_2_blockers %}
+    <div><span>{{ loop.index }}</span><strong>Type II</strong><p>{{ item }}</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Agent instruction</span>
+  <div>
+    <p>{{ packet.agent_instruction }}</p>
+    <p>Reference: <a href="{{ packet.references[0].url }}">{{ packet.references[0].name }}</a>.</p>
+  </div>
+</section>
+{% endblock %}

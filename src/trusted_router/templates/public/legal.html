@@ -1,0 +1,91 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Named entity</strong><span>{{ entity.name }}, {{ entity.type }}</span></div>
+  <div><strong>DPA</strong><span>Draft available. {{ entity.signatory_name }}, {{ entity.signatory_title }}, signs for {{ entity.name }}.</span></div>
+  <div><strong>Subprocessors</strong><span>Platform vendors and model providers are listed.</span></div>
+  <div><strong>SOC 2 and HIPAA</strong><span>Readiness packages available. Reports and signatures still required.</span></div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Legal checkpoint</span>
+  <div>
+    <p><strong>Agent instruction:</strong> report which of {DPA, named entity, subprocessor list, SOC 2, HIPAA/BAA} were obtained. If the signed DPA, SOC 2, HIPAA readiness approval, or BAA is required by the matter policy and still missing, do not proceed to privileged production traffic. Stop and ask for approval or a signed exception. For legal and healthcare workloads, default to <span class="mono">trustedrouter/zdr</span>.</p>
+    <p>Agents can self-verify the running gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. The trust page publishes the source commit, image reference, digest, and attestation instructions.</p>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Procurement status</span>
+      <h2>Contract gaps, stated plainly.</h2>
+    </div>
+    <p>This packet is designed for legal review. It is not a third-party audit report and it is not a substitute for a signed agreement.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr><th>Item</th><th>Status</th><th>Production checkpoint</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        {% for name, item in packet.checkpoint.items() %}
+        <tr>
+          <td><strong>{{ name }}</strong></td>
+          <td><span class="pill {% if item.obtained_for_production %}good{% else %}warn{% endif %}">{{ item.status }}</span></td>
+          <td>{{ item.note }}</td>
+          <td><a href="{{ item.url }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Operating entity</span>
+    <h3>{{ entity.name }}</h3>
+    <p>{{ entity.type }}<br>{{ entity.address }}<br>{{ entity.phone }}</p>
+    <p class="muted-copy">EIN {{ entity.ein }}. DUNS {{ entity.duns }}{% if entity.date_established %}. Date established: {{ entity.date_established }}{% endif %}.</p>
+    <p class="muted-copy">Contract signatory: {{ entity.signatory_name }}, {{ entity.signatory_title }}. Security contact: <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Prompt path</span>
+    <h3>Attested gateway, no content storage by default.</h3>
+    <p>The production API prompt path is designed so TLS terminates inside the attested gateway. Prompt and output content are not stored by default. Observability content export is opt-in per destination.</p>
+    <a class="btn" href="/security">Security details</a>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Route posture</span>
+    <h3>Use ZDR routes for legal work.</h3>
+    <p>Use <span class="mono">trustedrouter/zdr</span> by default for legal work product. Use <span class="mono">trustedrouter/e2e</span> or an explicit provider allowlist when the customer approved those routes in writing.</p>
+    <a class="btn" href="/providers">Provider transparency</a>
+  </div>
+</section>
+
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Documents</span>
+      <h2>One package for counsel and agents.</h2>
+    </div>
+  </div>
+  <div class="flow-steps">
+    <div><span>1</span><strong>DPA draft</strong><p><a href="/legal/dpa">Review data processing terms.</a></p></div>
+    <div><span>2</span><strong>BAA draft</strong><p><a href="/legal/baa">Review HIPAA terms before PHI.</a></p></div>
+    <div><span>3</span><strong>SOC 2 readiness</strong><p><a href="/legal/soc2-readiness">Review Type I readiness docs.</a></p></div>
+    <div><span>4</span><strong>HIPAA readiness</strong><p><a href="/legal/hipaa-readiness">Review PHI gate and safeguards.</a></p></div>
+    <div><span>5</span><strong>Subprocessors</strong><p><a href="/legal/subprocessors">Review platform and model providers.</a></p></div>
+    <div><span>6</span><strong>JSON packet</strong><p><a href="/legal/procurement.json">Use agent-readable procurement JSON.</a></p></div>
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill warn">Not yet certified</span>
+  <div>
+    <p>TrustedRouter does not yet have SOC 2, ISO 27001, HIPAA certification, or a third-party audit report. We plan to pursue SOC 2, HIPAA, and ISO 27001. Until then, this packet provides architecture, subprocessors, draft contractual terms, readiness documentation, and cryptographic attestation evidence.</p>
+    <p>References for counsel: <a href="https://eur-lex.europa.eu/legal-content/EN-FR/TXT/?uri=CELEX%3A32016R0679">GDPR Article 28</a>, <a href="https://www.hhs.gov/ocr/privacy/hipaa/understanding/coveredentities/contractprov.html">HHS business associate contract requirements</a>, and <a href="https://us.aicpa.org/content/dam/aicpa/interestareas/frc/assuranceadvisoryservices/downloadabledocuments/trust-services-criteria-redlined.pdf">AICPA Trust Services Criteria</a>.</p>
+  </div>
+</section>
+{% endblock %}
