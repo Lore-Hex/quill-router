@@ -108,3 +108,17 @@ def test_decrease_does_not_fail() -> None:
     after = _to_prices(_make_snapshot({"a/b": ("0.000001", "0.000001")}))
     failures, _, _ = check(before, after)
     assert failures == []
+
+
+def test_summary_surfaces_per_model_deltas(tmp_path: Path, capsys) -> None:
+    """The drift-visibility fix: --summary must print the actual old->new
+    delta per model, not just the count (so sub-2x changes are visible)."""
+    from scripts.check_price_spike import main
+
+    before = _write(tmp_path, "b.json", _make_snapshot({"a/b": ("0.00000004", "0.00000013")}))
+    after = _write(tmp_path, "a.json", _make_snapshot({"a/b": ("0.00000005", "0.00000015")}))
+    rc = main([str(before), str(after), "--summary"])
+    out = capsys.readouterr().out
+    assert rc == 0  # +25% is under the 2x spike gate
+    assert "1 prices changed" in out
+    assert "a/b:" in out  # the delta line is surfaced, not just the count

@@ -145,9 +145,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.summary:
         print(_summary_line(changes, removed))
+        # Surface the actual per-model deltas (old → new), not just the
+        # count — these land in the commit body + the Actions run summary
+        # so a price change is VISIBLE without diffing the snapshot by hand.
+        # (Drift-visibility fix: previously only the count was emitted, so
+        # any sub-2x change was effectively silent.)
+        for line in changes:
+            print(line)
         if removed:
-            print(f"removed: {', '.join(removed[:10])}" + (
-                f" (+{len(removed) - 10} more)" if len(removed) > 10 else ""
+            print(f"removed: {', '.join(removed[:20])}" + (
+                f" (+{len(removed) - 20} more)" if len(removed) > 20 else ""
             ))
         return 1 if failures else 0
 

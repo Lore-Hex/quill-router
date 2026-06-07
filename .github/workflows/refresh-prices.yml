@@ -153,12 +153,32 @@ jobs:
           set -o pipefail
           uv run python -m scripts.pricing.refresh | tee /tmp/refresh-summary.txt
 
-      - name: Sanity-check for price spikes
+      - name: Sanity-check for price spikes + record deltas
         run: |
+          set +e
           uv run python scripts/check_price_spike.py \
             /tmp/before.json src/trusted_router/data/openrouter_snapshot.json \
             --summary | tee /tmp/spike-summary.txt
-        # Exits 1 on a literal-2x spike or both-prices-to-zero.
+          rc=${PIPESTATUS[0]}
+          # Surface the actual per-model deltas in the Actions run summary so
+          # ANY price change is visible at a glance (not just buried in the
+          # snapshot diff). Still gates: exits 1 on a literal-2x spike or
+          # both-prices-to-zero.
+          {
+            echo "### Price changes this run"
+            echo '```'
+            cat /tmp/spike-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Price-source coverage audit
+        # Non-failing visibility: flags prepaid providers with no live scraper
+        # (hand-coded prices that never refresh, e.g. Cohere) + stale static
+        # manifests (Nebius/MiniMax). Writes to the Actions run summary.
+        if: always()
+        run: |
+          uv run python scripts/check_price_coverage.py | tee -a "$GITHUB_STEP_SUMMARY" || true
 
       - name: Commit and push if changed
         run: |
@@ -177,20 +197,43 @@ jobs:
           fi
 
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%MZ")
-          SPIKE_LINE=$(head -n1 /tmp/spike-summary.txt 2>/dev/null || echo "")
 
+          # Record the full per-model price deltas in the commit body (not
+          # just a count) so a `git show` of any refresh commit answers
+          # "what changed?" precisely.
           {
             echo "[bot] hourly price refresh: ${TIMESTAMP}"
             echo ""
-            if [ -n "${SPIKE_LINE}" ]; then
-              echo "Diff: ${SPIKE_LINE}"
-              echo ""
-            fi
+            echo "Price changes:"
+            cat /tmp/spike-summary.txt 2>/dev/null || echo "(summary unavailable)"
+            echo ""
             cat /tmp/refresh-summary.txt
           } > /tmp/commit-msg.txt
 
           git commit -F /tmp/commit-msg.txt
-          git push origin HEAD:main
+
+          # Push with retry. A parallel bot run, a human commit, or the
+          # release-digest bot can land on main between our checkout and push
+          # (non-fast-forward). Rebase our freshly-computed snapshot on top and
+          # retry instead of failing the run. A genuine snapshot↔snapshot
+          # rebase conflict is a CLEAN skip — the next hourly run recomputes
+          # from live prices and recommits (self-healing). Fixes the recurring
+          # "failed to push some refs" races.
+          pushed=""
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then pushed=1; break; fi
+            echo "push rejected (attempt ${attempt}); rebasing onto origin/main"
+            git fetch -q origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "::warning::price-refresh: snapshot rebase conflict — skipping; next hourly run recovers"
+              exit 0
+            fi
+          done
+          if [ -z "${pushed}" ]; then
+            echo "push still failing after retries"
+            exit 1
+          fi
 
           # Bot-pushed commits don't auto-trigger downstream workflows
           # (GHA loop prevention applies to the `push` event when the
