@@ -367,6 +367,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "pricing": PublicPage(
         template="public/pricing.html",
+        og_card="pricing.png",
         title="Pricing — Usage-Based, No Subscription",
         description=(
             "Prepaid credits, BYOK, or usage-based billing — pay the provider "
@@ -376,6 +377,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs": PublicPage(
         template="public/docs.html",
+        og_card="docs.png",
         title="Docs — Quickstart, SDKs, and API Reference",
         description=(
             "Point any OpenAI-compatible SDK at TrustedRouter with one base_url "
@@ -385,6 +387,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "apps": PublicPage(
         template="public/apps.html",
+        og_card="apps.png",
         title="Apps — Built on TrustedRouter",
         description=(
             "Apps routing through TrustedRouter can self-identify and appear "
