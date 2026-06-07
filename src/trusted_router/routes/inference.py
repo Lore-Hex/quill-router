@@ -32,7 +32,7 @@ from trusted_router.auth import (
 )
 from trusted_router.catalog import AUTO_MODEL_ID, MODELS, MONITOR_MODEL_ID, Model
 from trusted_router.config import Settings
-from trusted_router.errors import api_error, not_supported
+from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.routing import (
     chat_route_candidates,
@@ -45,6 +45,7 @@ from trusted_router.services.inference import (
     run_chat_candidates,
     run_chat_candidates_stream,
     run_chat_stream,
+    run_embeddings,
     run_messages_stream,
 )
 from trusted_router.types import ErrorType, UsageType
@@ -205,8 +206,35 @@ def register_inference_routes(router: APIRouter) -> None:
         )
 
     @router.post("/embeddings")
-    async def embeddings() -> JSONResponse:
-        return not_supported()
+    async def embeddings(
+        request: Request,
+        principal: InferencePrincipal,
+        settings: SettingsDep,
+    ) -> JSONResponse:
+        body = await json_body(request)
+        model = _require_embeddings_model(body)
+        result, generation = await run_embeddings(
+            body,
+            model,
+            principal,
+            settings,
+            app_name=_app_name(request),
+        )
+        # The provider envelope is already OpenAI-shaped; attach the TR
+        # provenance block (mirrors chat) and surface routing headers.
+        envelope = dict(result)
+        envelope["trustedrouter"] = {
+            "generation_id": generation.id,
+            "content_stored": False,
+            "selected_provider": model.provider,
+        }
+        return JSONResponse(
+            envelope,
+            headers={
+                "x-trustedrouter-provider": model.provider,
+                "x-trustedrouter-served-model": model.id,
+            },
+        )
 
     @router.post("/responses")
     async def responses(
@@ -368,6 +396,38 @@ def _require_messages_model(body: dict[str, Any]) -> Model:
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     return model
+
+
+def _require_embeddings_model(body: dict[str, Any]) -> Model:
+    model_id = str(body.get("model") or "")
+    if not model_id:
+        raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
+    model = MODELS.get(model_id)
+    if model is None or not model.supports_embeddings:
+        raise api_error(
+            400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED
+        )
+    _validate_embeddings_input(body)
+    return model
+
+
+def _validate_embeddings_input(body: dict[str, Any]) -> None:
+    """`input` must be a non-empty string or a non-empty list of strings.
+    (Token-array inputs aren't supported yet — TR embeds text.)"""
+    value = body.get("input")
+    if isinstance(value, str):
+        if not value:
+            raise api_error(400, "input must not be empty", ErrorType.BAD_REQUEST)
+        return
+    if (
+        isinstance(value, list)
+        and value
+        and all(isinstance(item, str) and item for item in value)
+    ):
+        return
+    raise api_error(
+        400, "input must be a non-empty string or array of strings", ErrorType.BAD_REQUEST
+    )
 
 
 def _validate_chat_messages(body: dict[str, Any]) -> None:

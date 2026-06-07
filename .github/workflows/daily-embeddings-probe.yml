@@ -1,0 +1,49 @@
+name: Daily Embeddings Probe
+
+# Small daily authenticated probe of the live attested gateway's
+# /v1/embeddings path, one call per embedding provider (serialized). Catches
+# upstream/key/route regressions that the unauthenticated 30-min prod smoke
+# (which has no monitor key) can't. Also the on-demand post-deploy embeddings
+# check via "Run workflow".
+on:
+  schedule:
+    - cron: "17 13 * * *" # 13:17 UTC daily — off the top-of-hour deploy/cron rush.
+  workflow_dispatch:
+    inputs:
+      include_cohere:
+        description: "Include Cohere (only after its key is provisioned)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # for google-github-actions/auth (Workload Identity Federation)
+
+jobs:
+  probe:
+    name: probe /v1/embeddings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Probe embeddings
+        env:
+          # Scheduled (cron) runs carry no inputs, so they read the repo
+          # variable TR_EMBEDDINGS_INCLUDE_COHERE (Settings → Variables): set
+          # it to "1" once the trustedrouter-cohere-api-key secret is
+          # provisioned + the enclave redeployed with QUILL_COHERE_SECRET.
+          # Manual workflow_dispatch runs can force-enable via the checkbox
+          # regardless of the variable. Empty (unset) => Cohere skipped.
+          TR_EMBEDDINGS_INCLUDE_COHERE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.include_cohere == 'true') && '1' || vars.TR_EMBEDDINGS_INCLUDE_COHERE }}
+        run: |
+          set -euo pipefail
+          # tr-deploy SA needs secretmanager.versions.access on this secret.
+          TR_MONITOR_API_KEY="$(gcloud secrets versions access latest \
+            --secret=trustedrouter-synthetic-monitor-api-key \
+            --project=quill-cloud-proxy)" \
+            python3 scripts/prod_embeddings_probe.py

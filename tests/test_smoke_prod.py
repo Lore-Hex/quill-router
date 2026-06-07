@@ -126,6 +126,37 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
     assert "europe-west4" in {item["id"] for item in regions.json()["data"]}
 
 
+def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None:
+    """/v1/embeddings/models must list the hand-curated embedding catalog,
+    and each row must be flagged supports_embeddings with a text->embedding
+    modality so SDKs/pickers never confuse them with chat models. Catches a
+    deploy that drops the embedding seed or the modality flag."""
+    response = client.get("/v1/embeddings/models")
+    assert response.status_code == 200, response.text
+    rows = response.json()["data"]
+    ids = {row["id"] for row in rows}
+    assert {"openai/text-embedding-3-large", "cohere/embed-v4.0"}.issubset(ids), ids
+    assert {"openai", "gemini", "together", "cohere"}.issubset(
+        {row["trustedrouter"]["provider"] for row in rows}
+    )
+    for row in rows:
+        assert row["trustedrouter"]["supports_embeddings"] is True, row["id"]
+        assert row["architecture"]["modality"] == "text->embedding", row["id"]
+
+
+def test_attested_gateway_rejects_unauthenticated_embeddings(api_client: httpx.Client) -> None:
+    """The attested gateway must never serve embeddings without a bearer —
+    same billing/key-limit gate as chat. Tolerates 404 only in the window
+    before the enclave embeddings route is deployed; the security property
+    asserted here is "never an unauthenticated 200"."""
+    response = api_client.post(
+        "/embeddings",
+        headers={"content-type": "application/json"},
+        content=b'{"model":"openai/text-embedding-3-large","input":"x"}',
+    )
+    assert response.status_code in {401, 404}, response.text
+
+
 def test_status_pages_are_publicly_reachable(
     client: httpx.Client,
     status_client: httpx.Client,

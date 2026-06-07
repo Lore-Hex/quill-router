@@ -93,6 +93,56 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert refreshed_key.byok_usage_microdollars == expected_cost
 
 
+def test_gateway_authorize_and_settle_embeddings_model() -> None:
+    # The attested-enclave prod path: authorize an embedding model (which is
+    # supports_chat=False), then settle it billing INPUT tokens only.
+    client, key = _client_and_key()
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "openai/text-embedding-3-large",
+            "estimated_input_tokens": 1_000,
+            # Embeddings have no completion; the enclave sends the schema
+            # minimum (1). Completion price is 0, so the estimate is unaffected.
+            "max_output_tokens": 1,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    assert auth_data["model"] == "openai/text-embedding-3-large"
+    assert auth_data["limit_usage_type"] == "Credits"
+    credits = next(
+        item
+        for item in auth_data["route_candidates"]
+        if item["provider"] == "openai" and item["usage_type"] == "Credits"
+    )
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "selected_endpoint": credits["endpoint_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 0,
+            "request_id": "gw-embeddings-openai",
+            "elapsed_seconds": 0.2,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    data = settle.json()["data"]
+    expected_cost = cost_microdollars(MODELS["openai/text-embedding-3-large"], 1_000, 0)
+    assert data["model"] == "openai/text-embedding-3-large"
+    assert data["provider"] == "openai"
+    assert data["cost_microdollars"] == expected_cost
+
+    generation = STORE.get_generation(data["generation_id"])
+    assert generation is not None
+    assert generation.tokens_prompt == 1_000
+    assert generation.tokens_completion == 0
+
+
 def test_gateway_validate_checks_key_without_reserving_or_recording_usage() -> None:
     client, key = _client_and_key()
 

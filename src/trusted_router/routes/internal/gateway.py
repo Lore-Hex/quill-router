@@ -33,7 +33,10 @@ from trusted_router.errors import api_error
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
-from trusted_router.routing import chat_route_endpoint_candidates
+from trusted_router.routing import (
+    chat_route_endpoint_candidates,
+    embeddings_route_endpoint_candidates,
+)
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
     GatewaySettleRequest,
@@ -91,11 +94,28 @@ def register(router: APIRouter) -> None:
         body_dict = body.model_dump(exclude_none=True)
         _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
         requested_model_id = body.model
-        endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
-        if not endpoint_candidates:
-            raise api_error(
-                400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
-            )
+        # Embedding-only models can't go through the chat resolver (it
+        # rejects supports_chat=False). Route them to the embeddings
+        # resolver so the attested enclave can authorize + bill an
+        # embeddings call exactly like a chat one.
+        requested_model = MODELS.get(body.model) if body.model else None
+        is_embeddings_request = (
+            requested_model is not None
+            and requested_model.supports_embeddings
+            and not requested_model.supports_chat
+        )
+        if is_embeddings_request:
+            endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
+            if not endpoint_candidates:
+                raise api_error(
+                    400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED
+                )
+        else:
+            endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
+            if not endpoint_candidates:
+                raise api_error(
+                    400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
+                )
         endpoint_candidates = _eligible_gateway_endpoint_candidates(
             endpoint_candidates, workspace.id
         )

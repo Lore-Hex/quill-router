@@ -621,6 +621,25 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
     ),
+    # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
+    # Command chat models. Embeddings are Cohere's flagship retrieval
+    # product; chat is registered but TR currently only catalogs Cohere
+    # embedding models. NOT OpenAI-shaped: the enclave talks to Cohere's
+    # native POST /v2/embed ({model, texts, input_type, embedding_types})
+    # and adapts the response to the OpenAI embeddings envelope.
+    "cohere": Provider(
+        slug="cohere",
+        name="Cohere",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        provider_policy=(
+            "Cohere documents that data submitted through its API is not used to "
+            "train models without opt-in; no provider-ZDR, confidential-compute, "
+            "or E2EE claim is tracked here. Security/privacy terms are linked for "
+            "retention review."
+        ),
+        provider_policy_url="https://cohere.com/security",
+    ),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -675,6 +694,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "deepinfra",
         "nebius",
         "minimax",
+        # Cohere — embeddings only for now (native /v2/embed in the enclave).
+        "cohere",
     }
 )
 
@@ -1245,6 +1266,141 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     return models, endpoints
 
 
+# --- Embedding models -----------------------------------------------------
+# Hand-curated embedding catalog. Embeddings don't come from the OpenRouter
+# chat snapshot or the chat-only provider manifests (`_supplemental_*` skips
+# any model_type != chat), so they're seeded here with explicit upstream IDs
+# + published per-million INPUT prices. Completion price is always 0 —
+# embeddings bill input tokens only. Each model gets a Credits endpoint (if
+# its provider is in GATEWAY_PREPAID_PROVIDER_SLUGS) + a BYOK endpoint,
+# synthesized by `_build_endpoints` exactly like a chat model, because
+# `prepaid_available`/`byok_available` are set.
+#
+# PRICES are the providers' published per-million input rates as of
+# 2026-06-07 (markup + $0.01/M floor applied via `_priced`); the
+# pricing-refresh job should true them up. supports_chat=False keeps chat
+# routing from ever selecting an embedding model; supports_embeddings=True
+# is what `/embeddings/models` and the embeddings route filter on.
+class _EmbeddingSpec(TypedDict):
+    id: str
+    name: str
+    provider: str
+    upstream_id: str
+    context_length: int
+    cost_dollars_per_million: str
+
+
+_EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
+    # OpenAI — api.openai.com/v1/embeddings (OpenAI-shaped)
+    {
+        "id": "openai/text-embedding-3-large",
+        "name": "OpenAI Text Embedding 3 Large",
+        "provider": "openai",
+        "upstream_id": "text-embedding-3-large",
+        "context_length": 8191,
+        "cost_dollars_per_million": "0.13",
+    },
+    {
+        "id": "openai/text-embedding-3-small",
+        "name": "OpenAI Text Embedding 3 Small",
+        "provider": "openai",
+        "upstream_id": "text-embedding-3-small",
+        "context_length": 8191,
+        "cost_dollars_per_million": "0.02",
+    },
+    {
+        "id": "openai/text-embedding-ada-002",
+        "name": "OpenAI Text Embedding Ada 002",
+        "provider": "openai",
+        "upstream_id": "text-embedding-ada-002",
+        "context_length": 8191,
+        "cost_dollars_per_million": "0.10",
+    },
+    # Google Gemini — generativelanguage.googleapis.com/v1beta :embedContent
+    {
+        "id": "google/gemini-embedding-001",
+        "name": "Gemini Embedding 001",
+        "provider": "gemini",
+        "upstream_id": "gemini-embedding-001",
+        "context_length": 2048,
+        "cost_dollars_per_million": "0.15",
+    },
+    # Together — api.together.xyz/v1/embeddings (OpenAI-shaped)
+    {
+        "id": "togethercomputer/m2-bert-80M-8k-retrieval",
+        "name": "Together M2-BERT 80M 8K Retrieval",
+        "provider": "together",
+        "upstream_id": "togethercomputer/m2-bert-80M-8k-retrieval",
+        "context_length": 8192,
+        "cost_dollars_per_million": "0.008",
+    },
+    {
+        "id": "BAAI/bge-large-en-v1.5",
+        "name": "BAAI BGE Large EN v1.5",
+        "provider": "together",
+        "upstream_id": "BAAI/bge-large-en-v1.5",
+        "context_length": 512,
+        "cost_dollars_per_million": "0.016",
+    },
+    # Cohere — api.cohere.com/v2/embed (NATIVE shape; enclave adapts to OpenAI)
+    {
+        "id": "cohere/embed-v4.0",
+        "name": "Cohere Embed v4.0",
+        "provider": "cohere",
+        "upstream_id": "embed-v4.0",
+        "context_length": 128_000,
+        "cost_dollars_per_million": "0.12",
+    },
+    {
+        "id": "cohere/embed-english-v3.0",
+        "name": "Cohere Embed English v3.0",
+        "provider": "cohere",
+        "upstream_id": "embed-english-v3.0",
+        "context_length": 512,
+        "cost_dollars_per_million": "0.10",
+    },
+    {
+        "id": "cohere/embed-multilingual-v3.0",
+        "name": "Cohere Embed Multilingual v3.0",
+        "provider": "cohere",
+        "upstream_id": "embed-multilingual-v3.0",
+        "context_length": 512,
+        "cost_dollars_per_million": "0.10",
+    },
+)
+
+
+def _embedding_models() -> dict[str, Model]:
+    """Seed the embedding-model catalog (input-only pricing)."""
+    models: dict[str, Model] = {}
+    for spec in _EMBEDDING_SPECS:
+        if spec["provider"] not in PROVIDERS:
+            continue
+        prompt_price, published_price, _cost = _priced(spec["cost_dollars_per_million"])
+        models[spec["id"]] = Model(
+            id=spec["id"],
+            name=spec["name"],
+            provider=spec["provider"],
+            context_length=spec["context_length"],
+            upstream_id=spec["upstream_id"],
+            supports_chat=False,
+            supports_messages=False,
+            supports_embeddings=True,
+            prepaid_available=True,
+            byok_available=True,
+            prompt_price_microdollars_per_million_tokens=prompt_price,
+            completion_price_microdollars_per_million_tokens=0,
+            published_prompt_price_microdollars_per_million_tokens=published_price,
+            published_completion_price_microdollars_per_million_tokens=0,
+            price_tiers=_flat_tier(prompt_price, 0, None),
+            published_price_tiers=_flat_tier(published_price, 0, None),
+        )
+    return models
+
+
+_EMBEDDING_MODELS = _embedding_models()
+
+
 _INGESTED_MODELS, _INGESTED_ENDPOINTS = _ingested_models_and_endpoints()
 _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_and_endpoints()
 # The OpenRouter ingest snapshot is the primary catalog. Provider-native
@@ -1254,6 +1410,12 @@ _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_an
 MODELS.update(_INGESTED_MODELS)
 for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
     MODELS.setdefault(_model_id, _model)
+# Embedding models override any snapshot/supplemental collision: the
+# hand-curated embedding entry (input-only pricing, supports_embeddings) is
+# authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
+# its Credits + BYOK endpoints synthesized.
+for _model_id, _model in _EMBEDDING_MODELS.items():
+    MODELS[_model_id] = _model
 
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
@@ -1815,6 +1977,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "route_kind": _meta_route_kind(model.id) if is_meta else "model",
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
         "internal_only": model.id == MONITOR_MODEL_ID,
+        # Capability flags so OpenRouter-compat clients (and TR's own chat
+        # picker) can tell an embedding model from a chat model without
+        # parsing `architecture.modality`.
+        "supports_chat": model.supports_chat,
+        "supports_embeddings": model.supports_embeddings,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -1851,7 +2018,15 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "created": 0,
         "description": f"{model.name} via TrustedRouter",
         "context_length": model.context_length,
-        "architecture": {"modality": "text->text", "tokenizer": "unknown", "instruct_type": None},
+        "architecture": {
+            "modality": (
+                "text->embedding"
+                if model.supports_embeddings and not model.supports_chat
+                else "text->text"
+            ),
+            "tokenizer": "unknown",
+            "instruct_type": None,
+        },
         "pricing": pricing,
         "top_provider": {
             "context_length": model.context_length,

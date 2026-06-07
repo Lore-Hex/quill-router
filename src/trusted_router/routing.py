@@ -143,6 +143,44 @@ def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> 
     return candidates
 
 
+def embeddings_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Endpoint candidates for an embeddings request — the gateway-authorize
+    analogue of `chat_route_endpoint_candidates`, accepting only
+    `supports_embeddings` models. Cost falls out of the per-endpoint prompt
+    price (completion price is 0 on embedding endpoints), so the enclave can
+    authorize + bill an embeddings route exactly like a chat one."""
+    raw_ids, prefs = _routing_for_body(body, settings)
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_embeddings:
+            raise api_error(
+                400,
+                f"Model does not support embeddings: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    if not candidates:
+        raise api_error(
+            400,
+            "No route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
 def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     raw = body.get("provider")
     if not isinstance(raw, dict):

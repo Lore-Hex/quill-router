@@ -373,23 +373,54 @@ def test_anthropic_messages_stream_uses_provider_stream_without_materializing(
 
 
 def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: dict[str, str]) -> None:
+    # A chat-only model is not a valid embeddings target.
+    not_embeddings = client.post(
+        "/v1/embeddings",
+        headers=inference_headers,
+        json={"model": "openai/gpt-5.5", "input": ["a", "b"]},
+    )
+    assert not_embeddings.status_code == 400
+    assert not_embeddings.json()["error"]["type"] == "model_not_supported"
+
+    # A real embedding model returns the OpenAI embeddings envelope. In the
+    # test env enable_live_providers=False, so this exercises the
+    # deterministic synthetic vectors — the shape + billing path are real.
     embeddings = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-5.4-nano", "input": ["a", "b"]},
+        json={"model": "openai/text-embedding-3-small", "input": ["a", "b"]},
     )
-    assert embeddings.status_code == 501
-    assert embeddings.json()["error"]["type"] == "endpoint_not_supported"
+    assert embeddings.status_code == 200, embeddings.text
+    payload = embeddings.json()
+    assert payload["object"] == "list"
+    assert payload["model"] == "openai/text-embedding-3-small"
+    assert [row["index"] for row in payload["data"]] == [0, 1]
+    assert all(row["object"] == "embedding" and row["embedding"] for row in payload["data"])
+    # Embeddings bill input tokens only: total == prompt, no completion.
+    assert payload["usage"]["prompt_tokens"] >= 1
+    assert payload["usage"]["total_tokens"] == payload["usage"]["prompt_tokens"]
+    assert payload["trustedrouter"]["generation_id"]
+    assert payload["trustedrouter"]["selected_provider"] == "openai"
+
+    # Empty input is rejected.
+    bad = client.post(
+        "/v1/embeddings",
+        headers=inference_headers,
+        json={"model": "openai/text-embedding-3-small", "input": ""},
+    )
+    assert bad.status_code == 400
 
     models = client.get("/v1/embeddings/models")
     assert models.status_code == 200
-    # The catalog is sourced entirely from the OpenRouter ingest snapshot,
-    # which doesn't carry a `supports_embeddings` flag (OpenRouter focuses on
-    # chat/completion). Until embeddings models are added back as a
-    # hand-curated subset, `/v1/embeddings/models` returns an empty list —
-    # the embeddings *route* still answers (501 above) so callers get a
-    # clean error path; no model just means no eligible candidates.
-    assert models.json()["data"] == []
+    rows = models.json()["data"]
+    embedding_ids = {row["id"] for row in rows}
+    assert {"openai/text-embedding-3-large", "cohere/embed-v4.0"} <= embedding_ids
+    # OpenAI, Gemini, Together, and Cohere are all represented.
+    assert {"openai", "gemini", "together", "cohere"} <= {
+        row["trustedrouter"]["provider"] for row in rows
+    }
+    assert all(row["trustedrouter"]["supports_embeddings"] for row in rows)
+    assert all(row["architecture"]["modality"] == "text->embedding" for row in rows)
 
     endpoint = client.get("/v1/models/meta-llama/llama-3.1-8b-instruct/endpoints")
     assert endpoint.status_code == 200

@@ -22,6 +22,7 @@ from trusted_router.providers import (
     ProviderClient,
     ProviderError,
     estimate_tokens_from_messages,
+    estimate_tokens_from_text,
 )
 from trusted_router.routes.helpers import cost_microdollars, integer_body_field
 from trusted_router.secrets import LocalKeyFile
@@ -251,6 +252,60 @@ async def run_chat(
         return result, generation
 
 
+def _embedding_input_tokens(body: dict[str, Any]) -> int:
+    value = body.get("input", "")
+    inputs = value if isinstance(value, list) else [value]
+    return sum(estimate_tokens_from_text(str(item)) for item in inputs)
+
+
+async def run_embeddings(
+    body: dict[str, Any],
+    model: Model,
+    principal: Principal,
+    settings: Settings,
+    *,
+    app_name: str,
+    usage_type: UsageType | None = None,
+) -> tuple[dict[str, Any], Generation]:
+    """Embeddings runner — parallels `run_chat` but bills INPUT tokens only
+    (no completion phase). Reserves on the estimated input cost, settles on
+    the provider-reported `usage.prompt_tokens`, and records a Generation
+    with tokens_completion=0."""
+    assert principal.api_key is not None
+    client = provider_client(settings)
+    input_estimate = _embedding_input_tokens(body)
+    reserve_amount = cost_microdollars(model, input_estimate, 0)
+    async with reserved_quota(
+        principal,
+        model,
+        reserve_amount=reserve_amount,
+        input_tokens=input_estimate,
+        streamed=False,
+        region=settings.primary_region,
+        usage_type_override=usage_type,
+    ) as ticket:
+        result = await client.embeddings(model, body)
+        usage = result.get("usage") or {}
+        actual_input_tokens = int(usage.get("prompt_tokens") or input_estimate)
+        actual_cost = cost_microdollars(model, actual_input_tokens, 0)
+        ticket.settle(actual_cost)
+        generation = Generation.from_embeddings_result(
+            result=result,
+            workspace_id=principal.workspace.id,
+            key_hash=principal.api_key.hash,
+            model_id=model.id,
+            app_name=app_name,
+            actual_cost_microdollars=actual_cost,
+            usage_type=ticket.usage_type,
+            input_tokens=actual_input_tokens,
+            provider=model.provider,
+            provider_name=PROVIDERS[model.provider].name,
+            region=settings.primary_region,
+        )
+        STORE.add_generation(generation)
+        return result, generation
+
+
 async def run_chat_auto(
     body: dict[str, Any],
     principal: Principal,
@@ -323,5 +378,6 @@ __all__ = [
     "run_chat_candidates",
     "run_chat_candidates_stream",
     "run_chat_stream",
+    "run_embeddings",
     "run_messages_stream",
 ]

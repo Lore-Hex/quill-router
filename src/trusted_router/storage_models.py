@@ -308,6 +308,50 @@ class Generation:
         )
 
     @classmethod
+    def from_embeddings_result(
+        cls,
+        *,
+        result: dict[str, Any],
+        workspace_id: str,
+        key_hash: str,
+        model_id: str,
+        app_name: str,
+        actual_cost_microdollars: int,
+        usage_type: UsageType | str,
+        input_tokens: int,
+        provider: str | None = None,
+        provider_name: str | None = None,
+        region: str | None = None,
+        elapsed_seconds: float = 0.001,
+    ) -> Generation:
+        """Record an embeddings call. Embeddings bill INPUT tokens only, so
+        `tokens_completion` is 0 and there is no throughput figure
+        (speed_tokens_per_second=0). `finish_reason` is "stop" by
+        convention — embeddings have no streamed completion."""
+        request_id = str(result.get("id") or f"emb-{uuid.uuid4().hex}")
+        return cls(
+            id=f"gen-{uuid.uuid4().hex}",
+            request_id=request_id,
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            model=model_id,
+            provider_name=provider_name or (provider or model_id),
+            app=app_name,
+            tokens_prompt=input_tokens,
+            tokens_completion=0,
+            total_cost_microdollars=actual_cost_microdollars,
+            usage_type=UsageType.coerce(usage_type),
+            speed_tokens_per_second=0.0,
+            finish_reason="stop",
+            status="success",
+            streamed=False,
+            usage_estimated=False,
+            provider=provider,
+            elapsed_milliseconds=_seconds_to_milliseconds(elapsed_seconds),
+            region=region,
+        )
+
+    @classmethod
     def from_settle_body(
         cls,
         *,

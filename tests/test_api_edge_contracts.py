@@ -43,19 +43,35 @@ def test_generation_lookup_is_workspace_scoped(
     assert content.json()["error"]["type"] == "content_not_stored"
 
 
-def test_embeddings_are_explicitly_not_implemented_without_writing_generation(
+def test_embeddings_write_input_only_generation(
     client: TestClient,
     inference_headers: dict[str, str],
 ) -> None:
-    resp = client.post(
+    # A non-embedding model is rejected outright (never mis-billed as chat).
+    not_embeddings = client.post(
         "/v1/embeddings",
         headers=inference_headers,
         json={"model": "mistralai/mistral-small-2603", "input": "hello"},
     )
-
-    assert resp.status_code == 501
-    assert resp.json()["error"]["type"] == "endpoint_not_supported"
+    assert not_embeddings.status_code == 400
+    assert not_embeddings.json()["error"]["type"] == "model_not_supported"
     assert STORE.generation_store.generations == {}
+
+    # A real embedding model is billed and records exactly ONE generation
+    # with tokens_completion == 0 (embeddings have no completion phase).
+    resp = client.post(
+        "/v1/embeddings",
+        headers=inference_headers,
+        json={"model": "openai/text-embedding-3-large", "input": "hello"},
+    )
+    assert resp.status_code == 200, resp.text
+    generations = list(STORE.generation_store.generations.values())
+    assert len(generations) == 1
+    gen = generations[0]
+    assert gen.model == "openai/text-embedding-3-large"
+    assert gen.tokens_completion == 0
+    assert gen.tokens_prompt >= 1
+    assert gen.id == resp.json()["trustedrouter"]["generation_id"]
 
 
 def test_responses_api_validation_and_metadata_privacy(
@@ -134,23 +150,24 @@ def test_chat_completions_accepts_common_openai_sdk_extras_and_router_fields(
     assert metadata_marker not in response.text
 
 
-def test_embeddings_stub_accepts_any_input_shape_without_generation_rows(
+def test_embeddings_accept_scalar_and_array_input(
     client: TestClient,
     inference_headers: dict[str, str],
 ) -> None:
     scalar = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-5.4-nano", "input": "hello"},
+        json={"model": "cohere/embed-v4.0", "input": "hello"},
     )
     array = client.post(
         "/v1/embeddings",
         headers=inference_headers,
-        json={"model": "openai/gpt-5.4-nano", "input": ["hello", "world"]},
+        json={"model": "cohere/embed-v4.0", "input": ["hello", "world"]},
     )
 
-    assert scalar.status_code == 501, scalar.text
-    assert array.status_code == 501, array.text
-    assert scalar.json()["error"]["type"] == "endpoint_not_supported"
-    assert array.json()["error"]["type"] == "endpoint_not_supported"
-    assert STORE.generation_store.generations == {}
+    assert scalar.status_code == 200, scalar.text
+    assert array.status_code == 200, array.text
+    assert len(scalar.json()["data"]) == 1
+    assert len(array.json()["data"]) == 2
+    # Two successful embeddings calls → two recorded generations.
+    assert len(STORE.generation_store.generations) == 2

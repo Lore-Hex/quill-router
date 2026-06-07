@@ -10,10 +10,13 @@ from trusted_router.catalog import PROVIDERS, Model
 from trusted_router.provider_adapters import (
     anthropic_chat,
     anthropic_messages_stream,
+    cohere_embeddings,
     gemini_chat,
     gemini_chat_stream,
+    gemini_embeddings,
     openai_compatible_chat,
     openai_compatible_chat_stream,
+    openai_compatible_embeddings,
 )
 from trusted_router.provider_payloads import (
     deterministic_embedding,
@@ -137,6 +140,33 @@ class ProviderClient:
         return self._synthetic_anthropic_messages_stream(model, request, state)
 
     async def embeddings(self, model: Model, request: dict[str, Any]) -> dict[str, Any]:
+        if self.live:
+            if model.provider == "cohere":
+                api_key = self._secret("COHERE_API_KEY")
+                if not api_key:
+                    raise RuntimeError("COHERE_API_KEY is not configured")
+                return await cohere_embeddings(model, request, api_key=api_key)
+            if model.provider == "gemini":
+                api_key = self._secret("GEMINI_API_KEY")
+                if not api_key:
+                    raise RuntimeError("GEMINI_API_KEY is not configured")
+                return await gemini_embeddings(model, request, api_key=api_key)
+            openai_compatible = OPENAI_COMPATIBLE_PROVIDERS.get(model.provider)
+            if openai_compatible is not None:
+                env_keys, base_url = openai_compatible
+                api_key = self._secret_any(env_keys)
+                if not api_key:
+                    raise RuntimeError(
+                        f"{_credential_label(env_keys, model.provider)} is not configured"
+                    )
+                return await openai_compatible_embeddings(
+                    model,
+                    request,
+                    api_key=api_key,
+                    base_url=self._provider_base_url(model.provider, base_url),
+                )
+        # Synthetic fallback (no live providers): deterministic vectors so
+        # local/test embedding calls are reproducible without a real key.
         input_value = request.get("input", "")
         inputs = input_value if isinstance(input_value, list) else [input_value]
         return {

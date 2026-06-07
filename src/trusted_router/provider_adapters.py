@@ -118,6 +118,153 @@ async def openai_compatible_chat_stream(
                 yield f"data: {data}\n\n".encode()
 
 
+# ---------------------------------------------------------------------------
+# Embeddings. Each adapter returns the OpenAI embeddings envelope
+#   {object:"list", data:[{object:"embedding", embedding:[...], index}],
+#    model, usage:{prompt_tokens, total_tokens}}
+# so the route can return it verbatim. Embeddings bill INPUT tokens only;
+# `total_tokens == prompt_tokens` and there is no completion component.
+#
+# These run in the control plane only for local/test/dev (the live path);
+# in production the attested enclave performs the upstream call. They double
+# as the executable contract the enclave's per-provider embeddings must match.
+# ---------------------------------------------------------------------------
+
+
+def _embedding_inputs(request: dict[str, Any]) -> list[str]:
+    value = request.get("input", "")
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _estimate_embedding_tokens(inputs: list[str]) -> int:
+    return sum(estimate_tokens_from_text(text) for text in inputs)
+
+
+def _embedding_envelope(
+    model: Model,
+    data_rows: list[dict[str, Any]],
+    *,
+    prompt_tokens: int,
+) -> dict[str, Any]:
+    return {
+        "object": "list",
+        "data": data_rows,
+        "model": model.id,
+        "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
+    }
+
+
+def _embedding_rows(vectors: list[Any]) -> list[dict[str, Any]]:
+    return [
+        {"object": "embedding", "embedding": vector, "index": index}
+        for index, vector in enumerate(vectors)
+    ]
+
+
+async def openai_compatible_embeddings(
+    model: Model,
+    request: dict[str, Any],
+    *,
+    api_key: str,
+    base_url: str,
+) -> dict[str, Any]:
+    """OpenAI / Together — POST {base_url}/embeddings with {model, input}."""
+    inputs = _embedding_inputs(request)
+    payload: dict[str, Any] = {"model": upstream_model_id(model), "input": inputs}
+    if request.get("encoding_format"):
+        payload["encoding_format"] = request["encoding_format"]
+    if request.get("dimensions"):
+        payload["dimensions"] = request["dimensions"]
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{base_url}/embeddings",
+            headers={"authorization": f"Bearer {api_key}"},
+            json=payload,
+        )
+    if resp.status_code >= 400:
+        raise ProviderError(model.provider, resp.status_code, safe_error_message(resp))
+    data = resp.json()
+    usage = data.get("usage") or {}
+    prompt_tokens = int(usage.get("prompt_tokens") or _estimate_embedding_tokens(inputs))
+    # OpenAI-compatible upstreams already return rows in the right shape;
+    # pass them through (preserves base64 encoding_format) and re-stamp model.
+    # Default a missing `object` to "embedding" so the envelope stays
+    # OpenAI-conformant even if an upstream omits it — matches the enclave's
+    # Go adapter (cross-implementation symmetry).
+    rows = list(data.get("data") or [])
+    for row in rows:
+        if isinstance(row, dict) and not row.get("object"):
+            row["object"] = "embedding"
+    return _embedding_envelope(model, rows, prompt_tokens=prompt_tokens)
+
+
+async def gemini_embeddings(
+    model: Model,
+    request: dict[str, Any],
+    *,
+    api_key: str,
+) -> dict[str, Any]:
+    """Gemini — POST :batchEmbedContents (one entry per input)."""
+    inputs = _embedding_inputs(request)
+    upstream_model = upstream_model_id(model)
+    body = {
+        "requests": [
+            {"model": f"models/{upstream_model}", "content": {"parts": [{"text": text}]}}
+            for text in inputs
+        ]
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{upstream_model}:batchEmbedContents",
+            params={"key": api_key},
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
+    data = resp.json()
+    vectors = [row.get("values") or [] for row in (data.get("embeddings") or [])]
+    # Gemini's embed API does not report token usage; estimate from input.
+    prompt_tokens = _estimate_embedding_tokens(inputs)
+    return _embedding_envelope(model, _embedding_rows(vectors), prompt_tokens=prompt_tokens)
+
+
+async def cohere_embeddings(
+    model: Model,
+    request: dict[str, Any],
+    *,
+    api_key: str,
+) -> dict[str, Any]:
+    """Cohere — POST /v2/embed (native shape) adapted to OpenAI envelope.
+
+    Cohere is NOT OpenAI-shaped: it takes `texts` + a required `input_type`
+    and returns `embeddings.float` (a list of vectors). OpenAI's embeddings
+    request has no `input_type`; default to `search_document` (the right
+    choice for indexing corpora) and let callers override it."""
+    inputs = _embedding_inputs(request)
+    body = {
+        "model": upstream_model_id(model),
+        "texts": inputs,
+        "input_type": str(request.get("input_type") or "search_document"),
+        "embedding_types": ["float"],
+    }
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            "https://api.cohere.com/v2/embed",
+            headers={"authorization": f"Bearer {api_key}"},
+            json=body,
+        )
+    if resp.status_code >= 400:
+        raise ProviderError("cohere", resp.status_code, safe_error_message(resp))
+    data = resp.json()
+    floats = (data.get("embeddings") or {}).get("float") or []
+    vectors = [list(vector) for vector in floats]
+    billed = (data.get("meta") or {}).get("billed_units") or {}
+    prompt_tokens = int(billed.get("input_tokens") or _estimate_embedding_tokens(inputs))
+    return _embedding_envelope(model, _embedding_rows(vectors), prompt_tokens=prompt_tokens)
+
+
 async def anthropic_chat(
     model: Model,
     request: dict[str, Any],
