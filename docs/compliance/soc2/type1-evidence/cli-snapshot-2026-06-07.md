@@ -65,6 +65,7 @@ Active workflows observed:
 
 Recent workflow observations:
 
+- Deploy TR control plane succeeded at 2026-06-07T08:22:00Z for SHA `9324ce375b8d2472bc4478ade73e771b662e3bd9`.
 - Deploy TR control plane succeeded at 2026-06-07T04:25:44Z for SHA `2cf4578b232121d9e7a27f7b74bd6aad9ee04e96`.
 - Refresh upstream prices succeeded at 2026-06-07T03:53:42Z.
 - Several Prod Smoke scheduled/workflow runs failed on 2026-06-06 and 2026-06-07 and need operational triage records.
@@ -132,15 +133,18 @@ Observed:
 | URL | Status | Notes |
 |---|---:|---|
 | `https://trustedrouter.com/` | 200 | Homepage live. |
-| `https://trustedrouter.com/legal` | 404 | New legal packet is not deployed. |
-| `https://trustedrouter.com/legal/procurement.json` | 404 | New procurement JSON is not deployed. |
+| `https://trustedrouter.com/legal` | 200 | Legal packet live. |
+| `https://trustedrouter.com/legal/procurement.json` | 200 | Procurement JSON live. |
+| `https://trustedrouter.com/legal/soc2-readiness` | 200 | SOC 2 readiness page live. |
+| `https://trustedrouter.com/legal/hipaa-readiness` | 200 | HIPAA readiness page live. |
+| `https://trustedrouter.com/legal/subprocessors` | 200 | Subprocessor list live. |
 | `https://trustedrouter.com/security` | 200 | Security page live. |
 | `https://trustedrouter.com/providers` | 200 | Provider page live. |
 | `https://trust.trustedrouter.com/` | 200 | Trust page live. |
 | `https://status.trustedrouter.com/` | 200 | Status page live. |
 | `https://api.trustedrouter.com/v1/models` | 401 | API requires authentication. Expected for unauthenticated request. |
 
-Type I implication: deploy the legal packet before using public legal posture as evidence.
+Type I implication: public legal posture can now be used as evidence, subject to final management approval and auditor review.
 
 ## Test Snapshot
 
@@ -159,4 +163,3 @@ Observed:
 - Mypy: passed, 130 source files.
 - Focused compliance/security/API tests: 65 passed.
 - Full Python test suite: 799 passed, 31 skipped.
-

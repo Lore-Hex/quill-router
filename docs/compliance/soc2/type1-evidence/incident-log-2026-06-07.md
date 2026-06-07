@@ -8,7 +8,7 @@ Status: draft. Requires owner review.
 
 | Event ID | Date/Time | Severity | Description | Status | Next Action |
 |---|---|---|---|---|---|
-| EVT-2026-06-07-001 | 2026-06-07 | Medium | Public `/legal` and `/legal/procurement.json` return 404 because new legal packet is local but not deployed. | Open | Deploy legal packet, verify HTTP 200, record change. |
+| EVT-2026-06-07-001 | 2026-06-07 | Medium | Public `/legal` and `/legal/procurement.json` returned 404 before the legal packet deployment. | Resolved | Deployed commit `9324ce3`; verified `/legal`, `/legal/procurement.json`, `/legal/soc2-readiness`, `/legal/hipaa-readiness`, `/legal/subprocessors`, `/legal/dpa`, and `/legal/baa` return HTTP 200. |
 | EVT-2026-06-07-002 | 2026-06-06 to 2026-06-07 | Medium | GitHub Actions Prod Smoke has recent failed scheduled/workflow runs. | Open | Root-cause failures, document whether provider/auth/status false positive or real production issue. |
 | EVT-2026-06-07-003 | 2026-06-07 | High | GitHub `main` branch is not protected. | Open | Enable branch protection and record evidence. |
 
@@ -23,4 +23,3 @@ Any future event involving prompt/output leakage, signing/trust compromise, acti
 Reviewed by:
 
 Date:
-

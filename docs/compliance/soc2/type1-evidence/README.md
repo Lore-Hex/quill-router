@@ -48,13 +48,12 @@ Current internal grade: not Type I ready yet.
 Primary blockers:
 
 1. GitHub `main` branch is not protected. This is a change-management blocker.
-2. New `/legal` procurement pages are implemented locally but not deployed to production. Public posture evidence currently shows `404` for `/legal`.
-3. MFA evidence for GitHub, GCP, Cloudflare, Stripe, PayPal, AWS, Sentry, Axiom, and DNS/admin systems is not captured.
-4. Formal management approval of policies is not signed.
-5. Vulnerability, dependency, secret, and container scanning evidence is incomplete.
-6. Alert-routing and incident-response evidence is incomplete.
-7. Backup/restore test evidence is incomplete.
-8. Auditor has not reviewed scope, criteria mapping, or evidence.
+2. MFA evidence for GitHub, GCP, Cloudflare, Stripe, PayPal, AWS, Sentry, Axiom, and DNS/admin systems is not captured.
+3. Formal management approval of policies is not signed.
+4. Vulnerability, dependency, secret, and container scanning evidence is incomplete.
+5. Alert-routing and incident-response evidence is incomplete.
+6. Backup/restore test evidence is incomplete.
+7. Auditor has not reviewed scope, criteria mapping, or evidence.
 
 ## Packet Contents
 
@@ -79,4 +78,3 @@ Primary blockers:
 - If evidence exists only as source code, mark the control as designed and code-supported, not auditor-verified.
 - If a production setting is not yet deployed, mark it as pending deployment.
 - If an auditor changes criteria mapping, update the control matrix before the audit date.
-

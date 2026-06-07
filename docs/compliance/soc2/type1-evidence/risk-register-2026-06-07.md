@@ -7,7 +7,7 @@ Status: draft internal risk register.
 | Risk ID | Risk | Likelihood | Impact | Current Controls | Residual Status | Owner |
 |---|---|---|---|---|---|---|
 | RISK-001 | Branch protection disabled allows unreviewed or force-pushed changes to main. | Medium | High | CI exists, deploy workflow exists. | Open gap. Enable branch protection. | Joseph Perla |
-| RISK-002 | Public legal packet not deployed, causing procurement evidence mismatch. | High | Medium | Local tests and templates pass. | Open gap. Deploy legal pages. | Joseph Perla |
+| RISK-002 | Public legal packet could drift from procurement evidence after future legal changes. | Low | Medium | Legal pages are deployed, tests cover the public packet, trust page links the packet, and production URLs were verified 200 on 2026-06-07. | Monitor on future legal changes. | Joseph Perla |
 | RISK-003 | Admin MFA evidence unavailable during audit. | Medium | High | Personal MFA may exist, but not exported. | Evidence pending. | Joseph Perla |
 | RISK-004 | Prompt/output content accidentally enters durable logs or monitoring. | Low | High | Metadata-only policies, Sentry excluded from enclave path, security tests. | Continue tests and log sampling. | Joseph Perla |
 | RISK-005 | Provider routes with unknown retention posture are used for legal/HIPAA work. | Medium | High | `trustedrouter/zdr`, provider transparency, route approval policy. | Customer-specific approvals required. | Joseph Perla |
@@ -20,4 +20,3 @@ Status: draft internal risk register.
 ## Review Notes
 
 This register is enough for internal readiness, but the auditor will likely expect owner, treatment decision, due date, and status for each open risk before the Type I report date.
-

@@ -30,6 +30,7 @@ Deploy workflow includes:
 
 Recent GitHub Actions observations:
 
+- Deploy TR control plane succeeded at 2026-06-07T08:22:00Z for SHA `9324ce375b8d2472bc4478ade73e771b662e3bd9`, including warm-region canaries, cold-region deploy, synthetic monitor job deploy, and prod smoke.
 - Deploy TR control plane succeeded at 2026-06-07T04:25:44Z for SHA `2cf4578b232121d9e7a27f7b74bd6aad9ee04e96`.
 - Deploy TR control plane succeeded at 2026-06-06T23:36:41Z.
 - Deploy TR control plane succeeded at 2026-06-06T21:59:26Z.
@@ -41,7 +42,7 @@ Recent GitHub Actions observations:
 |---|---|---|
 | `main` branch protection is disabled. | High | Enable branch protection before audit date. |
 | Prod Smoke has recent failures. | Medium | Open incident/operational event records for each failure cluster and document root cause/remediation. |
-| Current compliance packet is not deployed to production. | Medium | Deploy and verify `/legal`, `/legal/procurement.json`, SOC 2 readiness, HIPAA readiness, and subprocessors pages. |
+| Compliance packet production deploy verification. | Informational | Verified `/legal`, `/legal/procurement.json`, SOC 2 readiness, HIPAA readiness, subprocessors, DPA, and BAA pages return HTTP 200. |
 
 ## Emergency Change Record Placeholder
 
@@ -56,4 +57,3 @@ Test evidence:
 Deploy evidence:
 
 Post-change review:
-

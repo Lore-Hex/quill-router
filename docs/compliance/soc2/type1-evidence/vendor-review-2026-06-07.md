@@ -29,10 +29,9 @@ Sensitive legal/HIPAA workloads default to `trustedrouter/zdr`. `trustedrouter/e
 
 - Export vendor admin/account screenshots where available.
 - Attach vendor DPA/BAA/security documentation where applicable.
-- Export public subprocessor page after `/legal/subprocessors` is deployed.
+- Attach public subprocessor page verification and any vendor-specific DPA/BAA evidence.
 - Record customer-specific provider approvals for regulated workloads.
 
 Reviewer signature:
 
 Date:
-

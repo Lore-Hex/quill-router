@@ -26,7 +26,7 @@ Status key:
 | TR-GOV-002 | Designed, evidence pending | Solo-founder responsibilities are documented. Confidentiality/training evidence is still needed for any contractors or future employees. | Personnel policy, open evidence gaps. |
 | TR-RISK-001 | Implemented | Risk register exists for current product, infrastructure, vendor, privacy, and availability risks. | Risk register. |
 | TR-RISK-002 | Designed, evidence pending | Rate limiting, billing controls, API key controls, and abuse controls exist in code and tests. Need production config export and review record. | Tests, config, risk register. |
-| TR-POL-001 | Designed, evidence pending | Policy binder exists locally. Public legal packet is not deployed yet, so production evidence is pending. | Policy docs, production snapshot showing `/legal` 404. |
+| TR-POL-001 | Designed, evidence pending | Policy binder exists and public legal packet is deployed. Management approval and auditor review are still pending. | Policy docs, production HTTP snapshot. |
 | TR-ACCESS-001 | Designed, evidence pending | IAM evidence was collected at summary level. Need formal least-privilege review and admin access exports from all systems. | CLI snapshot, access review. |
 | TR-ACCESS-002 | Designed, evidence pending | Access change process is documented. Joiner/mover/leaver evidence is not meaningful yet for a solo-founder company but should be recorded as not applicable or future-state with auditor agreement. | Access control policy, access review. |
 | TR-ACCESS-003 | Gap | MFA evidence is not captured for admin systems. | Open evidence gaps. |
@@ -35,13 +35,13 @@ Status key:
 | TR-CHANGE-002 | Designed, evidence pending | Emergency change tracking process exists. Need completed change records for recent production fixes. | Change record template, change record draft. |
 | TR-OPS-001 | Implemented | Status page, synthetic monitoring, and Cloud Run regional services are present. | CLI snapshot, status snapshot. |
 | TR-OPS-002 | Designed, evidence pending | Sentry/Axiom/floodgate controls exist in configuration and docs. Need exported alert settings and review record. | Logging policy, open evidence gaps. |
-| TR-OPS-003 | Designed, evidence pending | Incident response process exists. Recent prod smoke failures and legal route 404 need triage records. | Incident log. |
+| TR-OPS-003 | Designed, evidence pending | Incident response process exists. Recent prod smoke failures need triage records; legal-route deploy event is resolved. | Incident log. |
 | TR-VULN-001 | Designed, evidence pending | CI runs tests, ruff, mypy, frontend checks, browser smoke, and coverage. Need dependency, secret, and container scanning evidence. | Workflow snapshot, vulnerability review. |
 | TR-VULN-002 | Designed, evidence pending | Remediation policy exists. Need tracker export or risk acceptance records for open findings. | Vulnerability policy, vulnerability review. |
 | TR-DATA-001 | Implemented | Data classification and retention policy exists. | Policy binder. |
 | TR-DATA-002 | Implemented | Tests and schemas support metadata-only storage by default. Need sampled production log evidence. | Test evidence, storage schemas, logging policy. |
 | TR-DATA-003 | Designed, evidence pending | BYOK encryption and secret handling are implemented in code/tests. Need KMS/envelope config evidence and per-secret access review. | Tests, Secret Manager inventory. |
-| TR-PRIV-001 | Designed, evidence pending | Security and providers pages are live. Legal page is not deployed yet. | Production HTTP snapshot. |
+| TR-PRIV-001 | Designed, evidence pending | Security, providers, legal, SOC 2 readiness, HIPAA readiness, and subprocessor pages are live. Management approval and auditor review are still pending. | Production HTTP snapshot. |
 | TR-PRIV-002 | Implemented | Routing preferences, BYOK, provider filters, and content export toggles are covered by tests and code. | Local tests. |
 | TR-PRIV-003 | Designed, evidence pending | Retention policy exists. Need deletion/export procedure evidence and sample request record. | Retention policy, open gaps. |
 | TR-AVAIL-001 | Implemented | Router-core, provider-effective, and control-plane SLO classes are documented and public status separates them. | Status page, status JSON. |
@@ -66,4 +66,3 @@ Fix or collect:
 6. Run and record restore/backup evidence.
 7. Sign policy approval and management assertion.
 8. Ask auditor to confirm Trust Services Criteria mapping.
-
