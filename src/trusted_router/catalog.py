@@ -1325,22 +1325,25 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "context_length": 2048,
         "cost_dollars_per_million": "0.15",
     },
-    # Together — api.together.xyz/v1/embeddings (OpenAI-shaped)
+    # Together — api.together.xyz/v1/embeddings (OpenAI-shaped). These are the
+    # models Together actually serves on our account as of 2026-06-07 (verified
+    # against Together /v1/models). Together retired m2-bert + bge-large-en
+    # (they 400 "model not available"), so we carry the live replacements.
     {
-        "id": "togethercomputer/m2-bert-80M-8k-retrieval",
-        "name": "Together M2-BERT 80M 8K Retrieval",
+        "id": "intfloat/multilingual-e5-large-instruct",
+        "name": "Multilingual E5 Large Instruct",
         "provider": "together",
-        "upstream_id": "togethercomputer/m2-bert-80M-8k-retrieval",
-        "context_length": 8192,
-        "cost_dollars_per_million": "0.008",
+        "upstream_id": "intfloat/multilingual-e5-large-instruct",
+        "context_length": 512,
+        "cost_dollars_per_million": "0.02",
     },
     {
-        "id": "BAAI/bge-large-en-v1.5",
-        "name": "BAAI BGE Large EN v1.5",
+        "id": "BAAI/bge-base-en-v1.5",
+        "name": "BAAI BGE Base EN v1.5",
         "provider": "together",
-        "upstream_id": "BAAI/bge-large-en-v1.5",
+        "upstream_id": "BAAI/bge-base-en-v1.5",
         "context_length": 512,
-        "cost_dollars_per_million": "0.016",
+        "cost_dollars_per_million": "0.008",
     },
     # Cohere — api.cohere.com/v2/embed (NATIVE shape; enclave adapts to OpenAI)
     {

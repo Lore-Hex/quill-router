@@ -39,7 +39,7 @@ TIMEOUT_SECONDS = float(os.environ.get("TR_EMBEDDINGS_PROBE_TIMEOUT_SECONDS", "3
 # run (their keys are wired). Cohere is opt-in until its key is provisioned.
 PROBES = [
     {"provider": "openai", "model": "openai/text-embedding-3-large", "required": True},
-    {"provider": "together", "model": "togethercomputer/m2-bert-80M-8k-retrieval", "required": True},
+    {"provider": "together", "model": "BAAI/bge-base-en-v1.5", "required": True},
     {"provider": "cohere", "model": "cohere/embed-v4.0", "required": INCLUDE_COHERE},
 ]
 
