@@ -102,7 +102,11 @@ def test_chat_activity_generation_and_no_content_storage(
     assert sample.total_cost_microdollars == generation_data["total_cost_microdollars"]
     assert "workspace_id" not in safe_sample
     assert "key_hash" not in safe_sample
-    assert "app" not in safe_sample
+    # `app` is the caller's public, opt-in self-reported title (X-Title): it
+    # powers the /apps directory and is NOT tenant / credential / prompt data.
+    # It is intentionally carried on the benchmark sample; the real privacy
+    # guarantees below (no workspace, no key, no prompt body) still hold.
+    assert isinstance(safe_sample["app"], str)
     assert prompt not in str(safe_sample)
 
     content = client.get(f"/v1/generation/content?id={generation_id}", headers=user_headers)

@@ -470,6 +470,25 @@ def dashboard_html(settings: Settings) -> str:
     )
 
 
+def public_apps_html(settings: Settings, *, apps: dict[str, object]) -> str:
+    """Render the /apps directory page with the cached app-usage snapshot.
+    Reuses the PUBLIC_PAGES["apps"] metadata (title/description/OG) and injects
+    the privacy-safe ranked app list (see trusted_router.apps.aggregate_apps)."""
+    page = PUBLIC_PAGES["apps"]
+    return _env().get_template(page.template).render(
+        api_base_url=settings.api_base_url,
+        site_url=f"https://{settings.trusted_domain}/apps",
+        title=f"{page.title} | TrustedRouter",
+        heading=page.title,
+        description=page.description,
+        og_image=_og_image_url(settings, page.og_card),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+        apps=apps,
+    )
+
+
 def _og_image_url(settings: Settings, og_card: str | None) -> str:
     """Resolve the social-card URL for a page. Returns the tailored card
     only when its PNG exists under static/og/; otherwise the default

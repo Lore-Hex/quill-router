@@ -469,6 +469,12 @@ class ProviderBenchmarkSample:
     # two; public ranking pages intentionally combine them without surfacing
     # this field.
     source: str = "organic"
+    # Caller-self-reported app name (Generation.app, from the X-Title / Referer
+    # header), used by the /apps directory. Privacy-safe: it's the public title
+    # the caller chose to send — never a workspace, key, or prompt. Empty / the
+    # "TrustedRouter Gateway" default is treated as anonymous "Direct" traffic;
+    # "TrustedRouter Synthetic" (the monitor) is excluded from the apps ranking.
+    app: str = ""
     created_at: str = field(default_factory=iso_now)
 
     def __post_init__(self) -> None:
@@ -494,6 +500,7 @@ class ProviderBenchmarkSample:
             ttfb_milliseconds=generation.ttfb_milliseconds,
             finish_reason=generation.finish_reason,
             region=generation.region,
+            app=generation.app,
             created_at=generation.created_at,
         )
 

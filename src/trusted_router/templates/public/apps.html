@@ -24,9 +24,25 @@ X-Title: My AI Product
   </div>
 </section>
 
-<section class="callout" style="margin-top:40px">
-  <strong>Public usage leaderboard rolling out.</strong> Ranked app usage (built on the same privacy-safe rollups as the
-  <a href="/leaderboard">provider &amp; model leaderboard</a>) is being seeded now. In the meantime, set <code>X-Title</code> so your app is counted from day one.
+<section style="margin-top:48px">
+  <h2 class="section-center">App directory</h2>
+  {% if apps and apps.apps %}
+  <div class="table-wrap">
+    <table class="home-table">
+      <thead><tr><th>#</th><th>App</th><th>Requests</th><th>Tokens</th></tr></thead>
+      <tbody>
+        {% for a in apps.apps[:50] %}
+        <tr><td>{{ loop.index }}</td><td>{{ a.name }}</td><td>{{ "{:,}".format(a.requests) }}</td><td>{{ "{:,}".format(a.tokens) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="sdk-stack-note">Ranked by request volume over the recent traffic window, combining organic and synthetic-coverage requests. A further {{ "{:,}".format(apps.direct_requests) }} requests came from untitled / Direct traffic and are aggregated anonymously. Set <code>X-Title</code> to appear here.</p>
+  {% else %}
+  <div class="callout">
+    <strong>No titled apps in the current window yet.</strong> Apps appear here as soon as they send an <code>X-Title</code> header; until then traffic stays anonymous in the Direct bucket{% if apps and apps.direct_requests %} ({{ "{:,}".format(apps.direct_requests) }} recent requests){% endif %}.
+  </div>
+  {% endif %}
 </section>
 
 <section class="marketing-grid three" style="margin-top:40px">

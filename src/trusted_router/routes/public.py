@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
+from trusted_router.apps import aggregate_apps
 from trusted_router.benchmark_samples import public_benchmark_samples
 from trusted_router.catalog import provider_to_openrouter_shape, providers_for_display
 from trusted_router.config import Settings
@@ -26,6 +27,7 @@ from trusted_router.dashboard import (
     hipaa_readiness_json,
     llms_txt,
     procurement_json,
+    public_apps_html,
     public_baa_html,
     public_benchmarks_html,
     public_chat_html,
@@ -75,6 +77,7 @@ LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
+_APPS_CACHE: tuple[float, dict[str, Any]] | None = None
 _STATUS_RESPONSE_CACHE: dict[str, _CachedPublicBody] = {}
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
@@ -229,7 +232,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/apps")
     async def apps() -> str:
-        return public_page_html(settings, "apps")
+        return public_apps_html(settings, apps=_apps_snapshot(settings))
 
     @public_html_route("/security")
     async def security() -> str:
@@ -741,6 +744,26 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     payload["window_label"] = f"{LEADERBOARD_SAMPLE_LIMIT:,}-sample benchmark set"
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
+    return payload
+
+
+def _apps_snapshot(settings: Settings) -> dict[str, Any]:
+    """Cached self-reported app directory, aggregated from the same recent
+    benchmark sample set as the leaderboard (no per-view live reads)."""
+    global _APPS_CACHE
+    now = time.monotonic()
+    if settings.environment != "test" and _APPS_CACHE is not None:
+        cached_at, payload = _APPS_CACHE
+        if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
+            return payload
+    samples = public_benchmark_samples(
+        limit=LEADERBOARD_SAMPLE_LIMIT,
+        recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
+    )
+    payload = aggregate_apps(samples)
+    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+    if settings.environment != "test":
+        _APPS_CACHE = (now, payload)
     return payload
 
 
