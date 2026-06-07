@@ -30,6 +30,37 @@ NON_DOWNTIME_ERROR_TYPES = frozenset(
     }
 )
 
+# Organic benchmark samples (ProviderBenchmarkSample.from_provider_error) are
+# written with the provider's RAW error_type/error_status and are NOT run
+# through the synthetic rotation classifier (_rotation_error_type in
+# synthetic/probes.py). A config failure — auth or deployment-missing
+# (401/403), or model-not-found (404 / a not-found error_type) — means the
+# provider simply does not serve that route on our key; it is NOT provider
+# downtime and must not count against uptime. The synthetic path already
+# excludes these (status="unsupported" / NON_DOWNTIME_ERROR_TYPES); the sets
+# below mirror that for organic traffic so the combined public uptime number
+# isn't dragged down by dead routes (e.g. Parasail's 403 "deployment doesn't
+# exist"). Genuine provider-health failures — timeouts, 429s, 5xx, empty
+# streams — are deliberately NOT listed here, so they still count as downtime.
+_CONFIG_FAILURE_STATUSES = frozenset({401, 403, 404})
+_NOT_FOUND_ERROR_TYPES = frozenset(
+    {
+        "model_not_found",
+        "model_not_available",
+        "not_found",
+        "not_supported",
+        "unsupported",
+        "unsupported_model",
+        "unsupported_provider",
+        "unsupported_route",
+        "provider_auth_config",
+        "probe_config_error",
+        "bad_request",
+        "invalid_request",
+        "invalid_request_error",
+    }
+)
+
 
 def _percentile(values: Sequence[int], percentile: int) -> int | None:
     if not values:
@@ -266,4 +297,15 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
 
 
 def _excluded_from_uptime(sample: ProviderBenchmarkSample) -> bool:
-    return sample.status == "unsupported" or sample.error_type in NON_DOWNTIME_ERROR_TYPES
+    if sample.status == "unsupported":
+        return True
+    if sample.error_type in NON_DOWNTIME_ERROR_TYPES:
+        return True
+    # Organic config failures are normalized here (see the module-level note):
+    # auth / deployment-missing / model-not-found are not provider downtime.
+    if sample.status == "error":
+        if sample.error_status in _CONFIG_FAILURE_STATUSES:
+            return True
+        if (sample.error_type or "").casefold() in _NOT_FOUND_ERROR_TYPES:
+            return True
+    return False

@@ -277,3 +277,84 @@ def test_aggregate_excluded_only_rows_do_not_surface_as_provider_errors() -> Non
     assert provider["error_rate"] == 0.0
     assert provider["top_error"] is None
     assert provider["excluded_count"] == 2
+
+
+def test_aggregate_excludes_organic_config_failures_by_status() -> None:
+    # Parasail-style: organic errors carry the provider's RAW error_type +
+    # error_status (not the synthetic classifier's normalized type). A 403
+    # "deployment doesn't exist" / 404 model-not-found is a config failure,
+    # NOT downtime, so it must be excluded from uptime — while a 502 still
+    # counts as a real provider-health failure.
+    samples = [
+        _sample(provider="parasail", model="deepseek/deepseek-v3.2", ttft=120),
+        _sample(provider="parasail", model="deepseek/deepseek-v3.2", ttft=130),
+        _sample(
+            provider="parasail",
+            model="deepseek/deepseek-v3.2",
+            status="error",
+            error_type="provider_error",
+            error_status=403,
+        ),
+        _sample(
+            provider="parasail",
+            model="deepseek/deepseek-v3.2",
+            status="error",
+            error_type="provider_error",
+            error_status=404,
+        ),
+        _sample(
+            provider="parasail",
+            model="deepseek/deepseek-v3.2",
+            status="error",
+            error_type="provider_error",
+            error_status=502,
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+
+    # 2 success + 1 real 502 downtime = 3 counted; the 403 + 404 are excluded.
+    assert model["sample_count"] == 3
+    assert model["excluded_count"] == 2
+    assert model["uptime"] == round(2 / 3, 4)
+    assert model["errors"] == {"provider_error": 1}  # only the 502 counts
+
+
+def test_aggregate_excludes_organic_not_found_error_type() -> None:
+    # A raw model_not_found error_type (even without a 4xx status) is a config
+    # miss, not downtime.
+    samples = [
+        _sample(provider="parasail", model="z-ai/glm-5", ttft=100),
+        _sample(
+            provider="parasail",
+            model="z-ai/glm-5",
+            status="error",
+            error_type="model_not_found",
+            error_status=None,
+        ),
+    ]
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    assert model["sample_count"] == 1
+    assert model["excluded_count"] == 1
+    assert model["uptime"] == 1.0
+
+
+def test_aggregate_still_counts_real_provider_downtime() -> None:
+    # 429s, 5xx, and timeouts are genuine provider-health failures and MUST
+    # still count against uptime (not silently excluded by the config filter).
+    samples = [
+        _sample(provider="parasail", model="x/y", ttft=100),
+        _sample(provider="parasail", model="x/y", status="error",
+                error_type="rate_limited", error_status=429),
+        _sample(provider="parasail", model="x/y", status="error",
+                error_type="ttfb_exceeded", error_status=None),
+        _sample(provider="parasail", model="x/y", status="error",
+                error_type="provider_error", error_status=500),
+    ]
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    assert model["sample_count"] == 4
+    assert model["excluded_count"] == 0
+    assert model["uptime"] == 0.25
