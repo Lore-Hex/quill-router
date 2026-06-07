@@ -59,7 +59,13 @@ def create_app(
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)
-    app = FastAPI(title="TrustedRouter", version="0.1.0")
+    # Swagger UI moves to /api/reference so the public docs hub can own
+    # /docs (the marketing nav points "Docs" there). ReDoc stays at /redoc.
+    app = FastAPI(
+        title="TrustedRouter",
+        version="0.1.0",
+        docs_url="/api/reference",
+    )
     app.state.settings = settings
 
     register_http_middleware(app, settings)

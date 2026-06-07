@@ -1,0 +1,77 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Quickstart">
+  <div class="marketing-copy">
+    <h2>Quickstart: one base_url change.</h2>
+    <ul class="check-list">
+      <li>✓ OpenAI-compatible — point any OpenAI/Anthropic SDK at TrustedRouter</li>
+      <li>✓ Read your key from <code>TRUSTEDROUTER_API_KEY</code></li>
+      <li>✓ Use <code>trustedrouter/auto</code> for provider failover</li>
+      <li>✓ Add <code>provider.data_collection = "deny"</code> for zero-retention routing</li>
+    </ul>
+    <a class="btn" href="/docs/migrate-from-openrouter">Migration guide →</a>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Drop-in</span><span>TypeScript</span></div>
+    <pre><code>const client = new OpenAI({
+  apiKey: process.env.TRUSTEDROUTER_API_KEY,
+  baseURL: "{{ api_base_url }}"
+})
+
+const r = await client.chat.completions.create({
+  model: "trustedrouter/auto",
+  messages: [{ role: "user", content: "Hello" }]
+})</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Guides</h2>
+  <div class="marketing-grid three">
+    <a class="marketing-card card-as-link" href="/docs/agent-setup"><h3>Agent setup</h3><p>Point Codex, Claude Code, Cursor, or any OpenAI-compatible client at TrustedRouter.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/compare/openrouter"><h3>vs OpenRouter</h3><p>How TrustedRouter compares to closed routers.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/security"><h3>Security &amp; attestation</h3><p>How the attested gateway and trust record work.</p><span class="card-link">Open →</span></a>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">SDKs</h2>
+  <div class="repo-grid">
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-swift"><span class="mono">trusted-router-swift</span><span class="repo-sub">Swift SDK</span></a>
+    <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Open-source router</span></a>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">API reference</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>OpenAI-compatible endpoints</h3>
+      <p>Base URL <code>{{ api_base_url }}</code>. Authenticate with a <code>Bearer sk-tr-…</code> key.</p>
+      <ul class="check-list">
+        <li><code>POST /v1/chat/completions</code></li>
+        <li><code>POST /v1/responses</code></li>
+        <li><code>POST /v1/embeddings</code></li>
+        <li><code>GET /v1/models</code></li>
+      </ul>
+      <p style="margin-top:14px"><a class="card-link" href="/api/reference">Interactive API reference →</a></p>
+    </div>
+    <div class="marketing-card">
+      <h3>Agent-readable docs</h3>
+      <p>Point your coding agent at the machine-readable docs for the full surface:</p>
+      <ul class="check-list">
+        <li><a href="/docs/llms.txt">/docs/llms.txt</a> — concise index</li>
+        <li><a href="/docs/llms-full.txt">/docs/llms-full.txt</a> — full context</li>
+        <li><a href="https://github.com/Lore-Hex/quill-router">GitHub</a> — source + issues</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

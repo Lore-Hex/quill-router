@@ -3,8 +3,8 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /End-to-end encrypted LLMs/ })).toBeVisible();
-  await expect(page.locator(".proof-card .mono", { hasText: "trustedrouter/auto" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Private, reliable LLM routing/ })).toBeVisible();
+  await expect(page.getByText("ATTESTED GATEWAY")).toBeVisible();
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
@@ -95,27 +95,24 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /End-to-end encrypted LLMs/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Private, reliable LLM routing/ })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 });
 
-test("homepage exposes stablecoin, open-source, and trust claims", async ({ page }) => {
+test("homepage exposes privacy, no-subscription, and open-source claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("End-to-end encrypted AI").first()).toBeVisible();
-  await expect(page.getByText("Stablecoin")).toBeVisible();
-  await expect(page.getByText("No subscriptions")).toBeVisible();
-  await expect(page.getByText("Open source hosting")).toBeVisible();
-  await expect(page.locator(".panel-body .mono", { hasText: "api.trustedrouter.com" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "trusted-router-py" })).toHaveAttribute(
-    "href",
-    "https://github.com/Lore-Hex/trusted-router-py",
-  );
-  await expect(page.getByRole("link", { name: "trusted-router-js" })).toHaveAttribute(
-    "href",
-    "https://github.com/Lore-Hex/trusted-router-js",
-  );
+  await expect(page.getByText("Privacy-first AI gateway").first()).toBeVisible();
+  await expect(page.getByText("No subscription required")).toBeVisible();
+  await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
+  await expect(page.getByText("ATTESTED GATEWAY")).toBeVisible();
+  await expect(
+    page.locator('a[href="https://github.com/Lore-Hex/trusted-router-py"]').first(),
+  ).toBeVisible();
+  await expect(
+    page.locator('a[href="https://github.com/Lore-Hex/trusted-router-js"]').first(),
+  ).toBeVisible();
 });
 
 test("local trust page links the public source repositories and release files", async ({ page }) => {

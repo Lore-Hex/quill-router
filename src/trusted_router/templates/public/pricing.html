@@ -1,0 +1,56 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-grid three" aria-label="Ways to pay">
+  <div class="marketing-card">
+    <span class="card-icon">⚡</span>
+    <h3>Pay as you go</h3>
+    <p>Prepaid credits. Add a card and you're charged only for what you route — provider cost plus a small routing margin. Auto-refill keeps prepaid routes flowing. Wallet accounts can start at <strong>$0</strong>.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-icon">🔑</span>
+    <h3>Bring your own key</h3>
+    <p>BYOK for any provider where you already have committed spend or enterprise rate limits. Keep your discounts; gain the attested prompt path, failover, and one unified API.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-icon">→</span>
+    <h3>Migration credits</h3>
+    <p>Teams already spending more than $100/month on LLMs can request migration credits by approval. Move your workloads over with one base_url change and keep your runway.</p>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:40px">
+  <div class="marketing-copy">
+    <h2>Transparent, usage-based. No subscription.</h2>
+    <ul class="check-list">
+      <li>✓ No monthly plan or seat fees — you pay for tokens you route</li>
+      <li>✓ Per-model prices are published on the <a href="/models">models page</a></li>
+      <li>✓ Prepaid credits, BYOK, and usage-based billing all supported</li>
+      <li>✓ Metadata-only billing records — no prompt or output bodies stored</li>
+      <li>✓ Stripe and stablecoin checkout for prepaid credits</li>
+    </ul>
+    <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>What you pay</span><span>per request</span></div>
+    <pre><code># You are billed the provider's price for the
+# tokens you use, plus a small routing margin.
+#
+# Per-model prices (prompt / completion per 1M
+# tokens) are listed on /models — e.g.:
+#
+#   anthropic/claude-sonnet-4.5   $3.00 / $15.00
+#   openai/gpt-5.1                $2.50 / $10.00
+#   deepseek/deepseek-v4-flash    $0.27 / $0.27
+#
+# trustedrouter/auto picks a healthy route and
+# bills at the selected provider's price.</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid two" style="margin-top:40px">
+  <div class="check-card">🛡 <span>Privacy is structural, not a paid add-on — every plan routes through the attested, no-log gateway.</span></div>
+  <div class="check-card">↺ <span>Provider failover with <code>trustedrouter/auto</code> is included on every plan.</span></div>
+</section>
+
+{% endblock %}

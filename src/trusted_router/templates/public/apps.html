@@ -1,0 +1,38 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Apps on TrustedRouter">
+  <div class="marketing-copy">
+    <h2>Apps building on TrustedRouter.</h2>
+    <p>Apps that route through TrustedRouter can self-identify and appear here. Identification is <strong>opt-in by construction</strong>: an app shows up only if it sends a public title with its requests. Untitled traffic is bucketed anonymously — we never expose a workspace, key, or any prompt content.</p>
+    <ul class="check-list">
+      <li>✓ Self-reported via the <code>X-Title</code> header (or HTTP <code>Referer</code>)</li>
+      <li>✓ Counts and token volume only — never tenant, key, or prompt data</li>
+      <li>✓ Anonymous "Direct" bucket for everything untitled</li>
+    </ul>
+    <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Appear in the directory</span><span>HTTP header</span></div>
+    <pre><code># Add one header to your inference requests:
+
+X-Title: My AI Product
+
+# That's it. Your app's name (and only its name)
+# becomes eligible for the public apps directory.
+# Send nothing and your traffic stays anonymous.</code></pre>
+  </div>
+</section>
+
+<section class="callout" style="margin-top:40px">
+  <strong>Public usage leaderboard rolling out.</strong> Ranked app usage (built on the same privacy-safe rollups as the
+  <a href="/leaderboard">provider &amp; model leaderboard</a>) is being seeded now. In the meantime, set <code>X-Title</code> so your app is counted from day one.
+</section>
+
+<section class="marketing-grid three" style="margin-top:40px">
+  <div class="marketing-card"><h3>Privacy-safe by design</h3><p>The directory is built from metadata-only rollups. No prompt or output bodies are ever read or stored.</p></div>
+  <div class="marketing-card"><h3>One API, every model</h3><p>Apps reach hundreds of models across providers through a single OpenAI-compatible endpoint.</p></div>
+  <div class="marketing-card"><h3>Bring your own users</h3><p>With <a href="/sign-in-with-trustedrouter">Sign in with TrustedRouter</a>, your users bring their own credits and any model.</p></div>
+</section>
+
+{% endblock %}

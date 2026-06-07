@@ -171,19 +171,18 @@ def test_local_key_file_accepts_operator_aliases(tmp_path: Path) -> None:
 def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
-    # Marketing page hero copy stays.
-    assert "Get a key" in dashboard.text
-    assert "Stablecoin" in dashboard.text
+    # Marketing page hero + key surfaces stay real. Redesigned 2026-06: a
+    # static routing-diagram hero + reliability stat cards replace the
+    # animated orbital scene and the world map.
+    assert "Get API key" in dashboard.text
+    assert "ATTESTED GATEWAY" in dashboard.text  # routing-diagram hero
+    assert "Live regions" in dashboard.text  # reliability stats
+    assert "trustedrouter/auto" in dashboard.text  # routing model
     assert "$25 USDC" not in dashboard.text
     assert "Stripe Crypto" not in dashboard.text
-    assert "regional routing" in dashboard.text
-    assert "regions-map-svg" in dashboard.text  # the new world map renders
-    assert "Global footprint: 7 regions" in dashboard.text
-    assert "aws-us-west-2" in dashboard.text
     assert "https://quill.lorehex.co" in dashboard.text
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
-    assert "api.trustedrouter.com" in dashboard.text
     assert 'href="/providers"' in dashboard.text
     # The model catalog mentions the providers we serve.
     assert "DeepSeek" in dashboard.text

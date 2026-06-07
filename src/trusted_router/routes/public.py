@@ -219,6 +219,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_sign_in_with_trustedrouter() -> str:
         return public_page_html(settings, "sign-in-with-trustedrouter")
 
+    @public_html_route("/pricing")
+    async def pricing() -> str:
+        return public_page_html(settings, "pricing")
+
+    @public_html_route("/docs")
+    async def docs_hub() -> str:
+        return public_page_html(settings, "docs")
+
+    @public_html_route("/apps")
+    async def apps() -> str:
+        return public_page_html(settings, "apps")
+
     @public_html_route("/security")
     async def security() -> str:
         return public_page_html(settings, "security")

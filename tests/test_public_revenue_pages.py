@@ -106,19 +106,20 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     response = client.get("/")
 
     assert response.status_code == 200
+    # Core invariant: the homepage links to the PUBLIC models page, never the
+    # keyed API catalog.
     assert 'href="/models"' in response.text
     assert 'href="https://api.trustedrouter.com/v1/models"' not in response.text
-    assert "Migration credits" in response.text
-    assert "spending more than $100 per month on LLMs" in response.text
-    assert "Provider failover" in response.text
-    assert "Public status separates router health from provider health" in response.text
-    assert "/static/hero-router-scene.js" in response.text
-    assert "data-router-scene" in response.text
-    # Hero leads with the "tell your agent to move you over" prompt flow.
-    assert "Move over in one prompt" in response.text
-    assert "Migrate this project to TrustedRouter" in response.text
+    # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
+    # animated orbital scene, on the friend-provided modern layout. Assert the
+    # new conversion surface rather than the old orbital-scene markup.
+    assert "Private, reliable LLM routing" in response.text  # new H1
+    assert "ATTESTED GATEWAY" in response.text  # routing diagram
+    assert "Get API key" in response.text  # primary CTA
+    assert "Provider failover" in response.text  # hero proof row
     assert "data_collection" in response.text  # privacy-level routing pref
-    assert "Sign up &amp; get a key" in response.text
+    assert "Migration credits" in response.text
+    assert "$100/month" in response.text
 
 
 def test_console_credit_note_is_manual(client: TestClient) -> None:

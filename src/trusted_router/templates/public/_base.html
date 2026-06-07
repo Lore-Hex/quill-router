@@ -58,18 +58,15 @@
     <nav class="nav">
       <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
       <div class="links">
-        <a href="/compare/openrouter">OpenRouter</a>
-        <a href="/docs/migrate-from-openrouter">Migrate</a>
-        <a href="/sign-in-with-trustedrouter">Sign-in API</a>
-        <a href="/security">Security</a>
-        <a href="/legal">Legal</a>
         <a href="/models">Models</a>
         <a href="/providers">Providers</a>
-        <a href="/benchmarks">Benchmarks</a>
-        <a href="/leaderboard">Leaderboard</a>
-        <a href="/chat">Chat</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/docs">Docs</a>
+        <a href="/security">Security</a>
         <a href="/status">Status</a>
+        <span class="nav-sep" aria-hidden="true"></span>
         <a href="https://trust.trustedrouter.com">Trust</a>
+        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
         {# Theme toggle: flips document.documentElement.dataset.theme
            between unset (dark, the default) and "light", persisting the
            choice to localStorage. The glyph is set by dashboard.js to
@@ -102,21 +99,49 @@
     {% endblock %}
     {% block body %}{% endblock %}
   </main>
-  <footer class="site-footer" aria-label="TrustedRouter documentation">
-    <div class="site-footer-inner">
-      <div>
-        <strong>Docs for agents</strong>
-        <span>Short setup paths for coding agents, eval runners, and OpenAI-compatible clients.</span>
+  <footer class="site-footer" aria-label="TrustedRouter">
+    <div class="site-footer-cols">
+      <div class="footer-brand">
+        <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
+        <p>Privacy-first AI gateway for production inference. One API for every model, with an inspectable prompt path.</p>
       </div>
-      <nav class="site-footer-links" aria-label="Agent documentation links">
-        <a href="/docs/agent-setup">Agent setup</a>
-        <a href="/docs/evals">Evals</a>
-        <a href="/legal">Legal packet</a>
+      <div class="footer-col">
+        <h3>Product</h3>
+        <a href="/models">Models</a>
+        <a href="/providers">Providers</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/leaderboard">Leaderboard</a>
+        <a href="/chat">Chat playground</a>
+        <a href="/compare/openrouter">vs OpenRouter</a>
+        <a href="https://quill.lorehex.co">Quill hardware</a>
+      </div>
+      <div class="footer-col">
+        <h3>Trust</h3>
+        <a href="/security">Security</a>
+        <a href="/status">Status</a>
+        <a href="https://trust.trustedrouter.com">Attestation</a>
+        <a href="/legal">Privacy &amp; terms</a>
+        <a href="/legal/dpa">DPA</a>
+        <a href="/legal/baa">BAA</a>
+      </div>
+      <div class="footer-col">
+        <h3>Developers</h3>
+        <a href="/docs">Docs</a>
+        <a href="/sign-in-with-trustedrouter">Sign-in API</a>
         <a href="/docs/migrate-from-openrouter">Migrate</a>
+        <a href="/docs/agent-setup">Agent setup</a>
+        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
         <a href="/docs/llms.txt">llms.txt</a>
-        <a href="/docs/llms-full.txt">llms-full.txt</a>
-      </nav>
+      </div>
+      <div class="footer-col">
+        <h3>Company</h3>
+        <a href="https://jperla.com/blog">Blog</a>
+        <a href="https://jperla.com/blog/attestation-is-all-you-need">Attestation is All You Need</a>
+        <a href="https://jperla.com/blog/why-not-openrouter-litellm-or-vercel-ai-gateway">Why not OpenRouter / LiteLLM?</a>
+        <a href="https://jperla.com/blog/trustedrouter-founding-engineer">About</a>
+      </div>
     </div>
+    <div class="site-footer-base">© 2026 TrustedRouter · <a href="/legal">Legal</a> · <a href="/legal">Privacy</a></div>
   </footer>
   <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
     <form method="dialog">

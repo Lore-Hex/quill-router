@@ -4,11 +4,11 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter — End-to-end encrypted LLMs. One API. Provable privacy."
+OG_TITLE = "TrustedRouter — Private, reliable LLM routing for production AI apps"
 OG_DESCRIPTION = (
-    "Point Codex, Claude Code, or any OpenAI/Anthropic app at TrustedRouter and "
-    "stop worrying about who sees your prompts. Hundreds of models, one key, an "
-    "attested gateway you can cryptographically verify never logs you."
+    "Route requests across OpenAI, Anthropic, Google, Mistral, DeepSeek, Cerebras "
+    "and more through one OpenAI-compatible API. An attested gateway with no "
+    "prompt/output logs, provider failover, BYOK, and an open-source trust path."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630

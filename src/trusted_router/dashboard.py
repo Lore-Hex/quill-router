@@ -93,6 +93,9 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/confidential-computing-llm",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
+    "/pricing",
+    "/docs",
+    "/apps",
     "/docs/agent-setup",
     "/docs/evals",
     "/docs/migrate-from-openrouter",
@@ -360,6 +363,33 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "account — instant access to hundreds of models, billed to them, "
             "through an attested no-log gateway. Integrate in minutes with the "
             "Python, TypeScript, or Swift SDK."
+        ),
+    ),
+    "pricing": PublicPage(
+        template="public/pricing.html",
+        title="Pricing — Usage-Based, No Subscription",
+        description=(
+            "Prepaid credits, BYOK, or usage-based billing — pay the provider "
+            "price plus a small routing margin, with no monthly plan. Per-model "
+            "prices are published on the models page."
+        ),
+    ),
+    "docs": PublicPage(
+        template="public/docs.html",
+        title="Docs — Quickstart, SDKs, and API Reference",
+        description=(
+            "Point any OpenAI-compatible SDK at TrustedRouter with one base_url "
+            "change. Guides, Python / TypeScript / Swift SDKs, and the "
+            "OpenAI-compatible API reference."
+        ),
+    ),
+    "apps": PublicPage(
+        template="public/apps.html",
+        title="Apps — Built on TrustedRouter",
+        description=(
+            "Apps routing through TrustedRouter can self-identify and appear "
+            "here. Opt-in by construction and privacy-safe: names and counts "
+            "only, never prompts or keys."
         ),
     ),
 }
