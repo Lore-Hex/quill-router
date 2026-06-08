@@ -42,6 +42,17 @@ def register_byok_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         slug = _require_byok_provider(provider)
+        if not settings.byok_registration_enabled:
+            # Replica nodes (e.g. the AWS control-plane) hold decrypt-only on
+            # the byok-envelope KMS key and are not the registration authority.
+            # Refuse the write cleanly here — before attempting a KMS encrypt
+            # that would be denied — and point callers at the primary endpoint.
+            raise api_error(
+                503,
+                "BYOK key registration is handled by the primary control plane. "
+                "Register keys at https://api.trustedrouter.com.",
+                ErrorType.SERVICE_UNAVAILABLE,
+            )
         api_key = body.api_key or body.key
         secret_ref = body.secret_ref
         key_hint = body.key_hint

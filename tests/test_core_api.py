@@ -783,6 +783,27 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
     assert resp.json()["error"]["type"] == "service_unavailable"
 
 
+def test_byok_registration_refused_when_disabled_on_replica() -> None:
+    # Replica nodes (byok_registration_enabled=False, e.g. the AWS control
+    # plane which holds decrypt-only on byok-envelope) refuse BYOK
+    # registration with a clean 503 BEFORE any KMS attempt — a direct hit to a
+    # decrypt-only node never 500s.
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+
+    replica = TestClient(
+        create_app(Settings(environment="test", byok_registration_enabled=False))
+    )
+    resp = replica.put(
+        "/v1/byok/providers/cerebras",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"api_key": "csk-test-secret-value-1234"},
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"]["type"] == "service_unavailable"
+    assert "primary control plane" in resp.json()["error"]["message"]
+
+
 def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     client: TestClient,
     user_headers: dict[str, str],

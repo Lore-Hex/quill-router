@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     byok_kms_key_name: str | None = None
     byok_envelope_key_b64: str | None = None
     byok_envelope_key_ref: str = "trustedrouter/byok-envelope-key/v1"
+    # BYOK key REGISTRATION wraps the secret with the byok-envelope KMS key,
+    # which only the primary (GCP) control-plane SA may encrypt with — replica
+    # nodes (e.g. the AWS control-plane) hold decrypt-only and must not attempt
+    # it. Set False on replicas so registration is refused cleanly (clean 503)
+    # instead of attempting a KMS encrypt it can't perform. Unwrapping at
+    # inference (decrypt) is unaffected.
+    byok_registration_enabled: bool = True
 
     auth_session_ttl_seconds: int = 60 * 60 * 24 * 30
     oauth_authorization_code_ttl_seconds: int = 10 * 60
