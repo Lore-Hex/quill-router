@@ -60,6 +60,10 @@ ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" 
 # from the project-level secretAccessor binding (infra.sh), like every other
 # provider secret.
 ensure_secret_from_env_file "COHERE_API_KEY" "trustedrouter-cohere-api-key"
+# Voyage AI — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).
+# Reads VOYAGE_API_KEY from ~/.quill_cloud_keys.private. Same project-level
+# secretAccessor binding as every other provider secret.
+ensure_secret_from_env_file "VOYAGE_API_KEY" "trustedrouter-voyage-api-key"
 # 2026-05 — six new backend providers. All OpenAI-compatible chat
 # completions; the existing enclave OpenAI-shape adapter dispatches
 # to whichever base URL the catalog selects per model.
