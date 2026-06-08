@@ -758,6 +758,31 @@ def test_byok_provider_config_never_stores_or_returns_raw_key(
     assert "encrypted_secret" not in str(fetched.json())
 
 
+def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
+    client: TestClient,
+    user_headers: dict[str, str],
+    monkeypatch,
+) -> None:
+    # A management caller can land on a control-plane node whose GCP SA can't
+    # encrypt with the byok-envelope KMS key (e.g. the AWS/cross-cloud SA is
+    # decrypt-only by design). That must return a clean 503 — never an
+    # unhandled 500 + KMS stack trace (prod 2026-06-08).
+    import trusted_router.routes.byok as byok_routes
+    from google.api_core import exceptions as gcp_exceptions
+
+    def _denied(*_args: object, **_kwargs: object) -> object:
+        raise gcp_exceptions.PermissionDenied("useToEncrypt denied on byok-envelope")
+
+    monkeypatch.setattr(byok_routes, "encrypt_byok_secret", _denied)
+    resp = client.put(
+        "/v1/byok/providers/cerebras",
+        headers=user_headers,
+        json={"api_key": "csk-test-secret-value-1234"},
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"]["type"] == "service_unavailable"
+
+
 def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     client: TestClient,
     user_headers: dict[str, str],

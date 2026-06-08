@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from google.api_core import exceptions as gcp_exceptions
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_byok_secret
@@ -14,6 +16,8 @@ from trusted_router.security import key_label
 from trusted_router.serialization import byok_provider_shape
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 
 def register_byok_routes(router: APIRouter) -> None:
@@ -53,12 +57,44 @@ def register_byok_routes(router: APIRouter) -> None:
             secret_ref = _default_byok_secret_ref(principal.workspace.id, slug)
             if key_hint is None:
                 key_hint = _secret_hint(api_key)
-            encrypted_secret = encrypt_byok_secret(
-                api_key,
-                settings,
-                workspace_id=principal.workspace.id,
-                provider=slug,
-            )
+            try:
+                encrypted_secret = encrypt_byok_secret(
+                    api_key,
+                    settings,
+                    workspace_id=principal.workspace.id,
+                    provider=slug,
+                )
+            except gcp_exceptions.PermissionDenied as exc:
+                # The BYOK envelope DEK is wrapped with the GCP KMS
+                # byok-envelope key, which ONLY the GCP control-plane SA
+                # (trusted-router-control-run@) may encrypt with — the
+                # AWS/cross-cloud SA is decrypt-only by design (it just
+                # unwraps keys at inference). So a management caller hitting a
+                # non-primary endpoint (e.g. the AWS control-plane directly)
+                # can't register a key. Return a clean, actionable 503 instead
+                # of an unhandled 500 + KMS stack trace.
+                log.warning(
+                    "byok.encrypt_permission_denied",
+                    extra={"provider": slug, "workspace_id": principal.workspace.id},
+                )
+                raise api_error(
+                    503,
+                    "BYOK key registration is not available on this endpoint. "
+                    "Register keys through the primary API at https://api.trustedrouter.com.",
+                    ErrorType.SERVICE_UNAVAILABLE,
+                ) from exc
+            except gcp_exceptions.GoogleAPICallError as exc:
+                # Any other KMS/RPC failure (transient unavailability, timeout):
+                # a best-effort retry-able error, not an unhandled 500.
+                log.error(
+                    "byok.encrypt_failed",
+                    extra={"provider": slug, "error": type(exc).__name__},
+                )
+                raise api_error(
+                    503,
+                    "BYOK key encryption is temporarily unavailable. Please retry shortly.",
+                    ErrorType.SERVICE_UNAVAILABLE,
+                ) from exc
         elif secret_ref is None:
             raise api_error(400, "api_key or secret_ref is required", ErrorType.BAD_REQUEST)
 
