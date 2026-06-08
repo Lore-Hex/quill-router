@@ -40,6 +40,12 @@ jobs:
           # Manual workflow_dispatch runs can force-enable via the checkbox
           # regardless of the variable. Empty (unset) => Cohere skipped.
           TR_EMBEDDINGS_INCLUDE_COHERE: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.include_cohere == 'true') && '1' || vars.TR_EMBEDDINGS_INCLUDE_COHERE }}
+          # Voyage / Qwen3-Embedding-8B (DeepInfra) / Gemini embeddings are
+          # permanently live (verified in-gateway 2026-06-08: 1024 / 4096 /
+          # 3072 dims), so always include them in the daily probe.
+          TR_EMBEDDINGS_INCLUDE_VOYAGE: '1'
+          TR_EMBEDDINGS_INCLUDE_DEEPINFRA: '1'
+          TR_EMBEDDINGS_INCLUDE_GEMINI: '1'
         run: |
           set -euo pipefail
           # tr-deploy SA needs secretmanager.versions.access on this secret.
