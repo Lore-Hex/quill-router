@@ -755,9 +755,14 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
   .home-hero { padding:56px 24px 48px; }
   .home-hero h1 { font-size:32px; }
   .rd-cols { flex-direction:column; align-items:stretch; }
+  .rd-left, .rd-mid, .rd-right { width:100%; }
+  .rd-node { display:block; }
   .rd-right { align-items:stretch; }
   .rd-provider { width:auto; }
-  .rd-flow { display:none; }
+  /* Vertical flow connectors on mobile (was display:none, which left the
+     App/Gateway/Provider boxes visually disconnected — read as broken). */
+  .rd-flow { flex:0 0 auto; height:26px; display:flex; align-items:center; justify-content:center; }
+  .rd-flow span { width:0; height:26px; border-top:0; border-left:2px dashed var(--green); }
   .home-matrix .matrix-row { grid-template-columns:1.3fr 1fr; }
   .home-matrix .matrix-row > *:nth-child(3) { display:none; }
 }
