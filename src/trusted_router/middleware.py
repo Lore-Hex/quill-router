@@ -219,12 +219,31 @@ def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | 
         subject = _fingerprint(user or ip)
         limit = settings.rate_limit_ip_per_window
 
-    hit = STORE.hit_rate_limit(
-        namespace=namespace,
-        subject=subject,
-        limit=limit,
-        window_seconds=settings.rate_limit_window_seconds,
-    )
+    try:
+        hit = STORE.hit_rate_limit(
+            namespace=namespace,
+            subject=subject,
+            limit=limit,
+            window_seconds=settings.rate_limit_window_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort guard, must not 500
+        # Rate limiting is a best-effort guard, not core request logic. The
+        # Spanner read-modify-write on the (namespace#subject#bucket) counter
+        # ABORTS under hot-row contention — e.g. a bot bursting junk GETs from
+        # one IP all increment the same row, deadlocking the transaction
+        # ("Aborted: Deadlock with higher priority transaction", observed
+        # 2026-06-08 on scanner traffic). Never crash a request because the
+        # limiter is contended or unavailable: fail OPEN (allow) and log.
+        log.warning(
+            "rate_limit.store_error",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "namespace": namespace,
+                "path": path,
+                "error": type(exc).__name__,
+            },
+        )
+        return None
     if hit.allowed:
         return None
     request_id = getattr(request.state, "request_id", None)

@@ -439,6 +439,34 @@ def test_rate_limit_returns_stable_openrouter_style_error() -> None:
     assert second.headers["retry-after"]
 
 
+def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
+    """A Spanner abort/deadlock in the rate-limit counter must NEVER 500 a
+    request. Rate limiting is a best-effort guard, so a contended/unavailable
+    store fails OPEN (allow). Regression for the 2026-06-08 production
+    "Aborted: Deadlock with higher priority transaction" that surfaced as an
+    unhandled 500 on bot scanner traffic hammering one IP's counter row."""
+    from trusted_router import middleware
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("Aborted: Deadlock with higher priority transaction.")
+
+    app = create_app(
+        Settings(
+            environment="test",
+            rate_limit_ip_per_window=1,
+            rate_limit_window_seconds=60,
+        )
+    )
+    client = TestClient(app)
+    monkeypatch.setattr(middleware.STORE, "hit_rate_limit", boom)
+    # Even an aggressive limit + a raising store: both requests pass through
+    # (fail-open) — not 429, and crucially not 500.
+    first = client.get("/v1/models")
+    second = client.get("/v1/models")
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
 def test_production_config_fails_closed() -> None:
     internal_token = "tok" + "en"
     webhook_secret = "whsec_" + "test"
