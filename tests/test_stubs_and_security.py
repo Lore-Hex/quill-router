@@ -184,9 +184,11 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert 'href="/status"' in dashboard.text
     assert "https://github.com/Lore-Hex/trusted-router-py" in dashboard.text
     assert 'href="/providers"' in dashboard.text
-    # The model catalog mentions the providers we serve.
+    # The homepage features the open-weight leaders (the main use) by name.
     assert "DeepSeek" in dashboard.text
-    assert "Mistral" in dashboard.text
+    assert "Qwen" in dashboard.text
+    assert "GLM" in dashboard.text
+    assert "Gemma" in dashboard.text
     assert "Google" in dashboard.text
     # Inline console is gone — these used to be rendered server-side here.
     assert "Workspace Console" not in dashboard.text

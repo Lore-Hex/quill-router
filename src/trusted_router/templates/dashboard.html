@@ -70,7 +70,7 @@
       <div class="home-hero-copy">
         <span class="hero-badge">Privacy-first AI gateway</span>
         <h1>Private, reliable LLM routing<br class="br-wide"> for production AI apps.</h1>
-        <p class="lead">Route requests across OpenAI, Anthropic, Google, Mistral, DeepSeek, Cerebras, and other providers through one OpenAI-compatible API. TrustedRouter keeps prompt traffic on an attested gateway, avoids prompt/output logs, and gives teams a verifiable trust path instead of another black-box router.</p>
+        <p class="lead">Route the open-weight leaders — <strong>Qwen, GLM, DeepSeek, Gemma, Kimi, MiniMax</strong> — plus every frontier model, through one OpenAI-compatible API. TrustedRouter keeps prompt traffic on an attested gateway, avoids prompt/output logs, and gives teams a verifiable trust path instead of another black-box router.</p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
           <a class="btn" href="https://trust.trustedrouter.com">🛡 Verify trust</a>
@@ -111,7 +111,7 @@
           </div>
           <div class="rd-flow rd-flow-2" aria-hidden="true"><span></span></div>
           <div class="rd-col rd-right">
-            {% for prov in ["OpenAI","Anthropic","Google","Mistral","DeepSeek","Cerebras"] %}
+            {% for prov in ["Qwen","GLM","DeepSeek","Gemma","Kimi","+ frontier"] %}
             <div class="rd-provider">{{ prov }}</div>
             {% endfor %}
           </div>
@@ -293,17 +293,20 @@ const response = await client.chat.completions.create({
     {# 9. Models preview #}
     <section class="home-section">
       <div class="home-wrap">
-        <h2>Route by model, provider, price, or privacy posture.</h2>
+        <h2>Open-weight leaders, at a fraction of frontier cost.</h2>
+        <p class="section-sub">Qwen, GLM, DeepSeek, Gemma, Kimi and MiniMax — the models most teams actually run — each routed across multiple hosts for price and availability. Frontier models too.</p>
         <div class="table-wrap">
           <table class="home-table">
-            <thead><tr><th>Model</th><th>Provider</th><th>Context</th><th>Prompt price</th><th>Privacy</th></tr></thead>
+            <thead><tr><th>Model</th><th>Maker</th><th>Context</th><th>Prompt price</th><th>Class</th></tr></thead>
             <tbody>
               {% for m in [
-                {"model":"trustedrouter/auto","provider":"Multiple (failover)","ctx":"Varies","price":"Varies","priv":"Attested + Zero Retention"},
-                {"model":"anthropic/claude-sonnet-4.5","provider":"Anthropic","ctx":"200k","price":"$3.00 / 1M","priv":"Zero Retention"},
-                {"model":"openai/gpt-5.1","provider":"OpenAI","ctx":"128k","price":"$2.50 / 1M","priv":"Zero Retention"},
-                {"model":"google/gemini-2.5-pro","provider":"Google","ctx":"2M","price":"$1.25 / 1M","priv":"Standard"},
-                {"model":"deepseek/deepseek-v4-flash","provider":"DeepSeek / Cerebras","ctx":"128k","price":"$0.27 / 1M","priv":"Zero Retention"}
+                {"model":"qwen/qwen3-235b-a22b-2507","provider":"Alibaba","ctx":"262k","price":"$0.11 / 1M","priv":"Open weights"},
+                {"model":"z-ai/glm-5","provider":"Zhipu AI","ctx":"205k","price":"$0.66 / 1M","priv":"Open weights"},
+                {"model":"deepseek/deepseek-v4-flash","provider":"DeepSeek","ctx":"1M","price":"$0.14 / 1M","priv":"Open weights"},
+                {"model":"google/gemma-4-31b-it","provider":"Google","ctx":"262k","price":"$0.14 / 1M","priv":"Open weights"},
+                {"model":"moonshotai/kimi-k2-thinking","provider":"Moonshot","ctx":"262k","price":"$0.66 / 1M","priv":"Open weights"},
+                {"model":"trustedrouter/auto","provider":"Multiple (failover)","ctx":"Varies","price":"Varies","priv":"Attested + ZDR"},
+                {"model":"anthropic/claude-sonnet-4.5","provider":"Anthropic","ctx":"200k","price":"$3.00 / 1M","priv":"Frontier"}
               ] %}
               <tr><td class="mono">{{ m.model }}</td><td>{{ m.provider }}</td><td>{{ m.ctx }}</td><td>{{ m.price }}</td><td><span class="pill">{{ m.priv }}</span></td></tr>
               {% endfor %}
