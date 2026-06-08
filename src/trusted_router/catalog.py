@@ -641,6 +641,24 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://cohere.com/security",
     ),
+    # Voyage AI — first-party retrieval embeddings (voyage-3-large etc.).
+    # OpenAI-shaped: the enclave talks to api.voyageai.com/v1/embeddings with
+    # {model, input} and Bearer auth, so the existing OpenAI-compatible
+    # embeddings adapter dispatches it by base-URL + key swap.
+    "voyage": Provider(
+        slug="voyage",
+        name="Voyage AI",
+        supports_embeddings=True,
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Marked ZDR — Voyage AI does not retain prompt content for "
+            "TrustedRouter's configured account and does not train on customer "
+            "API data. (Not a confidential-compute/TEE provider.)"
+        ),
+        provider_policy_url="https://www.voyageai.com/privacy",
+    ),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
 # Anthropic-on-Vertex / Gemini-on-Vertex quota approvals.
@@ -697,6 +715,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
         "cohere",
+        # Voyage — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).
+        "voyage",
     }
 )
 
@@ -1364,6 +1384,29 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "upstream_id": "embed-multilingual-v3.0",
         "context_length": 512,
         "cost_dollars_per_million": "0.10",
+    },
+    # Voyage AI — api.voyageai.com/v1/embeddings (OpenAI-shaped). voyage-3-large
+    # is top-tier retrieval-per-dollar; supports MRL output dims + int8/binary
+    # quantization (callers pass `dimensions` / `output_dtype`).
+    {
+        "id": "voyage/voyage-3-large",
+        "name": "Voyage 3 Large",
+        "provider": "voyage",
+        "upstream_id": "voyage-3-large",
+        "context_length": 32_000,
+        "cost_dollars_per_million": "0.06",
+    },
+    # Qwen3-Embedding-8B — open model, served serverlessly by DeepInfra
+    # (api.deepinfra.com/v1/openai/embeddings, OpenAI-shaped). Tops MTEB; 4096
+    # dims with MRL. Routed via DeepInfra so TR runs no GPU. (Verify the route
+    # is live on our DeepInfra key via the daily embeddings probe.)
+    {
+        "id": "Qwen/Qwen3-Embedding-8B",
+        "name": "Qwen3 Embedding 8B",
+        "provider": "deepinfra",
+        "upstream_id": "Qwen/Qwen3-Embedding-8B",
+        "context_length": 32_000,
+        "cost_dollars_per_million": "0.01",
     },
 )
 

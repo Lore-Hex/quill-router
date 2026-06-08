@@ -46,6 +46,10 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "kimi": (("KIMI_API_KEY", "MOONSHOT_API_KEY"), "https://api.moonshot.ai/v1"),
     "zai": (("ZAI_API_KEY", "ZHIPU_API_KEY"), "https://api.z.ai/api/paas/v4"),
     "together": (("TOGETHER_API_KEY",), "https://api.together.xyz/v1"),
+    # DeepInfra — OpenAI-compatible chat + embeddings (serves Qwen3-Embedding-8B).
+    "deepinfra": (("DEEPINFRA_API_KEY",), "https://api.deepinfra.com/v1/openai"),
+    # Voyage AI — OpenAI-shaped embeddings (voyage-3-large).
+    "voyage": (("VOYAGE_API_KEY",), "https://api.voyageai.com/v1"),
 }
 
 __all__ = [

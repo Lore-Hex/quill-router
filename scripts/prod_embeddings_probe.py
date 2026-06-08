@@ -32,15 +32,24 @@ import urllib.request
 API_BASE = os.environ.get("TR_API_BASE", "https://api.trustedrouter.com/v1").rstrip("/")
 API_KEY = os.environ.get("TR_MONITOR_API_KEY", "")
 INCLUDE_COHERE = os.environ.get("TR_EMBEDDINGS_INCLUDE_COHERE", "") == "1"
+# New embedding providers — gated like Cohere so the probe stays green until
+# the enclave re-roll that serves them is live (+ Voyage's key provisioned).
+INCLUDE_VOYAGE = os.environ.get("TR_EMBEDDINGS_INCLUDE_VOYAGE", "") == "1"
+INCLUDE_GEMINI = os.environ.get("TR_EMBEDDINGS_INCLUDE_GEMINI", "") == "1"
+INCLUDE_DEEPINFRA = os.environ.get("TR_EMBEDDINGS_INCLUDE_DEEPINFRA", "") == "1"
 SPACING_SECONDS = float(os.environ.get("TR_EMBEDDINGS_PROBE_SPACING_SECONDS", "3"))
 TIMEOUT_SECONDS = float(os.environ.get("TR_EMBEDDINGS_PROBE_TIMEOUT_SECONDS", "30"))
 
 # One representative model per embedding provider. OpenAI + Together always
-# run (their keys are wired). Cohere is opt-in until its key is provisioned.
+# run (their keys are wired). The rest are opt-in until their enclave route +
+# key are live.
 PROBES = [
     {"provider": "openai", "model": "openai/text-embedding-3-large", "required": True},
     {"provider": "together", "model": "intfloat/multilingual-e5-large-instruct", "required": True},
     {"provider": "cohere", "model": "cohere/embed-v4.0", "required": INCLUDE_COHERE},
+    {"provider": "voyage", "model": "voyage/voyage-3-large", "required": INCLUDE_VOYAGE},
+    {"provider": "deepinfra", "model": "Qwen/Qwen3-Embedding-8B", "required": INCLUDE_DEEPINFRA},
+    {"provider": "gemini", "model": "google/gemini-embedding-001", "required": INCLUDE_GEMINI},
 ]
 
 
