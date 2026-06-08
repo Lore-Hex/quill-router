@@ -82,6 +82,24 @@ _THROUGHPUT_RANK = {
     "trustedrouter": 99,
 }
 
+# Phase 4 — reliability-informed DEFAULT routing preference. Lower = tried
+# first. When a model is served by several prepaid hosts, default traffic
+# routes to the more RELIABLE host rather than raw catalog order. Demotions are
+# evidence-based, from measured uptime on the public leaderboard (2026-06):
+# gmi ~82% (and slow ~2.8s TTFT), parasail ~87%, novita ~94% — all materially
+# below the reliable open-weight hosts (deepinfra / cerebras / lightning /
+# deepseek ~100%). Everything unlisted stays at the reliable default; within a
+# tier the catalog order is preserved, so only models served by BOTH a flaky
+# and a healthy host change. Explicit `provider.order` and
+# `sort=price|throughput` still take precedence. (A future per-model measured
+# snapshot will refine this static floor — see Phase 4 plan.)
+_DEFAULT_PROVIDER_PREFERENCE = 0
+_PROVIDER_PREFERENCE = {
+    "novita": 3,
+    "parasail": 4,
+    "gmi": 5,
+}
+
 
 def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Model]:
     raw_ids, prefs = _routing_for_body(body, settings)
@@ -367,6 +385,10 @@ def _sort_candidates(candidates: list[Model], prefs: RoutePreferences) -> list[M
         elif prefs.sort in {"latency", "throughput"}:
             sort_rank = _THROUGHPUT_RANK.get(model.provider, 50)
         else:
+            # Default: preserve the caller's explicit `models` array order. The
+            # reliability preference is applied at the ENDPOINT level (which host
+            # serves a model), NOT here — reordering an explicit fallback list
+            # would violate the caller's intended order.
             sort_rank = original_index
         return order_rank, sort_rank, original_index
 
@@ -419,7 +441,9 @@ def _sort_endpoint_candidates(
         elif prefs.sort in {"latency", "throughput"}:
             sort_rank = _THROUGHPUT_RANK.get(endpoint.provider, 50)
         else:
-            sort_rank = original_index
+            # Default: reliability-informed preference (Phase 4), catalog order
+            # preserved within a tier via the original_index tiebreaker below.
+            sort_rank = _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE)
         return order_rank, sort_rank, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]

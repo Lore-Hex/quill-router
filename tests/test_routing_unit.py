@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from trusted_router.config import Settings
 from trusted_router.routing import (
+    _sort_endpoint_candidates,
     chat_route_candidates,
     provider_route_preferences,
 )
@@ -354,3 +355,41 @@ def test_unverified_provider_defaults_to_stores_content() -> None:
 
     assert provider_privacy_tier(PROVIDERS["mistral"]) == PRIVACY_TIER_STANDARD
     assert PROVIDERS["mistral"].stores_content is True
+
+
+# ── reliability-informed endpoint preference (Phase 4) ──────────────────
+
+
+def _credits_endpoint(provider: str):
+    """First prepaid (Credits) endpoint for a provider, from the live catalog."""
+    from trusted_router.catalog import MODEL_ENDPOINTS, MODELS
+
+    for ep in MODEL_ENDPOINTS.values():
+        if ep.usage_type == "Credits" and ep.provider == provider:
+            return MODELS[ep.model_id], ep
+    raise AssertionError(f"no prepaid endpoint for {provider}")
+
+
+def test_default_endpoint_routing_prefers_reliable_host_over_flaky() -> None:
+    # parasail/novita/gmi are demoted below reliable hosts, so default routing
+    # tries deepinfra before parasail even when parasail is listed first.
+    flaky = _credits_endpoint("parasail")
+    reliable = _credits_endpoint("deepinfra")
+    ordered = _sort_endpoint_candidates([flaky, reliable], provider_route_preferences({}))
+    assert [ep.provider for _, ep in ordered] == ["deepinfra", "parasail"]
+
+
+def test_explicit_provider_order_overrides_reliability_preference() -> None:
+    flaky = _credits_endpoint("parasail")
+    reliable = _credits_endpoint("deepinfra")
+    prefs = provider_route_preferences({"provider": {"order": ["parasail"]}})
+    ordered = _sort_endpoint_candidates([flaky, reliable], prefs)
+    assert ordered[0][1].provider == "parasail"  # caller's explicit order wins
+
+
+def test_same_preference_tier_keeps_catalog_order() -> None:
+    # Two reliable hosts share the default tier -> original order preserved.
+    a = _credits_endpoint("deepinfra")
+    b = _credits_endpoint("cerebras")
+    ordered = _sort_endpoint_candidates([a, b], provider_route_preferences({}))
+    assert [ep.provider for _, ep in ordered] == ["deepinfra", "cerebras"]
