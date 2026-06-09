@@ -4,7 +4,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: /Private, reliable LLM routing/ })).toBeVisible();
-  await expect(page.getByText("ATTESTED GATEWAY")).toBeVisible();
+  await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
@@ -106,7 +106,7 @@ test("homepage exposes privacy, no-subscription, and open-source claims", async 
   await expect(page.getByText("Privacy-first AI gateway").first()).toBeVisible();
   await expect(page.getByText("No subscription required")).toBeVisible();
   await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
-  await expect(page.getByText("ATTESTED GATEWAY")).toBeVisible();
+  await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
   await expect(
     page.locator('a[href="https://github.com/Lore-Hex/trusted-router-py"]').first(),
   ).toBeVisible();
