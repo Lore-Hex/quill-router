@@ -44,13 +44,18 @@ def aggregate_apps(
         requests[name] += 1
         tokens[name] += toks
 
+    # Rank off the typed `requests` counter (most-used first, stable
+    # tie-break on name) BEFORE projecting into the public dict shape, so
+    # the sort key stays `tuple[int, str]` rather than indexing into the
+    # heterogeneous {str|int} result dict.
+    ordered_names = sorted(
+        (name for name in requests if requests[name] >= min_requests),
+        key=lambda name: (-requests[name], name),
+    )
     apps = [
         {"name": name, "requests": requests[name], "tokens": tokens[name]}
-        for name in requests
-        if requests[name] >= min_requests
+        for name in ordered_names
     ]
-    # Most-used first; stable tie-break on name.
-    apps.sort(key=lambda a: (-a["requests"], a["name"]))
 
     return {
         "apps": apps,
