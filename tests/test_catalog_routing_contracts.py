@@ -441,3 +441,26 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         ultraspeed.completion_price_microdollars_per_million_tokens
         != pro.completion_price_microdollars_per_million_tokens
     )
+
+
+def test_anthropic_claude_fable_5_present_and_routable() -> None:
+    """Claude Fable 5 (GA 2026-06-09) loads from the anthropic manifest, maps
+    to the anthropic provider, prices at cost x1.10 ($10/$50 -> $11/$55), and
+    has a prepaid (Credits) anthropic endpoint the attested gateway can
+    dispatch. The enclave resolves the dotted id -> `claude-fable-5` via the
+    mapModelID dot->dash fallback, so no enclave change is required."""
+    from trusted_router.catalog import endpoints_for_model
+
+    model = MODELS.get("anthropic/claude-fable-5")
+    assert model is not None, "anthropic/claude-fable-5 missing from catalog"
+    assert model.supports_chat
+    assert model.provider == "anthropic"
+    # cost $10/$50 per M -> microdollars 10_000_000 / 50_000_000, x1.10 markup
+    assert model.prompt_price_microdollars_per_million_tokens == 11_000_000
+    assert model.completion_price_microdollars_per_million_tokens == 55_000_000
+    credits = [
+        e
+        for e in endpoints_for_model("anthropic/claude-fable-5")
+        if str(e.usage_type) == "Credits" and e.provider == "anthropic"
+    ]
+    assert credits, "claude-fable-5 has no anthropic prepaid endpoint"
