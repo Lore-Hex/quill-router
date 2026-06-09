@@ -31,6 +31,22 @@ from trusted_router.provider_types import (
     estimate_tokens_from_text,
 )
 
+OPENAI_COMPATIBLE_PASSTHROUGH_FIELDS = (
+    # Provider-specific controls still use the OpenAI-compatible envelope.
+    # Xiaomi MiMo requires `thinking: {"type": "disabled"}` to suppress
+    # reasoning text that otherwise arrives as normal delta.content.
+    "thinking",
+    "chat_template_kwargs",
+)
+
+
+def _openai_compatible_passthrough(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        field: request[field]
+        for field in OPENAI_COMPATIBLE_PASSTHROUGH_FIELDS
+        if request.get(field) is not None
+    }
+
 
 async def openai_compatible_chat(
     model: Model,
@@ -47,6 +63,7 @@ async def openai_compatible_chat(
         "temperature": request.get("temperature"),
         "max_tokens": request.get("max_tokens"),
     }
+    payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
@@ -89,6 +106,7 @@ async def openai_compatible_chat_stream(
         "temperature": request.get("temperature"),
         "max_tokens": request.get("max_tokens"),
     }
+    payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(

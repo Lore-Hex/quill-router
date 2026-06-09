@@ -104,6 +104,64 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
     ]
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_adapter_forwards_provider_specific_controls(tmp_path, monkeypatch) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("XIAOMI_API_KEY=xiaomi-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_mimo",
+                    "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 7, "completion_tokens": 2},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+
+    result = await client.chat(
+        MODELS["xiaomi/mimo-v2.5-pro"],
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 5,
+            "thinking": {"type": "disabled"},
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    )
+
+    assert result.request_id == "chatcmpl_mimo"
+    assert calls == [
+        {
+            "url": "https://api.xiaomimimo.com/v1/chat/completions",
+            "headers": {"authorization": "Bearer xiaomi-value"},
+            "json": {
+                "model": "mimo-v2.5-pro",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "max_tokens": 5,
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+            "timeout": 120,
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("provider_model", "env_key", "env_value", "expected_url", "expected_model"),
     [
@@ -394,6 +452,85 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp
                 "stream": True,
                 "stream_options": {"include_usage": True},
                 "max_tokens": 5,
+            },
+            "timeout": 120,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_stream_forwards_provider_specific_controls(tmp_path, monkeypatch) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("XIAOMI_API_KEY=xiaomi-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeStreamResponse:
+        status_code = 200
+        reason_phrase = "OK"
+
+        async def __aenter__(self) -> FakeStreamResponse:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def aiter_lines(self) -> AsyncIterator[str]:
+            yield 'data: {"id":"chatcmpl_mimo_stream","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'
+            yield "data: [DONE]"
+
+        async def aread(self) -> bytes:
+            return b""
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def stream(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "headers": headers,
+                    "json": json,
+                    "timeout": self.timeout,
+                }
+            )
+            return FakeStreamResponse()
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+    request = {
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 5,
+        "thinking": {"type": "disabled"},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    model = MODELS["xiaomi/mimo-v2.5-pro"]
+    state = client.new_stream_state(model, request)
+
+    chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
+
+    assert b"".join(chunks).endswith(b"data: [DONE]\n\n")
+    assert state.to_result().text == "ok"
+    assert calls == [
+        {
+            "method": "POST",
+            "url": "https://api.xiaomimimo.com/v1/chat/completions",
+            "headers": {"authorization": "Bearer xiaomi-value"},
+            "json": {
+                "model": "mimo-v2.5-pro",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "max_tokens": 5,
+                "thinking": {"type": "disabled"},
+                "chat_template_kwargs": {"enable_thinking": False},
             },
             "timeout": 120,
         }
