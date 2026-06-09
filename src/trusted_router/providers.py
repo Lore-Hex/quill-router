@@ -50,6 +50,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "deepinfra": (("DEEPINFRA_API_KEY",), "https://api.deepinfra.com/v1/openai"),
     # Voyage AI — OpenAI-shaped embeddings (voyage-3-large).
     "voyage": (("VOYAGE_API_KEY",), "https://api.voyageai.com/v1"),
+    # Xiaomi MiMo — OpenAI-compatible chat (MiMo-V2 / V2.5).
+    "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
 }
 
 __all__ = [

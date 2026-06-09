@@ -767,8 +767,9 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
     # encrypt with the byok-envelope KMS key (e.g. the AWS/cross-cloud SA is
     # decrypt-only by design). That must return a clean 503 — never an
     # unhandled 500 + KMS stack trace (prod 2026-06-08).
-    import trusted_router.routes.byok as byok_routes
     from google.api_core import exceptions as gcp_exceptions
+
+    import trusted_router.routes.byok as byok_routes
 
     def _denied(*_args: object, **_kwargs: object) -> object:
         raise gcp_exceptions.PermissionDenied("useToEncrypt denied on byok-envelope")

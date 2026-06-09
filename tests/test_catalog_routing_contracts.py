@@ -397,3 +397,32 @@ def test_route_candidate_validation_errors_are_specific(body: dict, message: str
     with pytest.raises(Exception) as exc_info:
         chat_route_candidates(body, Settings(environment="test"))
     assert message in str(exc_info.value)
+
+
+def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
+    """Xiaomi MiMo onboarding: the 4 chat models load from the static manifest,
+    map to the right upstream ids, and have a prepaid (Credits) xiaomi endpoint
+    the attested gateway can dispatch."""
+    from trusted_router.catalog import PROVIDERS, endpoints_for_model
+
+    assert "xiaomi" in PROVIDERS
+    assert "xiaomi" in GATEWAY_PREPAID_PROVIDER_SLUGS
+    expected = {
+        "xiaomi/mimo-v2-flash": "mimo-v2-flash",
+        "xiaomi/mimo-v2-pro": "mimo-v2-pro",
+        "xiaomi/mimo-v2.5": "mimo-v2.5",
+        "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
+    }
+    for model_id, upstream in expected.items():
+        model = MODELS.get(model_id)
+        assert model is not None, f"{model_id} missing from catalog"
+        assert model.supports_chat, f"{model_id} not chat"
+        assert model.provider == "xiaomi"
+        assert model.upstream_id == upstream
+        assert model.prompt_price_microdollars_per_million_tokens > 0
+        credits = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "Credits" and e.provider == "xiaomi"
+        ]
+        assert credits, f"{model_id} has no xiaomi prepaid endpoint"

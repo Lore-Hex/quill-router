@@ -1,0 +1,73 @@
+{
+  "provider": "xiaomi",
+  "source": "https://api.xiaomimimo.com/v1/models",
+  "generated_at": "2026-06-09T00:00:00Z",
+  "model_count": 4,
+  "_note": "Xiaomi MiMo. OpenAI-compatible chat at api.xiaomimimo.com/v1 (Bearer auth). Model ids verified live against /v1/models 2026-06-09; prices from platform.xiaomimimo.com (provider cost, marked up by the catalog). Context set to the documented MiMo-V2 256K window. /v1/models does not expose context/price, so these are hand-maintained.",
+  "models": [
+    {
+      "id": "xiaomi/mimo-v2-flash",
+      "upstream_id": "mimo-v2-flash",
+      "display_name": "Xiaomi MiMo V2 Flash",
+      "title": "MiMo-V2-Flash",
+      "created": 1781000000,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 290000,
+      "model_type": "chat",
+      "endpoints": ["chat/completions"],
+      "features": ["function-calling", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    },
+    {
+      "id": "xiaomi/mimo-v2-pro",
+      "upstream_id": "mimo-v2-pro",
+      "display_name": "Xiaomi MiMo V2 Pro",
+      "title": "MiMo-V2-Pro",
+      "created": 1781000000,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "endpoints": ["chat/completions"],
+      "features": ["function-calling", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    },
+    {
+      "id": "xiaomi/mimo-v2.5",
+      "upstream_id": "mimo-v2.5",
+      "display_name": "Xiaomi MiMo V2.5",
+      "title": "MiMo-V2.5",
+      "created": 1781000000,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2000000,
+      "model_type": "chat",
+      "endpoints": ["chat/completions"],
+      "features": ["function-calling", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    },
+    {
+      "id": "xiaomi/mimo-v2.5-pro",
+      "upstream_id": "mimo-v2.5-pro",
+      "display_name": "Xiaomi MiMo V2.5 Pro",
+      "title": "MiMo-V2.5-Pro",
+      "created": 1781000000,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "endpoints": ["chat/completions"],
+      "features": ["function-calling", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"]
+    }
+  ]
+}

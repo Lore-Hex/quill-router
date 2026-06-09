@@ -64,6 +64,9 @@ ensure_secret_from_env_file "COHERE_API_KEY" "trustedrouter-cohere-api-key"
 # Reads VOYAGE_API_KEY from ~/.quill_cloud_keys.private. Same project-level
 # secretAccessor binding as every other provider secret.
 ensure_secret_from_env_file "VOYAGE_API_KEY" "trustedrouter-voyage-api-key"
+# Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). Reads
+# XIAOMI_API_KEY from ~/.quill_cloud_keys.private.
+ensure_secret_from_env_file "XIAOMI_API_KEY" "trustedrouter-xiaomi-api-key"
 # 2026-05 — six new backend providers. All OpenAI-compatible chat
 # completions; the existing enclave OpenAI-shape adapter dispatches
 # to whichever base URL the catalog selects per model.
