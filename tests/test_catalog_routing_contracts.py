@@ -400,7 +400,7 @@ def test_route_candidate_validation_errors_are_specific(body: dict, message: str
 
 
 def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
-    """Xiaomi MiMo onboarding: the 4 chat models load from the static manifest,
+    """Xiaomi MiMo onboarding: the 5 chat models load from the static manifest,
     map to the right upstream ids, and have a prepaid (Credits) xiaomi endpoint
     the attested gateway can dispatch."""
     from trusted_router.catalog import PROVIDERS, endpoints_for_model
@@ -412,6 +412,7 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         "xiaomi/mimo-v2-pro": "mimo-v2-pro",
         "xiaomi/mimo-v2.5": "mimo-v2.5",
         "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
+        "xiaomi/mimo-v2.5-pro-ultraspeed": "mimo-v2.5-pro-ultraspeed",
     }
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
@@ -426,3 +427,17 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
             if str(e.usage_type) == "Credits" and e.provider == "xiaomi"
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
+
+    # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
+    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.10,
+    # $0.01/M floor). Guard the exact prices so a regen can't silently
+    # collapse them onto the regular v2.5-pro numbers ($1.10/$3.30 customer).
+    ultraspeed = MODELS["xiaomi/mimo-v2.5-pro-ultraspeed"]
+    assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_435_500
+    assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_871_000
+    # ...and that it is genuinely a distinct row from regular v2.5-pro.
+    pro = MODELS["xiaomi/mimo-v2.5-pro"]
+    assert (
+        ultraspeed.completion_price_microdollars_per_million_tokens
+        != pro.completion_price_microdollars_per_million_tokens
+    )
