@@ -621,6 +621,18 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
     ),
+    # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). MiMo-V2 /
+    # V2.5 agent models. Models + prices are in data/provider_models/xiaomi.json.
+    "xiaomi": Provider(
+        slug="xiaomi",
+        name="Xiaomi MiMo",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Xiaomi MiMo's open-platform "
+            "terms are linked for users who need to review API data handling."
+        ),
+        provider_policy_url="https://platform.xiaomimimo.com/",
+    ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
     # product; chat is registered but TR currently only catalogs Cohere
@@ -717,6 +729,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "cohere",
         # Voyage — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).
         "voyage",
+        # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1).
+        "xiaomi",
     }
 )
 
@@ -1180,6 +1194,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "anthropic",
         "cerebras",
         "gemini",
+        "xiaomi",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
