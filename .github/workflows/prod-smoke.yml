@@ -32,6 +32,12 @@ jobs:
       - name: Smoke against https://trustedrouter.com
         env:
           TR_PROD_SMOKE: "1"
+          # Signing secret for the webhook drift guard
+          # (test_stripe_webhook_accepts_validly_signed_event). Must match
+          # Secret Manager trustedrouter-stripe-webhook-secret and the live
+          # Stripe endpoint. The test skips when unset, so a missing repo
+          # secret degrades to "no drift guard", not a red build.
+          TR_STRIPE_WEBHOOK_SECRET: ${{ secrets.TR_STRIPE_WEBHOOK_SECRET }}
         # Show every test by name so deploy regressions are obvious in
         # the workflow log without clicking into the failed step.
         run: uv run pytest tests/test_smoke_prod.py -v --tb=short
