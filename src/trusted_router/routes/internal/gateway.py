@@ -25,6 +25,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     Model,
     ModelEndpoint,
+    cache_token_prices_microdollars,
     default_endpoint_for_model,
     endpoint_for_id,
 )
@@ -480,7 +481,30 @@ def _settle_gateway_authorization(
 
     input_tokens = body.input_count
     output_tokens = body.output_count
-    actual_cost = _endpoint_cost_microdollars(selected_endpoint, input_tokens, output_tokens)
+    cache_read = body.cache_read_count
+    cache_creation = body.cache_creation_count
+    # Provider-dependent prompt accounting: Anthropic reports input_tokens
+    # EXCLUSIVE of cached tokens (input 14 + cache_read 6081 = 6095-token
+    # prompt), while OpenAI-compatible and Gemini prompt counts INCLUDE the
+    # cached subset. Normalize to (uncached, read, creation) for pricing
+    # and store the TOTAL prompt on the generation for honest dashboards.
+    if cache_read or cache_creation:
+        if selected_endpoint.provider == "anthropic":
+            uncached_input = input_tokens
+            total_input = input_tokens + cache_read + cache_creation
+        else:
+            uncached_input = max(input_tokens - cache_read - cache_creation, 0)
+            total_input = input_tokens
+    else:
+        uncached_input = total_input = input_tokens
+    actual_cost = _endpoint_cost_microdollars(
+        selected_endpoint,
+        uncached_input,
+        output_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
+    )
+    input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
 
     generation_id: str | None = None
@@ -665,13 +689,26 @@ def _endpoint_cost_microdollars(
     endpoint: ModelEndpoint,
     input_tokens: int,
     output_tokens: int,
+    *,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> int:
-    return token_cost_microdollars(
+    """input_tokens must be the UNCACHED prompt tokens when cache counts
+    are passed — cached reads/writes bill at the provider-specific
+    multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
+    cost = token_cost_microdollars(
         input_tokens, endpoint.prompt_price_microdollars_per_million_tokens
     ) + token_cost_microdollars(
         output_tokens,
         endpoint.completion_price_microdollars_per_million_tokens,
     )
+    if cache_read_tokens or cache_creation_tokens:
+        read_price, write_price = cache_token_prices_microdollars(
+            endpoint.provider, endpoint.prompt_price_microdollars_per_million_tokens
+        )
+        cost += token_cost_microdollars(cache_read_tokens, read_price)
+        cost += token_cost_microdollars(cache_creation_tokens, write_price)
+    return cost
 
 
 def _schedule_auto_refill(
