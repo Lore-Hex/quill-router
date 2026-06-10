@@ -195,6 +195,12 @@ class GatewaySettleRequest(_Lenient):
     actual_output_tokens: int | None = Field(default=None, ge=0)
     input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
+    # Prompt-cache accounting reported by the attested gateway. NOTE the
+    # provider-dependent semantics the settle handler normalizes:
+    # Anthropic's input_tokens EXCLUDE cached tokens; OpenAI-compatible
+    # and Gemini prompt counts INCLUDE the cached subset.
+    cache_read_input_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0)
     request_id: str | None = None
     finish_reason: str | None = None
     status: str | None = None
@@ -226,6 +232,14 @@ class GatewaySettleRequest(_Lenient):
         if self.actual_output_tokens is not None:
             return self.actual_output_tokens
         return self.output_tokens or 0
+
+    @property
+    def cache_read_count(self) -> int:
+        return self.cache_read_input_tokens or 0
+
+    @property
+    def cache_creation_count(self) -> int:
+        return self.cache_creation_input_tokens or 0
 
     @property
     def selected_model_id(self) -> str | None:

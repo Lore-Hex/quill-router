@@ -218,6 +218,53 @@ def _customer_price(cost_microdollars_per_million: int) -> int:
     return max(marked_up, _PRICE_FLOOR_MICRODOLLARS_PER_M)
 
 
+# ---------------------------------------------------------------------------
+# Prompt-cache pricing
+#
+# The attested gateway reports cache_read_input_tokens /
+# cache_creation_input_tokens at settle. Cached tokens are billed as a
+# multiple of the endpoint's (already marked-up) prompt price, so the
+# uniform x1.10 margin structure is preserved: provider charges
+# cost x multiplier, we bill customer_price x multiplier.
+#
+# Multipliers mirror published provider pricing as of 2026-06:
+#   anthropic: cache read 0.1x, 5-minute cache write 1.25x
+#              (docs.anthropic.com/en/docs/build-with-claude/prompt-caching)
+#   openai:    cached input 0.5x for the gpt-4o family; newer families
+#              are CHEAPER (0.1x), so 0.5x is the safe-side bound that
+#              never bills below our upstream cost. Tighten per-model
+#              when the pricing scrapers track cached rates.
+#   gemini/vertex: cached content 0.25x.
+# Providers absent from the read table get NO discount (1.0x) until
+# their cached pricing is verified — overcharging a discount we can't
+# confirm is the safe failure mode for margin, and those providers
+# rarely report cache fields anyway. Only Anthropic reports cache
+# WRITES; the 1.25x default keeps any future writer safe-side too.
+_CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
+    "anthropic": Decimal("0.1"),
+    "openai": Decimal("0.5"),
+    "gemini": Decimal("0.25"),
+    "vertex": Decimal("0.25"),
+}
+_CACHE_WRITE_PRICE_MULTIPLIER: dict[str, Decimal] = {
+    "anthropic": Decimal("1.25"),
+}
+_DEFAULT_CACHE_READ_MULTIPLIER = Decimal("1")
+_DEFAULT_CACHE_WRITE_MULTIPLIER = Decimal("1.25")
+
+
+def cache_token_prices_microdollars(provider: str, prompt_price_microdollars: int) -> tuple[int, int]:
+    """(cache-read, cache-write) customer price in microdollars per million
+    tokens for one endpoint's prompt price."""
+    prompt = Decimal(prompt_price_microdollars)
+    read = _CACHE_READ_PRICE_MULTIPLIER.get(provider, _DEFAULT_CACHE_READ_MULTIPLIER)
+    write = _CACHE_WRITE_PRICE_MULTIPLIER.get(provider, _DEFAULT_CACHE_WRITE_MULTIPLIER)
+    return (
+        int((prompt * read).to_integral_value()),
+        int((prompt * write).to_integral_value()),
+    )
+
+
 def _priced(cost_dollars_per_million: str | int | float) -> tuple[int, int, int]:
     """Return (prompt_price, published_price, cost_microdollars) for a
     dollars-per-million cost. prompt_price == published_price under the
