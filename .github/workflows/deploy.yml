@@ -13,6 +13,12 @@
 #
 # Trigger: deploys ONLY when files that affect the running service change.
 # Docs / README / unrelated config edits do not trigger a rollout.
+#
+# CI gate: the first step blocks until ci.yml concludes SUCCESS for the
+# same SHA. Push-to-main fires ci.yml and deploy.yml in parallel; without
+# the gate a red commit could finish rolling out to every region while
+# its tests were still failing. workflow_dispatch hotfix=true skips the
+# gate (same rationale as skipping the synthetic watchdog).
 
 name: Deploy TR control plane
 
@@ -30,7 +36,7 @@ on:
   workflow_dispatch:
     inputs:
       hotfix:
-        description: "Skip synthetic-watchdog gating (ship aggressively when prod is sick)"
+        description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
         default: false
 
@@ -43,6 +49,7 @@ concurrency:
 permissions:
   id-token: write   # for Workload Identity Federation
   contents: read
+  actions: read     # for the CI-green gate (gh run list)
 
 jobs:
   deploy:
@@ -54,6 +61,54 @@ jobs:
       SERVICE: trusted-router
     steps:
       - uses: actions/checkout@v4
+
+      - name: Gate on CI green (same commit)
+        # ci.yml and deploy.yml both trigger on push to main and used to
+        # race: a bad merge could finish rolling out to every region while
+        # CI was still failing on the very same SHA (main carried three
+        # latent CI failures this way in early June). This serializes them
+        # WITHOUT giving up the paths: filter above — a workflow_run
+        # trigger would fire on docs-only pushes too. Polls the ci.yml run
+        # for $GITHUB_SHA; refuses to deploy unless it concluded success.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.hotfix }}" = "true" ]; then
+            echo "::warning::HOTFIX MODE — skipping the CI-green gate."
+            exit 0
+          fi
+          echo "waiting for CI (ci.yml) on ${GITHUB_SHA}"
+          deadline=$(( $(date +%s) + 2700 ))   # 45 min, far above CI's normal ~15
+          while true; do
+            run_json=$(gh run list \
+              --repo "${GITHUB_REPOSITORY}" \
+              --workflow ci.yml \
+              --commit "${GITHUB_SHA}" \
+              --json databaseId,status,conclusion \
+              --jq '.[0]' || true)
+            if [ -n "${run_json}" ] && [ "${run_json}" != "null" ]; then
+              status=$(jq -r '.status' <<<"${run_json}")
+              conclusion=$(jq -r '.conclusion' <<<"${run_json}")
+              echo "  ci run $(jq -r '.databaseId' <<<"${run_json}"): status=${status} conclusion=${conclusion:-<pending>}"
+              if [ "${status}" = "completed" ]; then
+                if [ "${conclusion}" = "success" ]; then
+                  echo "CI is green — proceeding with the rollout."
+                  exit 0
+                fi
+                echo "CI concluded '${conclusion}' for ${GITHUB_SHA} — refusing to deploy a red commit."
+                echo "Fix main, or use workflow_dispatch hotfix=true for emergencies."
+                exit 1
+              fi
+            else
+              echo "  no CI run found yet for ${GITHUB_SHA} (queueing?)"
+            fi
+            if [ "$(date +%s)" -ge "${deadline}" ]; then
+              echo "timed out after 45 min waiting for CI on ${GITHUB_SHA}"
+              exit 1
+            fi
+            sleep 20
+          done
 
       - name: Set image ref from commit SHA
         run: |
