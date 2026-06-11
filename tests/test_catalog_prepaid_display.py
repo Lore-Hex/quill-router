@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from trusted_router.catalog import (
+    _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
     MODEL_ENDPOINTS,
     MODELS,
@@ -80,6 +81,25 @@ def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
     assert MODEL_ENDPOINTS["cerebras/zai-glm-4.7@cerebras/prepaid"].upstream_id == (
         "zai-glm-4.7"
     )
+
+
+def test_nebius_deprecated_june_2026_models_are_not_routable() -> None:
+    deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["nebius"]
+    nebius_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "nebius"
+    ]
+
+    assert nebius_endpoints
+    for endpoint in nebius_endpoints:
+        assert endpoint.model_id not in deprecated
+        assert endpoint.upstream_id not in deprecated
+
+
+def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
+    assert "minimax/minimax-m2.5@minimax/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.5@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
+    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
 
 
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:

@@ -994,6 +994,41 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 
+_PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Nebius notified customers that these Token Factory model APIs / UI
+    # entries will be disabled on 2026-06-22. This is provider-scoped:
+    # equivalent model families on MiniMax, Kimi, Z.AI, Cerebras, etc. remain
+    # routable if those providers still serve them. Drop both prepaid and BYOK
+    # Nebius endpoints because the upstream model API itself is going away.
+    "nebius": frozenset(
+        {
+            "deepseek-ai/DeepSeek-V3.2",
+            "deepseek-ai/DeepSeek-V3.2-fast",
+            "MiniMaxAI/MiniMax-M2.5-fast",
+            "moonshotai/Kimi-K2.5",
+            "moonshotai/Kimi-K2.5-fast",
+            "openai/gpt-oss-120b-fast",
+            "PrimeIntellect/INTELLECT-3",
+            "Qwen/Qwen3-235B-A22B-Thinking-2507-fast",
+            "Qwen/Qwen3-Next-80B-A3B-Thinking-fast",
+            "Qwen/Qwen3.5-397B-A17B-fast",
+            "zai-org/GLM-5",
+        }
+    ),
+}
+
+
+def _is_provider_deprecated_model(
+    provider_slug: str,
+    model_id: str,
+    upstream_id: str | None,
+) -> bool:
+    deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS.get(provider_slug)
+    if not deprecated:
+        return False
+    return model_id in deprecated or (upstream_id is not None and upstream_id in deprecated)
+
+
 def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | None:
     author = model_id.split("/", 1)[0].lower()
     if author in _AUTHOR_TO_PROVIDER_SLUG:
@@ -1034,6 +1069,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         for raw_ep in raw_endpoints:
             slug = raw_ep.get("tr_provider_slug")
             if not isinstance(slug, str) or slug not in PROVIDERS:
+                continue
+            upstream_id = str(raw_ep.get("model_id") or model_id)
+            if _is_provider_deprecated_model(slug, model_id, upstream_id):
                 continue
             pricing = raw_ep.get("pricing") or {}
             prompt_price, _, _ = _customer_price_from_dollars_per_token(
@@ -1291,6 +1329,8 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             upstream_id = raw_model.get("upstream_id")
             if not isinstance(upstream_id, str) or not upstream_id:
                 upstream_id = model_id
+            if _is_provider_deprecated_model(provider_slug, model_id, upstream_id):
+                continue
             if raw_model.get("model_type") not in (None, "chat"):
                 continue
             if "chat/completions" not in {str(item) for item in (raw_model.get("endpoints") or [])}:
@@ -1713,14 +1753,20 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Three complementary filters apply, all Credits-only:
-      * allowlist        — keep ONLY the listed models for a provider (Cerebras).
-      * model denylist    — drop the listed models on EVERY provider (GPT-5.4/pro).
-      * provider denylist — drop a model on ONE provider only (gmi closed models).
+    Four complementary filters apply:
+      * provider deprecation — drop a disabled upstream route on one provider for
+        every usage type (Nebius June 2026 retirements).
+      * allowlist        — keep ONLY the listed Credits models for a provider (Cerebras).
+      * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
+      * provider denylist — drop a Credits model on ONE provider only (gmi closed models).
     """
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST
 
     def _keep(endpoint: ModelEndpoint) -> bool:
+        if _is_provider_deprecated_model(
+            endpoint.provider, endpoint.model_id, endpoint.upstream_id
+        ):
+            return False
         if endpoint.usage_type != "Credits":
             return True
         if endpoint.provider in allow and endpoint.model_id not in allow[endpoint.provider]:

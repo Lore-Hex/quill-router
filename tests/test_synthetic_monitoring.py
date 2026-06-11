@@ -1545,6 +1545,8 @@ class _FakeBigtable:
 
 
 def test_rotation_candidates_cover_credits_endpoints() -> None:
+    from trusted_router.catalog import _PROVIDER_DEPRECATED_UPSTREAM_MODELS
+
     pool = rotation_candidates()
     assert pool, "expected at least one provider with a prepaid endpoint"
     for provider, models in pool.items():
@@ -1561,6 +1563,9 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert "meta-llama/llama-3-8b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen2.5-vl-72b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen3-4b-fp8" not in pool.get("novita", [])
+    assert not (
+        set(pool.get("nebius", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["nebius"]
+    )
 
 
 def test_choose_rotation_target_two_stage_pick() -> None:

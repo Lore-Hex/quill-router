@@ -111,11 +111,12 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "nebius",
-            30,
+            20,
             [
-                # Nebius retired Meta-Llama-3.1-8B + gemma-2-2b-it (dropped from
-                # Credits via _PROVIDER_UNSERVED_CREDITS_MODELS); Llama-3.3-70B
-                # is its current live Llama route.
+                # Nebius retired Meta-Llama-3.1-8B + gemma-2-2b-it earlier, then
+                # announced 11 more Token Factory model retirements for
+                # 2026-06-22. These are intentionally absent; this contract keeps
+                # representative non-deprecated Nebius routes alive.
                 "meta-llama/Llama-3.3-70B-Instruct",
                 "Qwen/Qwen3.5-397B-A17B",
                 "deepseek-ai/DeepSeek-V4-Pro",
