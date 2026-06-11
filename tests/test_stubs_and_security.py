@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
+from trusted_router.og import OG_DESCRIPTION, OG_TITLE, og_image_svg
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE
@@ -304,17 +305,28 @@ def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None
     dashboard = client.get("/")
     assert dashboard.status_code == 200
     assert 'property="og:type" content="website"' in dashboard.text
-    assert 'property="og:title"' in dashboard.text
-    assert 'property="og:description"' in dashboard.text
+    assert f'property="og:title" content="{OG_TITLE}"' in dashboard.text
+    assert f'property="og:description" content="{OG_DESCRIPTION}"' in dashboard.text
     assert 'property="og:url" content="https://trustedrouter.com/"' in dashboard.text
     assert 'property="og:image" content="https://trustedrouter.com/og.png"' in dashboard.text
     assert 'property="og:image:type" content="image/png"' in dashboard.text
     assert 'property="og:image:width" content="1200"' in dashboard.text
     assert 'property="og:image:height" content="630"' in dashboard.text
     assert 'name="twitter:card" content="summary_large_image"' in dashboard.text
+    assert f'name="twitter:title" content="{OG_TITLE}"' in dashboard.text
+    assert f'name="twitter:description" content="{OG_DESCRIPTION}"' in dashboard.text
     assert 'name="twitter:image" content="https://trustedrouter.com/og.png"' in dashboard.text
     assert '<meta name="description"' in dashboard.text
     assert "<title>TrustedRouter" in dashboard.text
+
+
+def test_og_svg_copy_matches_current_positioning() -> None:
+    svg = og_image_svg(Settings())
+
+    assert "End-to-End Encrypted Router" in svg
+    assert "Hundreds of models. One verifiable prompt path." in svg
+    assert "base_url=https://api.quillrouter.com/v1" in svg
+    assert "api.trustedrouter.com" not in svg
 
 
 def test_og_image_route_serves_png(client: TestClient) -> None:
