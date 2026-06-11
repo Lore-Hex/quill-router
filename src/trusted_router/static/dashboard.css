@@ -627,6 +627,17 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .br-wide { display:none; }
 .hero-proof-row { display:flex; flex-wrap:wrap; justify-content:center; gap:14px 26px; margin-top:56px; padding-top:28px; border-top:1px solid var(--line2); }
 .hero-proof-row span { color:var(--muted); font-size:13px; font-family:ui-monospace,SFMono-Regular,monospace; }
+.region-map-card { margin:30px auto 0; max-width:900px; border:1px solid var(--line); border-radius:12px; background:var(--panel); overflow:hidden; box-shadow:0 18px 55px var(--shadow); }
+.region-map-visual { position:relative; aspect-ratio:2/1; background:#0b1727; }
+.region-map-visual img, .region-map-visual svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+.region-map-visual img { object-fit:cover; opacity:.86; }
+.region-dot circle { fill:var(--blue); stroke:#dcecff; stroke-width:2.5; filter:drop-shadow(0 0 8px rgba(68,147,248,.68)); }
+.region-dot.edge circle { fill:var(--green); stroke:#d8ffe9; opacity:.78; }
+.region-dot.primary circle { fill:#fff; stroke:var(--blue); stroke-width:4; }
+.region-dot text { fill:#dfe9f6; font-size:15px; font-weight:700; paint-order:stroke; stroke:#07111f; stroke-width:4px; stroke-linejoin:round; }
+.region-map-copy { display:flex; justify-content:space-between; gap:18px; align-items:center; padding:14px 18px; border-top:1px solid var(--line); background:var(--panel2); }
+.region-map-copy strong { color:var(--inkstrong); font-size:14px; }
+.region-map-copy span { color:var(--muted); font-size:13px; text-align:right; }
 
 /* Routing diagram */
 .routing-diagram { position:relative; margin-top:64px; border:1px solid var(--line); background:var(--panel); border-radius:12px; padding:44px 28px 32px; }
@@ -763,6 +774,8 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
      App/Gateway/Provider boxes visually disconnected — read as broken). */
   .rd-flow { flex:0 0 auto; height:26px; display:flex; align-items:center; justify-content:center; }
   .rd-flow span { width:0; height:26px; border-top:0; border-left:2px dashed var(--green); }
+  .region-map-copy { align-items:flex-start; flex-direction:column; gap:6px; }
+  .region-map-copy span { text-align:left; }
   .home-matrix .matrix-row { grid-template-columns:1.3fr 1fr; }
   .home-matrix .matrix-row > *:nth-child(3) { display:none; }
 }

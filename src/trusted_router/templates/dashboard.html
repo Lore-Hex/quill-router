@@ -89,6 +89,24 @@
         <span>✓ Open source</span>
       </div>
 
+      <div class="region-map-card" aria-label="TrustedRouter regional footprint">
+        <div class="region-map-visual">
+          <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
+          <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+            {% for region in map_regions %}
+            <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
+              <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
+              <text x="12" y="-8">{{ region.city }}</text>
+            </g>
+            {% endfor %}
+          </svg>
+        </div>
+        <div class="region-map-copy">
+          <strong>{{ map_regions|length }} region footprint</strong>
+          <span>{{ api_region_count }} live regions, edge capacity warming, one OpenAI-compatible router.</span>
+        </div>
+      </div>
+
       {# Routing diagram (replaces the orbital scene) #}
       <div class="routing-diagram" aria-label="App to attested gateway to providers">
         <div class="rd-cp-label">Control plane (metadata only)</div>
