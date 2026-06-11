@@ -897,6 +897,7 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
 
     assert routing.status_code == 200
     assert 'model="trustedrouter/auto"' in routing.text
+    assert "trustedrouter/eu" in routing.text
     assert "us-central1" in routing.text
     assert "europe-west4" in routing.text
     assert "api-europe-west4.quillrouter.com" in routing.text

@@ -1,0 +1,73 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>EU entry point</strong><span><span class="mono">eu.trustedrouter.com</span> for Europe-focused setup.</span></div>
+  <div><strong>EU API region</strong><span><span class="mono">https://api-europe-west4.quillrouter.com/v1</span></span></div>
+  <div><strong>EU alias</strong><span><span class="mono">trustedrouter/eu</span> prefers EU and privacy-forward routes.</span></div>
+  <div><strong>Same trust model</strong><span>TLS terminates inside the attested gateway.</span></div>
+</section>
+
+<section class="marketing-split" aria-label="EU quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Europe-first routing</span>
+    <h2>Use the EU gateway and an EU-focused model alias.</h2>
+    <p>For European teams, start with the regional API hostname and the <span class="mono">trustedrouter/eu</span> model. The router prefers Mistral first, then EU-regionable and privacy-forward provider routes.</p>
+    <p>This is not a blanket data-residency guarantee for every upstream provider. For strict residency, pin approved providers in <span class="mono">provider.only</span> and keep that allowlist in the contract.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create EU key</button>
+      <a class="btn" href="/providers">Review providers</a>
+    </div>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>EU route</span><span>Python</span></div>
+    <pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="https://api-europe-west4.quillrouter.com/v1",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/eu",
+    messages=[{"role": "user", "content": "Reply PONG."}],
+    max_tokens=8,
+)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Gateway</span>
+    <h3>Terminate prompt TLS in Europe.</h3>
+    <p>The EU regional hostname targets the Europe West attested gateway. It keeps the router hop close to European users and avoids the global convenience endpoint.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Providers</span>
+    <h3>Prefer the right upstreams.</h3>
+    <p><span class="mono">trustedrouter/eu</span> restricts routing to an EU-focused provider set, led by Mistral and followed by privacy-forward providers with tracked policy notes.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Compliance</span>
+    <h3>Use filters for hard rules.</h3>
+    <p>For legal, healthcare, financial, or procurement-gated work, use <span class="mono">trustedrouter/zdr</span>, <span class="mono">trustedrouter/e2e</span>, or an explicit provider allowlist.</p>
+  </div>
+</section>
+
+<section class="public-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Provider filter example</h2><span class="pill">strict mode</span></div>
+    <div class="panel-body">
+      <pre><code>{
+  "model": "trustedrouter/eu",
+  "provider": {
+    "only": ["mistral", "gemini"],
+    "allow_fallbacks": true
+  },
+  "messages": [{"role": "user", "content": "Summarize this contract."}]
+}</code></pre>
+      <p class="muted">The alias narrows to the EU-focused pool first. A caller-supplied <span class="mono">provider.only</span> narrows it further.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

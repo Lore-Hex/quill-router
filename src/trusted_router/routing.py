@@ -7,6 +7,8 @@ from typing import Any
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
+    EU_FOCUSED_PROVIDER_ORDER,
+    EU_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
@@ -286,6 +288,14 @@ def _routing_for_body(
                 if provider.strip()
             ),
         )
+    if "only" in overrides:
+        override_only = frozenset(
+            _provider_slug(provider)
+            for provider in overrides["only"].split(",")
+            if provider.strip()
+        )
+        effective_only = override_only if not prefs.only else prefs.only & override_only
+        prefs = dataclasses.replace(prefs, only=effective_only)
     if "min_privacy" in overrides:
         prefs = dataclasses.replace(
             prefs,
@@ -313,6 +323,10 @@ def _requested_model_ids(
         elif stripped == E2E_MODEL_ID:
             overrides["min_privacy"] = "e2ee"
             overrides["order"] = "tinfoil,venice,phala,gmi"
+        elif stripped == EU_MODEL_ID:
+            provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
+            overrides["order"] = provider_order
+            overrides["only"] = provider_order
         ids.extend(_expand_model_id(stripped, settings))
 
     model_id = str(body.get("model") or "").strip()

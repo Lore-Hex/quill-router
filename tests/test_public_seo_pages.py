@@ -21,6 +21,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" in sitemap.text
+    assert "<loc>https://trustedrouter.com/eu</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/providers/minimax</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>" in sitemap.text
     assert "trustedrouter/monitor" not in sitemap.text
@@ -35,6 +36,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert response.status_code == 200
         assert "TrustedRouter" in response.text
         assert "api.trustedrouter.com/v1" in response.text
+        assert "trustedrouter/eu" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text
 

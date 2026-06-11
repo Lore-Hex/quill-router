@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from trusted_router.catalog import (
     CHEAP_MODEL_ID,
     E2E_MODEL_ID,
+    EU_MODEL_ID,
     FREE_MODEL_ID,
     MODELS,
     MONITOR_MODEL_ID,
@@ -64,12 +65,14 @@ from trusted_router.synthetic.status import history_payload, status_snapshot
 def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert FREE_MODEL_ID in MODELS
     assert CHEAP_MODEL_ID in MODELS
+    assert EU_MODEL_ID in MODELS
     assert ZDR_MODEL_ID in MODELS
     assert E2E_MODEL_ID in MODELS
     assert MONITOR_MODEL_ID in MODELS
 
     free = meta_candidate_models(FREE_MODEL_ID)
     cheap = meta_candidate_models(CHEAP_MODEL_ID)
+    eu = meta_candidate_models(EU_MODEL_ID)
     zdr = meta_candidate_models(ZDR_MODEL_ID)
     e2e = meta_candidate_models(E2E_MODEL_ID)
     monitor = meta_candidate_models(MONITOR_MODEL_ID)
@@ -78,6 +81,7 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert free
     assert all(model.id.endswith(":free") for model in free)
     assert len({model.provider for model in cheap}) >= 2
+    assert eu and eu[0].provider == "mistral"
     assert zdr and zdr[0].provider == "anthropic"
     assert e2e and any(model.provider == "deepseek" for model in e2e)
     assert len({model.provider for model in monitor}) >= 2
@@ -87,6 +91,9 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])["trustedrouter"][
         "route_kind"
     ] == "zdr_pool"
+    assert model_to_openrouter_shape(MODELS[EU_MODEL_ID])["trustedrouter"][
+        "route_kind"
+    ] == "eu_pool"
     assert model_to_openrouter_shape(MODELS[E2E_MODEL_ID])["trustedrouter"][
         "route_kind"
     ] == "e2e_pool"

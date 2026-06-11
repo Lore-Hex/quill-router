@@ -48,6 +48,7 @@
       <div class="links">
         <a href="/models">Models</a>
         <a href="/providers">Providers</a>
+        <a href="/eu">EU</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
         <a href="/security">Security</a>
@@ -83,6 +84,7 @@
         <span>✓ No prompt/output logs</span>
         <span>✓ Attested gateway</span>
         <span>✓ Provider failover</span>
+        <span>✓ EU regional routing</span>
         <span>✓ BYOK + prepaid credits</span>
         <span>✓ Open source</span>
       </div>
@@ -168,6 +170,7 @@
           <h2>Move over with one base_url change.</h2>
           <ul class="check-list">
             <li>✓ Use <code>trustedrouter/auto</code> for fallback</li>
+            <li>✓ Use <code>trustedrouter/eu</code> with the EU regional API for Europe-focused routing</li>
             <li>✓ Use <code>provider.data_collection = "deny"</code> for zero-retention provider preference</li>
             <li>✓ Use BYOK where needed</li>
             <li>✓ Keep existing OpenAI-shaped calls working</li>
@@ -305,6 +308,7 @@ const response = await client.chat.completions.create({
                 {"model":"deepseek/deepseek-v4-flash","provider":"DeepSeek","ctx":"1M","price":"$0.14 / 1M","priv":"Open weights"},
                 {"model":"google/gemma-4-31b-it","provider":"Google","ctx":"262k","price":"$0.14 / 1M","priv":"Open weights"},
                 {"model":"moonshotai/kimi-k2-thinking","provider":"Moonshot","ctx":"262k","price":"$0.66 / 1M","priv":"Open weights"},
+                {"model":"trustedrouter/eu","provider":"EU-focused","ctx":"Varies","price":"Varies","priv":"Regional"},
                 {"model":"trustedrouter/auto","provider":"Multiple (failover)","ctx":"Varies","price":"Varies","priv":"Attested + ZDR"},
                 {"model":"anthropic/claude-sonnet-4.5","provider":"Anthropic","ctx":"200k","price":"$3.00 / 1M","priv":"Frontier"}
               ] %}
@@ -419,6 +423,7 @@ const response = await client.chat.completions.create({
         <h3>Product</h3>
         <a href="/models">Models</a>
         <a href="/providers">Providers</a>
+        <a href="/eu">EU routing</a>
         <a href="/pricing">Pricing</a>
         <a href="/leaderboard">Leaderboard</a>
         <a href="/chat">Chat playground</a>

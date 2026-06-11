@@ -624,9 +624,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models = client.get("/v1/models").json()["data"]
     model_ids = {model["id"] for model in models}
     assert models
-    assert {"trustedrouter/auto", "trustedrouter/zdr", "trustedrouter/e2e"}.issubset(
-        model_ids
-    )
+    assert {
+        "trustedrouter/auto",
+        "trustedrouter/eu",
+        "trustedrouter/zdr",
+        "trustedrouter/e2e",
+    }.issubset(model_ids)
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
     # have GCP quota for Anthropic-on-Vertex / Gemini-on-Vertex yet.

@@ -113,6 +113,7 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
     assert providers.status_code == 200, providers.text
     assert regions.status_code == 200, regions.text
     assert any(item["id"] == "trustedrouter/auto" for item in models.json()["data"])
+    assert any(item["id"] == "trustedrouter/eu" for item in models.json()["data"])
     assert {
         "anthropic",
         "openai",
@@ -218,6 +219,10 @@ def test_v1_models_includes_kimi_and_auto_fallback_chain(client: httpx.Client) -
     assert "moonshotai/kimi-k2.6" in candidates
     assert "mistralai/mistral-small-2603" in candidates
     assert "z-ai/glm-4.6" in candidates
+
+    eu = models["trustedrouter/eu"]
+    eu_candidates = eu["trustedrouter"]["auto_candidates"]
+    assert any(candidate.startswith("mistralai/") for candidate in eu_candidates)
 
 
 def test_regions_list_covers_all_ten_gcp_regions(client: httpx.Client) -> None:

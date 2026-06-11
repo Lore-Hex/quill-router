@@ -16,6 +16,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/security": "TrustedRouter does not store prompt or output content by default.",
+        "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
         # The marker is a load-bearing headline from the page so a
         # silent template breakage gets caught here.
@@ -52,6 +53,7 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
         "/security",
+        "/eu",
         "/models",
     ]
 
@@ -67,6 +69,7 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert response.status_code == 200
     assert "Public catalog" in response.text
     assert "trustedrouter/auto" in response.text
+    assert "trustedrouter/eu" in response.text
     assert "API JSON remains" in response.text
     assert '<span class="pill" title="kimi">Kimi</span>' in response.text
     assert '<span class="pill" title="parasail">Parasail</span>' in response.text
@@ -118,8 +121,15 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row
     assert "data_collection" in response.text  # privacy-level routing pref
-    assert "Migration credits" in response.text
-    assert "$100/month" in response.text
+    assert 'href="/eu"' in response.text
+
+
+def test_eu_host_renders_eu_landing_page(client: TestClient) -> None:
+    response = client.get("/", headers={"host": "eu.trustedrouter.com"})
+
+    assert response.status_code == 200
+    assert "Use the EU gateway and an EU-focused model alias." in response.text
+    assert "https://api-europe-west4.quillrouter.com/v1" in response.text
 
 
 def test_console_credit_note_is_manual(client: TestClient) -> None:

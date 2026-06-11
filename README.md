@@ -37,9 +37,11 @@ key into TRUSTEDROUTER_API_KEY.
 
 Then:
 
-1. **Pick your privacy level** — start sensitive workloads with
+1. **Pick your privacy level or region** — start sensitive workloads with
    `trustedrouter/zdr`, use `trustedrouter/e2e` for confidential + E2EE
-   routes, or set `{"provider": {"data_collection": "deny"}}` yourself.
+   routes, use `trustedrouter/eu` with
+   `https://api-europe-west4.quillrouter.com/v1` for EU-focused routing, or
+   set `{"provider": {"data_collection": "deny"}}` yourself.
 2. **Pick a model** — any of hundreds, or `trustedrouter/auto` for automatic
    fallback when provider breadth matters more than the strictest privacy
    filter.
@@ -226,6 +228,10 @@ public attested API, and store only metadata. The monitor model aliases are:
 - `trustedrouter/free`: OpenRouter-style free pool. Useful for users, not an
   SLA signal.
 - `trustedrouter/cheap`: cheapest paid pool with provider diversity.
+- `trustedrouter/eu`: EU-focused provider pool. It prefers European,
+  EU-regionable, and privacy-forward providers, especially when paired with
+  `https://api-europe-west4.quillrouter.com/v1`. This is a routing policy, not
+  a blanket data-residency guarantee.
 - `trustedrouter/monitor`: internal uptime pool for PONG and fallback checks.
   It is visible in the catalog for transparency, but authorization requires
   the configured `TR_SYNTHETIC_MONITOR_API_KEY`; normal API keys receive 403.
@@ -256,10 +262,11 @@ the router-core error budget when fallback remains available.
   floating point dollars, so tiny token costs remain auditable in the ledger.
 - Uptime target: `trustedrouter/auto` is a real chat model alias in local/test
   control-plane inference and rolls to the next configured provider on upstream
-  provider failures. `trustedrouter/zdr` forces a zero-retention provider floor
-  with Anthropic first, and `trustedrouter/e2e` forces confidential + E2EE
-  routes with Tinfoil first. Chat requests also honor OpenRouter-style `models`
-  and `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
+  provider failures. `trustedrouter/eu` prefers the EU-focused provider pool,
+  `trustedrouter/zdr` forces a zero-retention provider floor with Anthropic
+  first, and `trustedrouter/e2e` forces confidential + E2EE routes with
+  Tinfoil first. Chat requests also honor OpenRouter-style `models` and
+  `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
   `data_collection`, and `sort`) so clients can request explicit fallback
   chains or provider preferences.
 - Billing: prepaid credits and BYOK first; no subscription is required.

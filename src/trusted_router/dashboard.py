@@ -72,6 +72,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/leaderboard",
     "/status",
     "/security",
+    "/eu",
     "/legal",
     "/legal/dpa",
     "/legal/baa",
@@ -261,6 +262,15 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/evals.html",
         title="TrustedRouter Evals Guide",
         description="Run model, provider, privacy, latency, and cost evals through one OpenAI compatible API.",
+    ),
+    "eu": PublicPage(
+        template="public/eu.html",
+        og_card="eu.png",
+        title="EU LLM Gateway",
+        description=(
+            "EU-focused LLM routing through the Europe West attested gateway, "
+            "with European and privacy-forward provider choices."
+        ),
     ),
     "security": PublicPage(
         template="public/security.html",
@@ -502,11 +512,11 @@ def _og_image_url(settings: Settings, og_card: str | None) -> str:
     return f"https://{settings.trusted_domain}/og.png"
 
 
-def public_page_html(settings: Settings, page_key: str) -> str:
+def public_page_html(settings: Settings, page_key: str, *, site_url: str | None = None) -> str:
     page = PUBLIC_PAGES[page_key]
     return _env().get_template(page.template).render(
         api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/{page_key}",
+        site_url=site_url or f"https://{settings.trusted_domain}/{page_key}",
         title=f"{page.title} | TrustedRouter",
         heading=page.title,
         description=page.description,
@@ -952,6 +962,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Homepage: https://{domain}/",
         f"- Models: https://{domain}/models",
         f"- Providers: https://{domain}/providers",
+        f"- EU routing: https://{domain}/eu",
         f"- Benchmarks: https://{domain}/benchmarks",
         f"- Rankings: https://{domain}/rankings",
         "- Status: https://status.trustedrouter.com/",
@@ -965,6 +976,7 @@ def llms_txt(settings: Settings) -> str:
         "",
         "## API",
         "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
+        "- EU regional base URL: https://api-europe-west4.quillrouter.com/v1",
         "- Chat completions: POST /v1/chat/completions",
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
@@ -974,6 +986,11 @@ def llms_txt(settings: Settings) -> str:
         f"- Public model pages: {model_count}",
         f"- Provider pages: {provider_count}",
         "- Model pages include providers, pricing, performance, uptime, API quickstart, and benchmark links.",
+        (
+            "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
+            "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
+            "trustedrouter/free."
+        ),
         "",
         "## Privacy Boundary",
         "- TrustedRouter stores metadata and billing records, not prompt or output content by default.",
@@ -998,10 +1015,15 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
             f"- Model catalog: https://{domain}/models",
             f"- Provider transparency: https://{domain}/providers",
+            f"- EU routing: https://{domain}/eu",
             "- Public status: https://status.trustedrouter.com/",
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
             "Use https://api.trustedrouter.com/v1 as the OpenAI compatible API base URL.",
+            (
+                "For Europe-focused routing, use "
+                "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
+            ),
             "",
         ]
     )
@@ -1020,6 +1042,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "## Canonical URLs",
         f"- Homepage: https://{domain}/",
         "- API base: https://api.trustedrouter.com/v1",
+        "- EU regional API base: https://api-europe-west4.quillrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
         f"- Legal/procurement packet: https://{domain}/legal",
         f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
@@ -1028,8 +1051,17 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
+        f"- EU routing: https://{domain}/eu",
         f"- Compact LLM docs: https://{domain}/docs/llms.txt",
         f"- Full LLM docs: https://{domain}/docs/llms-full.txt",
+        "",
+        "## Model Aliases",
+        "- trustedrouter/auto: broad provider fallback.",
+        "- trustedrouter/zdr: zero-retention providers first.",
+        "- trustedrouter/e2e: confidential and provider E2EE routes.",
+        "- trustedrouter/eu: EU-focused provider selection.",
+        "- trustedrouter/cheap: low-cost paid route pool.",
+        "- trustedrouter/free: free pool with no SLA.",
         "",
         "## Models",
     ]

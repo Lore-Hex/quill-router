@@ -5,6 +5,8 @@ import pytest
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
+    EU_FOCUSED_PROVIDER_ORDER,
+    EU_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     MODELS,
@@ -272,12 +274,16 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
 def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert ZDR_MODEL_ID in MODELS
     assert E2E_MODEL_ID in MODELS
+    assert EU_MODEL_ID in MODELS
 
     zdr = meta_candidate_models(ZDR_MODEL_ID)
     e2e = meta_candidate_models(E2E_MODEL_ID)
+    eu = meta_candidate_models(EU_MODEL_ID)
 
     assert zdr
     assert e2e
+    assert eu
+    assert eu[0].provider == "mistral"
     assert zdr[0].provider == "anthropic"
     assert any(model.provider == "openai" for model in zdr)
     assert any(model.provider == "gemini" for model in zdr)
@@ -285,10 +291,13 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
 
     zdr_shape = model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])
     e2e_shape = model_to_openrouter_shape(MODELS[E2E_MODEL_ID])
+    eu_shape = model_to_openrouter_shape(MODELS[EU_MODEL_ID])
     assert zdr_shape["trustedrouter"]["route_kind"] == "zdr_pool"
     assert e2e_shape["trustedrouter"]["route_kind"] == "e2e_pool"
+    assert eu_shape["trustedrouter"]["route_kind"] == "eu_pool"
     assert zdr_shape["trustedrouter"]["auto_candidates"]
     assert e2e_shape["trustedrouter"]["auto_candidates"]
+    assert eu_shape["trustedrouter"]["auto_candidates"]
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
@@ -313,6 +322,27 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
         provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_CONFIDENTIAL
         for _model, endpoint in e2e_endpoints
     )
+
+
+def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers() -> None:
+    eu_endpoints = chat_route_endpoint_candidates(
+        {"model": EU_MODEL_ID},
+        Settings(environment="test"),
+    )
+
+    assert eu_endpoints
+    assert eu_endpoints[0][1].provider == "mistral"
+    assert all(endpoint.provider in EU_FOCUSED_PROVIDER_ORDER for _model, endpoint in eu_endpoints)
+    assert {"deepseek", "kimi", "zai"}.isdisjoint(
+        {endpoint.provider for _model, endpoint in eu_endpoints}
+    )
+
+    narrowed = chat_route_endpoint_candidates(
+        {"model": EU_MODEL_ID, "provider": {"only": ["gemini"]}},
+        Settings(environment="test"),
+    )
+    assert narrowed
+    assert {endpoint.provider for _model, endpoint in narrowed} == {"gemini"}
 
 
 def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:

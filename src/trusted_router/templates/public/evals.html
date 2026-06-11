@@ -22,7 +22,7 @@ def ask(model: str, prompt: str) -> str:
     )
     return response.choices[0].message.content or ""
 
-for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
+for model in ["trustedrouter/zdr", "trustedrouter/eu", "trustedrouter/auto", "trustedrouter/cheap"]:
     print(model, ask(model, "Recommend 5 real albums for fans of Talk Talk."))</code></pre>
     </div>
   </div>
@@ -46,6 +46,7 @@ for model in ["trustedrouter/zdr", "trustedrouter/auto", "trustedrouter/cheap"]:
         <ul class="plain-list">
           <li><span class="mono">trustedrouter/zdr</span> for legal, medical, financial, and private customer data.</li>
           <li><span class="mono">trustedrouter/e2e</span> when the eval needs an end-to-end encrypted provider route.</li>
+          <li><span class="mono">trustedrouter/eu</span> for Europe-focused model and provider selection.</li>
           <li><span class="mono">trustedrouter/auto</span> for availability and broad fallback testing.</li>
           <li><span class="mono">trustedrouter/cheap</span> for wide sweeps where cost matters more than top quality.</li>
         </ul>

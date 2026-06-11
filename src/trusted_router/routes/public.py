@@ -147,6 +147,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 host=hostname,
                 background_tasks=background_tasks,
             )
+        if hostname == "eu.trustedrouter.com":
+            return public_page_html(settings, "eu", site_url="https://eu.trustedrouter.com/")
         return dashboard_html(settings)
 
     @public_html_route("/trust")
@@ -176,6 +178,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/docs/evals")
     async def evals() -> str:
         return public_page_html(settings, "docs/evals")
+
+    @public_html_route("/eu")
+    async def eu() -> str:
+        return public_page_html(settings, "eu")
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a

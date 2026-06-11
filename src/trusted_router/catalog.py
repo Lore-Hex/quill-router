@@ -785,6 +785,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
 AUTO_MODEL_ID = "trustedrouter/auto"
 FREE_MODEL_ID = "trustedrouter/free"
 CHEAP_MODEL_ID = "trustedrouter/cheap"
+EU_MODEL_ID = "trustedrouter/eu"
 ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
@@ -793,10 +794,30 @@ META_MODEL_IDS = frozenset(
         AUTO_MODEL_ID,
         FREE_MODEL_ID,
         CHEAP_MODEL_ID,
+        EU_MODEL_ID,
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
     }
+)
+
+# EU-focused routing is a provider policy, not a hard data-residency promise.
+# It keeps traffic on the EU regional attested gateway when the caller uses
+# that base URL, then prefers European / EU-regionable / privacy-forward
+# upstreams. Customers needing contractual residency should still pin a
+# provider allowlist in their agreement and request body.
+EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
+    "mistral",
+    "gemini",
+    "openai",
+    "anthropic",
+    "tinfoil",
+    "venice",
+    "phala",
+    "deepinfra",
+    "nebius",
+    "together",
+    "cerebras",
 )
 # IDs follow snapshot naming exactly. The picks span the 8 keyed
 # providers so `trustedrouter/auto` rolls over across providers if any
@@ -859,6 +880,15 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
+    ),
+    EU_MODEL_ID: Model(
+        id=EU_MODEL_ID,
+        name="TrustedRouter EU",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     ZDR_MODEL_ID: Model(
         id=ZDR_MODEL_ID,
@@ -1836,6 +1866,7 @@ def _privacy_candidate_models(
     *,
     min_tier: int,
     preferred_providers: tuple[str, ...] = (),
+    allowed_providers: frozenset[str] | None = None,
     limit: int = 12,
 ) -> list[Model]:
     """Unique chat models with at least one endpoint clearing min_tier.
@@ -1856,6 +1887,8 @@ def _privacy_candidate_models(
             or model.id.endswith(":free")
             or provider_privacy_tier(provider) < min_tier
         ):
+            continue
+        if allowed_providers is not None and endpoint.provider not in allowed_providers:
             continue
         price = (
             endpoint.prompt_price_microdollars_per_million_tokens
@@ -1894,6 +1927,15 @@ def _privacy_candidate_models(
     return result
 
 
+def eu_candidate_models(limit: int = 12) -> list[Model]:
+    return _privacy_candidate_models(
+        min_tier=PRIVACY_TIER_STANDARD,
+        preferred_providers=EU_FOCUSED_PROVIDER_ORDER,
+        allowed_providers=frozenset(EU_FOCUSED_PROVIDER_ORDER),
+        limit=limit,
+    )
+
+
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         min_tier=PRIVACY_TIER_ZERO_RETENTION,
@@ -1917,6 +1959,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return free_candidate_models()
     if model_id == CHEAP_MODEL_ID:
         return cheap_candidate_models()
+    if model_id == EU_MODEL_ID:
+        return eu_candidate_models()
     if model_id == ZDR_MODEL_ID:
         return zdr_candidate_models()
     if model_id == E2E_MODEL_ID:
@@ -1931,6 +1975,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "free_pool"
     if model_id == CHEAP_MODEL_ID:
         return "cheap_pool"
+    if model_id == EU_MODEL_ID:
+        return "eu_pool"
     if model_id == ZDR_MODEL_ID:
         return "zdr_pool"
     if model_id == E2E_MODEL_ID:
