@@ -20,6 +20,9 @@
   </script>
   <title>{{ title }}</title>
   <meta name="description" content="{{ description }}">
+  {% if robots_meta %}
+  <meta name="robots" content="{{ robots_meta }}">
+  {% endif %}
   <link rel="canonical" href="{{ site_url }}">
   {# Open Graph + Twitter card so every public/SEO page unfurls with its
      own title + description and the branded card image, instead of a

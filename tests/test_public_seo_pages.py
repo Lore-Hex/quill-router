@@ -14,13 +14,14 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert sitemap.status_code == 200
     assert sitemap.headers["content-type"].startswith("application/xml")
     assert "<urlset" in sitemap.text
-    assert sitemap.text.count("<url>") >= 4_000
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/performance</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" in sitemap.text
+    assert sitemap.text.count("<url>") >= 500
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3</loc>" in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" not in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" not in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/performance</loc>" not in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" not in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in sitemap.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" not in sitemap.text
     assert "<loc>https://trustedrouter.com/eu</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/providers/minimax</loc>" in sitemap.text
     assert "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>" in sitemap.text
@@ -199,6 +200,11 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
         assert f"MiniMax M3 {expected_label}" in response.text
         assert "openrouter.ai" not in response.text.lower()
         assert '<nav class="section-tabs"' in response.text
+        assert '<meta name="robots" content="noindex,follow">' in response.text
+        assert (
+            '<link rel="canonical" href="https://trustedrouter.com/models/minimax/minimax-m3">'
+            in response.text
+        )
 
     benchmarks = client.get("/models/minimax/minimax-m3/benchmarks")
     assert "MiniMax M3 model page" in benchmarks.text

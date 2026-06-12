@@ -863,11 +863,12 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     model = MODELS.get(model_id)
     if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
-    site_url = f"https://{settings.trusted_domain}/models/{model_id}/{section}"
+    base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
     label = MODEL_SEO_SECTION_LABELS[section]
     return _env().get_template("public/model_section.html").render(
         api_base_url=settings.api_base_url,
-        site_url=site_url,
+        site_url=base_model_url,
+        robots_meta="noindex,follow",
         title=f"{model.name} {label} | TrustedRouter",
         heading=f"{model.name} {label}",
         description=_model_section_description(model, section),
@@ -877,7 +878,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
         benchmark_links=_benchmark_links(model),
         benchmark_scores=scores_for_model(model.id),
         measured=measured_for_model(model.id, test_mode=settings.environment == "test"),
-        json_ld_blob=_model_json_ld(settings, model, f"https://{settings.trusted_domain}/models/{model_id}"),
+        json_ld_blob=_model_json_ld(settings, model, base_model_url),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -928,8 +929,6 @@ def sitemap_xml(settings: Settings) -> str:
         paths.append((f"/providers/{provider.slug}", "weekly", "0.7"))
     for model in _public_models_for_seo():
         paths.append((f"/models/{model.id}", "daily", "0.8"))
-        for section in MODEL_SEO_SECTIONS:
-            paths.append((f"/models/{model.id}/{section}", "daily", "0.7"))
     for left, right in _model_comparison_pairs():
         paths.append((f"/compare/models/{left.id}/vs/{right.id}", "weekly", "0.5"))
     urls = "\n".join(
