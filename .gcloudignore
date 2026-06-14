@@ -9,6 +9,6 @@
 !src/**
 src/**/__pycache__/
 *.pyc
-!scripts
-scripts/**
+!scripts/
+scripts/*
 !scripts/entrypoint.sh
