@@ -17,6 +17,8 @@ from trusted_router.evals.fusion_micro import (
     default_micro_configs,
     draco_cost_artifact,
     estimate_config,
+    frontier_draco_configs,
+    frontier_fusion_draco_configs,
     frontier_solo_draco_configs,
     select_micro_tasks,
     write_draco_eval_artifacts,
@@ -168,6 +170,39 @@ def test_frontier_solo_draco_configs_are_explicit_opt_in() -> None:
         allow_blocked_models=True,
     )
     assert estimate.total_cost_microdollars > 0
+
+
+def test_frontier_fusion_draco_configs_are_explicit_opt_in() -> None:
+    defaults = {config.id for config in default_draco_configs()}
+    frontier = {config.id: config for config in frontier_fusion_draco_configs()}
+
+    assert "fusion_mythos_candidate_6" not in defaults
+    assert "fusion_mythos_candidate_7" not in defaults
+    six = frontier["fusion_mythos_candidate_6"]
+    seven = frontier["fusion_mythos_candidate_7"]
+    assert six.kind == "fusion"
+    assert len(six.generation_models) == 6
+    assert seven.kind == "fusion"
+    assert len(seven.generation_models) == 7
+    assert seven.generation_models[:-1] == six.generation_models
+    assert seven.generation_models[-1] == "google/gemini-3.1-pro-preview"
+    assert six.final_model == "anthropic/claude-opus-4.8"
+    estimate = estimate_config(
+        seven,
+        task_count=1,
+        live_search=True,
+        judge_passes=1,
+        allow_blocked_models=True,
+    )
+    assert estimate.total_cost_microdollars > 0
+
+
+def test_frontier_draco_configs_include_solo_and_fusion_opt_ins() -> None:
+    ids = {config.id for config in frontier_draco_configs()}
+
+    assert "solo_opus_4_8" in ids
+    assert "fusion_mythos_candidate_6" in ids
+    assert "fusion_mythos_candidate_7" in ids
 
 
 def test_full_draco_pilot_scales_down_from_full_plan() -> None:

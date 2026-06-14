@@ -455,6 +455,57 @@ def frontier_solo_draco_configs() -> tuple[EvalConfig, ...]:
     return configs
 
 
+def frontier_fusion_draco_configs() -> tuple[EvalConfig, ...]:
+    """Expensive multi-frontier Fusion configs for explicit opt-in runs.
+
+    These are for trying to close the gap to the strongest published systems on
+    DRACO-style deep research. They intentionally include blocked-by-default
+    frontier models and should only be run with a hard budget and explicit
+    `--task-filter non-financial` when comparing the non-financial slice.
+    """
+    configs = (
+        EvalConfig(
+            id="fusion_mythos_candidate_6",
+            label="Fusion Mythos candidate, 6-model panel",
+            kind="fusion",
+            generation_models=(
+                "openai/gpt-5.5",
+                "anthropic/claude-opus-4.8",
+                "moonshotai/kimi-k2.7-code",
+                "z-ai/glm-5.2",
+                "minimax/minimax-m3",
+                "google/gemini-3-flash-preview",
+            ),
+            final_model="anthropic/claude-opus-4.8",
+            judge_model=DRACO_JUDGE_MODEL,
+        ),
+        EvalConfig(
+            id="fusion_mythos_candidate_7",
+            label="Fusion Mythos candidate, 7-model panel",
+            kind="fusion",
+            generation_models=(
+                "openai/gpt-5.5",
+                "anthropic/claude-opus-4.8",
+                "moonshotai/kimi-k2.7-code",
+                "z-ai/glm-5.2",
+                "minimax/minimax-m3",
+                "google/gemini-3-flash-preview",
+                "google/gemini-3.1-pro-preview",
+            ),
+            final_model="anthropic/claude-opus-4.8",
+            judge_model=DRACO_JUDGE_MODEL,
+        ),
+    )
+    for config in configs:
+        validate_config(config, allow_blocked_models=True)
+    return configs
+
+
+def frontier_draco_configs() -> tuple[EvalConfig, ...]:
+    """All explicit opt-in expensive DRACO configs."""
+    return frontier_fusion_draco_configs() + frontier_solo_draco_configs()
+
+
 def select_micro_tasks(
     task_count: int = DEFAULT_TASK_COUNT,
     *,

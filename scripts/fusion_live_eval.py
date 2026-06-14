@@ -38,7 +38,7 @@ from trusted_router.evals.fusion_micro import (
     call_estimates_for_config,
     default_draco_configs,
     estimate_config,
-    frontier_solo_draco_configs,
+    frontier_draco_configs,
 )
 from trusted_router.money import dollars_to_microdollars, format_money_precise
 
@@ -170,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
 
     frontier_config_ids: set[str] = set()
     configs = {config.id: config for config in default_draco_configs()}
-    for frontier_config in frontier_solo_draco_configs():
+    for frontier_config in frontier_draco_configs():
         configs[frontier_config.id] = frontier_config
         frontier_config_ids.add(frontier_config.id)
     config = configs.get(args.config)

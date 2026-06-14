@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -187,6 +188,7 @@ class TrustedRouterChatClient:
         *,
         base_url: str = DEFAULT_TR_API_BASE_URL,
         timeout_seconds: float = 120.0,
+        stream_timeout_seconds: float = 90.0,
         retry_attempts: int = 3,
         retry_sleep_seconds: float = 0.5,
         client: httpx.Client | None = None,
@@ -195,11 +197,14 @@ class TrustedRouterChatClient:
             raise ValueError("TrustedRouter API key is required")
         if retry_attempts < 1:
             raise ValueError("retry_attempts must be positive")
+        if stream_timeout_seconds <= 0:
+            raise ValueError("stream_timeout_seconds must be positive")
         if retry_sleep_seconds < 0:
             raise ValueError("retry_sleep_seconds cannot be negative")
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._stream_timeout_seconds = min(timeout_seconds, stream_timeout_seconds)
         self._retry_attempts = retry_attempts
         self._retry_sleep_seconds = retry_sleep_seconds
         self._client = client or httpx.Client(timeout=timeout_seconds)
@@ -219,13 +224,25 @@ class TrustedRouterChatClient:
         response_format: dict[str, str] | None = None,
         token_fallback_max_tokens: tuple[int, ...] = (),
         length_retry_max_tokens: tuple[int, ...] = (),
+        stream: bool = False,
     ) -> ChatResult:
+        if stream:
+            return self._complete_streaming(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=response_format,
+                token_fallback_max_tokens=token_fallback_max_tokens,
+                length_retry_max_tokens=length_retry_max_tokens,
+            )
         started = time.perf_counter()
         request_json: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": temperature,
         }
+        if _supports_temperature(model):
+            request_json["temperature"] = temperature
         if response_format is not None:
             request_json["response_format"] = response_format
         last_result: ChatResult | None = None
@@ -234,7 +251,7 @@ class TrustedRouterChatClient:
             for max_token_attempt in _max_token_attempts(
                 length_attempt, token_fallback_max_tokens
             ):
-                request_json["max_tokens"] = max_token_attempt
+                _set_max_tokens(request_json, model=model, max_tokens=max_token_attempt)
                 for attempt in range(1, self._retry_attempts + 1):
                     try:
                         response = self._client.post(
@@ -275,6 +292,75 @@ class TrustedRouterChatClient:
         if last_result is not None:
             return last_result
         raise RuntimeError("chat completion did not produce a response")
+
+    def _complete_streaming(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        response_format: dict[str, str] | None,
+        token_fallback_max_tokens: tuple[int, ...],
+        length_retry_max_tokens: tuple[int, ...],
+    ) -> ChatResult:
+        started = time.perf_counter()
+        request_json: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if response_format is not None:
+            request_json["response_format"] = response_format
+        if _supports_temperature(model):
+            request_json["temperature"] = temperature
+        last_result: ChatResult | None = None
+        for length_attempt in _length_token_attempts(max_tokens, length_retry_max_tokens):
+            for max_token_attempt in _max_token_attempts(
+                length_attempt, token_fallback_max_tokens
+            ):
+                _set_max_tokens(request_json, model=model, max_tokens=max_token_attempt)
+                for attempt in range(1, self._retry_attempts + 1):
+                    try:
+                        with self._client.stream(
+                            "POST",
+                            f"{self._base_url}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self._api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            json=request_json,
+                            timeout=self._stream_timeout_seconds,
+                        ) as response:
+                            if response.status_code in self.TOKEN_FALLBACK_STATUS_CODES:
+                                break
+                            if response.status_code in self.RETRYABLE_STATUS_CODES:
+                                if attempt == self._retry_attempts:
+                                    response.raise_for_status()
+                                self._sleep_before_retry(attempt)
+                                continue
+                            result = _parse_chat_stream_response(
+                                model=model,
+                                response=response,
+                                elapsed_ms=lambda: int(
+                                    (time.perf_counter() - started) * 1000
+                                ),
+                            )
+                            last_result = result
+                            if result.finish_reason != "length":
+                                return result
+                            break
+                    except (httpx.TimeoutException, httpx.NetworkError):
+                        if attempt == self._retry_attempts:
+                            raise
+                        self._sleep_before_retry(attempt)
+                        continue
+                if last_result is not None and last_result.finish_reason != "length":
+                    return last_result
+        if last_result is not None:
+            return last_result
+        raise RuntimeError("streaming chat completion did not produce a response")
 
     def _sleep_before_retry(self, attempt: int) -> None:
         if self._retry_sleep_seconds:
@@ -371,6 +457,7 @@ class FusionLiveRunner:
                         max_tokens=self.panel_max_tokens,
                         token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
                         length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                        stream=True,
                     )
                 )
             if config.final_model is None:
@@ -379,9 +466,10 @@ class FusionLiveRunner:
                 analysis = self.tr_client.complete(
                     model=config.final_model,
                     messages=fusion_analysis_messages(task, tuple(panel)),
-                max_tokens=min(self.fusion_analysis_max_tokens, self.final_max_tokens),
-                response_format={"type": "json_object"},
-            )
+                    max_tokens=min(self.fusion_analysis_max_tokens, self.final_max_tokens),
+                    response_format={"type": "json_object"},
+                    length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                )
             final = self.tr_client.complete(
                 model=config.final_model,
                 messages=synthesis_messages(
@@ -390,6 +478,7 @@ class FusionLiveRunner:
                 max_tokens=self.final_max_tokens,
                 token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
                 length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                stream=True,
             )
         else:
             if len(config.generation_models) != 1:
@@ -400,6 +489,7 @@ class FusionLiveRunner:
                 max_tokens=self.final_max_tokens,
                 token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
                 length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                stream=True,
             )
         judges: tuple[JudgeResult | CriterionJudgeResult, ...]
         if self.scoring_mode == "criteria":
@@ -464,6 +554,8 @@ class FusionLiveRunner:
             messages=judge_messages(task, answer),
             temperature=0.0,
             max_tokens=self.judge_max_tokens,
+            length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+            stream=True,
         )
         score, rationale = parse_judge_json(raw.content)
         return JudgeResult(model=raw.model, score=score, rationale=rationale, raw=raw)
@@ -511,6 +603,8 @@ class FusionLiveRunner:
             temperature=0.0,
             max_tokens=max(self.judge_max_tokens, DEFAULT_TR_CRITERION_JUDGE_MAX_OUTPUT_TOKENS),
             response_format={"type": "json_object"},
+            length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+            stream=True,
         )
         try:
             return parse_criterion_judge_json_for_criteria(criteria, raw.content), (raw,)
@@ -606,6 +700,23 @@ def _length_token_attempts(
     return tuple(dict.fromkeys(attempts))
 
 
+def _supports_temperature(model: str) -> bool:
+    return not model.lower().startswith("openai/gpt-5.5")
+
+
+def _uses_max_completion_tokens(model: str) -> bool:
+    return model.lower().startswith("openai/gpt-5.5")
+
+
+def _set_max_tokens(request_json: dict[str, Any], *, model: str, max_tokens: int) -> None:
+    request_json.pop("max_tokens", None)
+    request_json.pop("max_completion_tokens", None)
+    if _uses_max_completion_tokens(model):
+        request_json["max_completion_tokens"] = max_tokens
+    else:
+        request_json["max_tokens"] = max_tokens
+
+
 def _parse_chat_response(*, model: str, response: httpx.Response, elapsed_ms: int) -> ChatResult:
     request_id = response.headers.get("x-request-id") or response.headers.get("x-tr-request-id")
     response.raise_for_status()
@@ -640,6 +751,106 @@ def _parse_chat_response(*, model: str, response: httpx.Response, elapsed_ms: in
         request_id=request_id,
         elapsed_ms=elapsed_ms,
     )
+
+
+def _parse_chat_stream_response(
+    *,
+    model: str,
+    response: httpx.Response,
+    elapsed_ms: Callable[[], int],
+) -> ChatResult:
+    request_id = response.headers.get("x-request-id") or response.headers.get("x-tr-request-id")
+    response.raise_for_status()
+    content_parts: list[str] = []
+    finish_reason: str | None = None
+    input_tokens = output_tokens = None
+    returned_model: str | None = None
+    saw_done = False
+    for data in _iter_sse_data(response):
+        if data == "[DONE]":
+            saw_done = True
+            break
+        try:
+            payload = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            raise RuntimeError(message if isinstance(message, str) else "stream error")
+        model_value = payload.get("model")
+        if isinstance(model_value, str):
+            returned_model = model_value
+        usage = payload.get("usage")
+        if isinstance(usage, dict):
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            if isinstance(prompt_tokens, int):
+                input_tokens = prompt_tokens
+            if isinstance(completion_tokens, int):
+                output_tokens = completion_tokens
+        choices = payload.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            choice_finish = choice.get("finish_reason")
+            if isinstance(choice_finish, str):
+                finish_reason = choice_finish
+            content = _stream_choice_text(choice)
+            if content:
+                content_parts.append(content)
+    content = "".join(content_parts)
+    if not saw_done and finish_reason is None:
+        raise RuntimeError("stream ended without finish reason or [DONE]")
+    if not content and finish_reason != "length":
+        raise RuntimeError("streaming chat completion returned no content")
+    return ChatResult(
+        model=returned_model or model,
+        content=content,
+        finish_reason=finish_reason,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        request_id=request_id,
+        elapsed_ms=elapsed_ms(),
+    )
+
+
+def _iter_sse_data(response: httpx.Response) -> tuple[str, ...]:
+    data_lines: list[str] = []
+    events: list[str] = []
+    for raw_line in response.iter_lines():
+        line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+        if not line:
+            if data_lines:
+                events.append("\n".join(data_lines).strip())
+                data_lines.clear()
+            continue
+        if line.startswith("data:"):
+            data_lines.append(line[5:].strip())
+    if data_lines:
+        events.append("\n".join(data_lines).strip())
+    return tuple(event for event in events if event)
+
+
+def _stream_choice_text(choice: dict[str, Any]) -> str:
+    delta = choice.get("delta")
+    if isinstance(delta, dict):
+        for key in ("content", "reasoning_content", "reasoning", "text"):
+            value = delta.get(key)
+            if isinstance(value, str):
+                return value
+    message = choice.get("message")
+    if isinstance(message, dict):
+        for key in ("content", "reasoning_content", "reasoning"):
+            value = message.get(key)
+            if isinstance(value, str):
+                return value
+    text = choice.get("text")
+    return text if isinstance(text, str) else ""
 
 
 def _compact_query_text(value: str, *, max_chars: int) -> str:
