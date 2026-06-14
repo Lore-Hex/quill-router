@@ -35,6 +35,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/gemini-flash-alternative</loc>" in core.text
     assert "<loc>https://trustedrouter.com/llm-provider-latency-benchmarks</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
@@ -116,6 +117,16 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
     assert "micro-hybrid" in blog.text
     assert "OpenRouter Fusion announcement" in blog.text
+
+    frontier_blog = client.get("/blog/frontier-fusion-mythos-target")
+    assert frontier_blog.status_code == 200
+    frontier_payload = _json_ld(frontier_blog.text)
+    frontier_types = {item["@type"] for item in frontier_payload["@graph"]}
+    assert {"BreadcrumbList", "BlogPosting"}.issubset(frontier_types)
+    assert "GPT-5.5" in frontier_blog.text
+    assert "GLM 5.2" in frontier_blog.text
+    assert "19.85" in frontier_blog.text
+    assert "not presenting it as a win" in frontier_blog.text
 
 
 def _json_ld(html: str) -> dict[str, object]:

@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 from typing import TextIO, cast
 
@@ -22,6 +23,7 @@ from trusted_router.evals.exa import ExaSearchClient
 from trusted_router.evals.fusion_live import (
     DEFAULT_DRACO_SEARCH_QUERY_COUNT,
     DEFAULT_FETCH_SEARCH_RESULTS,
+    DEFAULT_LENGTH_RETRY_MAX_TOKENS,
     DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT,
     DEFAULT_TR_API_BASE_URL,
     DEFAULT_TR_CRITERION_JUDGE_CHUNK_SIZE,
@@ -57,6 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--config", default="fusion_tr_budget")
     parser.add_argument("--judge-passes", type=int, default=DRACO_JUDGE_PASSES)
+    parser.add_argument(
+        "--judge-model",
+        help="Override the config judge model for estimates and live runs.",
+    )
     parser.add_argument("--budget-usd", default="5.00")
     parser.add_argument("--base-url", default=DEFAULT_TR_API_BASE_URL)
     parser.add_argument("--cache-path", type=Path, default=Path("artifacts/draco/tasks.json"))
@@ -76,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         "--single-step-synthesis",
         action="store_true",
         help="Skip the separate Fusion analysis stage. Default matches the post more closely.",
+    )
+    parser.add_argument(
+        "--no-length-retry",
+        action="store_true",
+        help="Do not retry truncated generations with larger token caps. Useful for bounded smoke runs.",
     )
     parser.add_argument("--include-content", action="store_true")
     parser.add_argument(
@@ -180,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.judge_model:
+        config = replace(config, judge_model=args.judge_model)
 
     estimate = estimate_config(
         config,
@@ -273,6 +286,9 @@ def main(argv: list[str] | None = None) -> int:
         per_generation_search=not args.shared_search,
         fetch_search_results=not args.no_fetch_results,
         separate_fusion_analysis=not args.single_step_synthesis,
+        length_retry_max_tokens=()
+        if args.no_length_retry
+        else DEFAULT_LENGTH_RETRY_MAX_TOKENS,
         search_context_chars_per_result=args.search_context_chars_per_result,
         fetch_search_result_count=args.fetch_search_result_count,
         search_query_count=args.search_query_count,
@@ -309,6 +325,7 @@ def _run_tasks(
     per_generation_search: bool,
     fetch_search_results: bool,
     separate_fusion_analysis: bool,
+    length_retry_max_tokens: tuple[int, ...],
     search_context_chars_per_result: int,
     fetch_search_result_count: int,
     search_query_count: int,
@@ -342,6 +359,7 @@ def _run_tasks(
                         per_generation_search=per_generation_search,
                         fetch_search_results=fetch_search_results,
                         separate_fusion_analysis=separate_fusion_analysis,
+                        length_retry_max_tokens=length_retry_max_tokens,
                         search_context_chars_per_result=search_context_chars_per_result,
                         fetch_search_result_count=fetch_search_result_count,
                         search_query_count=search_query_count,
@@ -384,6 +402,7 @@ def _run_tasks(
                     per_generation_search=per_generation_search,
                     fetch_search_results=fetch_search_results,
                     separate_fusion_analysis=separate_fusion_analysis,
+                    length_retry_max_tokens=length_retry_max_tokens,
                     search_context_chars_per_result=search_context_chars_per_result,
                     fetch_search_result_count=fetch_search_result_count,
                     search_query_count=search_query_count,
@@ -434,11 +453,17 @@ def _run_one_task(
     per_generation_search: bool,
     fetch_search_results: bool,
     separate_fusion_analysis: bool,
+    length_retry_max_tokens: tuple[int, ...],
     search_context_chars_per_result: int,
     fetch_search_result_count: int,
     search_query_count: int,
 ) -> FusionRunResult:
-    tr_client = TrustedRouterChatClient(tr_key, base_url=base_url, timeout_seconds=timeout_seconds)
+    tr_client = TrustedRouterChatClient(
+        tr_key,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+        stream_timeout_seconds=timeout_seconds,
+    )
     exa_client = ExaSearchClient(exa_key, timeout_seconds=timeout_seconds) if exa_key else None
     try:
         runner = FusionLiveRunner(
@@ -453,6 +478,7 @@ def _run_one_task(
             per_generation_search=per_generation_search,
             fetch_search_results=fetch_search_results,
             separate_fusion_analysis=separate_fusion_analysis,
+            length_retry_max_tokens=length_retry_max_tokens,
             search_context_chars_per_result=search_context_chars_per_result,
             fetch_search_result_count=fetch_search_result_count,
             search_query_count=search_query_count,

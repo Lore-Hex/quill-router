@@ -20,6 +20,41 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="frontier-fusion-mythos-target",
+        title="Chasing Mythos-level Fusion in the open",
+        description=(
+            "A live engineering note on the first frontier Fusion attempt: what ran, "
+            "what failed, and why we are not claiming a benchmark win yet."
+        ),
+        published_date="2026-06-14",
+        source_label="Open Fusion methodology",
+        source_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/evals/fusion-draco.md",
+        body_html="""
+<p><strong>We tried to push TrustedRouter Fusion toward Mythos and Fable-class DRACO performance.</strong> The target panel was GPT-5.5, Claude Opus 4.8, Kimi K2.7 Code, GLM 5.2, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro, with Opus 4.8 synthesizing the final answer and Gemini 3.1 Pro judging against DRACO criteria.</p>
+<p>That exact run is not publishable yet. Two blockers showed up immediately: GPT-5.5 needs special long-reasoning handling on DRACO prompts, and our Z.AI account is not entitled for GLM 5.2 yet. Z.AI returns a permission error for <span class="mono">glm-5.2</span>, so substituting it silently would be dishonest.</p>
+<h2>What actually ran</h2>
+<table class="data-table">
+  <thead><tr><th>Run</th><th>Task slice</th><th>Result</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Exact 7-model target</td><td>Non-financial DRACO pilot</td><td>No score</td><td>Blocked by GPT-5.5 gateway handling and GLM 5.2 entitlement</td></tr>
+    <tr><td>Available 6-model fallback</td><td>First completed non-financial DRACO task</td><td>19.85</td><td>Completed, far below target</td></tr>
+  </tbody>
+</table>
+<p>The fallback panel used Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. It completed one task before the pilot was stopped for speed and reliability. A score of 19.85 is not close to the target, and we are not presenting it as a win.</p>
+<h2>What changed in the harness</h2>
+<ul class="plain-list">
+  <li>GPT-5.5 eval calls now omit <span class="mono">temperature</span> and use <span class="mono">max_completion_tokens</span>.</li>
+  <li>Panel and final synthesis calls stream so long answers do not wait for full completion before parsing.</li>
+  <li>Analysis and judge calls stay non-streaming because they require structured JSON reliability.</li>
+  <li>The live runner now has explicit six-model and seven-model frontier Fusion configs behind a hard budget.</li>
+  <li>The recommended DRACO slice for this experiment is <span class="mono">--task-filter non-financial</span>.</li>
+</ul>
+<h2>Next gates</h2>
+<p>The next clean run needs three fixes before any headline claim: enable GLM 5.2 on the Z.AI account, make GPT-5.5 long-reasoning responses produce useful content through the attested gateway, and finish a 10-task non-financial DRACO pilot without task-level hangs.</p>
+<p>This is the point of doing the work in the open. If TrustedRouter clears a Mythos/Fable-class target, the result should be reproducible from code, model ids, task filters, budget limits, and artifacts. Until then, the honest result is: not there yet.</p>
+""",
+    ),
+    BlogPost(
         slug="fusion-evals-open-source",
         title="Fusion eval results",
         description=(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -28,7 +28,7 @@ DEFAULT_TR_CRITERION_JUDGE_MAX_OUTPUT_TOKENS = 1_500
 DEFAULT_TR_CRITERION_JUDGE_CHUNK_SIZE = 10
 DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT = 4_000
 DEFAULT_FETCH_SEARCH_RESULTS = DEFAULT_EXA_FETCH_RESULTS
-DEFAULT_TOKEN_FALLBACK_MAX_TOKENS: tuple[int, ...] = (4_000, 3_000)
+DEFAULT_TOKEN_FALLBACK_MAX_TOKENS: tuple[int, ...] = (4_000, 3_000, 2_000, 1_000)
 DEFAULT_LENGTH_RETRY_MAX_TOKENS: tuple[int, ...] = (8_000, 12_000)
 DEFAULT_DRACO_SEARCH_QUERY_COUNT = 3
 DRACO_FINANCE_INCLUDE_DOMAINS: tuple[str, ...] = (
@@ -263,7 +263,7 @@ class TrustedRouterChatClient:
                             json=request_json,
                             timeout=self._timeout_seconds,
                         )
-                    except (httpx.TimeoutException, httpx.NetworkError):
+                    except (httpx.TimeoutException, httpx.NetworkError, RuntimeError):
                         if attempt == self._retry_attempts:
                             raise
                         self._sleep_before_retry(attempt)
@@ -317,9 +317,10 @@ class TrustedRouterChatClient:
             request_json["temperature"] = temperature
         last_result: ChatResult | None = None
         for length_attempt in _length_token_attempts(max_tokens, length_retry_max_tokens):
-            for max_token_attempt in _max_token_attempts(
+            max_token_attempts = _max_token_attempts(
                 length_attempt, token_fallback_max_tokens
-            ):
+            )
+            for max_token_index, max_token_attempt in enumerate(max_token_attempts):
                 _set_max_tokens(request_json, model=model, max_tokens=max_token_attempt)
                 for attempt in range(1, self._retry_attempts + 1):
                     try:
@@ -331,7 +332,10 @@ class TrustedRouterChatClient:
                                 "Content-Type": "application/json",
                             },
                             json=request_json,
-                            timeout=self._stream_timeout_seconds,
+                            timeout=httpx.Timeout(
+                                self._stream_timeout_seconds,
+                                read=min(30.0, self._stream_timeout_seconds),
+                            ),
                         ) as response:
                             if response.status_code in self.TOKEN_FALLBACK_STATUS_CODES:
                                 break
@@ -346,13 +350,17 @@ class TrustedRouterChatClient:
                                 elapsed_ms=lambda: int(
                                     (time.perf_counter() - started) * 1000
                                 ),
+                                deadline_at=time.perf_counter()
+                                + self._stream_timeout_seconds,
                             )
                             last_result = result
                             if result.finish_reason != "length":
                                 return result
                             break
-                    except (httpx.TimeoutException, httpx.NetworkError):
+                    except (httpx.TimeoutException, httpx.NetworkError, RuntimeError):
                         if attempt == self._retry_attempts:
+                            if max_token_index < len(max_token_attempts) - 1:
+                                break
                             raise
                         self._sleep_before_retry(attempt)
                         continue
@@ -383,6 +391,7 @@ class FusionLiveRunner:
         fetch_search_results: bool = False,
         separate_fusion_analysis: bool = True,
         fusion_analysis_max_tokens: int = 1_200,
+        length_retry_max_tokens: tuple[int, ...] = DEFAULT_LENGTH_RETRY_MAX_TOKENS,
         search_context_chars_per_result: int = DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT,
         fetch_search_result_count: int = DEFAULT_FETCH_SEARCH_RESULTS,
         search_query_count: int = 1,
@@ -414,6 +423,7 @@ class FusionLiveRunner:
         self.fetch_search_results = fetch_search_results
         self.separate_fusion_analysis = separate_fusion_analysis
         self.fusion_analysis_max_tokens = fusion_analysis_max_tokens
+        self.length_retry_max_tokens = length_retry_max_tokens
         self.search_context_chars_per_result = search_context_chars_per_result
         self.fetch_search_result_count = fetch_search_result_count
         self.search_query_count = search_query_count
@@ -456,7 +466,7 @@ class FusionLiveRunner:
                         messages=panel_messages(task, search_context_for_generation()),
                         max_tokens=self.panel_max_tokens,
                         token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
-                        length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                        length_retry_max_tokens=self.length_retry_max_tokens,
                         stream=True,
                     )
                 )
@@ -468,7 +478,7 @@ class FusionLiveRunner:
                     messages=fusion_analysis_messages(task, tuple(panel)),
                     max_tokens=min(self.fusion_analysis_max_tokens, self.final_max_tokens),
                     response_format={"type": "json_object"},
-                    length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                    length_retry_max_tokens=self.length_retry_max_tokens,
                 )
             final = self.tr_client.complete(
                 model=config.final_model,
@@ -477,7 +487,7 @@ class FusionLiveRunner:
                 ),
                 max_tokens=self.final_max_tokens,
                 token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
-                length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                length_retry_max_tokens=self.length_retry_max_tokens,
                 stream=True,
             )
         else:
@@ -488,7 +498,7 @@ class FusionLiveRunner:
                 messages=panel_messages(task, search_context_for_generation()),
                 max_tokens=self.final_max_tokens,
                 token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
-                length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+                length_retry_max_tokens=self.length_retry_max_tokens,
                 stream=True,
             )
         judges: tuple[JudgeResult | CriterionJudgeResult, ...]
@@ -554,8 +564,8 @@ class FusionLiveRunner:
             messages=judge_messages(task, answer),
             temperature=0.0,
             max_tokens=self.judge_max_tokens,
-            length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
-            stream=True,
+            response_format={"type": "json_object"},
+            length_retry_max_tokens=self.length_retry_max_tokens,
         )
         score, rationale = parse_judge_json(raw.content)
         return JudgeResult(model=raw.model, score=score, rationale=rationale, raw=raw)
@@ -603,8 +613,7 @@ class FusionLiveRunner:
             temperature=0.0,
             max_tokens=max(self.judge_max_tokens, DEFAULT_TR_CRITERION_JUDGE_MAX_OUTPUT_TOKENS),
             response_format={"type": "json_object"},
-            length_retry_max_tokens=DEFAULT_LENGTH_RETRY_MAX_TOKENS,
-            stream=True,
+            length_retry_max_tokens=self.length_retry_max_tokens,
         )
         try:
             return parse_criterion_judge_json_for_criteria(criteria, raw.content), (raw,)
@@ -758,6 +767,7 @@ def _parse_chat_stream_response(
     model: str,
     response: httpx.Response,
     elapsed_ms: Callable[[], int],
+    deadline_at: float | None = None,
 ) -> ChatResult:
     request_id = response.headers.get("x-request-id") or response.headers.get("x-tr-request-id")
     response.raise_for_status()
@@ -766,7 +776,7 @@ def _parse_chat_stream_response(
     input_tokens = output_tokens = None
     returned_model: str | None = None
     saw_done = False
-    for data in _iter_sse_data(response):
+    for data in _iter_sse_data(response, deadline_at=deadline_at):
         if data == "[DONE]":
             saw_done = True
             break
@@ -819,21 +829,41 @@ def _parse_chat_stream_response(
     )
 
 
-def _iter_sse_data(response: httpx.Response) -> tuple[str, ...]:
+def _iter_sse_data(
+    response: httpx.Response, *, deadline_at: float | None = None
+) -> Iterator[str]:
     data_lines: list[str] = []
-    events: list[str] = []
-    for raw_line in response.iter_lines():
-        line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
-        if not line:
-            if data_lines:
-                events.append("\n".join(data_lines).strip())
-                data_lines.clear()
-            continue
+
+    def emit_event() -> str | None:
+        if not data_lines:
+            return None
+        event = "\n".join(data_lines).strip()
+        data_lines.clear()
+        return event or None
+
+    text_buffer = ""
+    for raw_chunk in response.iter_raw():
+        if deadline_at is not None and time.perf_counter() > deadline_at:
+            raise httpx.TimeoutException("stream deadline exceeded")
+        text_buffer += raw_chunk.decode("utf-8", errors="replace")
+        while "\n" in text_buffer:
+            raw_line, text_buffer = text_buffer.split("\n", 1)
+            line = raw_line.rstrip("\r")
+            if not line:
+                event = emit_event()
+                if event is not None:
+                    yield event
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+    if text_buffer:
+        line = text_buffer.rstrip("\r")
         if line.startswith("data:"):
             data_lines.append(line[5:].strip())
-    if data_lines:
-        events.append("\n".join(data_lines).strip())
-    return tuple(event for event in events if event)
+    event = emit_event()
+    if event is not None:
+        if event:
+            yield event
 
 
 def _stream_choice_text(choice: dict[str, Any]) -> str:

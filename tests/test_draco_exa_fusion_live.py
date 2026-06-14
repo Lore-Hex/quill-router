@@ -74,6 +74,10 @@ def _chat_sse(
     )
 
 
+def _chat_error_sse(message: str) -> str:
+    return "data: " + json.dumps({"error": {"message": message}}) + "\n\n"
+
+
 def _draco_payload() -> dict[str, object]:
     rubric = {
         "sections": [
@@ -650,16 +654,21 @@ def test_fusion_runner_uses_search_panel_synthesis_and_judges(httpx_mock, tmp_pa
             "usage": {"prompt_tokens": 10, "completion_tokens": 5},
         },
     )
-    for model, content in (
-        ("model-final", "final answer cites https://example.com"),
-        ("model-judge", '{"score": 82, "rationale": "solid"}'),
-        ("model-judge", '{"score": 84, "rationale": "solid"}'),
-    ):
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_sse("model-final", "final answer cites https://example.com"),
+        headers={"content-type": "text/event-stream"},
+    )
+    for content in ('{"score": 82, "rationale": "solid"}', '{"score": 84, "rationale": "solid"}'):
         httpx_mock.add_response(
             method="POST",
             url="https://api.test/v1/chat/completions",
-            text=_chat_sse(model, content),
-            headers={"content-type": "text/event-stream"},
+            json={
+                "model": "model-judge",
+                "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
         )
 
     tr_client = TrustedRouterChatClient(
@@ -719,6 +728,74 @@ def test_trustedrouter_client_streams_chat_and_parses_reasoning_deltas(
     assert result.input_tokens == 10
     assert result.output_tokens == 5
     assert result.request_id == "req-stream"
+
+
+def test_trustedrouter_client_retries_stream_provider_error(httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_error_sse("provider error"),
+        headers={"content-type": "text/event-stream"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_sse("model-a", "retry ok"),
+        headers={"content-type": "text/event-stream"},
+    )
+    client = TrustedRouterChatClient(
+        "sk-test",
+        base_url="https://api.test/v1",
+        client=httpx.Client(),
+        retry_attempts=2,
+        retry_sleep_seconds=0,
+    )
+
+    result = client.complete(
+        model="model-a",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+    )
+
+    assert result.content == "retry ok"
+    assert len(httpx_mock.get_requests()) == 2
+
+
+def test_trustedrouter_client_stream_falls_back_to_lower_token_cap(httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_error_sse("provider error"),
+        headers={"content-type": "text/event-stream"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_sse("model-a", "lower cap ok"),
+        headers={"content-type": "text/event-stream"},
+    )
+    client = TrustedRouterChatClient(
+        "sk-test",
+        base_url="https://api.test/v1",
+        client=httpx.Client(),
+        retry_attempts=1,
+        retry_sleep_seconds=0,
+    )
+
+    result = client.complete(
+        model="model-a",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=5_000,
+        token_fallback_max_tokens=(1_000,),
+        stream=True,
+    )
+
+    requests = httpx_mock.get_requests()
+    assert [json.loads(request.content)["max_tokens"] for request in requests] == [
+        5_000,
+        1_000,
+    ]
+    assert result.content == "lower cap ok"
 
 
 def test_trustedrouter_client_shapes_gpt_5_5_requests_for_openai(httpx_mock) -> None:  # type: ignore[no-untyped-def]
