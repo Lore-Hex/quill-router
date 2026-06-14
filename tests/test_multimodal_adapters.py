@@ -328,6 +328,27 @@ def test_gemini_payload_handles_json_object_response_format() -> None:
     assert "responseSchema" not in out["generationConfig"]
 
 
+def test_gemini_payload_disables_thinking_for_flash_text_models() -> None:
+    from trusted_router.provider_payloads import gemini_payload
+
+    gemini_25 = gemini_payload({
+        "model": "google/gemini-2.5-flash",
+        "messages": [{"role": "user", "content": "x"}],
+    })
+    gemini_3 = gemini_payload({
+        "model": "google/gemini-3-flash-preview",
+        "messages": [{"role": "user", "content": "x"}],
+    })
+    image_model = gemini_payload({
+        "model": "google/gemini-3.1-flash-image",
+        "messages": [{"role": "user", "content": "x"}],
+    })
+
+    assert gemini_25["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+    assert gemini_3["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
+    assert "generationConfig" not in image_model
+
+
 def test_gemini_payload_strips_nested_unsupported_fields() -> None:
     """Unsupported fields buried inside `properties.<x>` and `items`
     must also be removed — Gemini validates the schema recursively."""

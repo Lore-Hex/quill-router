@@ -27,6 +27,8 @@ def gemini_payload(request: dict[str, Any]) -> dict[str, Any]:
         generation_config["temperature"] = request["temperature"]
     if request.get("top_p") is not None:
         generation_config["topP"] = request["top_p"]
+    if thinking_config := _gemini_thinking_config(str(request.get("model") or "")):
+        generation_config["thinkingConfig"] = thinking_config
 
     # Translate OpenAI's `response_format` to Gemini's
     # `responseMimeType` / `responseSchema`. forty.news's StoryDraftNode
@@ -95,6 +97,15 @@ def _gemini_response_schema(schema: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = value
     return out
+
+
+def _gemini_thinking_config(model_id: str) -> dict[str, Any] | None:
+    normalized = model_id.lower()
+    if "gemini" not in normalized or "flash" not in normalized or "image" in normalized:
+        return None
+    if "gemini-2.5" in normalized:
+        return {"thinkingBudget": 0}
+    return {"thinkingLevel": "minimal"}
 
 
 def messages(request: dict[str, Any]) -> list[dict[str, Any]]:
