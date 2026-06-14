@@ -1,0 +1,26 @@
+{
+  "_about": "Provider-native supplement for Z.AI models available ahead of the OpenRouter snapshot. GLM-5.2 is documented in Z.AI's Coding Plan docs with model id glm-5.2, 1M context, and 131072 max output tokens. Z.AI has not listed GLM-5.2 on the public token pricing table yet, so this manifest uses the current GLM-5.1 token price until a GLM-5.2 API price is published.",
+  "provider": "zai",
+  "source": "https://docs.z.ai/devpack/latest-model",
+  "generated_at": "2026-06-14T00:00:00Z",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "display_name": "Z.AI GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "structured-output"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}
