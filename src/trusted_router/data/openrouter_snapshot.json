@@ -4286,6 +4286,117 @@
       "pricing_source": "provider_direct"
     },
     {
+      "id": "moonshotai/kimi-k2.7-code",
+      "name": "MoonshotAI: Kimi K2.7 Code",
+      "created": 1781266361,
+      "description": "MoonshotAI: Kimi K2.7 Code is a coding-focused model in Moonshot AI's Kimi K2 family, built to complete end-to-end programming tasks reliably over long contexts. It uses a native multimodal mixture-of-experts architecture.",
+      "context_length": 262144,
+      "architecture": {
+        "modality": "text+image+video->text",
+        "input_modalities": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output_modalities": [
+          "text"
+        ],
+        "tokenizer": "Other",
+        "instruct_type": null
+      },
+      "pricing": {
+        "prompt": "0.00000095",
+        "completion": "0.000004",
+        "input_cache_read": "0.00000019"
+      },
+      "top_provider": {
+        "context_length": 262144,
+        "max_completion_tokens": 262144,
+        "is_moderated": false
+      },
+      "per_request_limits": null,
+      "endpoints": [
+        {
+          "name": "Moonshot AI | moonshotai/kimi-k2.7-code-20260612",
+          "model_id": "moonshotai/kimi-k2.7-code",
+          "model_name": "MoonshotAI: Kimi K2.7 Code",
+          "provider_name": "Moonshot AI",
+          "tag": "moonshotai/int4",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000095",
+            "completion": "0.000004",
+            "input_cache_read": "0.00000019",
+            "discount": 0
+          },
+          "quantization": "int4",
+          "max_completion_tokens": null,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "structured_outputs",
+            "response_format",
+            "tool_choice",
+            "tools"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.95719178082192,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.96265870052278,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "kimi",
+          "pricing_source": "provider_direct"
+        },
+        {
+          "name": "Novita | moonshotai/kimi-k2.7-code-20260612",
+          "model_id": "moonshotai/kimi-k2.7-code",
+          "model_name": "MoonshotAI: Kimi K2.7 Code",
+          "provider_name": "Novita",
+          "tag": "novita",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000095",
+            "completion": "0.000004",
+            "input_cache_read": "0.00000019",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 262144,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "stop",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "top_k",
+            "repetition_penalty",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.84472049689441,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 97.45519713261649,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "novita",
+          "pricing_source": "provider_direct"
+        }
+      ],
+      "pricing_source": "provider_direct"
+    },
+    {
       "id": "openai/gpt-4.1",
       "name": "OpenAI: GPT-4.1",
       "created": 1744651385,
