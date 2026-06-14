@@ -28,7 +28,7 @@ The default run matrix uses cheaper panel and judge models:
 - `fusion_tr_budget`: Gemini 3 Flash, Kimi K2.6, DeepSeek V4 Pro, synthesized by GLM 4.7.
 - `fusion_tr_current`: Gemini 3 Flash, Kimi K2.7 Code, DeepSeek V4 Pro, synthesized by GLM 4.7.
 - `fusion_tr_ultra_cheap`: DeepSeek V4 Flash, MiniMax M3, Mistral Small, synthesized by Mistral Small.
-- `fusion_mythos_candidate_6`: GPT-5.5, Opus 4.8, Kimi K2.7 Code, GLM 5.2, MiniMax M3, and Gemini 3 Flash, synthesized by Opus 4.8.
+- `fusion_mythos_candidate_6`: GPT-5.5, Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, and Gemini 3 Flash, synthesized by Opus 4.8.
 - `fusion_mythos_candidate_7`: the same six-model panel plus Gemini 3.1 Pro Preview.
 - Solo controls: DeepSeek V4 Pro, Kimi K2.6, Kimi K2.7 Code, Gemini 3 Flash, Mistral Small.
 
@@ -139,6 +139,10 @@ uv run python scripts/fusion_live_eval.py \
 
 Run `fusion_mythos_candidate_6` first if Gemini 3.1 Pro should be held out of
 the panel and used only as the judge.
+
+GLM 5.2 is not enabled for the current Z.AI operator account yet, so the
+current Mythos candidates use GLM 5.1. Swap the config to GLM 5.2 after the
+provider grants access and a direct smoke passes.
 
 The live runner fetches the public DRACO rows from Hugging Face, blocks
 benchmark/rubric hostnames from Exa search, runs the panel, synthesizes the

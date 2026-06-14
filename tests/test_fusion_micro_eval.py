@@ -185,6 +185,8 @@ def test_frontier_fusion_draco_configs_are_explicit_opt_in() -> None:
     assert seven.kind == "fusion"
     assert len(seven.generation_models) == 7
     assert seven.generation_models[:-1] == six.generation_models
+    assert "z-ai/glm-5.1" in six.generation_models
+    assert "z-ai/glm-5.2" not in six.generation_models
     assert seven.generation_models[-1] == "google/gemini-3.1-pro-preview"
     assert six.final_model == "anthropic/claude-opus-4.8"
     estimate = estimate_config(

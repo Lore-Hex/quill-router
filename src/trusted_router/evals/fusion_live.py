@@ -4,6 +4,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -13,6 +14,7 @@ import httpx
 from trusted_router.evals.draco import DRACO_EXCLUDED_SEARCH_DOMAINS, DracoTask
 from trusted_router.evals.exa import (
     DEFAULT_EXA_FETCH_RESULTS,
+    ExaResult,
     ExaSearchBundle,
     ExaSearchClient,
     fetch_search_result_texts,
@@ -30,7 +32,10 @@ DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT = 4_000
 DEFAULT_FETCH_SEARCH_RESULTS = DEFAULT_EXA_FETCH_RESULTS
 DEFAULT_TOKEN_FALLBACK_MAX_TOKENS: tuple[int, ...] = (4_000, 3_000, 2_000, 1_000)
 DEFAULT_LENGTH_RETRY_MAX_TOKENS: tuple[int, ...] = (8_000, 12_000)
+DEFAULT_GPT_5_5_LENGTH_RETRY_MAX_TOKENS: tuple[int, ...] = (16_000, 32_000)
 DEFAULT_DRACO_SEARCH_QUERY_COUNT = 3
+DEFAULT_PANEL_CONCURRENCY = 7
+DEFAULT_PANEL_STREAM_TIMEOUT_SECONDS = 120.0
 DRACO_FINANCE_INCLUDE_DOMAINS: tuple[str, ...] = (
     "sec.gov",
     "annualreports.com",
@@ -74,6 +79,28 @@ class ChatResult:
         if include_content:
             out["content"] = self.content
         return out
+
+
+@dataclass(frozen=True)
+class PanelFailure:
+    model: str
+    error_type: str
+    message: str
+
+    def public_dict(self) -> dict[str, str]:
+        return {
+            "model": self.model,
+            "error_type": self.error_type,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class PanelAttempt:
+    index: int
+    searches: tuple[ExaSearchBundle, ...]
+    result: ChatResult | None = None
+    failure: PanelFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +178,7 @@ class FusionRunResult:
     final: ChatResult
     judges: tuple[JudgeResult | CriterionJudgeResult, ...]
     scoring_mode: ScoringMode = "holistic"
+    panel_failures: tuple[PanelFailure, ...] = ()
 
     @property
     def score(self) -> float | None:
@@ -170,6 +198,7 @@ class FusionRunResult:
             "search": self.search.public_dict() if self.search else None,
             "searches": [item.public_dict() for item in self.searches],
             "panel": [item.public_dict(include_content=include_content) for item in self.panel],
+            "panel_failures": [item.public_dict() for item in self.panel_failures],
             "analysis": self.analysis.public_dict(include_content=include_content)
             if self.analysis
             else None,
@@ -225,7 +254,10 @@ class TrustedRouterChatClient:
         token_fallback_max_tokens: tuple[int, ...] = (),
         length_retry_max_tokens: tuple[int, ...] = (),
         stream: bool = False,
+        stream_timeout_seconds: float | None = None,
     ) -> ChatResult:
+        if stream_timeout_seconds is not None and stream_timeout_seconds <= 0:
+            raise ValueError("stream_timeout_seconds must be positive")
         if stream:
             return self._complete_streaming(
                 model=model,
@@ -235,6 +267,7 @@ class TrustedRouterChatClient:
                 response_format=response_format,
                 token_fallback_max_tokens=token_fallback_max_tokens,
                 length_retry_max_tokens=length_retry_max_tokens,
+                stream_timeout_seconds=stream_timeout_seconds,
             )
         started = time.perf_counter()
         request_json: dict[str, Any] = {
@@ -246,7 +279,12 @@ class TrustedRouterChatClient:
         if response_format is not None:
             request_json["response_format"] = response_format
         last_result: ChatResult | None = None
-        for length_attempt in _length_token_attempts(max_tokens, length_retry_max_tokens):
+        for length_attempt in _length_token_attempts(
+            max_tokens,
+            _effective_length_retry_max_tokens(
+                model, length_retry_max_tokens=length_retry_max_tokens
+            ),
+        ):
             response: httpx.Response | None = None
             for max_token_attempt in _max_token_attempts(
                 length_attempt, token_fallback_max_tokens
@@ -289,7 +327,13 @@ class TrustedRouterChatClient:
             last_result = result
             if result.finish_reason != "length":
                 return result
+            if _is_empty_length_result(result):
+                continue
         if last_result is not None:
+            if _is_empty_length_result(last_result):
+                raise RuntimeError(
+                    "chat completion exhausted token retries with empty length response"
+                )
             return last_result
         raise RuntimeError("chat completion did not produce a response")
 
@@ -303,8 +347,14 @@ class TrustedRouterChatClient:
         response_format: dict[str, str] | None,
         token_fallback_max_tokens: tuple[int, ...],
         length_retry_max_tokens: tuple[int, ...],
+        stream_timeout_seconds: float | None,
     ) -> ChatResult:
         started = time.perf_counter()
+        effective_stream_timeout_seconds = (
+            self._stream_timeout_seconds
+            if stream_timeout_seconds is None
+            else min(self._timeout_seconds, stream_timeout_seconds)
+        )
         request_json: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -316,7 +366,12 @@ class TrustedRouterChatClient:
         if _supports_temperature(model):
             request_json["temperature"] = temperature
         last_result: ChatResult | None = None
-        for length_attempt in _length_token_attempts(max_tokens, length_retry_max_tokens):
+        for length_attempt in _length_token_attempts(
+            max_tokens,
+            _effective_length_retry_max_tokens(
+                model, length_retry_max_tokens=length_retry_max_tokens
+            ),
+        ):
             max_token_attempts = _max_token_attempts(
                 length_attempt, token_fallback_max_tokens
             )
@@ -333,8 +388,8 @@ class TrustedRouterChatClient:
                             },
                             json=request_json,
                             timeout=httpx.Timeout(
-                                self._stream_timeout_seconds,
-                                read=min(30.0, self._stream_timeout_seconds),
+                                effective_stream_timeout_seconds,
+                                read=min(30.0, effective_stream_timeout_seconds),
                             ),
                         ) as response:
                             if response.status_code in self.TOKEN_FALLBACK_STATUS_CODES:
@@ -351,11 +406,13 @@ class TrustedRouterChatClient:
                                     (time.perf_counter() - started) * 1000
                                 ),
                                 deadline_at=time.perf_counter()
-                                + self._stream_timeout_seconds,
+                                + effective_stream_timeout_seconds,
                             )
                             last_result = result
                             if result.finish_reason != "length":
                                 return result
+                            if _is_empty_length_result(result):
+                                break
                             break
                     except (httpx.TimeoutException, httpx.NetworkError, RuntimeError):
                         if attempt == self._retry_attempts:
@@ -366,7 +423,13 @@ class TrustedRouterChatClient:
                         continue
                 if last_result is not None and last_result.finish_reason != "length":
                     return last_result
+                if last_result is not None and last_result.finish_reason == "length":
+                    break
         if last_result is not None:
+            if _is_empty_length_result(last_result):
+                raise RuntimeError(
+                    "streaming chat completion exhausted token retries with empty length response"
+                )
             return last_result
         raise RuntimeError("streaming chat completion did not produce a response")
 
@@ -391,6 +454,8 @@ class FusionLiveRunner:
         fetch_search_results: bool = False,
         separate_fusion_analysis: bool = True,
         fusion_analysis_max_tokens: int = 1_200,
+        panel_concurrency: int = DEFAULT_PANEL_CONCURRENCY,
+        panel_stream_timeout_seconds: float = DEFAULT_PANEL_STREAM_TIMEOUT_SECONDS,
         length_retry_max_tokens: tuple[int, ...] = DEFAULT_LENGTH_RETRY_MAX_TOKENS,
         search_context_chars_per_result: int = DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT,
         fetch_search_result_count: int = DEFAULT_FETCH_SEARCH_RESULTS,
@@ -400,6 +465,10 @@ class FusionLiveRunner:
             raise ValueError("judge_passes must be positive")
         if criterion_chunk_size < 1:
             raise ValueError("criterion_chunk_size must be positive")
+        if panel_concurrency < 1:
+            raise ValueError("panel_concurrency must be positive")
+        if panel_stream_timeout_seconds <= 0:
+            raise ValueError("panel_stream_timeout_seconds must be positive")
         for name, value in (
             ("panel_max_tokens", panel_max_tokens),
             ("final_max_tokens", final_max_tokens),
@@ -423,6 +492,8 @@ class FusionLiveRunner:
         self.fetch_search_results = fetch_search_results
         self.separate_fusion_analysis = separate_fusion_analysis
         self.fusion_analysis_max_tokens = fusion_analysis_max_tokens
+        self.panel_concurrency = panel_concurrency
+        self.panel_stream_timeout_seconds = panel_stream_timeout_seconds
         self.length_retry_max_tokens = length_retry_max_tokens
         self.search_context_chars_per_result = search_context_chars_per_result
         self.fetch_search_result_count = fetch_search_result_count
@@ -441,35 +512,43 @@ class FusionLiveRunner:
             shared_search_bundle = self._search(task)
             searches.append(shared_search_bundle)
 
-        def search_context_for_generation() -> str:
+        def search_context_for_generation() -> tuple[str, tuple[ExaSearchBundle, ...]]:
             if not live_search:
-                return "Search disabled."
+                return "Search disabled.", ()
             if shared_search_bundle is not None:
-                return format_search_context(
-                    shared_search_bundle,
-                    max_chars_per_result=self.search_context_chars_per_result,
+                return (
+                    format_search_context(
+                        shared_search_bundle,
+                        max_chars_per_result=self.search_context_chars_per_result,
+                    ),
+                    (),
                 )
             search_bundles = self._searches(task)
-            searches.extend(search_bundles)
-            return format_search_contexts(
+            return (
+                format_search_contexts(
+                    search_bundles,
+                    max_chars_per_result=self.search_context_chars_per_result,
+                ),
                 search_bundles,
-                max_chars_per_result=self.search_context_chars_per_result,
             )
 
         panel: list[ChatResult] = []
+        panel_failures: list[PanelFailure] = []
         analysis: ChatResult | None = None
         if config.kind == "fusion":
-            for model in config.generation_models:
-                panel.append(
-                    self.tr_client.complete(
-                        model=model,
-                        messages=panel_messages(task, search_context_for_generation()),
-                        max_tokens=self.panel_max_tokens,
-                        token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
-                        length_retry_max_tokens=self.length_retry_max_tokens,
-                        stream=True,
-                    )
-                )
+            attempts = self._run_panel_attempts(
+                task,
+                config.generation_models,
+                search_context_for_generation=search_context_for_generation,
+            )
+            for attempt in attempts:
+                searches.extend(attempt.searches)
+                if attempt.result is not None:
+                    panel.append(attempt.result)
+                if attempt.failure is not None:
+                    panel_failures.append(attempt.failure)
+            if not panel:
+                raise RuntimeError("all Fusion panel models failed")
             if config.final_model is None:
                 raise ValueError(f"fusion config {config.id} has no final model")
             if self.separate_fusion_analysis:
@@ -493,9 +572,11 @@ class FusionLiveRunner:
         else:
             if len(config.generation_models) != 1:
                 raise ValueError(f"solo config {config.id} must have exactly one model")
+            search_context, solo_searches = search_context_for_generation()
+            searches.extend(solo_searches)
             final = self.tr_client.complete(
                 model=config.generation_models[0],
-                messages=panel_messages(task, search_context_for_generation()),
+                messages=panel_messages(task, search_context),
                 max_tokens=self.final_max_tokens,
                 token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
                 length_retry_max_tokens=self.length_retry_max_tokens,
@@ -524,7 +605,70 @@ class FusionLiveRunner:
             final=final,
             judges=judges,
             scoring_mode=self.scoring_mode,
+            panel_failures=tuple(panel_failures),
         )
+
+    def _run_panel_attempts(
+        self,
+        task: DracoTask,
+        models: tuple[str, ...],
+        *,
+        search_context_for_generation: Callable[[], tuple[str, tuple[ExaSearchBundle, ...]]],
+    ) -> tuple[PanelAttempt, ...]:
+        if len(models) <= 1 or self.panel_concurrency <= 1:
+            return tuple(
+                self._run_panel_attempt(
+                    index=index,
+                    model=model,
+                    task=task,
+                    search_context_for_generation=search_context_for_generation,
+                )
+                for index, model in enumerate(models)
+            )
+        max_workers = min(self.panel_concurrency, len(models))
+        attempts: list[PanelAttempt] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    self._run_panel_attempt,
+                    index=index,
+                    model=model,
+                    task=task,
+                    search_context_for_generation=search_context_for_generation,
+                )
+                for index, model in enumerate(models)
+            ]
+            for future in as_completed(futures):
+                attempts.append(future.result())
+        return tuple(sorted(attempts, key=lambda attempt: attempt.index))
+
+    def _run_panel_attempt(
+        self,
+        *,
+        index: int,
+        model: str,
+        task: DracoTask,
+        search_context_for_generation: Callable[[], tuple[str, tuple[ExaSearchBundle, ...]]],
+    ) -> PanelAttempt:
+        search_bundles: tuple[ExaSearchBundle, ...] = ()
+        try:
+            search_context, search_bundles = search_context_for_generation()
+            result = self.tr_client.complete(
+                model=model,
+                messages=panel_messages(task, search_context),
+                max_tokens=self.panel_max_tokens,
+                token_fallback_max_tokens=DEFAULT_TOKEN_FALLBACK_MAX_TOKENS,
+                length_retry_max_tokens=self.length_retry_max_tokens,
+                stream=True,
+                stream_timeout_seconds=self.panel_stream_timeout_seconds,
+            )
+            return PanelAttempt(index=index, searches=search_bundles, result=result)
+        except Exception as exc:  # noqa: BLE001 - one panel member must not fail the whole fusion task.
+            return PanelAttempt(
+                index=index,
+                searches=search_bundles,
+                failure=_panel_failure(model, exc),
+            )
 
     def _search(self, task: DracoTask) -> ExaSearchBundle:
         return self._searches(task)[0]
@@ -552,7 +696,7 @@ class FusionLiveRunner:
                         max_results=self.fetch_search_result_count,
                         max_chars_per_result=self.search_context_chars_per_result,
                     )
-            validate_draco_search_bundle(task, bundle)
+            bundle = filter_draco_search_bundle(task, bundle)
             bundles.append(bundle)
         if not bundles:
             raise ValueError("no search queries were generated")
@@ -709,12 +853,38 @@ def _length_token_attempts(
     return tuple(dict.fromkeys(attempts))
 
 
+def _effective_length_retry_max_tokens(
+    model: str, *, length_retry_max_tokens: tuple[int, ...]
+) -> tuple[int, ...]:
+    attempts = list(length_retry_max_tokens)
+    if _is_gpt_5_5(model):
+        attempts.extend(DEFAULT_GPT_5_5_LENGTH_RETRY_MAX_TOKENS)
+    return tuple(dict.fromkeys(attempts))
+
+
 def _supports_temperature(model: str) -> bool:
-    return not model.lower().startswith("openai/gpt-5.5")
+    return not _is_gpt_5_5(model)
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
+    return _is_gpt_5_5(model)
+
+
+def _is_gpt_5_5(model: str) -> bool:
     return model.lower().startswith("openai/gpt-5.5")
+
+
+def _is_empty_length_result(result: ChatResult) -> bool:
+    return result.finish_reason == "length" and not result.content.strip()
+
+
+def _panel_failure(model: str, exc: Exception) -> PanelFailure:
+    message = str(exc).strip() or exc.__class__.__name__
+    return PanelFailure(
+        model=model,
+        error_type=exc.__class__.__name__,
+        message=message[:500],
+    )
 
 
 def _set_max_tokens(request_json: dict[str, Any], *, model: str, max_tokens: int) -> None:
@@ -897,6 +1067,29 @@ def validate_draco_search_bundle(task: DracoTask, bundle: ExaSearchBundle) -> No
     This validator only inspects returned result metadata/content.
     """
 
+    for result in bundle.results:
+        if reason := _draco_search_result_leak_reason(task, result):
+            raise ValueError(reason)
+
+
+def filter_draco_search_bundle(task: DracoTask, bundle: ExaSearchBundle) -> ExaSearchBundle:
+    clean_results = tuple(
+        result for result in bundle.results if not _draco_search_result_leak_reason(task, result)
+    )
+    if bundle.results and not clean_results:
+        raise ValueError("Exa returned only forbidden DRACO benchmark artifacts")
+    if len(clean_results) == len(bundle.results):
+        return bundle
+    return ExaSearchBundle(
+        query=bundle.query,
+        request_id=bundle.request_id,
+        resolved_search_type=bundle.resolved_search_type,
+        cost_dollars=bundle.cost_dollars,
+        results=clean_results,
+    )
+
+
+def _draco_search_result_leak_reason(task: DracoTask, result: ExaResult) -> str | None:
     criteria = _flat_criteria(task.rubric)
     criterion_ids = {
         str(criterion["id"]).lower() for criterion in criteria if len(str(criterion["id"])) >= 16
@@ -906,30 +1099,30 @@ def validate_draco_search_bundle(task: DracoTask, bundle: ExaSearchBundle) -> No
         for criterion in criteria
         if len(str(criterion["requirement"]).split()) >= 10
     }
-    for result in bundle.results:
-        url = result.url.lower()
-        haystack = "\n".join(
-            (
-                result.url,
-                result.title,
-                result.author or "",
-                "\n".join(result.highlights),
-                result.text or "",
-                result.fetched_text or "",
-            )
-        ).lower()
-        for domain in DRACO_EXCLUDED_SEARCH_DOMAINS:
-            if domain in url:
-                raise ValueError(f"Exa returned forbidden DRACO domain: {domain}")
-        for term in DRACO_FORBIDDEN_RESULT_TERMS:
-            if term in haystack:
-                raise ValueError(f"Exa returned possible DRACO benchmark artifact: {term}")
-        for criterion_id in criterion_ids:
-            if criterion_id in haystack:
-                raise ValueError("Exa returned possible DRACO criterion id")
-        for fragment in requirement_fragments:
-            if fragment and fragment in haystack:
-                raise ValueError("Exa returned possible DRACO rubric requirement")
+    url = result.url.lower()
+    haystack = "\n".join(
+        (
+            result.url,
+            result.title,
+            result.author or "",
+            "\n".join(result.highlights),
+            result.text or "",
+            result.fetched_text or "",
+        )
+    ).lower()
+    for domain in DRACO_EXCLUDED_SEARCH_DOMAINS:
+        if domain in url:
+            return f"Exa returned forbidden DRACO domain: {domain}"
+    for term in DRACO_FORBIDDEN_RESULT_TERMS:
+        if term in haystack:
+            return f"Exa returned possible DRACO benchmark artifact: {term}"
+    for criterion_id in criterion_ids:
+        if criterion_id in haystack:
+            return "Exa returned possible DRACO criterion id"
+    for fragment in requirement_fragments:
+        if fragment and fragment in haystack:
+            return "Exa returned possible DRACO rubric requirement"
+    return None
 
 
 def panel_messages(task: DracoTask, search_context: str) -> list[dict[str, str]]:

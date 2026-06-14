@@ -33,12 +33,14 @@ from trusted_router.evals.exa import (
     format_search_context,
 )
 from trusted_router.evals.fusion_live import (
+    ChatResult,
     CriterionJudgment,
     FusionLiveRunner,
     TrustedRouterChatClient,
     criterion_score,
     draco_search_query,
     draco_search_query_specs,
+    filter_draco_search_bundle,
     format_search_contexts,
     panel_messages,
     parse_criterion_judge_json,
@@ -602,6 +604,63 @@ def test_draco_search_validation_rejects_fetched_rubric_content() -> None:
         validate_draco_search_bundle(task, bundle)
 
 
+def test_draco_search_filter_drops_tainted_results_and_keeps_clean_sources() -> None:
+    task = parse_draco_rows(_draco_payload())[0]
+    bundle = ExaSearchBundle(
+        query="clean query",
+        request_id="req_1",
+        resolved_search_type="auto",
+        cost_dollars=0.001,
+        results=(
+            ExaResult(
+                title="Normal source",
+                url="https://example.com/source",
+                published_date=None,
+                author=None,
+                highlights=("Normal search snippet.",),
+                text="Useful public source.",
+            ),
+            ExaResult(
+                title="DRACO leak",
+                url="https://example.com/leak",
+                published_date=None,
+                author=None,
+                highlights=("This page contains a DRACO benchmark rubric.",),
+                text=None,
+            ),
+        ),
+    )
+
+    filtered = filter_draco_search_bundle(task, bundle)
+
+    assert filtered.request_id == "req_1"
+    assert filtered.cost_dollars == 0.001
+    assert [result.url for result in filtered.results] == ["https://example.com/source"]
+
+
+def test_draco_search_filter_rejects_all_tainted_results() -> None:
+    task = parse_draco_rows(_draco_payload())[0]
+    bundle = ExaSearchBundle(
+        query="clean query",
+        request_id=None,
+        resolved_search_type=None,
+        cost_dollars=None,
+        results=(
+            ExaResult(
+                title="DRACO leak",
+                url="https://example.com/leak",
+                published_date=None,
+                author=None,
+                highlights=("This page contains a DRACO benchmark rubric.",),
+                text=None,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="only forbidden"):
+        filter_draco_search_bundle(task, bundle)
+
+
 def test_fusion_runner_uses_search_panel_synthesis_and_judges(httpx_mock, tmp_path) -> None:  # type: ignore[no-untyped-def]
     task = DracoTask(
         id="task-1",
@@ -675,7 +734,12 @@ def test_fusion_runner_uses_search_panel_synthesis_and_judges(httpx_mock, tmp_pa
         "sk-test", base_url="https://api.test/v1", client=httpx.Client()
     )
     exa_client = ExaSearchClient("exa-test", client=httpx.Client())
-    runner = FusionLiveRunner(tr_client=tr_client, exa_client=exa_client, judge_passes=2)
+    runner = FusionLiveRunner(
+        tr_client=tr_client,
+        exa_client=exa_client,
+        judge_passes=2,
+        panel_concurrency=1,
+    )
 
     result = runner.run_task_config(task, config, live_search=True)
 
@@ -691,6 +755,189 @@ def test_fusion_runner_uses_search_panel_synthesis_and_judges(httpx_mock, tmp_pa
     assert "final answer cites" not in serialized
     assert "both cite source" not in serialized
     assert "sk-test" not in serialized
+
+
+def test_fusion_runner_records_panel_failure_and_continues(httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    task = DracoTask(
+        id="task-panel-fail",
+        domain="Academic",
+        problem="Compare the methods.",
+        rubric={"sections": [{"criteria": [{"id": "a", "weight": 1, "requirement": "be right"}]}]},
+    )
+    config = EvalConfig(
+        id="fusion_test",
+        label="Fusion test",
+        kind="fusion",
+        generation_models=("model-bad", "model-good"),
+        final_model="model-final",
+        judge_model="model-judge",
+    )
+    for request_id in ("exa-bad", "exa-good"):
+        httpx_mock.add_response(
+            method="POST",
+            url=EXA_SEARCH_URL,
+            json={
+                "requestId": request_id,
+                "results": [
+                    {"title": "Source", "url": "https://example.com", "highlights": ["source text"]}
+                ],
+            },
+        )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_error_sse("provider failed"),
+        headers={"content-type": "text/event-stream"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_sse("model-good", "usable panel answer"),
+        headers={"content-type": "text/event-stream"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        json={
+            "model": "model-final",
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"consensus":["good panel usable"],"contradictions":[],"partial_coverage":[],"unique_insights":[],"blind_spots":[]}'
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        },
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        text=_chat_sse("model-final", "final answer"),
+        headers={"content-type": "text/event-stream"},
+    )
+    httpx_mock.add_response(
+        method="POST",
+        url="https://api.test/v1/chat/completions",
+        json={
+            "model": "model-judge",
+            "choices": [
+                {"message": {"content": '{"score": 80, "rationale": "ok"}'}, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        },
+    )
+
+    tr_client = TrustedRouterChatClient(
+        "sk-test",
+        base_url="https://api.test/v1",
+        client=httpx.Client(),
+        retry_attempts=1,
+        retry_sleep_seconds=0,
+    )
+    exa_client = ExaSearchClient("exa-test", client=httpx.Client())
+    runner = FusionLiveRunner(
+        tr_client=tr_client,
+        exa_client=exa_client,
+        judge_passes=1,
+        panel_concurrency=1,
+    )
+
+    result = runner.run_task_config(task, config, live_search=True)
+
+    assert [item.model for item in result.panel] == ["model-good"]
+    assert len(result.panel_failures) == 1
+    assert result.panel_failures[0].model == "model-bad"
+    assert result.panel_failures[0].error_type == "RuntimeError"
+    assert "provider failed" in result.panel_failures[0].message
+    assert result.score == 80
+    assert result.public_dict()["panel_failures"][0]["model"] == "model-bad"
+
+
+def test_fusion_runner_concurrent_panel_preserves_config_order() -> None:
+    task = DracoTask(
+        id="task-parallel",
+        domain="Academic",
+        problem="Compare the methods.",
+        rubric={"sections": [{"criteria": [{"id": "a", "weight": 1, "requirement": "be right"}]}]},
+    )
+    config = EvalConfig(
+        id="fusion_parallel",
+        label="Fusion parallel",
+        kind="fusion",
+        generation_models=("model-a", "model-b", "model-c"),
+        final_model="model-final",
+        judge_model="model-judge",
+    )
+
+    class FakeTrustedRouterClient:
+        panel_timeouts: list[float | None] = []
+
+        def complete(self, **kwargs: object) -> ChatResult:
+            model = kwargs["model"]
+            assert isinstance(model, str)
+            response_format = kwargs.get("response_format")
+            if model in {"model-a", "model-b", "model-c"}:
+                stream_timeout = kwargs.get("stream_timeout_seconds")
+                assert stream_timeout is None or isinstance(stream_timeout, float)
+                self.panel_timeouts.append(stream_timeout)
+            if model == "model-final" and response_format is not None:
+                return ChatResult(
+                    model=model,
+                    content='{"consensus":["ok"],"contradictions":[],"partial_coverage":[],"unique_insights":[],"blind_spots":[]}',
+                    finish_reason="stop",
+                    input_tokens=1,
+                    output_tokens=1,
+                    request_id=None,
+                    elapsed_ms=1,
+                )
+            if model == "model-final":
+                return ChatResult(
+                    model=model,
+                    content="final answer",
+                    finish_reason="stop",
+                    input_tokens=1,
+                    output_tokens=1,
+                    request_id=None,
+                    elapsed_ms=1,
+                )
+            if model == "model-judge":
+                return ChatResult(
+                    model=model,
+                    content='{"score": 77, "rationale": "ok"}',
+                    finish_reason="stop",
+                    input_tokens=1,
+                    output_tokens=1,
+                    request_id=None,
+                    elapsed_ms=1,
+                )
+            return ChatResult(
+                model=model,
+                content=f"{model} panel answer",
+                finish_reason="stop",
+                input_tokens=1,
+                output_tokens=1,
+                request_id=None,
+                elapsed_ms=1,
+            )
+
+    runner = FusionLiveRunner(
+        tr_client=FakeTrustedRouterClient(),  # type: ignore[arg-type]
+        exa_client=None,
+        judge_passes=1,
+        panel_concurrency=3,
+        panel_stream_timeout_seconds=42.0,
+    )
+
+    result = runner.run_task_config(task, config, live_search=False)
+
+    assert [item.model for item in result.panel] == ["model-a", "model-b", "model-c"]
+    assert result.panel_failures == ()
+    assert result.score == 77
+    fake_client = runner.tr_client
+    assert isinstance(fake_client, FakeTrustedRouterClient)
+    assert sorted(fake_client.panel_timeouts) == [42.0, 42.0, 42.0]
 
 
 def test_trustedrouter_client_streams_chat_and_parses_reasoning_deltas(
@@ -828,6 +1075,41 @@ def test_trustedrouter_client_shapes_gpt_5_5_requests_for_openai(httpx_mock) -> 
     assert "max_tokens" not in body
     assert body["max_completion_tokens"] == 16
     assert result.content == "PONG"
+
+
+def test_trustedrouter_client_retries_gpt_5_5_empty_length_with_larger_budgets(
+    httpx_mock,
+) -> None:  # type: ignore[no-untyped-def]
+    for output_tokens in (16, 16_000, 32_000):
+        httpx_mock.add_response(
+            method="POST",
+            url="https://api.test/v1/chat/completions",
+            json={
+                "model": "openai/gpt-5.5",
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": output_tokens},
+            },
+        )
+    client = TrustedRouterChatClient(
+        "sk-test",
+        base_url="https://api.test/v1",
+        client=httpx.Client(),
+        retry_attempts=1,
+        retry_sleep_seconds=0,
+    )
+
+    with pytest.raises(RuntimeError, match="empty length response"):
+        client.complete(
+            model="openai/gpt-5.5",
+            messages=[{"role": "user", "content": "hard DRACO prompt"}],
+            max_tokens=16,
+        )
+
+    requests = httpx_mock.get_requests()
+    assert [
+        json.loads(request.content)["max_completion_tokens"] for request in requests
+    ] == [16, 16_000, 32_000]
+    assert all("temperature" not in json.loads(request.content) for request in requests)
 
 
 def test_trustedrouter_client_retries_transient_status(httpx_mock) -> None:  # type: ignore[no-untyped-def]

@@ -124,6 +124,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     frontier_types = {item["@type"] for item in frontier_payload["@graph"]}
     assert {"BreadcrumbList", "BlogPosting"}.issubset(frontier_types)
     assert "GPT-5.5" in frontier_blog.text
+    assert "GLM 5.1" in frontier_blog.text
     assert "GLM 5.2" in frontier_blog.text
     assert "19.85" in frontier_blog.text
     assert "not presenting it as a win" in frontier_blog.text

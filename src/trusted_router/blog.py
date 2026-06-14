@@ -30,17 +30,17 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label="Open Fusion methodology",
         source_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/evals/fusion-draco.md",
         body_html="""
-<p><strong>We tried to push TrustedRouter Fusion toward Mythos and Fable-class DRACO performance.</strong> The target panel was GPT-5.5, Claude Opus 4.8, Kimi K2.7 Code, GLM 5.2, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro, with Opus 4.8 synthesizing the final answer and Gemini 3.1 Pro judging against DRACO criteria.</p>
-<p>That exact run is not publishable yet. Two blockers showed up immediately: GPT-5.5 needs special long-reasoning handling on DRACO prompts, and our Z.AI account is not entitled for GLM 5.2 yet. Z.AI returns a permission error for <span class="mono">glm-5.2</span>, so substituting it silently would be dishonest.</p>
+<p><strong>We tried to push TrustedRouter Fusion toward Mythos and Fable-class DRACO performance.</strong> The current target panel is GPT-5.5, Claude Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro, with Opus 4.8 synthesizing the final answer and Gemini 3.1 Pro judging against DRACO criteria.</p>
+<p>That exact run is not publishable yet. The main blocker is GPT-5.5 long-reasoning behavior on DRACO prompts: it can spend the completion budget on reasoning and return no usable answer. GLM 5.2 is not enabled for the current Z.AI account yet, so the reproducible run uses GLM 5.1 until a direct GLM 5.2 smoke passes.</p>
 <h2>What actually ran</h2>
 <table class="data-table">
   <thead><tr><th>Run</th><th>Task slice</th><th>Result</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td>Exact 7-model target</td><td>Non-financial DRACO pilot</td><td>No score</td><td>Blocked by GPT-5.5 gateway handling and GLM 5.2 entitlement</td></tr>
+    <tr><td>Current 7-model target</td><td>Non-financial DRACO pilot</td><td>No score</td><td>Waiting on GPT-5.5 long-reasoning handling</td></tr>
     <tr><td>Available 6-model fallback</td><td>First completed non-financial DRACO task</td><td>19.85</td><td>Completed, far below target</td></tr>
   </tbody>
 </table>
-<p>The fallback panel used Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. It completed one task before the pilot was stopped for speed and reliability. A score of 19.85 is not close to the target, and we are not presenting it as a win.</p>
+<p>The first fallback panel used Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. It completed one task before the pilot was stopped for speed and reliability. A score of 19.85 is not close to the target, and we are not presenting it as a win.</p>
 <h2>What changed in the harness</h2>
 <ul class="plain-list">
   <li>GPT-5.5 eval calls now omit <span class="mono">temperature</span> and use <span class="mono">max_completion_tokens</span>.</li>
@@ -50,7 +50,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
   <li>The recommended DRACO slice for this experiment is <span class="mono">--task-filter non-financial</span>.</li>
 </ul>
 <h2>Next gates</h2>
-<p>The next clean run needs three fixes before any headline claim: enable GLM 5.2 on the Z.AI account, make GPT-5.5 long-reasoning responses produce useful content through the attested gateway, and finish a 10-task non-financial DRACO pilot without task-level hangs.</p>
+<p>The next clean run needs two fixes before any headline claim: make GPT-5.5 long-reasoning responses produce useful content through the attested gateway, and finish a 10-task non-financial DRACO pilot without task-level hangs. GLM 5.2 can replace GLM 5.1 later when Z.AI enables it for the account.</p>
 <p>This is the point of doing the work in the open. If TrustedRouter clears a Mythos/Fable-class target, the result should be reproducible from code, model ids, task filters, budget limits, and artifacts. Until then, the honest result is: not there yet.</p>
 """,
     ),

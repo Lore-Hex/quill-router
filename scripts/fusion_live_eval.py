@@ -24,6 +24,7 @@ from trusted_router.evals.fusion_live import (
     DEFAULT_DRACO_SEARCH_QUERY_COUNT,
     DEFAULT_FETCH_SEARCH_RESULTS,
     DEFAULT_LENGTH_RETRY_MAX_TOKENS,
+    DEFAULT_PANEL_STREAM_TIMEOUT_SECONDS,
     DEFAULT_SEARCH_CONTEXT_CHARS_PER_RESULT,
     DEFAULT_TR_API_BASE_URL,
     DEFAULT_TR_CRITERION_JUDGE_CHUNK_SIZE,
@@ -136,6 +137,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Number of DRACO tasks to run in parallel. Defaults to 1.",
     )
     parser.add_argument(
+        "--panel-concurrency",
+        type=int,
+        default=7,
+        help="Number of panel model calls to run concurrently inside each Fusion task.",
+    )
+    parser.add_argument(
+        "--panel-timeout-seconds",
+        type=float,
+        default=DEFAULT_PANEL_STREAM_TIMEOUT_SECONDS,
+        help="Per-panel-member stream timeout. Slow panel models are recorded as failures.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("artifacts/fusion-draco/live-results.jsonl"),
@@ -158,6 +171,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.concurrency < 1 or args.concurrency > 20:
         print("concurrency must be between 1 and 20", file=sys.stderr)
+        return 2
+    if args.panel_concurrency < 1 or args.panel_concurrency > 12:
+        print("panel-concurrency must be between 1 and 12", file=sys.stderr)
+        return 2
+    if args.panel_timeout_seconds <= 0:
+        print("panel-timeout-seconds must be positive", file=sys.stderr)
         return 2
     if args.timeout_seconds <= 0:
         print("timeout-seconds must be positive", file=sys.stderr)
@@ -277,6 +296,8 @@ def main(argv: list[str] | None = None) -> int:
         include_content=args.include_content,
         concurrency=args.concurrency,
         panel_max_tokens=args.panel_max_tokens,
+        panel_concurrency=args.panel_concurrency,
+        panel_timeout_seconds=args.panel_timeout_seconds,
         final_max_tokens=args.final_max_tokens,
         judge_max_tokens=args.judge_max_tokens,
         scoring_mode=args.scoring_mode,
@@ -316,6 +337,8 @@ def _run_tasks(
     include_content: bool,
     concurrency: int,
     panel_max_tokens: int,
+    panel_concurrency: int,
+    panel_timeout_seconds: float,
     final_max_tokens: int,
     judge_max_tokens: int,
     scoring_mode: ScoringMode,
@@ -351,6 +374,8 @@ def _run_tasks(
                         judge_passes=judge_passes,
                         live_search=live_search,
                         panel_max_tokens=panel_max_tokens,
+                        panel_concurrency=panel_concurrency,
+                        panel_timeout_seconds=panel_timeout_seconds,
                         final_max_tokens=final_max_tokens,
                         judge_max_tokens=judge_max_tokens,
                         scoring_mode=scoring_mode,
@@ -394,6 +419,8 @@ def _run_tasks(
                     judge_passes=judge_passes,
                     live_search=live_search,
                     panel_max_tokens=panel_max_tokens,
+                    panel_concurrency=panel_concurrency,
+                    panel_timeout_seconds=panel_timeout_seconds,
                     final_max_tokens=final_max_tokens,
                     judge_max_tokens=judge_max_tokens,
                     scoring_mode=scoring_mode,
@@ -445,6 +472,8 @@ def _run_one_task(
     judge_passes: int,
     live_search: bool,
     panel_max_tokens: int,
+    panel_concurrency: int,
+    panel_timeout_seconds: float,
     final_max_tokens: int,
     judge_max_tokens: int,
     scoring_mode: ScoringMode,
@@ -471,6 +500,8 @@ def _run_one_task(
             exa_client=exa_client,
             judge_passes=judge_passes,
             panel_max_tokens=panel_max_tokens,
+            panel_concurrency=panel_concurrency,
+            panel_stream_timeout_seconds=panel_timeout_seconds,
             final_max_tokens=final_max_tokens,
             judge_max_tokens=judge_max_tokens,
             scoring_mode=scoring_mode,
