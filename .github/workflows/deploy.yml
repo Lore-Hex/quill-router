@@ -30,6 +30,7 @@ on:
       - "scripts/deploy/**"
       - "frontend/src/**"
       - "Dockerfile"
+      - ".gcloudignore"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/deploy.yml"

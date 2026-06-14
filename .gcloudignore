@@ -1,0 +1,14 @@
+# Keep Cloud Build source uploads small and deterministic. The Dockerfile copies
+# only these paths, so everything else is deploy noise.
+*
+
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!src
+!src/**
+src/**/__pycache__/
+*.pyc
+!scripts
+scripts/**
+!scripts/entrypoint.sh
