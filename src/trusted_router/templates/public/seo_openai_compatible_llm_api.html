@@ -1,0 +1,42 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="OpenAI compatible LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">OpenAI compatible router</span>
+    <h2>Keep the SDK. Change the base URL.</h2>
+    <p>TrustedRouter lets teams use the OpenAI client shape while routing across many providers, privacy tiers, regions, and fallback policies.</p>
+    <ul class="check-list">
+      <li>✓ <code>POST /v1/chat/completions</code> and <code>POST /v1/responses</code></li>
+      <li>✓ Explicit model IDs or aliases like <code>trustedrouter/auto</code> and <code>trustedrouter/zdr</code></li>
+      <li>✓ BYOK, prepaid credits, provider filters, and workspace controls</li>
+      <li>✓ Public model pages with pricing, provider routes, and measured performance</li>
+    </ul>
+    <p>
+      <a class="btn primary" href="/docs">Read docs</a>
+      <a class="btn" href="/models">Browse models</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>OpenAI SDK</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Hello"}],
+)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <a class="marketing-card card-as-link" href="/leaderboard"><h3>Measured providers</h3><p>Use live TTFT, TTFB, throughput, and uptime data instead of vendor claims.</p><span class="card-link">Open leaderboard</span></a>
+  <a class="marketing-card card-as-link" href="/providers"><h3>Policy-aware routing</h3><p>Compare ZDR, confidential compute, provider E2EE, and upstream policy sources.</p><span class="card-link">Open providers</span></a>
+  <a class="marketing-card card-as-link" href="https://trust.trustedrouter.com"><h3>Verify the gateway</h3><p>Check the running image, source commit, digest, and attestation path.</p><span class="card-link">Open trust</span></a>
+</section>
+
+{% endblock %}

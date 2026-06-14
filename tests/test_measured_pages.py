@@ -22,8 +22,8 @@ def _settings() -> Settings:
     )
 
 
-def _seed(provider: str, model: str, *, ttft: int, ttfb: int) -> None:
-    for i in range(4):
+def _seed(provider: str, model: str, *, ttft: int, ttfb: int, count: int = 4) -> None:
+    for i in range(count):
         STORE.record_provider_benchmark(
             ProviderBenchmarkSample(
                 id=f"bench-measured-{provider}-{model}-{i}",
@@ -43,13 +43,18 @@ def _seed(provider: str, model: str, *, ttft: int, ttfb: int) -> None:
 
 def test_model_performance_page_shows_measured() -> None:
     client = TestClient(create_app(_settings(), init_observability=False))
-    _seed("deepinfra", "meta-llama/llama-3.3-70b-instruct", ttft=150, ttfb=90)
+    _seed("deepinfra", "meta-llama/llama-3.3-70b-instruct", ttft=150, ttfb=90, count=24)
     resp = client.get("/models/meta-llama/llama-3.3-70b-instruct/performance")
     assert resp.status_code == 200
     body = resp.text
     assert "Measured performance" in body
     assert "deepinfra" in body
     assert "150 ms" in body
+    assert '<meta name="robots" content="noindex,follow">' not in body
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/models/meta-llama/llama-3.3-70b-instruct/performance">'
+        in body
+    )
 
 
 def test_provider_detail_page_shows_measured() -> None:
@@ -62,8 +67,20 @@ def test_provider_detail_page_shows_measured() -> None:
     assert "110 ms" in body
 
 
+def test_provider_performance_page_indexes_with_enough_samples() -> None:
+    client = TestClient(create_app(_settings(), init_observability=False))
+    _seed("cerebras", "meta-llama/llama-3.3-70b-instruct", ttft=110, ttfb=70, count=24)
+    resp = client.get("/providers/cerebras/performance")
+    assert resp.status_code == 200
+    assert "Cerebras performance" in resp.text
+    assert "110 ms" in resp.text
+    assert '<meta name="robots" content="noindex,follow">' not in resp.text
+    assert '<script type="application/ld+json">' in resp.text
+
+
 def test_model_performance_page_without_data_still_renders() -> None:
     # No seeded samples for this model → no measured table, page still 200.
     client = TestClient(create_app(_settings(), init_observability=False))
     resp = client.get("/models/openai/gpt-5.4-nano/performance")
     assert resp.status_code == 200
+    assert '<meta name="robots" content="noindex,follow">' in resp.text

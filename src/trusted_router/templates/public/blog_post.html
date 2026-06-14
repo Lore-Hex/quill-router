@@ -1,0 +1,24 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<article class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>{{ post.title }}</h2>
+      <span class="pill">{{ post.published_date }}</span>
+    </div>
+    <div class="panel-body">
+      {% if post.source_url %}
+      <p class="muted-copy">Source context: <a href="{{ post.source_url }}">{{ post.source_label }}</a>.</p>
+      {% endif %}
+      {{ post.body_html|safe }}
+      <div class="sdk-links">
+        <a class="pill" href="/docs/evals">Evals guide</a>
+        <a class="pill" href="/models">Models</a>
+        <a class="pill" href="/providers">Providers</a>
+        <a class="pill" href="https://github.com/Lore-Hex/quill-router">GitHub</a>
+      </div>
+    </div>
+  </div>
+</article>
+{% endblock %}

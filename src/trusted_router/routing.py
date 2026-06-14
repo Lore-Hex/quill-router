@@ -9,6 +9,7 @@ from trusted_router.catalog import (
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
+    FUSION_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
@@ -315,6 +316,12 @@ def _requested_model_ids(
 
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
+        if stripped == FUSION_MODEL_ID:
+            raise api_error(
+                501,
+                "trustedrouter/fusion executes only inside the attested gateway; control-plane routing must not silently degrade to a single model",
+                ErrorType.ENDPOINT_NOT_SUPPORTED,
+            )
         if ovr:
             overrides.update(ovr)
         if stripped == ZDR_MODEL_ID:

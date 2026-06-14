@@ -159,9 +159,7 @@ _floodgate = _SentryFloodgate(SentryFloodgateConfig())
 
 
 def init_sentry(settings: Settings) -> None:
-    if not settings.sentry_dsn:
-        return
-    if _running_under_pytest(settings):
+    if not sentry_should_init(settings):
         return
     configure_sentry_floodgate(settings)
     import sentry_sdk
@@ -190,6 +188,22 @@ def init_sentry(settings: Settings) -> None:
         before_send_log=cast(Any, before_send_log),
         before_breadcrumb=cast(Any, before_breadcrumb),
     )
+
+
+def sentry_should_init(
+    settings: Settings,
+    *,
+    running_under_pytest: bool | None = None,
+) -> bool:
+    if not settings.sentry_dsn:
+        return False
+    if settings.environment.lower() == "local" and not settings.sentry_local_enabled:
+        return False
+    if running_under_pytest is None:
+        running_under_pytest = _running_under_pytest(settings)
+    if running_under_pytest:
+        return False
+    return True
 
 
 def _running_under_pytest(settings: Settings) -> bool:

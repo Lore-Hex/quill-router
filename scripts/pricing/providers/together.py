@@ -23,6 +23,7 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
+from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 
 SLUG = "together"
 URL = "https://api.together.xyz/v1/models"
@@ -62,9 +63,7 @@ _NATIVE_TO_OR_ID = {
 # OR-canonical id -> Together-native id. refresh.py reads this human-only
 # map when rebuilding the hourly snapshot so endpoint `model_id` remains
 # directly callable by Together after every automated price update.
-UPSTREAM_ID_MAP = {
-    or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()
-}
+UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 
 
 def _row_to_micro_per_m(price_per_token: object) -> int | None:
@@ -117,9 +116,10 @@ def fetch() -> ProviderPricingResult:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        or_id = _NATIVE_TO_OR_ID.get(native_id)
+        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
             continue
+        remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         pricing = row.get("pricing") or {}
         if not isinstance(pricing, dict):
             continue

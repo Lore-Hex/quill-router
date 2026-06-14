@@ -5,8 +5,9 @@ settings-driven values and renders the Jinja2 template."""
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from functools import lru_cache
 from itertools import combinations
@@ -17,6 +18,7 @@ from xml.sax.saxutils import escape as xml_escape
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from trusted_router.benchmark_scores import scores_for_model
+from trusted_router.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
@@ -61,6 +63,8 @@ MODEL_SEO_SECTION_LABELS: dict[str, str] = {
     "uptime": "Uptime",
     "api": "API",
 }
+MODEL_PERFORMANCE_INDEX_MIN_SAMPLES = 20
+PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
 SEO_CORE_PATHS: tuple[str, ...] = (
@@ -94,9 +98,14 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/confidential-computing-llm",
     "/tinfoil-alternative",
     "/sign-in-with-trustedrouter",
+    "/openai-compatible-llm-api",
+    "/kimi-k2-api",
+    "/gemini-flash-alternative",
+    "/llm-provider-latency-benchmarks",
     "/pricing",
     "/docs",
     "/apps",
+    "/blog",
     "/docs/agent-setup",
     "/docs/evals",
     "/docs/migrate-from-openrouter",
@@ -227,6 +236,7 @@ class PublicPage:
     # link unfurls use that tailored 1200x630 image instead of the default
     # /og.png. Generate the files per docs/marketing/og-card-spec.md.
     og_card: str | None = None
+    faq_items: tuple[tuple[str, str], ...] = ()
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
@@ -374,6 +384,92 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "through an attested no-log gateway. Integrate in minutes with the "
             "Python, TypeScript, or Swift SDK."
         ),
+        faq_items=(
+            (
+                "Do users need to copy API keys?",
+                "No. Third-party apps can use TrustedRouter delegated auth so end users approve access and pay with their own credits.",
+            ),
+            (
+                "Does delegated auth expose prompt content to the app?",
+                "The app sends inference requests, but TrustedRouter still keeps its hosted gateway metadata-only by default.",
+            ),
+        ),
+    ),
+    "openai-compatible-llm-api": PublicPage(
+        template="public/seo_openai_compatible_llm_api.html",
+        og_card="openai-compatible-llm-api.png",
+        title="OpenAI-Compatible LLM API Router",
+        description=(
+            "Use the OpenAI SDK with one base_url change, then route to hundreds "
+            "of models with failover, BYOK, ZDR options, and measured provider latency."
+        ),
+        faq_items=(
+            (
+                "Can I keep using the OpenAI SDK?",
+                "Yes. Set base_url to the TrustedRouter API and keep the usual chat completions or Responses API calls.",
+            ),
+            (
+                "Can I still choose exact providers?",
+                "Yes. Use explicit model IDs, provider filters, or TrustedRouter aliases such as trustedrouter/auto and trustedrouter/zdr.",
+            ),
+        ),
+    ),
+    "kimi-k2-api": PublicPage(
+        template="public/seo_kimi_k2_api.html",
+        og_card="kimi-k2-api.png",
+        title="Kimi K2 API With Provider Fallback",
+        description=(
+            "Call Kimi K2.7 Code, Kimi K2.6, and earlier Kimi routes through an OpenAI-compatible API with "
+            "multiple provider routes, structured output support, image URL normalization, and public latency data."
+        ),
+        faq_items=(
+            (
+                "Which Kimi routes can TrustedRouter use?",
+                "TrustedRouter exposes the verified Kimi-serving providers in the model page and endpoint JSON, then routes by provider health and request constraints.",
+            ),
+            (
+                "Can Kimi use public image URLs?",
+                "Yes. The attested gateway downloads and normalizes supported image URLs before sending provider-compatible payloads.",
+            ),
+        ),
+    ),
+    "gemini-flash-alternative": PublicPage(
+        template="public/seo_gemini_flash_alternative.html",
+        og_card="gemini-flash-alternative.png",
+        title="Gemini Flash Alternative Router",
+        description=(
+            "Compare Gemini Flash with low-cost open and proprietary alternatives "
+            "using TrustedRouter pricing, provider posture, and live route measurements."
+        ),
+        faq_items=(
+            (
+                "Can I route directly to Gemini Flash?",
+                "Yes. Use the Gemini model ID directly, or use an alias when you want fallback across comparable fast models.",
+            ),
+            (
+                "How should I choose alternatives?",
+                "Start with price, context length, privacy posture, and the measured latency tables on the model and leaderboard pages.",
+            ),
+        ),
+    ),
+    "llm-provider-latency-benchmarks": PublicPage(
+        template="public/seo_llm_provider_latency_benchmarks.html",
+        og_card="llm-provider-latency-benchmarks.png",
+        title="LLM Provider Latency Benchmarks",
+        description=(
+            "Measured time-to-first-token, time-to-first-byte, throughput, and "
+            "success rate for LLM providers routed through TrustedRouter."
+        ),
+        faq_items=(
+            (
+                "Are these vendor claims?",
+                "No. The leaderboard is generated from TrustedRouter synthetic probes and runtime metadata, not provider marketing claims.",
+            ),
+            (
+                "Do latency probes store prompts or outputs?",
+                "No. Status and leaderboard records store provider, model, latency, token, route, cost, and outcome metadata only.",
+            ),
+        ),
     ),
     "pricing": PublicPage(
         template="public/pricing.html",
@@ -512,11 +608,142 @@ def _og_image_url(settings: Settings, og_card: str | None) -> str:
     return f"https://{settings.trusted_domain}/og.png"
 
 
+def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
+    graph = [node for node in nodes if node]
+    if len(graph) == 1:
+        payload: dict[str, object] = {"@context": "https://schema.org", **graph[0]}
+    else:
+        payload = {"@context": "https://schema.org", "@graph": graph}
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def _breadcrumb_node(settings: Settings, crumbs: Sequence[tuple[str, str]]) -> dict[str, object]:
+    return {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": index,
+                "name": label,
+                "item": f"https://{settings.trusted_domain}{path}",
+            }
+            for index, (label, path) in enumerate(crumbs, start=1)
+        ],
+    }
+
+
+def _faq_node(faq_items: Sequence[tuple[str, str]]) -> dict[str, object] | None:
+    if not faq_items:
+        return None
+    return {
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": question,
+                "acceptedAnswer": {"@type": "Answer", "text": answer},
+            }
+            for question, answer in faq_items
+        ],
+    }
+
+
+def _blog_index_json_ld(settings: Settings) -> str:
+    return _json_ld_graph(
+        _breadcrumb_node(settings, (("Home", "/"), ("Blog", "/blog"))),
+        {
+            "@type": "Blog",
+            "name": "TrustedRouter Blog",
+            "url": f"https://{settings.trusted_domain}/blog",
+            "blogPost": [
+                {
+                    "@type": "BlogPosting",
+                    "headline": post.title,
+                    "url": f"https://{settings.trusted_domain}{post.href}",
+                    "datePublished": post.published_date,
+                    "description": post.description,
+                }
+                for post in BLOG_POSTS
+            ],
+        },
+    )
+
+
+def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
+    return _json_ld_graph(
+        _breadcrumb_node(
+            settings,
+            (("Home", "/"), ("Blog", "/blog"), (post.title, post.href)),
+        ),
+        {
+            "@type": "BlogPosting",
+            "headline": post.title,
+            "description": post.description,
+            "datePublished": post.published_date,
+            "dateModified": post.published_date,
+            "url": f"https://{settings.trusted_domain}{post.href}",
+            "author": {"@type": "Person", "name": "Joseph Perla"},
+            "publisher": {
+                "@type": "Organization",
+                "name": "TrustedRouter",
+                "url": f"https://{settings.trusted_domain}/",
+            },
+            "isBasedOn": post.source_url,
+        },
+    )
+
+
+def _dataset_node(
+    *,
+    name: str,
+    description: str,
+    url: str,
+    keywords: Sequence[str] = (),
+) -> dict[str, object]:
+    return {
+        "@type": "Dataset",
+        "name": name,
+        "description": description,
+        "url": url,
+        "creator": {
+            "@type": "Organization",
+            "name": "TrustedRouter",
+            "url": "https://trustedrouter.com/",
+        },
+        "license": "https://www.apache.org/licenses/LICENSE-2.0",
+        "keywords": list(keywords),
+        "measurementTechnique": "Synthetic streaming probes and metadata-only route telemetry",
+    }
+
+
+def _item_list_node(
+    *,
+    name: str,
+    items: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "@type": "ItemList",
+        "name": name,
+        "numberOfItems": len(items),
+        "itemListElement": [
+            {
+                "@type": "ListItem",
+                "position": index,
+                "url": str(item["url"]),
+                "name": str(item["name"]),
+            }
+            for index, item in enumerate(items, start=1)
+        ],
+    }
+
+
 def public_page_html(settings: Settings, page_key: str, *, site_url: str | None = None) -> str:
     page = PUBLIC_PAGES[page_key]
+    path = f"/{page_key}"
+    resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
     return _env().get_template(page.template).render(
         api_base_url=settings.api_base_url,
-        site_url=site_url or f"https://{settings.trusted_domain}/{page_key}",
+        site_url=resolved_site_url,
         title=f"{page.title} | TrustedRouter",
         heading=page.title,
         description=page.description,
@@ -526,6 +753,49 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
         # each card auto-activates the moment its image is generated into
         # static/og/, with zero risk of a 404 unfurl in the meantime.
         og_image=_og_image_url(settings, page.og_card),
+        faq_items=page.faq_items,
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
+            _faq_node(page.faq_items),
+        ),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_blog_index_html(settings: Settings) -> str:
+    site_url = f"https://{settings.trusted_domain}/blog"
+    return _env().get_template("public/blog_index.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=site_url,
+        title="Blog | TrustedRouter",
+        heading="TrustedRouter blog",
+        description=(
+            "Engineering notes on attested AI routing, Fusion evals, provider privacy, "
+            "and open source model routing."
+        ),
+        posts=BLOG_POSTS,
+        json_ld_blob=_blog_index_json_ld(settings),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_blog_post_html(settings: Settings, slug: str) -> str | None:
+    post = BLOG_POSTS_BY_SLUG.get(slug)
+    if post is None:
+        return None
+    site_url = f"https://{settings.trusted_domain}{post.href}"
+    return _env().get_template("public/blog_post.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=site_url,
+        title=f"{post.title} | TrustedRouter",
+        heading=post.title,
+        description=post.description,
+        post=post,
+        json_ld_blob=_blog_post_json_ld(settings, post),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -655,13 +925,31 @@ def subprocessors_json(settings: Settings) -> str:
 
 
 def public_models_html(settings: Settings) -> str:
+    models = [_model_view(model) for model in MODELS.values()]
+    item_list_rows: list[dict[str, object]] = []
+    for model in models:
+        if not model.get("detail_href"):
+            continue
+        item_list_row: dict[str, object] = {
+            "name": str(model["name"]),
+            "url": f"https://{settings.trusted_domain}{model['detail_href']}",
+        }
+        item_list_rows.append(item_list_row)
+    item_list_rows = item_list_rows[:200]
     return _env().get_template("public/models.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/models",
         title="Models | TrustedRouter",
         heading="Models",
         description="Hundreds of models with provider routes, prices, status, and policy notes.",
-        models=[_model_view(model) for model in MODELS.values()],
+        models=models,
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(settings, (("Home", "/"), ("Models", "/models"))),
+            _item_list_node(
+                name="TrustedRouter model catalog",
+                items=item_list_rows,
+            ),
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -705,6 +993,18 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
         ),
         page_kind="leaderboard",
         snapshot=snapshot,
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(settings, (("Home", "/"), ("Leaderboard", "/leaderboard"))),
+            _dataset_node(
+                name="TrustedRouter LLM provider and model speed leaderboard",
+                description=(
+                    "Metadata-only measurements for provider TTFT, TTFB, throughput, "
+                    "success rate, and excluded probe configuration rows."
+                ),
+                url=f"https://{settings.trusted_domain}/leaderboard",
+                keywords=("LLM latency", "provider benchmarks", "time to first token"),
+            ),
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -767,6 +1067,7 @@ def public_chat_html(settings: Settings) -> str:
 
 
 def public_providers_html(settings: Settings) -> str:
+    providers = [_provider_view(provider) for provider in providers_for_display()]
     return _env().get_template("public/providers.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/providers",
@@ -775,7 +1076,20 @@ def public_providers_html(settings: Settings) -> str:
         description=(
             "Provider transparency for model compute, retention, confidential compute, and encrypted routes."
         ),
-        providers=[_provider_view(provider) for provider in providers_for_display()],
+        providers=providers,
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(settings, (("Home", "/"), ("Providers", "/providers"))),
+            _item_list_node(
+                name="TrustedRouter provider catalog",
+                items=[
+                    {
+                        "name": str(provider["name"]),
+                        "url": f"https://{settings.trusted_domain}{provider['detail_href']}",
+                    }
+                    for provider in providers
+                ],
+            ),
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -798,6 +1112,72 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
         provider=_provider_detail_view(provider, served_models=served_models),
         served_models=served_models,
         measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(
+                settings,
+                (("Home", "/"), ("Providers", "/providers"), (provider.name, f"/providers/{provider.slug}")),
+            ),
+            _item_list_node(
+                name=f"{provider.name} models on TrustedRouter",
+                items=[
+                    {
+                        "name": str(model["name"]),
+                        "url": f"https://{settings.trusted_domain}{model['detail_href']}",
+                    }
+                    for model in served_models[:200]
+                ],
+            ),
+        ),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_provider_performance_html(settings: Settings, provider_slug: str) -> str | None:
+    provider = PROVIDERS.get(provider_slug)
+    if provider is None:
+        return None
+    measured = measured_for_provider(provider.slug, test_mode=settings.environment == "test")
+    provider_row = measured.get("provider_row")
+    sample_count = int(provider_row.get("sample_count") or 0) if provider_row else 0
+    indexable = sample_count >= PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES
+    site_path = f"/providers/{provider.slug}/performance"
+    return _env().get_template("public/provider_performance.html").render(
+        api_base_url=settings.api_base_url,
+        site_url=(
+            f"https://{settings.trusted_domain}{site_path}"
+            if indexable
+            else f"https://{settings.trusted_domain}/providers/{provider.slug}"
+        ),
+        robots_meta=None if indexable else "noindex,follow",
+        title=f"{provider.name} Performance | TrustedRouter",
+        heading=f"{provider.name} performance",
+        description=(
+            f"Measured TTFT, TTFB, throughput, uptime, and sampled model routes for {provider.name}."
+        ),
+        provider=_provider_detail_view(provider, served_models=_provider_model_rows(provider_slug)),
+        measured=measured,
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(
+                settings,
+                (
+                    ("Home", "/"),
+                    ("Providers", "/providers"),
+                    (provider.name, f"/providers/{provider.slug}"),
+                    ("Performance", site_path),
+                ),
+            ),
+            _dataset_node(
+                name=f"{provider.name} TrustedRouter performance measurements",
+                description=(
+                    f"Measured latency, throughput, and uptime for {provider.name} routes "
+                    "through TrustedRouter."
+                ),
+                url=f"https://{settings.trusted_domain}{site_path}",
+                keywords=("LLM latency", provider.name, "provider performance"),
+            ),
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -853,6 +1233,17 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
         ),
         left=_model_detail_view(left),
         right=_model_detail_view(right),
+        comparison=_comparison_view(left, right),
+        json_ld_blob=_json_ld_graph(
+            _breadcrumb_node(
+                settings,
+                (
+                    ("Home", "/"),
+                    ("Models", "/models"),
+                    (f"{left.name} vs {right.name}", site_path),
+                ),
+            )
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -864,11 +1255,15 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
     base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
+    section_path = f"/models/{model_id}/{section}"
+    section_url = f"https://{settings.trusted_domain}{section_path}"
     label = MODEL_SEO_SECTION_LABELS[section]
+    measured = measured_for_model(model.id, test_mode=settings.environment == "test")
+    section_indexable = _model_section_indexable(model, section, measured)
     return _env().get_template("public/model_section.html").render(
         api_base_url=settings.api_base_url,
-        site_url=base_model_url,
-        robots_meta="noindex,follow",
+        site_url=section_url if section_indexable else base_model_url,
+        robots_meta=None if section_indexable else "noindex,follow",
         title=f"{model.name} {label} | TrustedRouter",
         heading=f"{model.name} {label}",
         description=_model_section_description(model, section),
@@ -877,8 +1272,15 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
         section_label=label,
         benchmark_links=_benchmark_links(model),
         benchmark_scores=scores_for_model(model.id),
-        measured=measured_for_model(model.id, test_mode=settings.environment == "test"),
-        json_ld_blob=_model_json_ld(settings, model, base_model_url),
+        measured=measured,
+        json_ld_blob=_model_section_json_ld(
+            settings,
+            model,
+            section=section,
+            section_url=section_url,
+            base_model_url=base_model_url,
+            measured=measured,
+        ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
@@ -922,18 +1324,78 @@ def robots_txt(settings: Settings) -> str:
 
 def sitemap_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
+    sitemaps = [
+        "/sitemap-core.xml",
+        "/sitemap-providers.xml",
+        "/sitemap-models.xml",
+        "/sitemap-comparisons.xml",
+    ]
+    lastmod = _sitemap_lastmod()
+    rows = "\n".join(
+        "  <sitemap>"
+        f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
+        f"<lastmod>{lastmod}</lastmod>"
+        "</sitemap>"
+        for path in sitemaps
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{rows}\n"
+        "</sitemapindex>\n"
+    )
+
+
+def sitemap_core_xml(settings: Settings) -> str:
+    domain = settings.trusted_domain
     paths: list[tuple[str, str, str]] = []
     for path in SEO_CORE_PATHS:
         paths.append((path, "daily" if path in {"/models", "/providers"} else "weekly", "0.9"))
+    for post in BLOG_POSTS:
+        paths.append((post.href, "monthly", "0.7"))
+    return _sitemap_urlset(domain, paths)
+
+
+def sitemap_providers_xml(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    paths = [
+        (f"/providers/{provider.slug}", "weekly", "0.7")
+        for provider in providers_for_display()
+    ]
     for provider in providers_for_display():
-        paths.append((f"/providers/{provider.slug}", "weekly", "0.7"))
+        measured = measured_for_provider(provider.slug, test_mode=settings.environment == "test")
+        provider_row = measured.get("provider_row")
+        if provider_row and int(provider_row.get("sample_count") or 0) >= PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES:
+            paths.append((f"/providers/{provider.slug}/performance", "daily", "0.7"))
+    return _sitemap_urlset(domain, paths)
+
+
+def sitemap_models_xml(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    paths: list[tuple[str, str, str]] = []
     for model in _public_models_for_seo():
         paths.append((f"/models/{model.id}", "daily", "0.8"))
+        for section in MODEL_SEO_SECTIONS:
+            measured = measured_for_model(model.id, test_mode=settings.environment == "test")
+            if _model_section_indexable(model, section, measured):
+                paths.append((f"/models/{model.id}/{section}", "daily", "0.7"))
+    return _sitemap_urlset(domain, paths)
+
+
+def sitemap_comparisons_xml(settings: Settings) -> str:
+    domain = settings.trusted_domain
+    paths: list[tuple[str, str, str]] = []
     for left, right in _model_comparison_pairs():
         paths.append((f"/compare/models/{left.id}/vs/{right.id}", "weekly", "0.5"))
+    return _sitemap_urlset(domain, paths)
+
+
+def _sitemap_urlset(domain: str, paths: Sequence[tuple[str, str, str]]) -> str:
+    lastmod = _sitemap_lastmod()
     urls = "\n".join(
         "  <url>"
         f"<loc>{xml_escape(f'https://{domain}{path}')}</loc>"
+        f"<lastmod>{lastmod}</lastmod>"
         f"<changefreq>{changefreq}</changefreq>"
         f"<priority>{priority}</priority>"
         "</url>"
@@ -945,6 +1407,10 @@ def sitemap_xml(settings: Settings) -> str:
         f"{urls}\n"
         "</urlset>\n"
     )
+
+
+def _sitemap_lastmod() -> str:
+    return datetime.now(UTC).date().isoformat()
 
 
 def llms_txt(settings: Settings) -> str:
@@ -971,6 +1437,7 @@ def llms_txt(settings: Settings) -> str:
         f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
         "## API",
@@ -988,7 +1455,8 @@ def llms_txt(settings: Settings) -> str:
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
             "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
-            "trustedrouter/free."
+            "trustedrouter/free. trustedrouter/fusion runs panel, judge, and final "
+            "synthesis calls inside the attested gateway."
         ),
         "",
         "## Privacy Boundary",
@@ -1007,6 +1475,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "",
             f"- Agent setup: https://{domain}/docs/agent-setup",
             f"- Evals guide: https://{domain}/docs/evals",
+            f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Security: https://{domain}/security",
             f"- Legal/procurement packet: https://{domain}/legal",
@@ -1049,6 +1518,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Status: https://status.trustedrouter.com/",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
         f"- Compact LLM docs: https://{domain}/docs/llms.txt",
@@ -1061,6 +1531,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/eu: EU-focused provider selection.",
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",
+        "- trustedrouter/fusion: attested multi-model panel, selectable judge, and final synthesis.",
         "",
         "## Models",
     ]
@@ -1313,6 +1784,71 @@ def _model_section_description(model: Model, section: str) -> str:
     return f"{model.name} {label} on TrustedRouter."
 
 
+def _model_section_indexable(
+    model: Model,
+    section: str,
+    measured: Sequence[dict[str, object]],
+) -> bool:
+    if section == "performance":
+        sample_count = sum(_sample_count(row) for row in measured)
+        return sample_count >= MODEL_PERFORMANCE_INDEX_MIN_SAMPLES
+    if section in {"providers", "pricing"}:
+        return len(endpoints_for_model(model.id)) >= 2
+    if section == "benchmarks":
+        return bool(scores_for_model(model.id))
+    return False
+
+
+def _model_section_json_ld(
+    settings: Settings,
+    model: Model,
+    *,
+    section: str,
+    section_url: str,
+    base_model_url: str,
+    measured: Sequence[dict[str, object]],
+) -> str:
+    nodes: list[dict[str, object] | None] = [
+        _breadcrumb_node(
+            settings,
+            (
+                ("Home", "/"),
+                ("Models", "/models"),
+                (model.name, f"/models/{model.id}"),
+                (MODEL_SEO_SECTION_LABELS[section], f"/models/{model.id}/{section}"),
+            ),
+        ),
+        _model_service_node(settings, model, base_model_url),
+    ]
+    if section == "performance":
+        sample_count = sum(_sample_count(row) for row in measured)
+        nodes.append(
+            _dataset_node(
+                name=f"{model.name} TrustedRouter performance measurements",
+                description=(
+                    f"Measured TTFT, TTFB, throughput, and uptime for {model.name} "
+                    f"across TrustedRouter provider routes. Current sample count: {sample_count}."
+                ),
+                url=section_url,
+                keywords=("LLM latency", model.name, "provider performance"),
+            )
+        )
+    return _json_ld_graph(*nodes)
+
+
+def _sample_count(row: Mapping[str, object]) -> int:
+    value = row.get("sample_count")
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return 0
+
+
 def _benchmark_links(model: Model) -> list[dict[str, str]]:
     provider_links = list(_PROVIDER_MODEL_INFO_LINKS.get(model.provider, ()))
     model_links = list(_MODEL_SPECIFIC_BENCHMARK_LINKS.get(model.id, ()))
@@ -1354,6 +1890,100 @@ def _model_comparison_pairs() -> list[tuple[Model, Model]]:
 
 def _seo_model_rows() -> list[dict[str, object]]:
     return [_model_view(model) for model in _public_models_for_seo()]
+
+
+def _comparison_view(left: Model, right: Model) -> dict[str, object]:
+    left_total = _cheapest_total_microdollars(left)
+    right_total = _cheapest_total_microdollars(right)
+    left_routes = len(endpoints_for_model(left.id))
+    right_routes = len(endpoints_for_model(right.id))
+    left_measured = _best_measured_ttft(left.id)
+    right_measured = _best_measured_ttft(right.id)
+    return {
+        "summary": _comparison_summary(
+            left,
+            right,
+            left_total=left_total,
+            right_total=right_total,
+            left_routes=left_routes,
+            right_routes=right_routes,
+            left_measured=left_measured,
+            right_measured=right_measured,
+        ),
+        "left_price": _price(left_total),
+        "right_price": _price(right_total),
+        "left_routes": left_routes,
+        "right_routes": right_routes,
+        "left_privacy": _privacy_summary(left),
+        "right_privacy": _privacy_summary(right),
+        "left_ttft": f"{left_measured} ms" if left_measured is not None else "not enough data",
+        "right_ttft": f"{right_measured} ms" if right_measured is not None else "not enough data",
+    }
+
+
+def _comparison_summary(
+    left: Model,
+    right: Model,
+    *,
+    left_total: int,
+    right_total: int,
+    left_routes: int,
+    right_routes: int,
+    left_measured: int | None,
+    right_measured: int | None,
+) -> str:
+    cheaper = left.name if left_total <= right_total else right.name
+    broader = left.name if left_routes >= right_routes else right.name
+    context = left.name if left.context_length >= right.context_length else right.name
+    if left_measured is not None and right_measured is not None:
+        faster = left.name if left_measured <= right_measured else right.name
+        speed_clause = f" Current TrustedRouter probes show {faster} with the lower p50 TTFT."
+    else:
+        speed_clause = " Probe-backed speed data is shown when enough recent samples exist."
+    return (
+        f"{cheaper} has the lower cheapest prompt+completion route on TrustedRouter. "
+        f"{broader} has more provider fallback routes, while {context} has the larger context window."
+        f"{speed_clause}"
+    )
+
+
+def _cheapest_total_microdollars(model: Model) -> int:
+    endpoints = endpoints_for_model(model.id)
+    totals = [
+        endpoint.prompt_price_microdollars_per_million_tokens
+        + endpoint.completion_price_microdollars_per_million_tokens
+        for endpoint in endpoints
+        if endpoint.prompt_price_microdollars_per_million_tokens
+        or endpoint.completion_price_microdollars_per_million_tokens
+    ]
+    if totals:
+        return min(totals)
+    return (
+        model.prompt_price_microdollars_per_million_tokens
+        + model.completion_price_microdollars_per_million_tokens
+    )
+
+
+def _best_measured_ttft(model_id: str) -> int | None:
+    rows = measured_for_model(model_id)
+    values = [
+        int(row["p50_ttft_ms"])
+        for row in rows
+        if row.get("p50_ttft_ms") is not None and int(row.get("sample_count") or 0) >= 2
+    ]
+    return min(values) if values else None
+
+
+def _privacy_summary(model: Model) -> str:
+    endpoints = endpoints_for_model(model.id)
+    providers = [PROVIDERS.get(endpoint.provider) for endpoint in endpoints]
+    if any(provider and provider.provider_e2ee for provider in providers):
+        return "has provider E2EE route"
+    if any(provider and provider.provider_confidential_compute for provider in providers):
+        return "has confidential-compute route"
+    if any(provider and provider.provider_zero_data_retention for provider in providers):
+        return "has ZDR route"
+    return "provider posture varies"
 
 
 def _provider_model_rows(provider_slug: str) -> list[dict[str, object]]:
@@ -1416,6 +2046,16 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
     Price: cheapest prompt rate across this model's endpoints, expressed
     as USD per million tokens, matching the unit the page itself displays.
     """
+    return _json_ld_graph(
+        _breadcrumb_node(
+            settings,
+            (("Home", "/"), ("Models", "/models"), (model.name, f"/models/{model.id}")),
+        ),
+        _model_service_node(settings, model, site_url),
+    )
+
+
+def _model_service_node(settings: Settings, model: Model, site_url: str) -> dict[str, object]:
     endpoints = endpoints_for_model(model.id)
     prompt_prices = [
         ep.prompt_price_microdollars_per_million_tokens
@@ -1423,20 +2063,13 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
         if ep.prompt_price_microdollars_per_million_tokens > 0
     ]
     if not prompt_prices:
-        # Edge case: catalog has the model but no priced endpoint.
-        # Fall back to the model-level price (often the cheapest seen
-        # historically).
         cheapest_micro_per_m = model.prompt_price_microdollars_per_million_tokens
     else:
         cheapest_micro_per_m = min(prompt_prices)
-    # microdollars-per-million-tokens → dollars-per-million-tokens.
     cheapest_usd_per_m = cheapest_micro_per_m / MICRODOLLARS_PER_DOLLAR
-
     brand_slug = model.provider
     brand_name = _BRAND_DISPLAY_NAMES.get(brand_slug, brand_slug.title())
-
-    payload = {
-        "@context": "https://schema.org",
+    return {
         "@type": "Service",
         "name": model.name,
         "description": (
@@ -1471,7 +2104,6 @@ def _model_json_ld(settings: Settings, model: Model, site_url: str) -> str:
             },
         },
     }
-    return json.dumps(payload, separators=(",", ":"))
 
 
 def _endpoint_price_range(endpoints: Sequence[ModelEndpoint], attr: str) -> str:

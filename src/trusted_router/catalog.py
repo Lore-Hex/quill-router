@@ -789,6 +789,7 @@ EU_MODEL_ID = "trustedrouter/eu"
 ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
+FUSION_MODEL_ID = "trustedrouter/fusion"
 META_MODEL_IDS = frozenset(
     {
         AUTO_MODEL_ID,
@@ -798,6 +799,7 @@ META_MODEL_IDS = frozenset(
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
+        FUSION_MODEL_ID,
     }
 )
 
@@ -917,6 +919,15 @@ MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=False,
     ),
+    FUSION_MODEL_ID: Model(
+        id=FUSION_MODEL_ID,
+        name="TrustedRouter Fusion",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
 }
 
 
@@ -995,6 +1006,10 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Fable was briefly added as an Anthropic supplement, then blocked. It is
+    # also not tracked as a ZDR-capable route, so keep it out of the public
+    # catalog and authorization path even if a future snapshot carries it.
+    "anthropic": frozenset({"anthropic/claude-fable-5"}),
     # Nebius notified customers that these Token Factory model APIs / UI
     # entries will be disabled on 2026-06-22. This is provider-scoped:
     # equivalent model families on MiniMax, Kimi, Z.AI, Cerebras, etc. remain
@@ -1293,7 +1308,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Novita, Nebius, MiniMax, Cerebras, and Gemini currently use this path because their
+    Novita, Nebius, MiniMax, Cerebras, Gemini, and Z.AI currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
     Claude Opus 4.8, which shipped after the snapshot — the attested gateway
@@ -1309,6 +1324,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "anthropic",
         "cerebras",
         "gemini",
+        "zai",
         "xiaomi",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
@@ -2013,6 +2029,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return e2e_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
+    if model_id == FUSION_MODEL_ID:
+        return []
     return []
 
 
@@ -2029,6 +2047,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
+    if model_id == FUSION_MODEL_ID:
+        return "fusion_panel"
     if model_id == AUTO_MODEL_ID:
         return "auto_pool"
     return "model"

@@ -89,7 +89,7 @@ def test_leaderboard_page_separates_config_exclusions_from_errors() -> None:
 
 def test_leaderboard_in_sitemap() -> None:
     client = TestClient(create_app(_settings(), init_observability=False))
-    resp = client.get("/sitemap.xml")
+    resp = client.get("/sitemap-core.xml")
     assert resp.status_code == 200
     assert "/leaderboard" in resp.text
 

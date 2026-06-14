@@ -21,6 +21,10 @@ class _FakeTogetherResponse:
                 {
                     "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
                     "pricing": {"input": 1.04, "output": 1.04},
+                },
+                {
+                    "id": "moonshotai/Kimi-K2.7-Code",
+                    "pricing": {"input": 0.95, "output": 4.00},
                 }
             ]
         }
@@ -56,6 +60,41 @@ def test_together_llama_33_turbo_price_change_is_mapped(monkeypatch: MonkeyPatch
     price = result.prices["meta-llama/llama-3.3-70b-instruct"]
     assert price.prompt_micro_per_m == 1_040_000
     assert price.completion_micro_per_m == 1_040_000
+
+
+def test_together_api_new_native_id_auto_maps_and_preserves_upstream(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TOGETHER_API_KEY", "fake-together-key")
+    monkeypatch.setattr(together.httpx, "Client", _FakeTogetherClient)
+
+    result = together.fetch()
+
+    price = result.prices["moonshotai/kimi-k2.7-code"]
+    assert price.prompt_micro_per_m == 950_000
+    assert price.completion_micro_per_m == 4_000_000
+    assert together.UPSTREAM_ID_MAP["moonshotai/kimi-k2.7-code"] == (
+        "moonshotai/Kimi-K2.7-Code"
+    )
+
+    merged = refresh._merge_snapshot(
+        {
+            "models": [
+                {
+                    "id": "moonshotai/kimi-k2.7-code",
+                    "name": "Kimi K2.7 Code",
+                    "context_length": 262144,
+                    "pricing": {"prompt": "0.00000095", "completion": "0.000004"},
+                    "endpoints": [],
+                }
+            ]
+        },
+        {"moonshotai/kimi-k2.7-code": {"together": price}},
+        set(),
+    )
+    assert merged["models"][0]["endpoints"][0]["model_id"] == (
+        "moonshotai/Kimi-K2.7-Code"
+    )
 
 
 def test_catalog_exposes_together_llama_33_endpoint_at_new_rate() -> None:

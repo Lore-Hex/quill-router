@@ -1,0 +1,54 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2><code>{{ provider.id }}</code></h2>
+    {% if measured.provider_row %}
+    <span class="pill good">{{ measured.provider_row.sample_count }} samples</span>
+    {% else %}
+    <span class="pill">warming up</span>
+    {% endif %}
+  </div>
+  <div class="panel-body">
+    <p><a href="/providers/{{ provider.id }}">Provider overview</a></p>
+    <p class="muted-copy">Continuously sampled provider performance. TrustedRouter reports unsupported route and probe-configuration rows separately from provider downtime. Prompt and output content is not stored.</p>
+    {% if measured.provider_row %}
+    <table>
+      <tbody>
+        <tr><th>p50 TTFT</th><td>{% if measured.provider_row.p50_ttft_ms is not none %}{{ measured.provider_row.p50_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
+        <tr><th>p95 TTFT</th><td>{% if measured.provider_row.p95_ttft_ms is not none %}{{ measured.provider_row.p95_ttft_ms }} ms{% else %}—{% endif %}</td></tr>
+        <tr><th>p50 TTFB</th><td>{% if measured.provider_row.p50_ttfb_ms is not none %}{{ measured.provider_row.p50_ttfb_ms }} ms{% else %}—{% endif %}</td></tr>
+        <tr><th>Throughput</th><td>{% if measured.provider_row.p50_tokens_per_second is not none %}{{ '%.0f'|format(measured.provider_row.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td></tr>
+        <tr><th>Uptime</th><td>{{ '%.2f'|format(measured.provider_row.uptime * 100) }}%</td></tr>
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</section>
+
+{% if measured.models %}
+<section class="panel">
+  <div class="panel-head"><h2>Measured model routes</h2></div>
+  <div class="panel-body">
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead><tr><th>Model</th><th>p50 TTFT</th><th>p50 TTFB</th><th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th></tr></thead>
+        <tbody>
+          {% for m in measured.models %}
+          <tr>
+            <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a></td>
+            <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
+            <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
+            <td>{{ m.sample_count }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

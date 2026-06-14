@@ -1,0 +1,38 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Gemini Flash alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">Fast model routing</span>
+    <h2>Compare Gemini Flash with the cheapest good routes.</h2>
+    <p>Gemini Flash is strong for OCR, multimodal extraction, and low-latency application logic. TrustedRouter helps you keep Gemini available while testing cheaper or faster alternatives with the same API key.</p>
+    <ul class="check-list">
+      <li>✓ Direct Gemini routes when you want Google models</li>
+      <li>✓ <code>trustedrouter/cheap</code> for low-cost paid fallback</li>
+      <li>✓ <code>trustedrouter/eu</code> for Europe-focused route selection</li>
+      <li>✓ Public measurements separate provider latency from router overhead</li>
+    </ul>
+    <p>
+      <a class="btn primary" href="/models/google/gemini-3.5-flash">Gemini 3.5 Flash</a>
+      <a class="btn" href="/leaderboard">Compare latency</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Fast route</span><span>OpenAI SDK</span></div>
+    <pre><code>response = client.chat.completions.create(
+    model="trustedrouter/cheap",
+    messages=[
+        {"role": "user", "content": "Extract the key facts."}
+    ],
+    max_tokens=256,
+)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three">
+  <a class="marketing-card card-as-link" href="/models/google/gemini-3.5-flash/performance"><h3>Gemini measurements</h3><p>Check p50 TTFT, p95 TTFT, throughput, and route sample count.</p><span class="card-link">Open performance</span></a>
+  <a class="marketing-card card-as-link" href="/models/google/gemma-4-31b-it"><h3>Open Google family</h3><p>Compare Gemma routes when you need lower-cost open-weight behavior.</p><span class="card-link">Open Gemma</span></a>
+  <a class="marketing-card card-as-link" href="/models/deepseek/deepseek-v4-flash"><h3>Cheap reasoning route</h3><p>Test DeepSeek Flash for cost-sensitive tasks where Gemini may be more than you need.</p><span class="card-link">Open DeepSeek</span></a>
+</section>
+
+{% endblock %}

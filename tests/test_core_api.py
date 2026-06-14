@@ -641,7 +641,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "moonshotai/kimi-k2.6",
         "mistralai/mistral-small-2603",
         "z-ai/glm-4.6",
+        "z-ai/glm-5.2",
     }.issubset(model_ids)
+    assert "anthropic/claude-fable-5" not in model_ids
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}

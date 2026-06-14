@@ -6,6 +6,19 @@
   <div><strong>Same API shape</strong><span>Use the OpenAI client and set the model you want.</span></div>
 </section>
 
+<section class="panel">
+  <div class="panel-head"><h2>Practical read</h2></div>
+  <div class="panel-body">
+    <p class="lead">{{ comparison.summary }}</p>
+    <div class="public-proof-strip">
+      <div><strong>{{ comparison.left_price }}</strong><span>{{ left.name }} cheapest route</span></div>
+      <div><strong>{{ comparison.right_price }}</strong><span>{{ right.name }} cheapest route</span></div>
+      <div><strong>{{ comparison.left_ttft }}</strong><span>{{ left.name }} measured p50 TTFT</span></div>
+      <div><strong>{{ comparison.right_ttft }}</strong><span>{{ right.name }} measured p50 TTFT</span></div>
+    </div>
+  </div>
+</section>
+
 <section class="compare-matrix" aria-label="{{ left.name }} and {{ right.name }} comparison">
   <div class="matrix-row matrix-head">
     <span></span><strong>{{ left.name }}</strong><strong>{{ right.name }}</strong>
@@ -21,6 +34,12 @@
   </div>
   <div class="matrix-row">
     <span>Provider routes</span><span>{{ left.endpoint_count }}</span><span>{{ right.endpoint_count }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Cheapest route</span><span>{{ comparison.left_price }}</span><span>{{ comparison.right_price }}</span>
+  </div>
+  <div class="matrix-row">
+    <span>Privacy posture</span><span>{{ comparison.left_privacy }}</span><span>{{ comparison.right_privacy }}</span>
   </div>
   <div class="matrix-row">
     <span>Modes</span>

@@ -12,4 +12,4 @@ build/
 htmlcov/
 .coverage
 node_modules/
-
+artifacts/

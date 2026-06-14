@@ -31,6 +31,7 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
+from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 
 SLUG = "parasail"
 URL = "https://api.parasail.io/v1/models"
@@ -165,6 +166,7 @@ _NATIVE_TO_OR_ID = {
     "parasail-ui-tars-1p5-7b": "bytedance/ui-tars-1.5-7b",
     "ByteDance-Seed/UI-TARS-1.5-7B": "bytedance/ui-tars-1.5-7b",
 }
+UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 
 # SKIPPED — not yet supported by TR's chat-completions path:
 #   - parasail-bge-m3 / BAAI/bge-m3 (embedding model)
@@ -270,7 +272,13 @@ def fetch() -> ProviderPricingResult:
         notes.append(f"/v1/models fetch failed ({exc}); treating all known natives as live")
         live_native = set(_NATIVE_TO_OR_ID.keys())
 
-    or_ids_live = {_NATIVE_TO_OR_ID[n] for n in live_native if n in _NATIVE_TO_OR_ID}
+    or_ids_live: set[str] = set()
+    for native_id in live_native:
+        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
+        if or_id is None:
+            continue
+        remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
+        or_ids_live.add(or_id)
     prices: dict[str, ModelPrice] = {}
     for or_id, rates in _RATES_USD_PER_M.items():
         if or_id not in or_ids_live:

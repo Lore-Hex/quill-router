@@ -132,7 +132,12 @@ jobs:
                       LIGHTNING_API_KEY:trustedrouter-lightning-api-key \
                       GMI_API_KEY:trustedrouter-gmi-api-key \
                       DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
-                      PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key; do
+                      PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
+                      CEREBRAS_API_KEY:trustedrouter-cerebras-api-key \
+                      GEMINI_API_KEY:trustedrouter-gemini-api-key \
+                      NOVITA_API_KEY:trustedrouter-novita-api-key \
+                      NEBIUS_API_KEY:trustedrouter-nebius-api-key \
+                      MINIMAX_API_KEY:trustedrouter-minimax-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)
@@ -173,12 +178,14 @@ jobs:
           exit $rc
 
       - name: Price-source coverage audit
-        # Non-failing visibility: flags prepaid providers with no live scraper
-        # (hand-coded prices that never refresh, e.g. Cohere) + stale static
-        # manifests (Nebius/MiniMax). Writes to the Actions run summary.
+        # General stale-price gaps stay visibility-only, but provider docs that
+        # announce a model we do not publish are a hard failure. That catches
+        # releases like GLM-5.2 when docs update before pricing/OpenRouter does.
         if: always()
         run: |
-          uv run python scripts/check_price_coverage.py | tee -a "$GITHUB_STEP_SUMMARY" || true
+          set -o pipefail
+          uv run python scripts/check_price_coverage.py --strict-model-discovery \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Commit and push if changed
         run: |

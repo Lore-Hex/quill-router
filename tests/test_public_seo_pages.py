@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+
 from fastapi.testclient import TestClient
 
 
@@ -13,20 +16,50 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     sitemap = client.get("/sitemap.xml")
     assert sitemap.status_code == 200
     assert sitemap.headers["content-type"].startswith("application/xml")
-    assert "<urlset" in sitemap.text
-    assert sitemap.text.count("<url>") >= 500
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/performance</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" not in sitemap.text
-    assert "<loc>https://trustedrouter.com/eu</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/providers/minimax</loc>" in sitemap.text
-    assert "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>" in sitemap.text
-    assert "trustedrouter/monitor" not in sitemap.text
-    assert "openrouter.ai" not in sitemap.text
+    assert "<sitemapindex" in sitemap.text
+    for child in [
+        "/sitemap-core.xml",
+        "/sitemap-providers.xml",
+        "/sitemap-models.xml",
+        "/sitemap-comparisons.xml",
+    ]:
+        assert f"<loc>https://trustedrouter.com{child}</loc>" in sitemap.text
+    assert "<lastmod>" in sitemap.text
+
+    core = client.get("/sitemap-core.xml")
+    assert core.status_code == 200
+    assert "<urlset" in core.text
+    assert "<loc>https://trustedrouter.com/eu</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/openai-compatible-llm-api</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/kimi-k2-api</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/gemini-flash-alternative</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/llm-provider-latency-benchmarks</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+
+    models = client.get("/sitemap-models.xml")
+    assert models.status_code == 200
+    assert models.text.count("<url>") >= 200
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3</loc>" in models.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" not in models.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" in models.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" in models.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in models.text
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" not in models.text
+
+    providers = client.get("/sitemap-providers.xml")
+    assert providers.status_code == 200
+    assert "<loc>https://trustedrouter.com/providers/minimax</loc>" in providers.text
+
+    comparisons = client.get("/sitemap-comparisons.xml")
+    assert comparisons.status_code == 200
+    assert (
+        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>"
+        in comparisons.text
+    )
+    combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
+    assert "trustedrouter/monitor" not in combined
+    assert "openrouter.ai" not in combined
 
 
 def test_llms_text_files_are_public_and_do_not_leak_secret_material(
@@ -38,6 +71,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "TrustedRouter" in response.text
         assert "api.trustedrouter.com/v1" in response.text
         assert "trustedrouter/eu" in response.text
+        assert "https://trustedrouter.com/blog" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text
 
@@ -53,6 +87,46 @@ def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestCl
     json_response = client.get("/providers", headers={"accept": "application/json"})
     assert json_response.status_code == 200
     assert json_response.headers["content-type"].startswith("application/json")
+
+
+def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClient) -> None:
+    models = client.get("/models")
+    assert models.status_code == 200
+    models_payload = _json_ld(models.text)
+    models_types = {item["@type"] for item in models_payload["@graph"]}
+    assert {"BreadcrumbList", "ItemList"}.issubset(models_types)
+
+    leaderboard = client.get("/leaderboard")
+    assert leaderboard.status_code == 200
+    leaderboard_payload = _json_ld(leaderboard.text)
+    leaderboard_types = {item["@type"] for item in leaderboard_payload["@graph"]}
+    assert {"BreadcrumbList", "Dataset"}.issubset(leaderboard_types)
+
+    faq = client.get("/openai-compatible-llm-api")
+    assert faq.status_code == 200
+    faq_payload = _json_ld(faq.text)
+    faq_types = {item["@type"] for item in faq_payload["@graph"]}
+    assert {"BreadcrumbList", "FAQPage"}.issubset(faq_types)
+    assert "Can I keep using the OpenAI SDK?" in faq.text
+
+    blog = client.get("/blog/fusion-evals-open-source")
+    assert blog.status_code == 200
+    blog_payload = _json_ld(blog.text)
+    blog_types = {item["@type"] for item in blog_payload["@graph"]}
+    assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
+    assert "micro-hybrid" in blog.text
+    assert "OpenRouter Fusion announcement" in blog.text
+
+
+def _json_ld(html: str) -> dict[str, object]:
+    match = re.search(
+        r'<script type="application/ld\+json">(?P<payload>.*?)</script>',
+        html,
+    )
+    assert match is not None
+    payload = json.loads(match.group("payload"))
+    assert isinstance(payload, dict)
+    return payload
 
 
 def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) -> None:
@@ -200,11 +274,18 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
         assert f"MiniMax M3 {expected_label}" in response.text
         assert "openrouter.ai" not in response.text.lower()
         assert '<nav class="section-tabs"' in response.text
-        assert '<meta name="robots" content="noindex,follow">' in response.text
-        assert (
-            '<link rel="canonical" href="https://trustedrouter.com/models/minimax/minimax-m3">'
-            in response.text
-        )
+        if section in {"providers", "pricing"}:
+            assert '<meta name="robots" content="noindex,follow">' not in response.text
+            assert (
+                f'<link rel="canonical" href="https://trustedrouter.com/models/minimax/minimax-m3/{section}">'
+                in response.text
+            )
+        else:
+            assert '<meta name="robots" content="noindex,follow">' in response.text
+            assert (
+                '<link rel="canonical" href="https://trustedrouter.com/models/minimax/minimax-m3">'
+                in response.text
+            )
 
     benchmarks = client.get("/models/minimax/minimax-m3/benchmarks")
     assert "MiniMax M3 model page" in benchmarks.text
@@ -221,6 +302,8 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert response.status_code == 200
     assert "MoonshotAI: Kimi K2.6 vs Z.ai: GLM 5.1" in response.text
     assert "Compare routes" in response.text
+    assert "Practical read" in response.text
+    assert "cheapest route" in response.text
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
     assert "/models/z-ai/glm-5.1/providers" in response.text
     assert "openrouter.ai" not in response.text.lower()

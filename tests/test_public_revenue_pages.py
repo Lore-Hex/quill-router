@@ -15,6 +15,8 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
+        "/blog": "TrustedRouter blog",
+        "/blog/fusion-evals-open-source": "Reproducing Fusion in the open",
         "/security": "TrustedRouter does not store prompt or output content by default.",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
@@ -30,6 +32,10 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/portkey-alternative": "Portkey logs every request.",
         "/confidential-computing-llm": "Run LLM inference behind hardware attestation",
         "/tinfoil-alternative": "Same verifiable-privacy bet.",
+        "/openai-compatible-llm-api": "Keep the SDK. Change the base URL.",
+        "/kimi-k2-api": "Kimi K2 with provider fallback and measured routes.",
+        "/gemini-flash-alternative": "Compare Gemini Flash with the cheapest good routes.",
+        "/llm-provider-latency-benchmarks": "Provider speed data from real routed requests.",
     }
 
     for path, marker in markers.items():
@@ -52,6 +58,8 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/vercel-ai-gateway",
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
+        "/blog",
+        "/blog/fusion-evals-open-source",
         "/security",
         "/eu",
         "/models",
@@ -96,13 +104,15 @@ def test_public_model_detail_uses_service_structured_data(client: TestClient) ->
     )
     assert match is not None
     payload = json.loads(match.group("payload"))
-    assert payload["@type"] == "Service"
-    assert payload["offers"]["@type"] == "Offer"
-    assert payload["serviceType"] == "AI model routing API"
-    assert "aggregateRating" not in payload
-    assert "review" not in payload
-    assert "hasMerchantReturnPolicy" not in payload["offers"]
-    assert "shippingDetails" not in payload["offers"]
+    graph = {item["@type"]: item for item in payload["@graph"]}
+    service = graph["Service"]
+    assert service["offers"]["@type"] == "Offer"
+    assert service["serviceType"] == "AI model routing API"
+    assert graph["BreadcrumbList"]["itemListElement"][-1]["name"] == "MoonshotAI: Kimi K2.6"
+    assert "aggregateRating" not in service
+    assert "review" not in service
+    assert "hasMerchantReturnPolicy" not in service["offers"]
+    assert "shippingDetails" not in service["offers"]
 
 
 def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClient) -> None:

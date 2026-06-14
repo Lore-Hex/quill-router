@@ -7,6 +7,7 @@ from trusted_router.catalog import (
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
+    FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     MODELS,
@@ -28,8 +29,13 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert len(PROVIDERS) >= 8
     assert "kimi" in PROVIDERS
     assert "moonshotai/kimi-k2.6" in MODELS
+    assert "moonshotai/kimi-k2.7-code" in MODELS
     assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@novita/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@novita/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
     for model_id, provider in [
         ("anthropic/claude-sonnet-4.6", "anthropic"),
@@ -40,6 +46,9 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("mistralai/mistral-small-2603", "mistral"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("moonshotai/kimi-k2.6", "kimi"),
+        ("moonshotai/kimi-k2.7-code", "kimi"),
+        ("moonshotai/kimi-k2.7-code", "novita"),
+        ("z-ai/glm-5.2", "zai"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -149,6 +158,15 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             [
                 "google/gemini-3.5-flash",
                 "google/gemini-3.1-flash-lite-preview",
+            ],
+        ),
+        (
+            "zai",
+            6,
+            [
+                "z-ai/glm-5.2",
+                "z-ai/glm-5.1",
+                "z-ai/glm-5",
             ],
         ),
     ],
@@ -276,6 +294,7 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert ZDR_MODEL_ID in MODELS
     assert E2E_MODEL_ID in MODELS
     assert EU_MODEL_ID in MODELS
+    assert FUSION_MODEL_ID in MODELS
 
     zdr = meta_candidate_models(ZDR_MODEL_ID)
     e2e = meta_candidate_models(E2E_MODEL_ID)
@@ -299,6 +318,19 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert zdr_shape["trustedrouter"]["auto_candidates"]
     assert e2e_shape["trustedrouter"]["auto_candidates"]
     assert eu_shape["trustedrouter"]["auto_candidates"]
+
+
+def test_fusion_alias_is_cataloged_but_not_silent_auto_route() -> None:
+    model = MODELS[FUSION_MODEL_ID]
+    shape = model_to_openrouter_shape(model)
+
+    assert model.name == "TrustedRouter Fusion"
+    assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert meta_candidate_models(FUSION_MODEL_ID) == []
+    with pytest.raises(Exception) as exc:
+        chat_route_candidates({"model": FUSION_MODEL_ID}, Settings(environment="test"))
+    assert getattr(exc.value, "status_code", None) == 501
+    assert "attested gateway" in str(exc.value)
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
@@ -378,6 +410,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     ("model_id", "provider"),
     [
         ("moonshotai/kimi-k2.6", "kimi"),
+        ("moonshotai/kimi-k2.7-code", "kimi"),
         ("openai/gpt-4.1-mini", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
@@ -474,24 +507,25 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     )
 
 
-def test_anthropic_claude_fable_5_present_and_routable() -> None:
-    """Claude Fable 5 (GA 2026-06-09) loads from the anthropic manifest, maps
-    to the anthropic provider, prices at cost x1.10 ($10/$50 -> $11/$55), and
-    has a prepaid (Credits) anthropic endpoint the attested gateway can
-    dispatch. The enclave resolves the dotted id -> `claude-fable-5` via the
-    mapModelID dot->dash fallback, so no enclave change is required."""
-    from trusted_router.catalog import endpoints_for_model
+def test_anthropic_claude_fable_5_is_blocked_and_not_zdr_routable() -> None:
+    """Claude Fable 5 is blocked and is not a ZDR route. It must not appear
+    in the public catalog, endpoint list, or privacy-filtered candidate pools."""
+    assert "anthropic/claude-fable-5" not in MODELS
+    assert endpoints_for_model("anthropic/claude-fable-5") == []
+    assert "anthropic/claude-fable-5" not in {
+        model.id for model in meta_candidate_models(ZDR_MODEL_ID)
+    }
 
-    model = MODELS.get("anthropic/claude-fable-5")
-    assert model is not None, "anthropic/claude-fable-5 missing from catalog"
+
+def test_zai_glm_52_supplement_publishes_current_model() -> None:
+    model = MODELS["z-ai/glm-5.2"]
+    prepaid = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/prepaid"]
+    byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
+
+    assert model.provider == "zai"
+    assert model.context_length == 1_000_000
     assert model.supports_chat
-    assert model.provider == "anthropic"
-    # cost $10/$50 per M -> microdollars 10_000_000 / 50_000_000, x1.10 markup
-    assert model.prompt_price_microdollars_per_million_tokens == 11_000_000
-    assert model.completion_price_microdollars_per_million_tokens == 55_000_000
-    credits = [
-        e
-        for e in endpoints_for_model("anthropic/claude-fable-5")
-        if str(e.usage_type) == "Credits" and e.provider == "anthropic"
-    ]
-    assert credits, "claude-fable-5 has no anthropic prepaid endpoint"
+    assert prepaid.upstream_id == "glm-5.2"
+    assert byok.upstream_id == "glm-5.2"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 1_540_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 4_840_000

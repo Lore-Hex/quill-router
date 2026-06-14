@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
+    sentry_local_enabled: bool = False
 
     # Axiom log shipping. Token + org-id read from env at startup
     # (`AXIOM_API_TOKEN`, `AXIOM_ORG_ID`) since those names match

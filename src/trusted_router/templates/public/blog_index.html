@@ -1,0 +1,25 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>TrustedRouter blog</h2><span class="pill">engineering notes</span></div>
+    <div class="panel-body">
+      <p>Build notes, eval methodology, attestation details, provider routing, and launch updates for the TrustedRouter open source router.</p>
+    </div>
+  </div>
+  <div class="docs-grid">
+    {% for post in posts %}
+    <article class="marketing-card">
+      <p class="eyebrow">{{ post.published_date }}</p>
+      <h3><a href="{{ post.href }}">{{ post.title }}</a></h3>
+      <p>{{ post.description }}</p>
+      {% if post.source_url %}
+      <p class="muted-copy">Adapted from <a href="{{ post.source_url }}">{{ post.source_label }}</a>.</p>
+      {% endif %}
+      <a class="card-link" href="{{ post.href }}">Read post</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

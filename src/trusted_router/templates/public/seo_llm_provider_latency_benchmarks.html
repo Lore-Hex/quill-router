@@ -1,0 +1,55 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="LLM provider latency benchmarks">
+  <div class="marketing-copy">
+    <span class="eyebrow">Measured provider latency</span>
+    <h2>Provider speed data from real routed requests.</h2>
+    <p>TrustedRouter publishes metadata-only measurements for time-to-first-token, time-to-first-byte, throughput, uptime, and excluded probe-configuration rows. The goal is to show what the router actually sees, not what a provider claims in a launch post.</p>
+    <ul class="check-list">
+      <li>✓ Provider and model leaderboards</li>
+      <li>✓ Per-provider performance pages when enough samples exist</li>
+      <li>✓ Per-model performance pages when enough samples exist</li>
+      <li>✓ Prompt and output content never stored for these rollups</li>
+    </ul>
+    <p>
+      <a class="btn primary" href="/leaderboard">Open leaderboard</a>
+      <a class="btn" href="/status">Open status</a>
+    </p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Signals</span><span>metadata only</span></div>
+    <pre><code>{
+  "provider": "tinfoil",
+  "model": "moonshotai/kimi-k2.6",
+  "p50_ttft_ms": 1192,
+  "uptime": 0.999,
+  "sample_count": 42
+}</code></pre>
+  </div>
+</section>
+
+<section class="seo-two-col">
+  <div class="panel">
+    <div class="panel-head"><h2>Provider pages</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/providers/tinfoil/performance">Tinfoil performance</a><span>Confidential and E2EE route samples</span></li>
+        <li><a href="/providers/anthropic/performance">Anthropic performance</a><span>Claude route samples</span></li>
+        <li><a href="/providers/gemini/performance">Gemini performance</a><span>Google model route samples</span></li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="panel-head"><h2>Model pages</h2></div>
+    <div class="panel-body">
+      <ul class="link-list">
+        <li><a href="/models/moonshotai/kimi-k2.6/performance">Kimi K2.6 performance</a><span>Provider-specific route metrics</span></li>
+        <li><a href="/models/google/gemini-3.5-flash/performance">Gemini Flash performance</a><span>Fast multimodal route metrics</span></li>
+        <li><a href="/models/openai/gpt-5.4-nano/performance">GPT Nano performance</a><span>Small-model latency metrics</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

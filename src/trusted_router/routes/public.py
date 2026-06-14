@@ -30,6 +30,8 @@ from trusted_router.dashboard import (
     public_apps_html,
     public_baa_html,
     public_benchmarks_html,
+    public_blog_index_html,
+    public_blog_post_html,
     public_chat_html,
     public_dpa_html,
     public_hipaa_readiness_html,
@@ -42,11 +44,16 @@ from trusted_router.dashboard import (
     public_models_html,
     public_page_html,
     public_provider_detail_html,
+    public_provider_performance_html,
     public_providers_html,
     public_rankings_html,
     public_soc2_readiness_html,
     public_subprocessors_html,
     robots_txt,
+    sitemap_comparisons_xml,
+    sitemap_core_xml,
+    sitemap_models_xml,
+    sitemap_providers_xml,
     sitemap_xml,
     soc2_readiness_json,
     subprocessors_json,
@@ -228,6 +235,22 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def seo_sign_in_with_trustedrouter() -> str:
         return public_page_html(settings, "sign-in-with-trustedrouter")
 
+    @public_html_route("/openai-compatible-llm-api")
+    async def seo_openai_compatible_llm_api() -> str:
+        return public_page_html(settings, "openai-compatible-llm-api")
+
+    @public_html_route("/kimi-k2-api")
+    async def seo_kimi_k2_api() -> str:
+        return public_page_html(settings, "kimi-k2-api")
+
+    @public_html_route("/gemini-flash-alternative")
+    async def seo_gemini_flash_alternative() -> str:
+        return public_page_html(settings, "gemini-flash-alternative")
+
+    @public_html_route("/llm-provider-latency-benchmarks")
+    async def seo_llm_provider_latency_benchmarks() -> str:
+        return public_page_html(settings, "llm-provider-latency-benchmarks")
+
     @public_html_route("/pricing")
     async def pricing() -> str:
         return public_page_html(settings, "pricing")
@@ -239,6 +262,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/apps")
     async def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
+
+    @public_html_route("/blog")
+    async def blog() -> str:
+        return public_blog_index_html(settings)
+
+    @public_html_route("/blog/{slug}")
+    async def blog_post(slug: str) -> Any:
+        html = public_blog_post_html(settings, slug)
+        if html is None:
+            return HTMLResponse(public_page_html(settings, "docs"), status_code=404)
+        return html
 
     @public_html_route("/security")
     async def security() -> str:
@@ -335,6 +369,38 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def sitemap() -> Response:
         return Response(
             sitemap_xml(settings),
+            media_type="application/xml",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/sitemap-core.xml", methods=["GET", "HEAD"])
+    async def sitemap_core() -> Response:
+        return Response(
+            sitemap_core_xml(settings),
+            media_type="application/xml",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/sitemap-providers.xml", methods=["GET", "HEAD"])
+    async def sitemap_providers() -> Response:
+        return Response(
+            sitemap_providers_xml(settings),
+            media_type="application/xml",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/sitemap-models.xml", methods=["GET", "HEAD"])
+    async def sitemap_models() -> Response:
+        return Response(
+            sitemap_models_xml(settings),
+            media_type="application/xml",
+            headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route("/sitemap-comparisons.xml", methods=["GET", "HEAD"])
+    async def sitemap_comparisons() -> Response:
+        return Response(
+            sitemap_comparisons_xml(settings),
             media_type="application/xml",
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
         )
@@ -451,6 +517,16 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return JSONResponse(
             {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}
         )
+
+    @public_html_route("/providers/{provider_slug}/performance")
+    async def provider_performance(provider_slug: str) -> HTMLResponse:
+        body = public_provider_performance_html(settings, provider_slug.strip())
+        if body is None:
+            return HTMLResponse(
+                public_page_html(settings, "security"),
+                status_code=404,
+            )
+        return HTMLResponse(body)
 
     @public_html_route("/providers/{provider_slug}")
     async def provider_detail(provider_slug: str) -> HTMLResponse:

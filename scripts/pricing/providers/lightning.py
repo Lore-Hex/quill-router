@@ -35,6 +35,7 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
+from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 
 SLUG = "lightning"
 URL = "https://lightning.ai/api/v1/models"
@@ -56,6 +57,7 @@ _NATIVE_TO_OR_ID = {
     "lightning-ai/llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct",
     "lightning-ai/DeepSeek-V3.1": "deepseek/deepseek-v3.1",
 }
+UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
 
 
 def fetch() -> ProviderPricingResult:
@@ -80,9 +82,10 @@ def fetch() -> ProviderPricingResult:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        or_id = _NATIVE_TO_OR_ID.get(native_id)
+        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
             continue
+        remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         pricing = row.get("pricing") or {}
         if not isinstance(pricing, dict):
             continue

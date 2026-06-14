@@ -38,6 +38,16 @@ _NAME_TO_OR_ID = {
 }
 
 
+def _or_id(native_id: str) -> str | None:
+    mapped = _NAME_TO_OR_ID.get(native_id)
+    if mapped is not None:
+        return mapped
+    lowered = native_id.strip().casefold()
+    if lowered.startswith(("kimi-", "moonshot-")):
+        return f"moonshotai/{lowered}"
+    return None
+
+
 # Match: ["model-id", "1M tokens", <>{"$"}X.X</>, <>{"$"}Y.Y</>, <>{"$"}Z.Z</>, "context"]
 # OR  : ["model-id", "1M tokens", <>{"$"}X.X</>, <>{"$"}Y.Y</>, "context"]
 _ROW_RE = re.compile(
@@ -57,7 +67,7 @@ def parse(text: str) -> dict:
     out: dict = {}
     for match in _ROW_RE.finditer(text):
         native_id, col_a, col_b, col_c, _context = match.groups()
-        or_id = _NAME_TO_OR_ID.get(native_id)
+        or_id = _or_id(native_id)
         if or_id is None:
             continue
         if or_id in out:

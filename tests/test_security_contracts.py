@@ -18,6 +18,7 @@ from trusted_router.sentry_config import (
     before_send_log,
     init_sentry,
     reset_sentry_floodgate_for_tests,
+    sentry_should_init,
 )
 from trusted_router.storage import STORE
 
@@ -406,6 +407,32 @@ def test_sentry_init_is_noop_under_pytest_even_with_local_dsn(monkeypatch) -> No
     )
 
     assert calls == []
+
+
+def test_sentry_init_is_noop_for_local_scripts_unless_explicitly_enabled() -> None:
+    dsn = "https://example@example.ingest.sentry.io/1"
+
+    assert (
+        sentry_should_init(
+            Settings(environment="local", sentry_dsn=dsn),
+            running_under_pytest=False,
+        )
+        is False
+    )
+    assert (
+        sentry_should_init(
+            Settings(environment="local", sentry_dsn=dsn, sentry_local_enabled=True),
+            running_under_pytest=False,
+        )
+        is True
+    )
+    assert (
+        sentry_should_init(
+            Settings(environment="staging", sentry_dsn=dsn),
+            running_under_pytest=False,
+        )
+        is True
+    )
 
 
 def test_test_settings_override_process_env_for_default_client(monkeypatch) -> None:

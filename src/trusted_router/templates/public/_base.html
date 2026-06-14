@@ -67,6 +67,7 @@
         <a href="/eu">EU</a>
         <a href="/pricing">Pricing</a>
         <a href="/docs">Docs</a>
+        <a href="/blog">Blog</a>
         <a href="/security">Security</a>
         <a href="/status">Status</a>
         <span class="nav-sep" aria-hidden="true"></span>
@@ -103,6 +104,19 @@
     </section>
     {% endblock %}
     {% block body %}{% endblock %}
+    {% if faq_items %}
+    <section class="panel faq-panel" aria-label="Frequently asked questions">
+      <div class="panel-head"><h2>Questions</h2></div>
+      <div class="panel-body">
+        {% for question, answer in faq_items %}
+        <details>
+          <summary>{{ question }}</summary>
+          <p>{{ answer }}</p>
+        </details>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
   </main>
   <footer class="site-footer" aria-label="TrustedRouter">
     <div class="site-footer-cols">
@@ -134,14 +148,21 @@
         <h3>Developers</h3>
         <a href="/docs">Docs</a>
         <a href="/sign-in-with-trustedrouter">Sign-in API</a>
+        <a href="/openai-compatible-llm-api">OpenAI-compatible API</a>
+        <a href="/llm-provider-latency-benchmarks">Latency benchmarks</a>
         <a href="/docs/migrate-from-openrouter">Migrate</a>
         <a href="/docs/agent-setup">Agent setup</a>
+        <a href="/blog">Blog</a>
         <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
+        <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a>
+        <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a>
+        <a href="https://pypi.org/project/trusted-router-py/">PyPI</a>
+        <a href="https://www.npmjs.com/package/@lore-hex%2Ftrusted-router">npm</a>
         <a href="/docs/llms.txt">llms.txt</a>
       </div>
       <div class="footer-col">
         <h3>Company</h3>
-        <a href="https://jperla.com/blog">Blog</a>
+        <a href="/blog">Blog</a>
         <a href="https://jperla.com/blog/attestation-is-all-you-need">Attestation is All You Need</a>
         <a href="https://jperla.com/blog/why-not-openrouter-litellm-or-vercel-ai-gateway">Why not OpenRouter / LiteLLM?</a>
         <a href="https://jperla.com/blog/trustedrouter-founding-engineer">About</a>
