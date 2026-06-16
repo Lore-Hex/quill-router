@@ -1,25 +1,52 @@
 {% extends "public/_base.html" %}
 
+{# No marketing hero on the blog — it's a reading index, not a landing page. #}
+{% block hero %}{% endblock %}
+
 {% block body %}
-<section class="public-section docs-section">
-  <div class="panel">
-    <div class="panel-head"><h2>TrustedRouter blog</h2><span class="pill">engineering notes</span></div>
-    <div class="panel-body">
-      <p>Build notes, eval methodology, attestation details, provider routing, and launch updates for the TrustedRouter open source router.</p>
-    </div>
+<style>
+  .blog-index { max-width: 720px; margin: 0 auto; padding: 6px 4px 56px; }
+  .blog-index-head h1 { font-size: 40px; line-height: 1.12; letter-spacing: -0.015em;
+    margin: 4px 0 10px; max-width: none; color: var(--inkstrong); }
+  .blog-index-head p { color: var(--muted); font-size: 18px; line-height: 1.55;
+    margin: 0 0 8px; max-width: 620px; }
+  .blog-list { margin-top: 14px; }
+  .blog-list-item { padding: 26px 0; border-top: 1px solid var(--line); }
+  .blog-list-item:first-child { border-top: none; }
+  .blog-list-item .blog-date { color: var(--muted); font-size: 13.5px;
+    letter-spacing: 0.02em; text-transform: uppercase; }
+  .blog-list-item h2 { font-size: 27px; line-height: 1.2; letter-spacing: -0.01em;
+    margin: 7px 0 8px; }
+  .blog-list-item h2 a { color: var(--inkstrong); text-decoration: none; }
+  .blog-list-item h2 a:hover { color: var(--blue); }
+  .blog-list-item .blog-dek { font-family: Charter, "Iowan Old Style", Georgia, serif;
+    font-size: 18.5px; line-height: 1.6; color: var(--ink); margin: 0 0 10px; max-width: 640px; }
+  .blog-list-item .blog-readmore { font-size: 14.5px; color: var(--blue); text-decoration: none; }
+  .blog-list-item .blog-readmore:hover { text-decoration: underline; }
+  .blog-list-item .blog-src { color: var(--muted); font-size: 13.5px; margin: 6px 0 0; }
+  .blog-list-item .blog-src a { color: var(--muted); }
+  @media (max-width: 700px) {
+    .blog-index-head h1 { font-size: 32px; }
+    .blog-list-item h2 { font-size: 23px; }
+  }
+</style>
+<div class="blog-index">
+  <div class="blog-index-head">
+    <h1>{{ heading }}</h1>
+    <p>{{ description }}</p>
   </div>
-  <div class="docs-grid">
+  <div class="blog-list">
     {% for post in posts %}
-    <article class="marketing-card">
-      <p class="eyebrow">{{ post.published_date }}</p>
-      <h3><a href="{{ post.href }}">{{ post.title }}</a></h3>
-      <p>{{ post.description }}</p>
+    <article class="blog-list-item">
+      <div class="blog-date">{{ post.published_date }}</div>
+      <h2><a href="{{ post.href }}">{{ post.title }}</a></h2>
+      <p class="blog-dek">{{ post.description }}</p>
+      <a class="blog-readmore" href="{{ post.href }}">Read &rarr;</a>
       {% if post.source_url %}
-      <p class="muted-copy">Adapted from <a href="{{ post.source_url }}">{{ post.source_label }}</a>.</p>
+      <p class="blog-src">Source: <a href="{{ post.source_url }}">{{ post.source_label }}</a></p>
       {% endif %}
-      <a class="card-link" href="{{ post.href }}">Read post</a>
     </article>
     {% endfor %}
   </div>
-</section>
+</div>
 {% endblock %}
