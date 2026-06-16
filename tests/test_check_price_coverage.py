@@ -14,6 +14,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"models": [{"name": "models/gemini-3.5-flash"}]}
     if "api.minimax.io" in url:
         return {"data": [{"id": "MiniMax-M3"}]}
+    if "api.fireworks.ai" in url:
+        return {"data": [{"id": "accounts/fireworks/models/gpt-oss-120b"}]}
     if "tokenfactory.nebius.com" in url:
         return {"data": [{"id": "meta-llama/Llama-3.3-70B-Instruct"}]}
     if "api.novita.ai" in url:
