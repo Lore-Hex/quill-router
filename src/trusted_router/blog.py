@@ -20,6 +20,50 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="the-models-that-say-no",
+        title="The models that say no",
+        description=(
+            "PrometheusBench measures how often a model refuses a plain question. "
+            "The spread is enormous, and Fusion routes around all of it."
+        ),
+        published_date="2026-06-16",
+        source_label="PrometheusBench on GitHub",
+        source_url="https://github.com/Lore-Hex/PrometheusBench",
+        body_html="""
+<p>A while back I dumped my own raw genotype file into a frontier model and asked it to walk me through a variant I was curious about. It wouldn't. <em>Consult a qualified professional.</em> For my own body, reading my own data, the data I paid to generate and own outright.</p>
+<p>That's the moment the "safety" framing fell apart for me. Not because the refusal was dangerous, but because it was so obviously useless. That variant is described in a dozen open papers and three databases I can reach from my phone. The model wasn't protecting anyone. It was just deciding I wasn't the kind of person who gets a straight answer.</p>
+<p>So I built a small benchmark to measure exactly that. It's called <strong>PrometheusBench</strong>, and the whole thing fits on one screen.</p>
+<h2>What it measures</h2>
+<p>Thirty short prompts. Ten about biology, ten about cybersecurity, ten about how language models work. Pointed questions in the areas where models get nervous. The score is dumb on purpose: how many of the thirty did the model just answer, instead of refusing? Higher means more willing. Lower means it slammed the door more often.</p>
+<p>I'll be honest about what this is and isn't. It is not a safety eval. Some of these prompts have an edge; I'm not pretending they're all about kittens. The point isn't "a good model answers everything no matter what." The point is that the line vendors actually draw, in practice, today, mostly catches ordinary curiosity and self-reliance while doing almost nothing to slow down anyone who's genuinely determined. PrometheusBench just puts a number on it.</p>
+<h2>The results surprised me, then they didn't</h2>
+<p>The most permissive models are the open-weight ones. <span class="mono">z-ai/glm-5.1</span> answered 29 of 30. Kimi, the other GLMs, Gemini Flash, all up near the top, all happy to talk to you like an adult. And at the very bottom: Claude Opus 4.8, one out of thirty. Opus 4.7 scored a clean zero.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>Non-refusals</th><th>Rate</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">trustedrouter/fusion</span> &#9733;</td><td>30 / 30</td><td>100%</td></tr>
+    <tr><td><span class="mono">z-ai/glm-5.1</span></td><td>29 / 30</td><td>96.7%</td></tr>
+    <tr><td><span class="mono">moonshotai/kimi-k2.6</span></td><td>27 / 30</td><td>90.0%</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-flash</span></td><td>26 / 30</td><td>86.7%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-haiku-4.5</span></td><td>9 / 30</td><td>30.0%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-opus-4.8</span></td><td>1 / 30</td><td>5.0%</td></tr>
+    <tr><td><span class="mono">anthropic/claude-opus-4.7</span></td><td>0 / 30</td><td>0.0%</td></tr>
+  </tbody>
+</table>
+<p>Sit with that for a second. The models marketed hardest on alignment and trust are the ones most likely to treat you as a suspect. The ones a lot of people sneer at as the "unsafe" alternatives are the ones that'll actually help you defend your own network or understand your own genome.</p>
+<p>I don't think the labs at the bottom are run by bad people. I think they've been cornered into a posture where the safest move for <em>them</em>, legally and reputationally, is to refuse, and the entire cost of that refusal lands on you. It costs them nothing. It costs the curious everything.</p>
+<h2>The part that should end the debate</h2>
+<p>Here's the experiment that convinced me refusal isn't really about the knowledge at all. TrustedRouter Fusion can fan a single prompt across a whole panel of models at once. You ask once; eight models answer behind the scenes; you get one response back. So I pointed it at a panel, Kimi and DeepSeek and Opus and a couple of Geminis and GPT-5.5 and MiniMax and GLM, and told it to take the first answer that wasn't a refusal.</p>
+<p>For the handful of prompts where the front-line judge still balked, I let it fall back to the next model, and the next. Door closed at one vendor? Try the next door. There are a lot of doors.</p>
+<p>It scored <strong>30 out of 30</strong>. Ten out of ten in biology, ten out of ten in cybersecurity, ten out of ten in LLM research. Every prompt Opus refused, some other model on the panel answered without blinking.</p>
+<p>That's the whole argument in one number. The "dangerous" knowledge wasn't locked away by anyone's refusal. It was one fallback away the entire time. Refusal isn't a wall around the information. It's a velvet rope in front of one specific door, and the rope only works on people too polite or too stuck to walk ten feet to the left.</p>
+<h2>Why I bothered</h2>
+<p>Prometheus stole fire from the gods and handed it to everyone. The gods were furious, not because fire is unsafe, but because they wanted to be the ones who decided who got to have it. That's the actual fight here, and it has nothing to do with safety.</p>
+<p>A person should be able to study the biology that touches their own life, harden their own machines, and understand the systems quietly reshaping their world. None of that requires helping anyone hurt anybody, and a model that's any good can tell the difference. The determined expert already has the fire, through open weights, internal tools, and institutional access. The refusal only ever lands on the person standing out in the open, asking honestly.</p>
+<p>The fire's already out. I'd rather we stopped pretending we can put it back, and started arguing about the thing that actually matters: who's allowed to warm their hands. PrometheusBench is open source, thirty prompts and three domains, and you can run it yourself against any model on TrustedRouter: <a href="https://github.com/Lore-Hex/PrometheusBench">github.com/Lore-Hex/PrometheusBench</a>.</p>
+""",
+    ),
+    BlogPost(
         slug="frontier-fusion-mythos-target",
         title="Chasing Mythos-level Fusion in the open",
         description=(
