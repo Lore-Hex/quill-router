@@ -221,9 +221,38 @@ def test_provider_route_preferences_normalizes_provider_aliases() -> None:
     canonical provider slugs so client-side aliases land in the same
     filter buckets as the canonical forms."""
     prefs = provider_route_preferences(
-        {"provider": {"only": ["google-ai-studio", "mistralai", "moonshot"]}}
+        {
+            "provider": {
+                "only": [
+                    "google-ai-studio",
+                    "google-vertex",
+                    "vertex-ai",
+                    "mistralai",
+                    "moonshot",
+                ]
+            }
+        }
     )
     assert prefs.only == frozenset({"gemini", "mistral", "kimi"})
+
+
+def test_provider_route_preferences_accepts_comma_separated_order() -> None:
+    prefs = provider_route_preferences({"provider": {"order": "anthropic, openai"}})
+    assert prefs.order == ("anthropic", "openai")
+
+
+def test_provider_route_preferences_rejects_router_as_provider() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences({"provider": {"only": ["openrouter"]}})
+    assert ctx.value.status_code == 400
+    assert "router name" in ctx.value.detail["error"]["message"]
+
+
+def test_provider_route_preferences_rejects_unknown_provider_filter() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences({"provider": {"only": ["not-a-provider"]}})
+    assert ctx.value.status_code == 400
+    assert "Unknown provider" in ctx.value.detail["error"]["message"]
 
 
 def test_provider_route_preferences_rejects_non_boolean_allow_fallbacks() -> None:

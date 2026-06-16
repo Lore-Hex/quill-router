@@ -45,6 +45,10 @@ class RoutePreferences:
 _PROVIDER_ALIASES = {
     "google": "gemini",
     "google-ai-studio": "gemini",
+    "google-vertex": "gemini",
+    "google-vertex-ai": "gemini",
+    "vertex": "gemini",
+    "vertex-ai": "gemini",
     "chatgpt": "openai",
     "chat-gpt": "openai",
     "mistralai": "mistral",
@@ -58,6 +62,16 @@ _PROVIDER_ALIASES = {
     "together-ai": "together",
     "togetherai": "together",
 }
+_ROUTER_PROVIDER_SLUGS = frozenset(
+    {
+        "openrouter",
+        "open-router",
+        "trustedrouter",
+        "trusted-router",
+        "quillrouter",
+        "quill-router",
+    }
+)
 
 # OpenRouter-style model-id suffixes. Append `:nitro` to a model id to
 # re-sort the upstream provider list by throughput-first (equivalent to
@@ -207,9 +221,9 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     if not isinstance(raw, dict):
         return RoutePreferences()
 
-    order = tuple(_provider_slug(item) for item in _string_list(raw.get("order")))
-    only = frozenset(_provider_slug(item) for item in _string_list(raw.get("only")))
-    ignore = frozenset(_provider_slug(item) for item in _string_list(raw.get("ignore")))
+    order = tuple(_provider_filter_list("order", raw.get("order")))
+    only = frozenset(_provider_filter_list("only", raw.get("only")))
+    ignore = frozenset(_provider_filter_list("ignore", raw.get("ignore")))
     allow_fallbacks = raw.get("allow_fallbacks")
     if allow_fallbacks is None:
         allow_fallbacks_bool = True
@@ -475,15 +489,51 @@ def _provider_slug(value: str) -> str:
     return _PROVIDER_ALIASES.get(slug, slug)
 
 
-def _string_list(value: Any) -> list[str]:
+def _provider_filter_list(field: str, value: Any) -> list[str]:
+    out: list[str] = []
+    for item in _string_list(field, value):
+        slug = _provider_slug(item)
+        if slug in _ROUTER_PROVIDER_SLUGS:
+            raise api_error(
+                400,
+                (
+                    f"provider.{field} cannot contain router name '{item}'. "
+                    "Use model='trustedrouter/zdr' or another TrustedRouter alias, "
+                    "and omit the router from provider filters."
+                ),
+                ErrorType.BAD_REQUEST,
+            )
+        if slug not in PROVIDERS:
+            raise api_error(
+                400,
+                f"Unknown provider in provider.{field}: {item}",
+                ErrorType.BAD_REQUEST,
+            )
+        out.append(slug)
+    return out
+
+
+def _string_list(field: str, value: Any) -> list[str]:
     if value is None:
         return []
-    if not isinstance(value, list):
-        raise api_error(400, "provider routing lists must be arrays of strings", ErrorType.BAD_REQUEST)
+    if isinstance(value, str):
+        values = [item.strip() for item in value.split(",") if item.strip()]
+    elif isinstance(value, list):
+        values = value
+    else:
+        raise api_error(
+            400,
+            f"provider.{field} must be an array of strings or a comma-separated string",
+            ErrorType.BAD_REQUEST,
+        )
     out: list[str] = []
-    for item in value:
+    for item in values:
         if not isinstance(item, str) or not item.strip():
-            raise api_error(400, "provider routing lists must contain strings", ErrorType.BAD_REQUEST)
+            raise api_error(
+                400,
+                f"provider.{field} must contain only provider names",
+                ErrorType.BAD_REQUEST,
+            )
         out.append(item)
     return out
 
