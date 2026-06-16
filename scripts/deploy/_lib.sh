@@ -17,6 +17,10 @@ REGION="${REGION:-us-central1}"
 # `api-<region>.quillrouter.com` and weakens the trust story.
 TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"
 TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
+# Cloud Run control-plane regions behind trustedrouter.com. This is broader
+# than TR_REGIONS because cold control-plane regions can serve cached public
+# pages without advertising non-existent regional attested gateway hostnames.
+TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,asia-northeast1,asia-southeast1,southamerica-east1}"
 # Comma-separated subset of TR_REGIONS that should run with min_scale=1
 # (always-on warm capacity). Anything in TR_REGIONS but NOT in
 # TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-

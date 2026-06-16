@@ -229,17 +229,18 @@ if [ "${TR_DEPLOY_ALL_REGIONS:-1}" != "1" ]; then
   TARGETS=("$REGION")
 fi
 
-# Full set of regions that SHOULD be in the LB (independent of what
-# this deploy run targets). The detach-stale-NEG step below compares
-# attached regions against this — NOT against TARGETS — so a
-# narrow-target deploy (e.g. TR_DEPLOY_TARGET_REGIONS=asia-northeast1)
-# doesn't accidentally rip warm regions out of the LB.
+# Full set of control-plane regions that SHOULD be in the LB (independent of
+# what this deploy run targets). The detach-stale-NEG step below compares
+# attached regions against this — NOT against TARGETS — so a narrow-target
+# deploy (e.g. TR_DEPLOY_TARGET_REGIONS=us-central1) doesn't accidentally rip
+# cold public-site regions out of the LB.
 #
 # Lost ~30s of trustedrouter.com 504s on 2026-05-10 from exactly this:
 # a cold-region-only deploy detached all three warm-region NEGs from
 # trusted-router-control-backend because the original loop compared
-# against TARGETS (the cold subset) instead of the full TR_REGIONS.
-IFS=',' read -ra _ALL_REGION_LIST <<<"$TR_REGIONS"
+# against TARGETS (the cold subset) instead of the full control-plane region
+# set. TR_REGIONS remains the attested API region set exposed to SDK callers.
+IFS=',' read -ra _ALL_REGION_LIST <<<"$TR_CONTROL_PLANE_REGIONS"
 ALL_REGIONS=()
 for r in "${_ALL_REGION_LIST[@]}"; do
   [ -n "$r" ] && ALL_REGIONS+=("$r")
@@ -352,11 +353,11 @@ attach_region_to_lb() {
 
 if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/null 2>&1; then
   log "wiring Serverless NEGs to ${LB_BACKEND_SERVICE}"
-  # Attach every region in TR_REGIONS, not just this deploy's TARGETS,
-  # so the LB always reflects the full intended region set. Idempotent:
-  # attach_region_to_lb no-ops on regions that are already attached.
-  # Without this, a narrow-target deploy could leave the LB in a state
-  # where a region exists as Cloud Run but isn't in the LB rotation.
+  # Attach every control-plane region, not just this deploy's TARGETS, so the
+  # LB always reflects the full intended public-site region set. Idempotent:
+  # attach_region_to_lb no-ops on regions that are already attached. Without
+  # this, a narrow-target deploy could leave a Cloud Run region outside LB
+  # rotation.
   for fanout_region in "${ALL_REGIONS[@]}"; do
     attach_region_to_lb "$fanout_region" || log "WARN: NEG attach failed for ${fanout_region}"
   done
@@ -366,11 +367,11 @@ if gc compute backend-services describe "$LB_BACKEND_SERVICE" --global >/dev/nul
     | sed -n 's#.*regions/\([^/]*\)/networkEndpointGroups/.*#\1#p' \
     | sort -u)"
   for attached_region in $existing_backend_regions; do
-    # Compare against ALL_REGIONS (= TR_REGIONS), not TARGETS. TARGETS
-    # is just this deploy run's subset; detaching anything outside of
-    # it would rip warm regions out of the LB when running a
-    # cold-only or narrow-target deploy. We only want to detach
-    # regions that fell out of TR_REGIONS entirely.
+    # Compare against ALL_REGIONS (= TR_CONTROL_PLANE_REGIONS), not TARGETS.
+    # TARGETS is just this deploy run's subset; detaching anything outside of
+    # it would rip cold regions out of the LB when running a warm-only or
+    # narrow-target deploy. We only want to detach regions that fell out of
+    # TR_CONTROL_PLANE_REGIONS entirely.
     keep_region=0
     for full_region in "${ALL_REGIONS[@]}"; do
       if [ "$attached_region" = "$full_region" ]; then
