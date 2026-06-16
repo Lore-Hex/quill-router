@@ -55,6 +55,7 @@ ensure_secret_from_env_file "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"
 ensure_secret_from_env_file "KIMI_API_KEY" "trustedrouter-kimi-api-key" "MOONSHOT_API_KEY"
 ensure_secret_from_env_file "ZAI_API_KEY" "trustedrouter-zai-api-key" "ZHIPU_API_KEY" "Z_AI_API_KEY"
 ensure_secret_from_env_file "TOGETHER_API_KEY" "trustedrouter-together-api-key" "TOGETHERAI_API_KEY" "TOGETHER_AI_API_KEY"
+ensure_secret_from_env_file "FIREWORKS_API_KEY" "trustedrouter-fireworks-api-key" "FIREWORKS_AI_API_KEY"
 # Cohere — embeddings only (native /v2/embed in the enclave). Reads
 # COHERE_API_KEY from ~/.quill_cloud_keys.private. Runtime read access comes
 # from the project-level secretAccessor binding (infra.sh), like every other

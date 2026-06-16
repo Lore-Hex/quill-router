@@ -85,6 +85,7 @@ def test_provider_error_type_classification(status: int, expected: str) -> None:
         ("deepseek", "env://DEEPSEEK_API_KEY"),
         ("mistral", "env://MISTRAL_API_KEY"),
         ("kimi", "env://KIMI_API_KEY"),
+        ("fireworks", "env://FIREWORKS_API_KEY"),
         ("vertex", "env://VERTEX_ACCESS_TOKEN"),
         # Unknown providers fall back to UPPER + _API_KEY.
         ("nebula", "env://NEBULA_API_KEY"),

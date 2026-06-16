@@ -94,6 +94,11 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
             (0.0, 15.0),  # GLM-4.5-X completion = $8.9/M; GLM-4.5-Flash is $0
         ),
         (
+            "fireworks",
+            {"moonshotai/kimi-k2.6", "deepseek/deepseek-v4-pro", "openai/gpt-oss-120b"},
+            (0.05, 10.0),
+        ),
+        (
             "grok",
             {"x-ai/grok-4.3"},
             (0.05, 5.0),

@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from trusted_router.catalog import MODELS
+from trusted_router.catalog import MODELS, Model, endpoints_for_model
 from trusted_router.providers import (
     ProviderClient,
     ProviderError,
@@ -200,11 +200,24 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(tmp
             "https://api.moonshot.ai/v1/chat/completions",
             "kimi-k2.6",
         ),
+        (
+            Model(
+                id="openai/gpt-oss-120b",
+                name="GPT OSS 120B on Fireworks",
+                provider="fireworks",
+                context_length=131072,
+                upstream_id="accounts/fireworks/models/gpt-oss-120b",
+            ),
+            "FIREWORKS_API_KEY",
+            "fireworks-value",
+            "https://api.fireworks.ai/inference/v1/chat/completions",
+            "accounts/fireworks/models/gpt-oss-120b",
+        ),
     ],
 )
 @pytest.mark.asyncio
 async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls(
-    provider_model: str,
+    provider_model: str | Model,
     env_key: str,
     env_value: str,
     expected_url: str,
@@ -241,7 +254,7 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS[provider_model],
+        MODELS[provider_model] if isinstance(provider_model, str) else provider_model,
         {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5},
     )
 
@@ -260,6 +273,20 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
             "timeout": 120,
         }
     ]
+
+
+def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
+    endpoints = endpoints_for_model("openai/gpt-oss-120b")
+    fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
+
+    assert {endpoint.usage_type for endpoint in fireworks} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in fireworks} == {
+        "accounts/fireworks/models/gpt-oss-120b"
+    }
+    assert {
+        endpoint.prompt_price_microdollars_per_million_tokens
+        for endpoint in fireworks
+    } == {165_000}
 
 
 @pytest.mark.asyncio

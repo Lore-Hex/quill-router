@@ -55,6 +55,7 @@ def default_provider_secret_ref(provider: str) -> str:
         "deepseek": "DEEPSEEK_API_KEY",
         "mistral": "MISTRAL_API_KEY",
         "kimi": "KIMI_API_KEY",
+        "fireworks": "FIREWORKS_API_KEY",
         "vertex": "VERTEX_ACCESS_TOKEN",
     }
     name = env_names.get(provider, f"{provider.upper()}_API_KEY")

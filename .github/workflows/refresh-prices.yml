@@ -134,6 +134,7 @@ jobs:
                       DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
                       PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
                       CEREBRAS_API_KEY:trustedrouter-cerebras-api-key \
+                      FIREWORKS_API_KEY:trustedrouter-fireworks-api-key \
                       GEMINI_API_KEY:trustedrouter-gemini-api-key \
                       NOVITA_API_KEY:trustedrouter-novita-api-key \
                       NEBIUS_API_KEY:trustedrouter-nebius-api-key \

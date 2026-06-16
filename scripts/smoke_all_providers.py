@@ -38,6 +38,7 @@ PROBES: list[tuple[str, str]] = [
     ("kimi",        "moonshotai/kimi-k2.6"),
     ("zai",         "z-ai/glm-4.6"),
     ("together",    "moonshotai/kimi-k2.6"),
+    ("fireworks",   "openai/gpt-oss-120b"),
     ("grok",        "x-ai/grok-4.20"),
     # Probe the provider-native Qwen route, not only a shared DeepSeek route:
     # this catches Novita-specific catalog/pricing drift and proves the

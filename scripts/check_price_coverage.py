@@ -59,6 +59,22 @@ def _gemini_model_id(native_id: str) -> str | None:
     return f"google/{value.casefold()}"
 
 
+_FIREWORKS_MODEL_IDS = {
+    "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
+    "accounts/fireworks/models/kimi-k2p5": "moonshotai/kimi-k2.5",
+    "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
+    "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
+}
+
+
+def _fireworks_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _FIREWORKS_MODEL_IDS.get(value, value)
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]],
     ...
@@ -74,6 +90,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://generativelanguage.googleapis.com/v1beta/models",
         ("GEMINI_API_KEY",),
         _gemini_model_id,
+    ),
+    (
+        "fireworks",
+        "https://api.fireworks.ai/inference/v1/models",
+        ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+        _fireworks_model_id,
     ),
     (
         "minimax",

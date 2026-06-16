@@ -480,6 +480,20 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
     ),
+    # Fireworks AI — OpenAI-compatible serverless inference at
+    # api.fireworks.ai/inference/v1. The live account currently exposes a
+    # compact high-value set: Kimi, DeepSeek, GLM, and GPT OSS routes.
+    "fireworks": Provider(
+        slug="fireworks",
+        name="Fireworks AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Fireworks publishes "
+            "security, privacy, and zero-retention documentation; enable a "
+            "contracted ZDR posture before marking this provider as ZDR."
+        ),
+        provider_policy_url="https://trust.fireworks.ai",
+    ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
     # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
     "grok": Provider(
@@ -738,6 +752,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "kimi",
         "zai",
         "together",
+        "fireworks",
         # New providers — all OpenAI-compatible chat completions, so
         # the existing enclave OpenAI-shape adapter can dispatch them
         # by switching base URL + auth header.
@@ -990,6 +1005,7 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "z-ai": "zai",
     "zhipu": "zai",
     "zhipuai": "zai",
+    "fireworks": "fireworks",
     "x-ai": "grok",
     "xai": "grok",
     "phala": "phala",
@@ -1308,7 +1324,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Novita, Nebius, MiniMax, Cerebras, Gemini, and Z.AI currently use this path because their
+    Novita, Nebius, MiniMax, Cerebras, Gemini, Fireworks, and Z.AI currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
     Claude Opus 4.8, which shipped after the snapshot — the attested gateway
@@ -1324,6 +1340,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "anthropic",
         "cerebras",
         "gemini",
+        "fireworks",
         "zai",
         "xiaomi",
     ):
