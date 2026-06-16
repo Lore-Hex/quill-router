@@ -1,23 +1,57 @@
 {% extends "public/_base.html" %}
 
+{# Blog posts don't want the marketing hero (eyebrow + Create key + metrics)
+   bolted to the top — it's a reading page, not a landing page. #}
+{% block hero %}{% endblock %}
+
 {% block body %}
-<article class="public-section docs-section">
-  <div class="panel">
-    <div class="panel-head">
-      <h2>{{ post.title }}</h2>
-      <span class="pill">{{ post.published_date }}</span>
-    </div>
-    <div class="panel-body">
-      {% if post.source_url %}
-      <p class="muted-copy">Source context: <a href="{{ post.source_url }}">{{ post.source_label }}</a>.</p>
-      {% endif %}
-      {{ post.body_html|safe }}
-      <div class="sdk-links">
-        <a class="pill" href="/docs/evals">Evals guide</a>
-        <a class="pill" href="/models">Models</a>
-        <a class="pill" href="/providers">Providers</a>
-        <a class="pill" href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-      </div>
+<style>
+  /* Medium-style reading column: narrow measure, serif body, generous
+     line-height. Scoped to .blog-article so no other page is affected.
+     Colors use the theme vars so dark (default) and light both work. */
+  .blog-article { max-width: 720px; margin: 0 auto; padding: 6px 4px 48px; }
+  .blog-back { display: inline-block; font-size: 14px; color: var(--muted);
+    text-decoration: none; margin-bottom: 8px; }
+  .blog-back:hover { color: var(--blue); }
+  .blog-article h1 { font-size: 42px; line-height: 1.14; letter-spacing: -0.015em;
+    margin: 10px 0 14px; max-width: none; color: var(--inkstrong); }
+  .blog-meta { color: var(--muted); font-size: 14.5px; margin: 0 0 36px; }
+  .blog-meta a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+  .blog-body { font-family: Charter, "Iowan Old Style", Georgia, "Times New Roman", serif;
+    font-size: 20px; line-height: 1.75; color: var(--ink); }
+  .blog-body p { margin: 0 0 26px; }
+  .blog-body strong { color: var(--inkstrong); font-weight: 700; }
+  .blog-body a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+  .blog-body .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.82em; background: var(--code-bg); color: var(--code-ink);
+    padding: 1px 6px; border-radius: 5px; }
+  .blog-body table.data-table { width: 100%; border-collapse: collapse;
+    font-family: Inter, system-ui, sans-serif; font-size: 15px; margin: 30px 0; }
+  .blog-body .data-table th, .blog-body .data-table td {
+    text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .blog-body .data-table th { color: var(--muted); font-weight: 650; }
+  .blog-body .data-table td:last-child, .blog-body .data-table th:last-child { text-align: right; }
+  .blog-end { border: none; border-top: 1px solid var(--line); margin: 44px 0 18px; }
+  .blog-foot-links { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (max-width: 700px) {
+    .blog-article h1 { font-size: 32px; }
+    .blog-body { font-size: 18px; }
+  }
+</style>
+<article class="blog-article">
+  <a class="blog-back" href="/blog">&larr; TrustedRouter blog</a>
+  <h1>{{ post.title }}</h1>
+  <p class="blog-meta">
+    {{ post.published_date }}
+    {%- if post.source_url %} &middot; <a href="{{ post.source_url }}">{{ post.source_label }}</a>{% endif %}
+  </p>
+  <div class="blog-body">
+    {{ post.body_html|safe }}
+    <hr class="blog-end">
+    <div class="blog-foot-links">
+      <a class="pill" href="/blog">More posts</a>
+      <a class="pill" href="/models">Models</a>
+      <a class="pill" href="https://github.com/Lore-Hex/PrometheusBench">PrometheusBench</a>
     </div>
   </div>
 </article>
