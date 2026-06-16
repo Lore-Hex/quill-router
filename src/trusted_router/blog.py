@@ -66,9 +66,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label="Open Fusion methodology",
         source_url="https://github.com/Lore-Hex/quill-router/blob/main/docs/evals/fusion-draco.md",
         body_html="""
-<p><strong>We tried to push TrustedRouter Fusion toward Mythos and Fable-class DRACO performance.</strong> The current target panel is GPT-5.5, Claude Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro, with Opus 4.8 synthesizing the final answer and Gemini 3.1 Pro judging against DRACO criteria.</p>
-<p>That exact run is not publishable yet. The main blocker is GPT-5.5 long-reasoning behavior on DRACO prompts: it can spend the completion budget on reasoning and return no usable answer. GLM 5.2 is not enabled for the current Z.AI account yet, so the reproducible run uses GLM 5.1 until a direct GLM 5.2 smoke passes.</p>
-<h2>What actually ran</h2>
+<p><strong>We tried to push TrustedRouter Fusion up to Mythos and Fable-class DRACO performance, and it isn't there.</strong> The target panel right now is seven models: GPT-5.5, Claude Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. Opus 4.8 synthesizes the final answer and Gemini 3.1 Pro judges it against DRACO criteria.</p>
+<p>Can we publish that run? No. One model breaks it. GPT-5.5 on DRACO prompts will spend its whole completion budget on reasoning and hand back nothing usable. So the seven-model panel produces no score at all. And GLM 5.2 isn't enabled on the current Z.AI account, so the reproducible run substitutes GLM 5.1 until a direct GLM 5.2 smoke passes. One model goes silent, the other is a stand-in.</p>
 <table class="data-table">
   <thead><tr><th>Run</th><th>Task slice</th><th>Result</th><th>Status</th></tr></thead>
   <tbody>
@@ -76,18 +75,10 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     <tr><td>Available 6-model fallback</td><td>First completed non-financial DRACO task</td><td>19.85</td><td>Completed, far below target</td></tr>
   </tbody>
 </table>
-<p>The first fallback panel used Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. It completed one task before the pilot was stopped for speed and reliability. A score of 19.85 is not close to the target, and we are not presenting it as a win.</p>
-<h2>What changed in the harness</h2>
-<ul class="plain-list">
-  <li>GPT-5.5 eval calls now omit <span class="mono">temperature</span> and use <span class="mono">max_completion_tokens</span>.</li>
-  <li>Panel and final synthesis calls stream so long answers do not wait for full completion before parsing.</li>
-  <li>Analysis and judge calls stay non-streaming because they require structured JSON reliability.</li>
-  <li>The live runner now has explicit six-model and seven-model frontier Fusion configs behind a hard budget.</li>
-  <li>The recommended DRACO slice for this experiment is <span class="mono">--task-filter non-financial</span>.</li>
-</ul>
-<h2>Next gates</h2>
-<p>The next clean run needs two fixes before any headline claim: make GPT-5.5 long-reasoning responses produce useful content through the attested gateway, and finish a 10-task non-financial DRACO pilot without task-level hangs. GLM 5.2 can replace GLM 5.1 later when Z.AI enables it for the account.</p>
-<p>This is the point of doing the work in the open. If TrustedRouter clears a Mythos/Fable-class target, the result should be reproducible from code, model ids, task filters, budget limits, and artifacts. Until then, the honest result is: not there yet.</p>
+<p>The six-model fallback dropped GPT-5.5 and ran Opus 4.8, Kimi K2.7 Code, GLM 5.1, MiniMax M3, Gemini 3 Flash, and Gemini 3.1 Pro. It finished exactly one non-financial DRACO task before we stopped the pilot for speed and reliability, and it scored 19.85. That is nowhere near the target, and I'm not dressing it up as one.</p>
+<p>The harness changes are real, even if the score isn't yet. GPT-5.5 eval calls now drop <span class="mono">temperature</span> and use <span class="mono">max_completion_tokens</span>. Panel and final synthesis calls stream, so a long answer gets parsed as it arrives instead of blocking on full completion. Analysis and judge calls stay non-streaming, because they need reliable structured JSON and streaming fights that. The live runner carries explicit six-model and seven-model frontier Fusion configs, each behind a hard budget. And the slice I'd actually run for this is <span class="mono">--task-filter non-financial</span>.</p>
+<p>Two gates stand between here and any headline. First, make GPT-5.5 long-reasoning responses produce useful content through the attested gateway instead of burning the budget on thinking. Second, finish a 10-task non-financial DRACO pilot with no task-level hangs. GLM 5.2 swaps in for GLM 5.1 later, whenever Z.AI flips it on for the account.</p>
+<p>That gap is the whole reason to do this in the open. If TrustedRouter ever clears a Mythos or Fable-class target, the number should fall straight out of the code, the model ids, the task filters, the budget limits, and the artifacts, with nothing to take on faith. It hasn't yet. Not there yet.</p>
 """,
     ),
     BlogPost(
@@ -101,9 +92,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label="OpenRouter Fusion announcement",
         source_url="https://openrouter.ai/blog/announcements/fusion-beats-frontier/",
         body_html="""
-<p><strong>Reproducing Fusion in the open.</strong> TrustedRouter is running the same class of routing experiment with public code, explicit model lists, and measurable cost/quality tradeoffs instead of a hidden benchmark harness.</p>
-<p>Comparable full-run results are not published yet. The prior holistic-judge run is excluded from this post because it does not match OpenRouter's DRACO scoring method.</p>
-<h2>Reference Results</h2>
+<p>We're reproducing OpenRouter's Fusion DRACO eval in the open. Same class of routing experiment, but with public code, explicit model lists, and cost/quality tradeoffs you can actually measure, instead of a hidden benchmark harness you have to take on faith.</p>
+<p>Do we have comparable full-run numbers yet? No. The one full run we did finish used a holistic judge, and that doesn't match OpenRouter's DRACO scoring, so it's out. Showing it next to their numbers would be comparing two different things.</p>
 <table class="data-table">
   <thead><tr><th>Run</th><th>OpenRouter score</th><th>TrustedRouter score</th><th>Status</th></tr></thead>
   <tbody>
@@ -113,15 +103,8 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     <tr><td>Fusion budget panel</td><td>64.7</td><td>Not run with exact scorer yet</td><td>Pending</td></tr>
   </tbody>
 </table>
-<h2>Replication Rules</h2>
-<ul class="plain-list">
-  <li>Mode: <span class="mono">micro-hybrid</span> runs the small public smoke before any expensive full pass.</li>
-  <li>Judge model: <span class="mono">google/gemini-3.1-pro-preview</span>.</li>
-  <li>Scoring: DRACO criterion-level grading, three independent passes, normalized 0-100.</li>
-  <li>Search: Exa with DRACO/rubric hostnames excluded and result leakage checks enabled.</li>
-  <li>Publication rule: raw solo baselines must be close before any Fusion headline is published.</li>
-</ul>
-<p>The exact scorer and leakage guard are implemented in the open-source harness. Full comparable results will replace this table when the raw baselines replicate.</p>
+<p>The rules keep us cheap and keep us comparable. We run in <span class="mono">micro-hybrid</span> mode, which means the small public smoke runs first before we spend on any full pass. The judge is <span class="mono">google/gemini-3.1-pro-preview</span>. Scoring is DRACO criterion-level grading, three independent passes, normalized 0-100. Search is Exa with the DRACO and rubric hostnames excluded and result-leakage checks turned on, so the judge can't just look up the answer. And the headline rule: the raw solo baselines have to replicate before we publish a single Fusion number. Fusion looking good means nothing if we can't first reproduce Gemini 3 Flash scoring 43.1 on its own.</p>
+<p>The exact scorer and the leakage guard both live in the open-source harness, so none of this is a claim you have to trust. When the raw baselines replicate, those numbers replace this table.</p>
 """,
     ),
     BlogPost(
@@ -135,17 +118,10 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label="Joseph Perla original",
         source_url="https://www.jperla.com/blog/trustedrouter-one-api-all-llms-provably-private",
         body_html="""
-<p>Developers want the OpenRouter shape because it removes switching cost. One base URL, many models, fallback when a provider fails, and one ledger for usage. The missing piece is verifiable trust.</p>
-<p>TrustedRouter keeps the dashboard and billing surface separate from the attested API gateway. The hosted prompt path is designed so the running code, image digest, and attestation evidence can be checked instead of taken on faith.</p>
-<h2>What that gives a developer</h2>
-<ul class="plain-list">
-  <li>Keep the OpenAI SDK and change the base URL.</li>
-  <li>Route to hundreds of models across many providers.</li>
-  <li>Use <span class="mono">trustedrouter/zdr</span> when zero-retention providers matter.</li>
-  <li>Use <span class="mono">trustedrouter/e2e</span> for confidential provider routes where available.</li>
-  <li>Verify the hosted gateway on <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</li>
-</ul>
-<p>The point is not that every upstream model provider becomes confidential by magic. The point is that the router should be honest about where the guarantee starts, where it ends, and which provider route was selected.</p>
+<p>Developers reach for the OpenRouter shape because it kills switching cost. One base URL, many models, fallback when a provider dies, one ledger for usage. What it doesn't give you is any way to verify trust, and that's the part that matters once a real prompt is on the wire.</p>
+<p>TrustedRouter splits the dashboard and billing surface off from the attested API gateway. The hosted prompt path is built so you can check the running code, the image digest, and the attestation evidence yourself, instead of taking someone's word for it. That's the whole difference: verifiable, not promised.</p>
+<p>For a developer the change is small. Keep the OpenAI SDK and point the base URL somewhere new. From there you route to hundreds of models across many providers. Use <span class="mono">trustedrouter/zdr</span> when you need zero-retention providers, and <span class="mono">trustedrouter/e2e</span> for confidential provider routes where they exist. Verify the hosted gateway at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+<p>This does not turn every upstream model provider confidential by magic. It can't. The router's job is to be plain about where the guarantee starts, where it ends, and which provider route actually got picked, so you know exactly what you're trusting and what you aren't.</p>
 """,
     ),
     BlogPost(
@@ -159,16 +135,10 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
         source_label="Joseph Perla original",
         source_url="https://www.jperla.com/blog/attestation-is-all-you-need",
         body_html="""
-<p>Policy matters, but policy alone is not enough for high-value prompts. A router should make it possible to verify what code is receiving the request and whether that code matches the open source release.</p>
-<p>That is why TrustedRouter treats attestation as part of the product surface. A user or agent can check the trust page, compare source commits and release digests, and then decide whether a route meets the workload's privacy bar.</p>
-<h2>The practical split</h2>
-<ul class="plain-list">
-  <li>The control plane manages accounts, keys, billing, docs, and status.</li>
-  <li>The API plane handles prompt traffic through the attested gateway.</li>
-  <li>Provider pages show upstream retention and confidential-compute posture separately.</li>
-  <li>Legal and procurement pages state what is ready now and what still requires a signed agreement.</li>
-</ul>
-<p>This makes the system legible. A lawyer can read the DPA and subprocessor list. An engineer can inspect the code. An agent can verify attestation before routing sensitive work.</p>
+<p>Policy is not enough for high-value prompts. A policy tells you what a router promises to do with your prompt. It does not let you check that the promise is being kept. For prompts that actually matter, you want to verify what code is receiving the request and whether that code matches the open source release.</p>
+<p>So TrustedRouter makes attestation part of the product, not a footnote. You can pull up the trust page, compare the source commits against the release digests, and decide for yourself whether a route clears your workload's privacy bar before you send anything through it.</p>
+<p>The design splits cleanly along who needs what. The control plane handles accounts, keys, billing, docs, and status. The API plane carries prompt traffic through the attested gateway, and nothing else runs there. Provider pages show upstream retention and confidential-compute posture on their own, separate from our claims, because that posture is theirs and not ours to launder. Legal and procurement pages say plainly what is ready now and what still needs a signed agreement.</p>
+<p>The payoff is that each person can verify the part they care about, in their own terms. A lawyer reads the DPA and the subprocessor list. An engineer reads the code. An agent checks attestation before it routes sensitive work. Nobody has to take the others' word for it.</p>
 """,
     ),
 )
