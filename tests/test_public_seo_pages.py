@@ -127,7 +127,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "GLM 5.1" in frontier_blog.text
     assert "GLM 5.2" in frontier_blog.text
     assert "19.85" in frontier_blog.text
-    assert "not presenting it as a win" in frontier_blog.text
+    assert "nowhere near the target" in frontier_blog.text
 
 
 def _json_ld(html: str) -> dict[str, object]:

@@ -17,7 +17,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/docs/migrate-from-openrouter": "Change base_url",
         "/blog": "TrustedRouter blog",
         "/blog/frontier-fusion-mythos-target": "Chasing Mythos-level Fusion in the open",
-        "/blog/fusion-evals-open-source": "Reproducing Fusion in the open",
+        "/blog/fusion-evals-open-source": "public code, explicit model lists",
         "/security": "TrustedRouter does not store prompt or output content by default.",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
@@ -44,7 +44,10 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert response.status_code == 200, f"{path} returned {response.status_code}"
         assert marker in response.text, f"{path} missing marker {marker!r}"
         assert "Approved short copy only" not in response.text
-        assert "OpenAI compatible API" in response.text
+        # Blog pages intentionally drop the marketing hero (and its
+        # "OpenAI compatible API" eyebrow); every other public page keeps it.
+        if not path.startswith("/blog"):
+            assert "OpenAI compatible API" in response.text
         assert "Invalid API key" not in response.text
         assert "Continue with MetaMask" in response.text
         # Every public page must unfurl: og:title + a card image.
