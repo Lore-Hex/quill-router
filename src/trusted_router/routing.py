@@ -497,7 +497,7 @@ def _provider_filter_list(field: str, value: Any) -> list[str]:
             raise api_error(
                 400,
                 (
-                    f"provider.{field} cannot contain router name '{item}'. "
+                    f"Routing filters cannot contain router name '{item}'. "
                     "Use model='trustedrouter/zdr' or another TrustedRouter alias, "
                     "and omit the router from provider filters."
                 ),

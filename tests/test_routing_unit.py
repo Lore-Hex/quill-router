@@ -245,7 +245,11 @@ def test_provider_route_preferences_rejects_router_as_provider() -> None:
     with pytest.raises(HTTPException) as ctx:
         provider_route_preferences({"provider": {"only": ["openrouter"]}})
     assert ctx.value.status_code == 400
-    assert "router name" in ctx.value.detail["error"]["message"]
+    assert ctx.value.detail["error"]["message"] == (
+        "Routing filters cannot contain router name 'openrouter'. "
+        "Use model='trustedrouter/zdr' or another TrustedRouter alias, "
+        "and omit the router from provider filters."
+    )
 
 
 def test_provider_route_preferences_rejects_unknown_provider_filter() -> None:
