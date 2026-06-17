@@ -142,11 +142,123 @@ def og_image_svg(_settings: Settings) -> str:
 """
 
 
+def choose_og_image_svg(_settings: Settings) -> str:
+    """Social card for /choose — the iron-triangle model picker. Same brand
+    chrome as og_image_svg (bg gradient, TR wordmark, footer), with the
+    smart/cheap/fast ternary chart as the hero motif. No emoji: rsvg-convert
+    has no colour-emoji support, so vertex meaning is carried by labels."""
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="Choose a model on the iron triangle">
+  <title>Choose a model — smart, cheap, fast</title>
+  <desc>TrustedRouter plots 220+ models on a smart, cheap, fast triangle and recommends the right one.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07131f"/>
+      <stop offset="54%" stop-color="#102236"/>
+      <stop offset="100%" stop-color="#173d49"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="74%" cy="14%" r="74%">
+      <stop offset="0%" stop-color="#19a06d" stop-opacity="0.30"/>
+      <stop offset="48%" stop-color="#2c6ecb" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#dff5ef" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2c6ecb"/><stop offset="100%" stop-color="#19a06d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2c6ecb"/><stop offset="100%" stop-color="#19a06d"/>
+    </linearGradient>
+    <linearGradient id="triedge" x1="0.5" y1="0" x2="0.12" y2="1">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="55%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <radialGradient id="floor" cx="50%" cy="58%" r="62%">
+      <stop offset="0%" stop-color="#16273f" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#0a1424" stop-opacity="0.12"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#020b14" flood-opacity="0.30"/>
+    </filter>
+    <filter id="dotglow" x="-160%" y="-160%" width="420%" height="420%">
+      <feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#bg)"/>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#glow)"/>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#grid)"/>
+  <rect x="0" y="0" width="{OG_IMAGE_WIDTH}" height="6" fill="url(#accent)"/>
+
+  <!-- Brand mark + wordmark -->
+  <g transform="translate(80 72)" font-family="{_SANS}">
+    <rect width="56" height="56" rx="12" fill="url(#mark)" filter="url(#shadow)"/>
+    <text x="28" y="38" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">TR</text>
+    <text x="74" y="36" font-size="22" font-weight="700" fill="#cfe1f1" letter-spacing="0.2">TrustedRouter</text>
+  </g>
+
+  <!-- Headline -->
+  <g font-family="{_SANS}">
+    <text x="80" y="214" font-size="21" font-weight="800" fill="#7be0b1" letter-spacing="3">THE IRON TRIANGLE OF LLMs</text>
+    <text x="80" y="292" font-size="64" font-weight="850" fill="#ffffff">Choose a model.</text>
+    <text x="80" y="362" font-size="46" font-weight="850"><tspan fill="#a78bfa">Smart</tspan><tspan fill="#5e7290"> &#183; </tspan><tspan fill="#34d399">Cheap</tspan><tspan fill="#5e7290"> &#183; </tspan><tspan fill="#f59e0b">Fast</tspan><tspan fill="#cfe1f1" font-weight="700" font-size="34"> &#8212; pick two.</tspan></text>
+    <text x="82" y="414" font-size="22" font-weight="600" fill="#cfe1f1">Tell us the task. We plot 220+ routes and pick the fit.</text>
+  </g>
+
+  <!-- Footer -->
+  <g transform="translate(80 566)" font-family="{_SANS}">
+    <text x="0" y="0" font-size="19" font-weight="800" fill="#ffffff">trustedrouter.com<tspan fill="#7be0b1">/choose</tspan></text>
+    <text x="276" y="0" font-size="18" font-weight="740" fill="#9fb6cf">Open &#183; ZDR &#183; TEE &#183; attested</text>
+  </g>
+
+  <!-- Iron triangle -->
+  <g>
+    <polygon points="890,168 700,496 1080,496" fill="url(#floor)"/>
+    <polygon points="890,168 700,496 1080,496" fill="none" stroke="url(#triedge)" stroke-width="3" stroke-linejoin="round" opacity="0.92"/>
+    <g stroke="#0a1120" stroke-width="1.4">
+      <circle cx="892" cy="252" r="10" fill="#22d3ee" filter="url(#dotglow)"/>
+      <circle cx="853" cy="305" r="8" fill="#8aa0c4"/>
+      <circle cx="935" cy="298" r="9" fill="#22c55e"/>
+      <circle cx="905" cy="348" r="9" fill="#22d3ee"/>
+      <circle cx="835" cy="384" r="7" fill="#8aa0c4"/>
+      <circle cx="967" cy="378" r="9" fill="#22c55e" filter="url(#dotglow)"/>
+      <circle cx="878" cy="410" r="7" fill="#8aa0c4"/>
+      <circle cx="998" cy="432" r="8" fill="#22d3ee"/>
+      <circle cx="788" cy="470" r="9" fill="#22c55e"/>
+      <circle cx="1016" cy="468" r="9" fill="#22d3ee" filter="url(#dotglow)"/>
+      <circle cx="905" cy="462" r="7" fill="#8aa0c4"/>
+      <circle cx="845" cy="452" r="6" fill="#8aa0c4"/>
+    </g>
+    <g transform="translate(930 400)">
+      <circle r="22" fill="#fbbf24" fill-opacity="0.12"/>
+      <circle r="13" fill="none" stroke="#fbbf24" stroke-width="2.6" filter="url(#shadow)"/>
+      <circle r="4.5" fill="#fbbf24"/>
+      <line x1="-19" y1="0" x2="-13" y2="0" stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"/>
+      <line x1="19" y1="0" x2="13" y2="0" stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"/>
+      <line x1="0" y1="-19" x2="0" y2="-13" stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"/>
+      <line x1="0" y1="19" x2="0" y2="13" stroke="#fbbf24" stroke-width="2.4" stroke-linecap="round"/>
+      <text x="0" y="-26" text-anchor="middle" font-family="{_SANS}" font-size="14" font-weight="800" fill="#fbbf24" letter-spacing="1.5">YOU</text>
+    </g>
+    <g font-family="{_SANS}" font-weight="800" letter-spacing="1">
+      <text x="890" y="144" text-anchor="middle" font-size="26" fill="#a78bfa">SMART</text>
+      <text x="700" y="532" text-anchor="middle" font-size="26" fill="#34d399">CHEAP</text>
+      <text x="1080" y="532" text-anchor="middle" font-size="26" fill="#f59e0b">FAST</text>
+    </g>
+  </g>
+</svg>
+"""
+
+
 if __name__ == "__main__":
-    # Regenerate src/trusted_router/static/og.png from the SVG source:
+    # Regenerate the social cards from their SVG sources:
     #   uv run python -m trusted_router.og \
-    #     | rsvg-convert -w 1200 -h 630 -f png \
-    #     > src/trusted_router/static/og.png
+    #     | rsvg-convert -w 1200 -h 630 -f png > src/trusted_router/static/og.png
+    #   uv run python -m trusted_router.og choose \
+    #     | rsvg-convert -w 1200 -h 630 -f png > src/trusted_router/static/og/choose.png
     import sys
 
-    sys.stdout.write(og_image_svg(Settings()))
+    which = sys.argv[1] if len(sys.argv) > 1 else "default"
+    svg = choose_og_image_svg(Settings()) if which == "choose" else og_image_svg(Settings())
+    sys.stdout.write(svg)

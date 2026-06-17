@@ -87,9 +87,10 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     # The renamed privacy tier and the router-route payload show up in copy.
     assert "Trusted Execution Environment" in response.text
     assert "trustedrouter/fusion" in response.text
-    # Must unfurl like every other public page.
+    # Must unfurl with the tailored triangle social card (the PNG is checked
+    # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
-    assert 'property="og:image"' in response.text
+    assert "/static/og/choose.png" in response.text
     # Trailing-slash + HEAD variants both resolve.
     assert client.head("/choose").status_code == 200
     assert client.get("/choose/", follow_redirects=False).status_code == 200
