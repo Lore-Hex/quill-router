@@ -405,11 +405,31 @@ function xy2bary(px,py){
   a=Math.max(0,a); b=Math.max(0,b); c=Math.max(0,c);
   const t=a+b+c; return {s:a/t,c:b/t,f:c/t};
 }
-/* model position: personality = normalized scores, with mild contrast */
+/* per-axis dynamic range across the panel, so each axis uses its full
+   width instead of bunching in the high-score middle */
+const AX = {
+  s:[Math.min(...MODELS.map(m=>m.intel/100)), Math.max(...MODELS.map(m=>m.intel/100))],
+  c:[Math.min(...MODELS.map(m=>m.cheap)),      Math.max(...MODELS.map(m=>m.cheap))],
+  f:[Math.min(...MODELS.map(m=>m.spd/100)),    Math.max(...MODELS.map(m=>m.spd/100))],
+};
+/* push barycentric weights out from the centroid to fill the triangle,
+   capped per-point so a dot never crosses an edge */
+function expandBary(w, factor){
+  const cen=1/3, off={s:w.s-cen,c:w.c-cen,f:w.f-cen};
+  let ff=factor;
+  for(const d of [off.s,off.c,off.f]) if(d<0) ff=Math.min(ff, cen/(-d));
+  return {s:cen+off.s*ff, c:cen+off.c*ff, f:cen+off.f*ff};
+}
+/* model position: range-normalise each axis, add contrast, then expand */
+const POS = {k:1.4, exp:1.55, floor:0.1};
 function modelPos(m){
-  const v=sc(m), k=1.35;
-  let s=Math.pow(v.s,k), c=Math.pow(v.c,k), f=Math.pow(v.f,k);
-  const t=s+c+f||1; return bary2xy({s:s/t,c:c/t,f:f/t});
+  const v=sc(m);
+  const nz=(x,a)=>{ const r=a[1]-a[0]; return r>0?(x-a[0])/r:0.5; };
+  let s=Math.pow(nz(v.s,AX.s)+POS.floor,POS.k),
+      c=Math.pow(nz(v.c,AX.c)+POS.floor,POS.k),
+      f=Math.pow(nz(v.f,AX.f)+POS.floor,POS.k);
+  const t=s+c+f||1;
+  return bary2xy(expandBary({s:s/t,c:c/t,f:f/t}, POS.exp));
 }
 
 const SVGNS='http://www.w3.org/2000/svg';
