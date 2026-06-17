@@ -87,9 +87,10 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     # The renamed privacy tier and the router-route payload show up in copy.
     assert "Trusted Execution Environment" in response.text
     assert "trustedrouter/fusion" in response.text
-    # Must unfurl like every other public page.
+    # Must unfurl with the tailored triangle social card (the PNG is checked
+    # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
-    assert 'property="og:image"' in response.text
+    assert "/static/og/choose.png" in response.text
     # Trailing-slash + HEAD variants both resolve.
     assert client.head("/choose").status_code == 200
     assert client.get("/choose/", follow_redirects=False).status_code == 200
@@ -102,6 +103,9 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "iron triangle of LLMs" in response.text
     # Embedded-mode hook that hides the in-app header inside the iframe.
     assert "tr-choose-height" in response.text
+    # Privacy floor defaults to Open (any provider), not ZDR.
+    assert '<option value="0" selected>' in response.text
+    assert "priv: 0," in response.text
 
 
 def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:

@@ -229,8 +229,8 @@ footer a:hover{color:var(--ink)}
         <h3><span class="n">1</span> Privacy floor</h3>
         <p class="hint">Every TrustedRouter route is attested. Choose how strict the upstream must be.</p>
         <select class="priv" id="priv">
-          <option value="0">🌐 Open — any provider (most choice, best price)</option>
-          <option value="2" selected>🔒 Zero-retention (ZDR) — no prompt logging</option>
+          <option value="0" selected>🌐 Open — any provider (most choice, best price)</option>
+          <option value="2">🔒 Zero-retention (ZDR) — no prompt logging</option>
           <option value="3">🛡️ Trusted Execution Environment (TEE) — confidential compute + E2EE</option>
         </select>
         <div class="privnote" id="privnote"></div>
@@ -373,7 +373,7 @@ const EXAMPLES = [
    STATE
    ================================================================= */
 let state = {
-  priv: 2,
+  priv: 0,
   intel: 'smart',
   speed: 'seconds',
   pref: {s:1/3, c:1/3, f:1/3},   // barycentric preference weights

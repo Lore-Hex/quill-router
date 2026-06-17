@@ -243,6 +243,7 @@ class PublicPage:
 PUBLIC_PAGES: dict[str, PublicPage] = {
     "choose": PublicPage(
         template="public/choose.html",
+        og_card="choose.png",
         title="Choose a Model — Smart, Cheap, Fast",
         description=(
             "Describe your task and privacy needs and we plot 220+ LLM routes on the "
