@@ -226,7 +226,7 @@ footer a:hover{color:var(--ink)}
     <aside class="controls">
 
       <div class="card block">
-        <h3><span class="n">1</span> Privacy floor</h3>
+        <h3><span class="n">1</span> Privacy level</h3>
         <p class="hint">Every TrustedRouter route is attested. Choose how strict the upstream must be.</p>
         <select class="priv" id="priv">
           <option value="0" selected>🌐 Open — any provider (most choice, best price)</option>
@@ -505,6 +505,16 @@ function passesFloors(m){
   const it=INTEL_TIERS.find(t=>t.key===state.intel).floor;
   const sp=SPEED_TIERS.find(t=>t.key===state.speed).floor;
   return m.intel>=it && m.spd>=sp && m.tier>=state.priv;
+}
+/* why a dimmed model was filtered out — specific reason, what they'd need */
+function failReasons(m){
+  const it=INTEL_TIERS.find(t=>t.key===state.intel);
+  const sp=SPEED_TIERS.find(t=>t.key===state.speed);
+  const r=[];
+  if(m.intel<it.floor)  r.push(`not smart enough (you asked for ${it.lab})`);
+  if(m.spd<sp.floor)    r.push(`too slow (you asked for ${sp.lab})`);
+  if(m.tier<state.priv) r.push(`not private enough (you asked for ${TIER[state.priv].k})`);
+  return r;
 }
 function matchScore(m){
   const v=sc(m); const p=state.pref;
@@ -806,7 +816,7 @@ function showTip(g,e){
       ${bar('Fast',v.f,'var(--fast)',m.spd+' tps≈')}
     </div>
     <div class="meta">${m.tags.map(x=>`<span class="tag">${x}</span>`).join('')}</div>
-    ${ok?'':'<div style="margin-top:8px;font-size:10.5px;color:#f0a">✕ below your current floor</div>'}`;
+    ${ok?'':`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line);font-size:10.5px;color:#fda4af;line-height:1.55">${failReasons(m).map(x=>'✕ '+x).join('<br>')}</div>`}`;
   const rect=tri.getBoundingClientRect();
   const src=e.touches?e.touches[0]:e;
   let x=src.clientX-rect.left+14, y=src.clientY-rect.top+14;
