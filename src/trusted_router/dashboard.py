@@ -69,6 +69,7 @@ MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/",
+    "/choose",
     "/models",
     "/providers",
     "/benchmarks",
@@ -240,6 +241,41 @@ class PublicPage:
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
+    "choose": PublicPage(
+        template="public/choose.html",
+        title="Choose a Model — Smart, Cheap, Fast",
+        description=(
+            "Describe your task and privacy needs and we plot 220+ LLM routes on the "
+            "smart-cheap-fast triangle, then recommend the model. Open, zero-retention, or TEE."
+        ),
+        faq_items=(
+            (
+                "How do you decide which model fits?",
+                "Tell us the task and we estimate the intelligence it needs (simple to "
+                "frontier), the latency you can tolerate (real-time to overnight), and a "
+                "privacy floor. We keep only the routes that clear all three, then rank them "
+                "by the smart/cheap/fast tradeoff you set on the triangle.",
+            ),
+            (
+                "What do the privacy tiers mean?",
+                "Open routes any attested provider. Zero-retention (ZDR) only uses providers "
+                "that contractually keep nothing. Trusted Execution Environment (TEE) runs in "
+                "confidential compute with end-to-end encryption, so even the provider can't "
+                "read your prompt.",
+            ),
+            (
+                "Which models are fastest?",
+                "Cerebras-served gpt-oss, Xiaomi MiMo v2.5 Ultraspeed and GLM-4.7 Flash sit at "
+                "the fast tip of the triangle — hundreds to thousands of tokens per second.",
+            ),
+            (
+                "Do I have to pick one model?",
+                "No. trustedrouter/auto picks the best fit per request, trustedrouter/cheap "
+                "takes the cheapest capable route in a TEE, and trustedrouter/fusion combines "
+                "open models to beat any single frontier model — all through one OpenAI-shaped API.",
+            ),
+        ),
+    ),
     "compare/openrouter": PublicPage(
         template="public/compare_openrouter.html",
         title="TrustedRouter Compared With OpenRouter",

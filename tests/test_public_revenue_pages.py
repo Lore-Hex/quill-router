@@ -76,6 +76,39 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert slash_response.status_code == 200
 
 
+def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
+    response = client.get("/choose")
+
+    assert response.status_code == 200
+    # Hero + the embedded interactive tool.
+    assert "Choose the right model for the job." in response.text
+    assert "/static/choose-app.html" in response.text  # iframe src
+    assert 'id="tr-choose-frame"' in response.text
+    # The renamed privacy tier and the router-route payload show up in copy.
+    assert "Trusted Execution Environment" in response.text
+    assert "trustedrouter/fusion" in response.text
+    # Must unfurl like every other public page.
+    assert 'property="og:title"' in response.text
+    assert 'property="og:image"' in response.text
+    # Trailing-slash + HEAD variants both resolve.
+    assert client.head("/choose").status_code == 200
+    assert client.get("/choose/", follow_redirects=False).status_code == 200
+
+
+def test_choose_app_static_asset_is_served(client: TestClient) -> None:
+    response = client.get("/static/choose-app.html")
+
+    assert response.status_code == 200
+    assert "iron triangle of LLMs" in response.text
+    # Embedded-mode hook that hides the in-app header inside the iframe.
+    assert "tr-choose-height" in response.text
+
+
+def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:
+    assert 'href="/choose"' in client.get("/").text
+    assert 'href="/choose"' in client.get("/models").text  # _base nav
+
+
 def test_public_models_page_does_not_require_api_key(client: TestClient) -> None:
     response = client.get("/models")
 
