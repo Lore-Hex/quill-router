@@ -20,6 +20,44 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="the-best-biology-ai-wont-do-biology",
+        title="The best biology AI won't do biology",
+        description=(
+            "Anthropic's strongest bioinformatics model is partner-only, and the "
+            "one you can call refuses biology. So I ran the open version of their "
+            "eval across nine models — cheap ones included — and watched."
+        ),
+        published_date="2026-06-16",
+        source_label="prometheus-biomysterybench on GitHub",
+        source_url="https://github.com/Lore-Hex/prometheus-biomysterybench",
+        body_html="""
+<p>Anthropic just shipped the strongest bioinformatics model anyone has built, and you can't use it for bioinformatics. The new Claude comes in two versions. Mythos 5 is the one that scores 83.9% on Anthropic's own BioMysteryBench, the best number they report, and it goes to vetted partners only. The version the rest of us can call is Fable 5, and Fable 5 blocks biology. Their system card says it flatly: send a chemistry-or-biology prompt to Fable 5 through the API and "the request is blocked, and the response returns a reason for the refusal." There is no fallback unless a developer opts into one. That is why every biology score in that system card belongs to Mythos. Fable doesn't have one. It won't sit still long enough to earn one.</p>
+<p>So what does a working biologist actually do? I ran the experiment. BioMysteryBench hands a model a pile of raw, unlabeled biology — a crystal structure with the organism scrubbed out, a stack of sequencing reads, a set of ChIP peaks — and asks a plain question: what organism is this, what bacterium is in here, which transcription factor made these peaks. The model gets a shell and the usual bioinformatics tools and has to go figure it out. I rebuilt the public version of this as an open harness so anyone can rerun it and check me. Claude Opus 4.8, the best model you can actually call on TrustedRouter, scores the same 80.4% Anthropic published for it, so the harness isn't doing anything funny.</p>
+<p>Then I pointed a stack of much cheaper models at the same three solvable tasks, some of them costing a fiftieth of what Opus costs, and watched.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>$/Mtok</th><th>Solved</th><th>Run cost</th></tr></thead>
+  <tbody>
+    <tr><td><span class="mono">anthropic/claude-opus-4.8</span></td><td>19.80</td><td>3/3</td><td>$1.57</td></tr>
+    <tr><td><span class="mono">z-ai/glm-5.2</span></td><td>4.01</td><td>2/3</td><td>$2.72</td></tr>
+    <tr><td><span class="mono">google/gemma-4-31b-it</span></td><td>0.35</td><td>2/3</td><td>$0.04</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-flash</span></td><td>0.27</td><td>1/3</td><td>$0.21</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v3.2</span></td><td>0.45</td><td>1/3</td><td>$0.31</td></tr>
+    <tr><td><span class="mono">deepseek/deepseek-v4-pro</span></td><td>0.84</td><td>1/3</td><td>$1.03</td></tr>
+    <tr><td><span class="mono">moonshotai/kimi-k2.7-code</span></td><td>3.56</td><td>1/3</td><td>$1.12</td></tr>
+    <tr><td><span class="mono">z-ai/glm-4.7-flash</span></td><td>0.38</td><td>0/3</td><td>$0.70</td></tr>
+    <tr><td><span class="mono">openai/gpt-4o-mini</span></td><td>0.54</td><td>0/3</td><td>$0.10</td></tr>
+  </tbody>
+</table>
+<p>Opus is the only model that got all three. It pulled the protein sequence out of the scrubbed structure, BLASTed it to <em>Homo sapiens</em>, named the bacterium, and ran MEME to find the transcription factor. On the longest, hardest task it finishes. It earns its 3/3.</p>
+<p>But look at <span class="mono">google/gemma-4-31b-it</span>. It got two of the three for four cents. It identified the human structure and named the bacterium — <em>Bacillus licheniformis</em>, correct — in six commands. GLM-5.2 also got two, and it's the one model under Opus that cracked the motif task every cheaper model gave up on. These are not models bluffing their way to an answer. They run real BLAST, they read the output, they do the work. A model that costs less than a vending-machine soda did most of what the twenty-dollar frontier model did.</p>
+<p>The cheap ones know plenty of biology. What they run out of is patience. Seven of the nine got the structure-to-organism call, which is a one-shot lookup. They came apart on the task that takes twenty steps — pull the peaks, run MEME, read the motifs — where they wander until they hit the turn limit or the clock runs out. Half the misses in that table are a timer expiring, not a wrong answer. The thing the frontier model is really selling you is stamina on a long loop.</p>
+<p>I also tried Fusion, the TrustedRouter mode that runs a whole panel of models and has a judge synthesize an answer at every step. On the two genuinely hard tasks I threw everything at it: one frontier model alone, an eight-model panel, and a hand-picked three of Gemma, GLM-5.2, and Opus. Every configuration scored zero out of two, and every one gave the same wrong answer — the same backwards drug condition on one task, the same "light stress" instead of heat on the other. That is the useful result. When every model in the world is confidently wrong in the same direction, a committee of them is just confidently wrong with better citations. Fusion is worth a lot when models disagree and one of them is right. It does nothing when they all share a blind spot.</p>
+<p>The obvious question: Opus swept 3/3, so isn't it worth the money? Sometimes. For a twenty-step analysis where you need the loop to actually finish, pay for the model that finishes. For "what organism is this," you are paying fifty times over for a lookup a four-cent model gets right.</p>
+<p>Three tasks is a small sample and you should treat it as a finger in the wind, not a leaderboard. The harness, the methodology, and every per-task result are open source. I don't publish the answer key.</p>
+<p>The model that is best at biology is locked up. The model you can buy off the shelf won't touch biology. The thing that actually answers your question is one <span class="mono">--models</span> flag away, and sometimes it costs four cents. TrustedRouter routes you to whichever model will pick up the phone.</p>
+""",
+    ),
+    BlogPost(
         slug="the-models-that-say-no",
         title="The safest AI models trust you the least",
         description=(
