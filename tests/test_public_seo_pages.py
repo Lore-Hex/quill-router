@@ -37,6 +37,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
     assert models.status_code == 200
@@ -72,6 +73,8 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "TrustedRouter" in response.text
         assert "api.trustedrouter.com/v1" in response.text
         assert "trustedrouter/eu" in response.text
+        assert "trustedrouter/fusion" in response.text
+        assert "https://trustedrouter.com/docs/fusion" in response.text
         assert "https://trustedrouter.com/blog" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text

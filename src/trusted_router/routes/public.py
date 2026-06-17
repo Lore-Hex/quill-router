@@ -186,6 +186,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def evals() -> str:
         return public_page_html(settings, "docs/evals")
 
+    @public_html_route("/docs/fusion")
+    async def fusion_docs() -> str:
+        return public_page_html(settings, "docs/fusion")
+
     @public_html_route("/eu")
     async def eu() -> str:
         return public_page_html(settings, "eu")

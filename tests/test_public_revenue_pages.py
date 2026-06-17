@@ -15,6 +15,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
+        "/docs/fusion": "Run a panel of models inside the attested gateway.",
         "/blog": "TrustedRouter blog",
         "/blog/frontier-fusion-mythos-target": "Chasing Mythos-level Fusion in the open",
         "/blog/fusion-evals-open-source": "public code, explicit model lists",
@@ -62,6 +63,7 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/vercel-ai-gateway",
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
+        "/docs/fusion",
         "/blog",
         "/blog/frontier-fusion-mythos-target",
         "/blog/fusion-evals-open-source",
@@ -106,6 +108,23 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
     assert "priv: 0," in response.text
+
+
+def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
+    response = client.get("/docs/fusion")
+
+    assert response.status_code == 200
+    assert "trustedrouter/fusion" in response.text
+    assert "trustedrouter:fusion" in response.text
+    assert "analysis_models" in response.text
+    assert "judge_models" in response.text
+    assert "fallback_judges" in response.text
+    assert "final_models" in response.text
+    assert "fallback_final_models" in response.text
+    assert "synthesize_non_refusals" in response.text
+    assert "Final fallback can switch before the first byte" in response.text
+    assert "TrustedRouter stores billing and route metadata, not prompt/output content by default." in response.text
+    assert "OpenAI compatible API" in response.text
 
 
 def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:

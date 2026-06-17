@@ -109,6 +109,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/blog",
     "/docs/agent-setup",
     "/docs/evals",
+    "/docs/fusion",
     "/docs/migrate-from-openrouter",
     "/docs/llms.txt",
     "/docs/llms-full.txt",
@@ -309,6 +310,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/evals.html",
         title="TrustedRouter Evals Guide",
         description="Run model, provider, privacy, latency, and cost evals through one OpenAI compatible API.",
+    ),
+    "docs/fusion": PublicPage(
+        template="public/fusion.html",
+        title="TrustedRouter Fusion",
+        description=(
+            "Run a panel of models inside the attested gateway, then use judge and final "
+            "fallbacks to return one OpenAI-compatible answer."
+        ),
     ),
     "eu": PublicPage(
         template="public/eu.html",
@@ -1474,6 +1483,7 @@ def llms_txt(settings: Settings) -> str:
         f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Fusion guide: https://{domain}/docs/fusion",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
@@ -1484,6 +1494,7 @@ def llms_txt(settings: Settings) -> str:
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
+        "- Fusion: use model trustedrouter/fusion with tool type trustedrouter:fusion",
         "",
         "## Catalog",
         f"- Public model pages: {model_count}",
@@ -1512,6 +1523,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "",
             f"- Agent setup: https://{domain}/docs/agent-setup",
             f"- Evals guide: https://{domain}/docs/evals",
+            f"- Fusion guide: https://{domain}/docs/fusion",
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Security: https://{domain}/security",
@@ -1528,6 +1540,11 @@ def docs_llms_txt(settings: Settings) -> str:
             (
                 "For Europe-focused routing, use "
                 "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
+            ),
+            (
+                "For multi-model synthesis, call model trustedrouter/fusion with a "
+                "trustedrouter:fusion tool and analysis_models, judge_models, "
+                "final_models, or fallback_final_models."
             ),
             "",
         ]
@@ -1555,6 +1572,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Status: https://status.trustedrouter.com/",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
+        f"- Fusion guide: https://{domain}/docs/fusion",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
@@ -1569,6 +1587,16 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",
         "- trustedrouter/fusion: attested multi-model panel, selectable judge, and final synthesis.",
+        "",
+        "## Fusion",
+        "- Endpoint shape: POST /v1/chat/completions.",
+        "- Model: trustedrouter/fusion.",
+        "- Tool type: trustedrouter:fusion.",
+        "- Common parameters: preset, analysis_models, selection_strategy, judge_models, fallback_judges, final_models, fallback_final_models, max_completion_tokens.",
+        "- Strategies: synthesize, synthesize_non_refusals, first_success, first_non_refusal.",
+        "- Limits: analysis_models, judge_models, and final_models each accept 1-8 model IDs.",
+        "- Privacy: panel, judge, and final calls run inside the attested gateway. TrustedRouter stores billing and route metadata, not prompt/output content by default.",
+        f"- Full guide: https://{domain}/docs/fusion",
         "",
         "## Models",
     ]

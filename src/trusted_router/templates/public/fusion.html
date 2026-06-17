@@ -1,0 +1,214 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Fusion quickstart">
+  <div class="marketing-copy">
+    <h2>Run a panel of models inside the attested gateway.</h2>
+    <p>
+      <code>trustedrouter/fusion</code> fans one request across several models,
+      asks a judge model to evaluate the panel, and returns one OpenAI-compatible
+      chat completion. Use it for hard prompts, evals, and prompts where one
+      provider's refusal or error should not decide the whole result.
+    </p>
+    <ul class="check-list">
+      <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
+      <li>Judge and final models can each have up to 8 fallbacks.</li>
+      <li><code>synthesize_non_refusals</code> removes panel refusals before synthesis.</li>
+      <li>TrustedRouter stores billing and route metadata, not prompt/output content by default.</li>
+    </ul>
+    <div class="hero-actions">
+      <a class="btn primary" href="/chat">Try in chat</a>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+    </div>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Fusion</span><span>curl</span></div>
+    <pre><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trustedrouter/fusion",
+    "messages": [
+      {"role": "user", "content": "Compare the best options and answer plainly."}
+    ],
+    "tools": [{
+      "type": "trustedrouter:fusion",
+      "parameters": {
+        "preset": "quality",
+        "selection_strategy": "synthesize_non_refusals",
+        "judge_models": [
+          "~anthropic/claude-latest",
+          "~google/gemini-pro-latest",
+          "~zai/glm-latest"
+        ],
+        "fallback_final_models": [
+          "~anthropic/claude-latest",
+          "~google/gemini-pro-latest",
+          "~kimi/latest"
+        ],
+        "max_completion_tokens": 800
+      }
+    }]
+  }'</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">How it works</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <h3>1. Panel</h3>
+      <p>
+        The gateway runs <code>analysis_models</code> in order, with normal
+        provider fallback for each route. A failed or empty panel member is
+        recorded as a panel failure, not a client-visible failure.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>2. Judge</h3>
+      <p>
+        The judge sees the panel outputs and produces an internal assessment.
+        <code>judge_models</code>, <code>fallback_judges</code>, and
+        <code>judges</code> are aliases for the same ordered fallback list.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>3. Final</h3>
+      <p>
+        The final model writes the visible answer. <code>final_models</code>,
+        <code>fallback_final_models</code>, <code>synthesis_models</code>, and
+        <code>synthesizer_models</code> are aliases for that ordered fallback list.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Parameters</h2>
+  <div class="panel">
+    <div class="panel-body">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td><code>preset</code></td><td><code>quality</code> or <code>budget</code>. Sets a built-in panel unless <code>analysis_models</code> is supplied.</td></tr>
+          <tr><td><code>analysis_models</code></td><td>Panel model IDs. Must contain 1 to 8 models.</td></tr>
+          <tr><td><code>model</code></td><td>Legacy shorthand for the judge/final model when specific fallback lists are not supplied.</td></tr>
+          <tr><td><code>selection_strategy</code></td><td><code>synthesize</code>, <code>synthesize_non_refusals</code>, <code>first_success</code>, or <code>first_non_refusal</code>.</td></tr>
+          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>.</td></tr>
+          <tr><td><code>final_models</code></td><td>Ordered final-answer fallback list. Also accepts <code>fallback_final_models</code>, <code>synthesis_models</code>, or <code>synthesizer_models</code>.</td></tr>
+          <tr><td><code>max_completion_tokens</code></td><td>Caps each internal panel, judge, and final completion.</td></tr>
+          <tr><td><code>max_tool_calls</code></td><td>Reserved compatibility field, accepted from 1 to 16.</td></tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        Exact model IDs are accepted. The gateway also resolves <code>~anthropic/claude-latest</code>,
+        <code>~openai/gpt-latest</code>, <code>~google/gemini-pro-latest</code>,
+        <code>~google/gemini-flash-latest</code>, <code>~kimi/latest</code>, and
+        <code>~zai/glm-latest</code> aliases.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">SDK examples</h2>
+  <div class="marketing-grid two">
+    <div class="copy-terminal">
+      <div class="code-head"><span>Python</span><span>trusted-router-py</span></div>
+      <pre><code>import os
+
+from trustedrouter import TrustedRouter
+
+client = TrustedRouter(api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+
+result = client.fusion(
+    messages=[{"role": "user", "content": "Give the best answer."}],
+    preset="quality",
+    selection_strategy="synthesize_non_refusals",
+    fallback_judges=[
+        "~anthropic/claude-latest",
+        "~google/gemini-pro-latest",
+        "~zai/glm-latest",
+    ],
+    fallback_final_models=[
+        "~anthropic/claude-latest",
+        "~google/gemini-pro-latest",
+        "~kimi/latest",
+    ],
+)
+
+print(result.choices[0].message.content)</code></pre>
+    </div>
+    <div class="copy-terminal">
+      <div class="code-head"><span>TypeScript</span><span>@lore-hex/trusted-router</span></div>
+      <pre><code>import { TrustedRouter } from "@lore-hex/trusted-router";
+
+const client = new TrustedRouter({
+  apiKey: process.env.TRUSTEDROUTER_API_KEY
+});
+
+const result = await client.fusion({
+  messages: [{ role: "user", content: "Give the best answer." }],
+  preset: "quality",
+  selectionStrategy: "synthesize_non_refusals",
+  fallbackJudges: [
+    "~anthropic/claude-latest",
+    "~google/gemini-pro-latest",
+    "~zai/glm-latest"
+  ],
+  fallbackFinalModels: [
+    "~anthropic/claude-latest",
+    "~google/gemini-pro-latest",
+    "~kimi/latest"
+  ]
+});
+
+console.log(result.choices[0].message.content);</code></pre>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Operational notes</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <h3>Cost</h3>
+      <p>
+        Fusion is multiple model calls. Budget it as panel calls plus judge
+        attempts plus final attempts. Use <code>preset="budget"</code> and
+        <code>max_completion_tokens</code> for cheaper eval loops.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>Streaming</h3>
+      <p>
+        Streaming runs the panel and judge first, then streams the final answer.
+        Final fallback can switch before the first byte. After bytes are sent,
+        the stream cannot safely switch to a different final model.
+      </p>
+    </div>
+    <div class="marketing-card">
+      <h3>Privacy</h3>
+      <p>
+        The intermediate panel, judge, and final prompts live in enclave memory.
+        Durable storage keeps request IDs, route metadata, usage, cost, and
+        status, not prompt or output text by default.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="cta-band">
+  <div>
+    <h2>Need an agent to wire it in?</h2>
+    <p>Use the agent setup guide and ask the agent to call <code>trustedrouter/fusion</code> only for hard prompts or evals.</p>
+  </div>
+  <div class="sdk-links">
+    <a class="pill" href="/docs/agent-setup">Agent setup</a>
+    <a class="pill" href="/docs/evals">Evals</a>
+    <a class="pill" href="/docs/llms-full.txt">llms-full.txt</a>
+    <a class="pill" href="/models">Models</a>
+  </div>
+</section>
+
+{% endblock %}
