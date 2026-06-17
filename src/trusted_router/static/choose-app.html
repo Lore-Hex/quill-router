@@ -226,7 +226,7 @@ footer a:hover{color:var(--ink)}
     <aside class="controls">
 
       <div class="card block">
-        <h3><span class="n">1</span> Privacy floor</h3>
+        <h3><span class="n">1</span> Privacy level</h3>
         <p class="hint">Every TrustedRouter route is attested. Choose how strict the upstream must be.</p>
         <select class="priv" id="priv">
           <option value="0" selected>🌐 Open — any provider (most choice, best price)</option>
@@ -405,11 +405,31 @@ function xy2bary(px,py){
   a=Math.max(0,a); b=Math.max(0,b); c=Math.max(0,c);
   const t=a+b+c; return {s:a/t,c:b/t,f:c/t};
 }
-/* model position: personality = normalized scores, with mild contrast */
+/* per-axis dynamic range across the panel, so each axis uses its full
+   width instead of bunching in the high-score middle */
+const AX = {
+  s:[Math.min(...MODELS.map(m=>m.intel/100)), Math.max(...MODELS.map(m=>m.intel/100))],
+  c:[Math.min(...MODELS.map(m=>m.cheap)),      Math.max(...MODELS.map(m=>m.cheap))],
+  f:[Math.min(...MODELS.map(m=>m.spd/100)),    Math.max(...MODELS.map(m=>m.spd/100))],
+};
+/* push barycentric weights out from the centroid to fill the triangle,
+   capped per-point so a dot never crosses an edge */
+function expandBary(w, factor){
+  const cen=1/3, off={s:w.s-cen,c:w.c-cen,f:w.f-cen};
+  let ff=factor;
+  for(const d of [off.s,off.c,off.f]) if(d<0) ff=Math.min(ff, cen/(-d));
+  return {s:cen+off.s*ff, c:cen+off.c*ff, f:cen+off.f*ff};
+}
+/* model position: range-normalise each axis, add contrast, then expand */
+const POS = {k:1.4, exp:1.55, floor:0.1};
 function modelPos(m){
-  const v=sc(m), k=1.35;
-  let s=Math.pow(v.s,k), c=Math.pow(v.c,k), f=Math.pow(v.f,k);
-  const t=s+c+f||1; return bary2xy({s:s/t,c:c/t,f:f/t});
+  const v=sc(m);
+  const nz=(x,a)=>{ const r=a[1]-a[0]; return r>0?(x-a[0])/r:0.5; };
+  let s=Math.pow(nz(v.s,AX.s)+POS.floor,POS.k),
+      c=Math.pow(nz(v.c,AX.c)+POS.floor,POS.k),
+      f=Math.pow(nz(v.f,AX.f)+POS.floor,POS.k);
+  const t=s+c+f||1;
+  return bary2xy(expandBary({s:s/t,c:c/t,f:f/t}, POS.exp));
 }
 
 const SVGNS='http://www.w3.org/2000/svg';
@@ -485,6 +505,16 @@ function passesFloors(m){
   const it=INTEL_TIERS.find(t=>t.key===state.intel).floor;
   const sp=SPEED_TIERS.find(t=>t.key===state.speed).floor;
   return m.intel>=it && m.spd>=sp && m.tier>=state.priv;
+}
+/* why a dimmed model was filtered out — specific reason, what they'd need */
+function failReasons(m){
+  const it=INTEL_TIERS.find(t=>t.key===state.intel);
+  const sp=SPEED_TIERS.find(t=>t.key===state.speed);
+  const r=[];
+  if(m.intel<it.floor)  r.push(`not smart enough (you asked for ${it.lab})`);
+  if(m.spd<sp.floor)    r.push(`too slow (you asked for ${sp.lab})`);
+  if(m.tier<state.priv) r.push(`not private enough (you asked for ${TIER[state.priv].k})`);
+  return r;
 }
 function matchScore(m){
   const v=sc(m); const p=state.pref;
@@ -786,7 +816,7 @@ function showTip(g,e){
       ${bar('Fast',v.f,'var(--fast)',m.spd+' tps≈')}
     </div>
     <div class="meta">${m.tags.map(x=>`<span class="tag">${x}</span>`).join('')}</div>
-    ${ok?'':'<div style="margin-top:8px;font-size:10.5px;color:#f0a">✕ below your current floor</div>'}`;
+    ${ok?'':`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line);font-size:10.5px;color:#fda4af;line-height:1.55">${failReasons(m).map(x=>'✕ '+x).join('<br>')}</div>`}`;
   const rect=tri.getBoundingClientRect();
   const src=e.touches?e.touches[0]:e;
   let x=src.clientX-rect.left+14, y=src.clientY-rect.top+14;
