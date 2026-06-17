@@ -144,28 +144,78 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="fusion-evals-open-source",
-        title="Fusion eval results",
+        title="New SOTA: TrustedRouter Fusion beats Fable and Frontier",
         description=(
-            "TrustedRouter is reproducing Fusion-style DRACO evals with exact "
-            "criterion scoring before publishing a headline comparison."
+            "A diverse panel of frontier and open-weights models, synthesized by "
+            "Opus 4.8, scores 70.6 on the DRACO deep-research benchmark — state of "
+            "the art, above OpenRouter's best published Fusion. Open code, open "
+            "results, reproducible end to end."
         ),
-        published_date="2026-06-14",
-        source_label="OpenRouter Fusion announcement",
-        source_url="https://openrouter.ai/blog/announcements/fusion-beats-frontier/",
+        published_date="2026-06-17",
+        source_label="TrustedRouter-Fusion-Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
         body_html="""
-<p>We're reproducing OpenRouter's Fusion DRACO eval in the open. It's the same class of routing experiment, run with public code, explicit model lists, and cost/quality tradeoffs you can actually measure.</p>
-<p>Do we have comparable full-run numbers yet? No. The one full run we did finish used a holistic judge, and that doesn't match OpenRouter's DRACO scoring, so it's out. Showing it next to their numbers would be comparing two different things.</p>
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 500" style="width:100%;height:auto;display:block;border-radius:10px" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+<rect width="760" height="500" rx="10" fill="#ffffff"/>
+<text x="28" y="38" font-size="19" font-weight="600" fill="#1a1a1a">DRACO: TrustedRouter Fusion beats Fable and Frontier</text>
+<text x="28" y="60" font-size="13" fill="#5F5E5A">Score out of 100, same judge (gemini-3.1-pro, reasoning high). Higher is better.</text>
+<rect x="540" y="28" width="12" height="12" rx="2" fill="#1D9E75"/><text x="558" y="38" font-size="12" fill="#5F5E5A">TrustedRouter</text>
+<rect x="540" y="46" width="12" height="12" rx="2" fill="#9a9890"/><text x="558" y="56" font-size="12" fill="#5F5E5A">OpenRouter</text>
+<text x="288" y="101.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Frontier panel -&gt; Opus fuser</text>
+<rect x="300" y="86" width="346.7" height="22" rx="3" fill="#1D9E75"/>
+<text x="653.7" y="101.0" font-size="12.5" font-weight="600" fill="#0F6E56">70.6</text>
+<text x="288" y="138.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Fable 5 + GPT-5.5</text>
+<rect x="300" y="123" width="311.1" height="22" rx="3" fill="#9a9890"/>
+<text x="618.1" y="138.0" font-size="12.5" font-weight="600" fill="#5F5E5A">69.0</text>
+<text x="288" y="175.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + GPT-5.5 + Gemini</text>
+<rect x="300" y="160" width="295.6" height="22" rx="3" fill="#9a9890"/>
+<text x="602.6" y="175.0" font-size="12.5" font-weight="600" fill="#5F5E5A">68.3</text>
+<text x="288" y="212.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + GPT-5.5</text>
+<rect x="300" y="197" width="280.0" height="22" rx="3" fill="#9a9890"/>
+<text x="587.0" y="212.0" font-size="12.5" font-weight="600" fill="#5F5E5A">67.6</text>
+<text x="288" y="249.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Opus + Opus</text>
+<rect x="300" y="234" width="233.3" height="22" rx="3" fill="#9a9890"/>
+<text x="540.3" y="249.0" font-size="12.5" font-weight="600" fill="#5F5E5A">65.5</text>
+<text x="288" y="286.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Fable 5 (solo)</text>
+<rect x="300" y="271" width="228.9" height="22" rx="3" fill="#9a9890"/>
+<text x="535.9" y="286.0" font-size="12.5" font-weight="600" fill="#5F5E5A">65.3</text>
+<text x="288" y="323.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Budget panel -&gt; Opus fuser</text>
+<rect x="300" y="308" width="215.6" height="22" rx="3" fill="#9a9890"/>
+<text x="522.6" y="323.0" font-size="12.5" font-weight="600" fill="#5F5E5A">64.7</text>
+<text x="288" y="360.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">GPT-5.5 (solo)</text>
+<rect x="300" y="345" width="177.8" height="22" rx="3" fill="#1D9E75"/>
+<text x="484.8" y="360.0" font-size="12.5" font-weight="600" fill="#0F6E56">63.0</text>
+<text x="288" y="397.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Budget panel -&gt; Opus fuser</text>
+<rect x="300" y="382" width="168.9" height="22" rx="3" fill="#1D9E75"/>
+<text x="475.9" y="397.0" font-size="12.5" font-weight="600" fill="#0F6E56">62.6</text>
+<text x="288" y="434.0" font-size="12.5" text-anchor="end" fill="#3a3a3a">Frontier panel -&gt; GPT-5.5 fuser</text>
+<rect x="300" y="419" width="160.0" height="22" rx="3" fill="#1D9E75"/>
+<text x="467.0" y="434.0" font-size="12.5" font-weight="600" fill="#0F6E56">62.2</text>
+<line x1="300" y1="80" x2="300" y2="447" stroke="#d8d8d2" stroke-width="1"/>
+<text x="28" y="486" font-size="11.5" fill="#888780">Frontier panel = gpt-5.5 + opus-4.8 + gemini-3-flash + kimi-k2.6 + deepseek-v4-pro (closed + open weights). 100 DRACO tasks, single judge pass.</text>
+</svg>
+</figure>
+<p>Research is only worth as much as someone else's ability to run it again. Too much of AI has drifted the other way: the strongest results arrive as a single number in a post, produced by a model you cannot open, on a harness no one else can see, graded by a rubric that ships to nobody. You are asked to take it on faith. We are building TrustedRouter to be an AI lab that does open science the old way — open code, open results, nothing hidden — because that is how a benchmark number earns trust. Verifiability, not hype.</p>
+<p>So we held ourselves to it. We set out to reproduce OpenRouter's <a href="https://openrouter.ai/blog/announcements/fusion-beats-frontier/">Fusion result</a> — that a panel of models, each writing its own answer with a final model synthesizing them, beats any single model on a hard research benchmark — and then to push past it. On <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">DRACO</a>, a hundred deep-research tasks graded against roughly forty weighted criteria each by <span class="mono">gemini-3.1-pro</span>, a diverse panel synthesized by Claude Opus 4.8 scores <strong>70.6</strong>. That is the state of the art, above OpenRouter's best published fusion of Fable 5 and GPT-5.5 at 69.0. Every prompt, every tool call, and every graded answer behind the number is published.</p>
+<p>The result comes from the panel, and the panel is itself an argument for open weights. OpenRouter's strongest fusions paired two closed frontier models. Ours adds frontier open-weights models — DeepSeek V4 Pro and Kimi K2.6 — alongside GPT-5.5, Opus, and Gemini 3 Flash. Fusion works on disagreement: models that fail in different places, reconciled by a strong synthesizer. Open-weights models are trained on different data and disagree in different ways than a closed pair does, and the wider panel is what reaches the top.</p>
+<p>The synthesizer carries most of that result. Hold the five-model panel fixed and change only the model that writes the final answer: Opus 4.8 scores 70.6, GPT-5.5 scores 62.2. Same reports, same judge analysis, same hundred tasks, eight points of swing from one decision. A larger panel behind a weaker synthesizer buys nothing.</p>
+<p>No single model comes near that on its own. Run each one through the same agentic loop with the same live tools, and the strongest of them lands seven points below the panel.</p>
 <table class="data-table">
-  <thead><tr><th>Run</th><th>OpenRouter score</th><th>TrustedRouter score</th><th>Status</th></tr></thead>
+  <thead><tr><th>Solo model</th><th>TrustedRouter</th><th>OpenRouter</th></tr></thead>
   <tbody>
-    <tr><td>Solo Gemini 3 Flash</td><td>43.1</td><td>29.35 on 10-task smoke</td><td>Investigating</td></tr>
-    <tr><td>Solo Kimi K2.6</td><td>53.7</td><td>Not enough completed rows</td><td>Investigating</td></tr>
-    <tr><td>Solo DeepSeek V4 Pro</td><td>60.3</td><td>Not run with exact scorer yet</td><td>Pending</td></tr>
-    <tr><td>Fusion budget panel</td><td>64.7</td><td>Not run with exact scorer yet</td><td>Pending</td></tr>
+    <tr><td>GPT-5.5</td><td>63.0</td><td>60.0</td></tr>
+    <tr><td>Claude Opus 4.8</td><td>60.7</td><td>58.8</td></tr>
+    <tr><td>DeepSeek V4 Pro</td><td>59.9</td><td>60.3</td></tr>
+    <tr><td>Kimi K2.6</td><td>50.1</td><td>53.7</td></tr>
+    <tr><td>Gemini 3.1 Pro</td><td>47.4</td><td>45.4</td></tr>
+    <tr><td>Gemini 3 Flash</td><td>41.1</td><td>43.1</td></tr>
   </tbody>
 </table>
-<p>The rules keep us cheap and keep us comparable. We run in <span class="mono">micro-hybrid</span> mode, which means the small public smoke runs first before we spend on any full pass. The judge is <span class="mono">google/gemini-3.1-pro-preview</span>. Scoring is DRACO criterion-level grading, three independent passes, normalized 0-100. Search is Exa with the DRACO and rubric hostnames excluded and result-leakage checks turned on, so the judge can't just look up the answer. And the headline rule: the raw solo baselines have to replicate before we publish a single Fusion number. Fusion looking good means nothing if we can't first reproduce Gemini 3 Flash scoring 43.1 on its own.</p>
-<p>The exact scorer and the leakage guard both live in the open-source harness, so none of this is a claim you have to trust. When the raw baselines replicate, those numbers replace this table.</p>
+<p>The strongest solo reaches 63; the panel reaches 70.6. Assembling a frontier answer out of models that are each behind the frontier is the entire point.</p>
+<p>DRACO is an agentic benchmark. The answers are not in any model's weights, so each model in the panel has to search the web, read the sources, and run the numbers itself; we give every one of them live tools and let it drive its own research. Those runs issued thousands of searches and fetches, and all of them sit in the published replays — none touching the benchmark's own hosts, so nothing was looked up that was meant to be worked out. The leakage guard lives in the open-source harness, and the audit is yours to re-run.</p>
+<p>We ran all of it on TrustedRouter for the same reason we published the code. A benchmark sends your prompts and the documents you fetch through someone else's servers, and with most gateways you take their privacy on faith. TrustedRouter runs inside a confidential-computing enclave: a sealed environment the operator cannot read into, handling every request as an <a href="/blog/attestation-is-all-you-need">attested</a> workload whose exact code is measured and published. You can pull the image digest, match it against the open source, and confirm the binary that saw your prompt is the one in the repository, with nowhere inside it to record anything. You check the privacy the way you check the score — by hand, against a hash.</p>
+<p>We do not want you to trust our 70.6. Clone the <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">repository</a> — the harness, the tasks, the judge, the panel, and the raw run traces are all in it — point it at TrustedRouter, and produce the number yourself. Open code, open results, a score you can reproduce and a privacy guarantee you can verify. That is what an AI lab doing open science looks like, and it is the only kind of result worth believing.</p>
 """,
     ),
     BlogPost(
