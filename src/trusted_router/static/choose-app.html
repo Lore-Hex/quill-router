@@ -817,10 +817,18 @@ function showTip(g,e){
     </div>
     <div class="meta">${m.tags.map(x=>`<span class="tag">${x}</span>`).join('')}</div>
     ${ok?'':`<div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--line);font-size:10.5px;color:#fda4af;line-height:1.55">${failReasons(m).map(x=>'✕ '+x).join('<br>')}</div>`}`;
-  const rect=tri.getBoundingClientRect();
+  /* position within the stage card (the tip's offset parent), flipping
+     left/up near an edge and clamping so it's never clipped by the card */
+  const host=tip.offsetParent||tri.parentNode;
+  const hr=host.getBoundingClientRect();
   const src=e.touches?e.touches[0]:e;
-  let x=src.clientX-rect.left+14, y=src.clientY-rect.top+14;
-  if(x>rect.width-258) x=src.clientX-rect.left-262;
+  const cx=src.clientX-hr.left, cy=src.clientY-hr.top;
+  const tw=tip.offsetWidth, th=tip.offsetHeight, pad=10;
+  let x=cx+16, y=cy+16;
+  if(x+tw>hr.width-pad)  x=cx-tw-16;
+  if(y+th>hr.height-pad) y=cy-th-16;
+  x=Math.max(pad, Math.min(x, hr.width-tw-pad));
+  y=Math.max(pad, Math.min(y, hr.height-th-pad));
   tip.style.left=x+'px'; tip.style.top=y+'px'; tip.classList.add('show');
 }
 function bar(lab,val,col,right){
