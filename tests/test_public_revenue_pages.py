@@ -103,6 +103,9 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "iron triangle of LLMs" in response.text
     # Embedded-mode hook that hides the in-app header inside the iframe.
     assert "tr-choose-height" in response.text
+    # Privacy floor defaults to Open (any provider), not ZDR.
+    assert '<option value="0" selected>' in response.text
+    assert "priv: 0," in response.text
 
 
 def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:
