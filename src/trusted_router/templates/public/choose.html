@@ -1,0 +1,96 @@
+{% extends "public/_base.html" %}
+{% block hero %}
+<section class="public-hero marketing-hero">
+  <div>
+    <span class="eyebrow">Smart · Cheap · Fast — pick two</span>
+    <h1>Choose the right model for the job.</h1>
+    <p class="lead">Describe your task and how private it has to be. We plot every route on the iron
+      triangle, keep the ones that fit, and recommend the model — then show you the one-line shortcut.</p>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create key</button>
+      <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
+    <div><strong>220+</strong><span>models &amp; routes</span></div>
+    <div><strong>3 tiers</strong><span>Open · ZDR · TEE</span></div>
+    <div><strong>0</strong><span>prompt logs by default</span></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section aria-label="Interactive model picker" class="choose-embed">
+  <iframe id="tr-choose-frame"
+          title="Interactive model tradeoff explorer — smart, cheap, fast"
+          src="/static/choose-app.html?v={{ static_version|default('local') }}"
+          loading="eager"
+          referrerpolicy="same-origin"></iframe>
+</section>
+<style>
+  .choose-embed{margin:6px 0 30px;border-radius:18px;overflow:hidden;
+    border:1px solid var(--border, #1c2942);background:#070b14;box-shadow:0 18px 50px -22px rgba(0,0,0,.7)}
+  #tr-choose-frame{width:100%;border:0;display:block;min-height:1480px;background:#070b14}
+  @media(max-width:980px){ #tr-choose-frame{min-height:2200px} }
+</style>
+<script>
+  /* Same-origin iframe: size it to its content. Prefer the height the app
+     postMessages; fall back to reading the document directly. */
+  (function(){
+    var f = document.getElementById('tr-choose-frame');
+    function readFit(){
+      try{
+        var d = f.contentWindow.document;
+        var h = Math.max(d.documentElement.scrollHeight, d.body.scrollHeight);
+        if(h > 300) f.style.height = h + 'px';
+      }catch(e){ /* cross-origin or not ready — ignore */ }
+    }
+    window.addEventListener('message', function(ev){
+      if(ev.source === f.contentWindow && ev.data && ev.data.type === 'tr-choose-height'){
+        if(ev.data.height > 300) f.style.height = ev.data.height + 'px';
+      }
+    });
+    f.addEventListener('load', function(){
+      readFit();
+      [200, 600, 1300].forEach(function(t){ setTimeout(readFit, t); });
+    });
+    window.addEventListener('resize', function(){ setTimeout(readFit, 80); });
+  })();
+</script>
+
+<section class="marketing-split">
+  <div class="marketing-copy">
+    <span class="eyebrow">How the triangle works</span>
+    <h2>Three axes, one honest tradeoff.</h2>
+    <p><strong>Smart</strong> is reasoning quality. <strong>Cheap</strong> is dollars per million tokens,
+      straight from the live catalog. <strong>Fast</strong> is throughput — Cerebras-served gpt-oss,
+      MiMo Ultraspeed and GLM-4.7 Flash sit right at the tip.</p>
+    <p>Pick a privacy floor — <strong>Open</strong>, <strong>Zero-retention&nbsp;(ZDR)</strong>, or a
+      hardware <strong>Trusted Execution Environment&nbsp;(TEE)</strong> with end-to-end encryption — and the
+      board only keeps routes that clear it. Every route is attested at
+      <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Stop choosing</span><span>OpenAI SDK</span></div>
+    <pre><code>base_url="{{ api_base_url }}"
+
+# let the router pick, per request:
+model="trustedrouter/auto"     # best fit, zero-retention
+model="trustedrouter/cheap"    # cheapest capable, TEE
+model="trustedrouter/fusion"   # fuse open models &gt; frontier</code></pre>
+  </div>
+</section>
+
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">The shortcut</span>
+    <h2>The corner you actually want rarely exists in one model.</h2>
+  </div>
+  <div>
+    <p>Frontier-smart, real-time-fast, dirt-cheap and private almost never coexist in a single model.
+      TrustedRouter's <code>auto</code>, <code>cheap</code> and <code>fusion</code> routes dissolve the
+      tradeoff — one OpenAI-shaped endpoint that picks per request and proves it never logged your prompt.
+      <button class="btn primary" type="button" data-action="open-signin">Create a key</button></p>
+  </div>
+</section>
+{% endblock %}

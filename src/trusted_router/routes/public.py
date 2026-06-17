@@ -255,6 +255,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def pricing() -> str:
         return public_page_html(settings, "pricing")
 
+    @public_html_route("/choose")
+    async def choose() -> str:
+        return public_page_html(settings, "choose")
+
     @public_html_route("/docs")
     async def docs_hub() -> str:
         return public_page_html(settings, "docs")
