@@ -213,8 +213,8 @@ footer a:hover{color:var(--ink)}
         <div class="t">Where the models live <small>· drag the <b style="color:var(--ink)">YOU</b> dot to set your tradeoff</small></div>
         <div class="legend">
           <span><i style="background:var(--t0)"></i>Open</span>
-          <span><i style="background:var(--t2)"></i>Zero-retention</span>
-          <span><i style="background:var(--t3)"></i>Trusted Execution (TEE)</span>
+          <span><i style="background:var(--t2)"></i>Zero Data Retention</span>
+          <span><i style="background:var(--t3)"></i>End to End Encrypted (TEE)</span>
           <span><i style="background:var(--gold)"></i>your pick</span>
         </div>
       </div>
@@ -230,8 +230,8 @@ footer a:hover{color:var(--ink)}
         <p class="hint">Every TrustedRouter route is attested. Choose how strict the upstream must be.</p>
         <select class="priv" id="priv">
           <option value="0" selected>🌐 Open — any provider (most choice, best price)</option>
-          <option value="2">🔒 Zero-retention (ZDR) — no prompt logging</option>
-          <option value="3">🛡️ Trusted Execution Environment (TEE) — confidential compute + E2EE</option>
+          <option value="2">🔒 Zero Data Retention (ZDR) — no prompt logging</option>
+          <option value="3">🛡️ End to End Encrypted (TEE: Trusted Execution Environment) — confidential compute</option>
         </select>
         <div class="privnote" id="privnote"></div>
       </div>
@@ -295,8 +295,8 @@ footer a:hover{color:var(--ink)}
    editorial 0–100 estimates for relative positioning.
    ================================================================= */
 const TIER = {0:{k:'Open',full:'Open',c:'var(--t0)',bg:'#1b2740',fg:'#aebfd9'},
-              2:{k:'ZDR',full:'Zero-retention',c:'var(--t2)',bg:'#0c2c33',fg:'#7fe5f5'},
-              3:{k:'TEE',full:'Trusted Execution Environment (TEE)',c:'var(--t3)',bg:'#0d2a18',fg:'#7ee6a3'}};
+              2:{k:'ZDR',full:'Zero Data Retention',c:'var(--t2)',bg:'#0c2c33',fg:'#7fe5f5'},
+              3:{k:'TEE',full:'End to End Encrypted (TEE: Trusted Execution Environment)',c:'var(--t3)',bg:'#0d2a18',fg:'#7ee6a3'}};
 
 const MODELS = [
  {id:'openai/gpt-5.5-pro',           n:'GPT-5.5 Pro',         intel:100, spd:22, pin:33,   pout:198,   ctx:1050000, tier:2, tags:['reasoning','math','research'], blurb:'Maximum-effort reasoning. Slow and costly — reserved for the hardest problems.'},
@@ -337,10 +337,10 @@ const MODELS = [
 
 /* TrustedRouter virtual routes — the "don't pick a corner" payload (real catalog values). */
 const ROUTES = {
- auto:  {id:'trustedrouter/auto',  n:'auto',  tier:2, pin:0.143, pout:0.308, desc:'Picks the best provider per request, fails over automatically. Zero-retention.'},
+ auto:  {id:'trustedrouter/auto',  n:'auto',  tier:2, pin:0.143, pout:0.308, desc:'Picks the best provider per request, fails over automatically. Zero Data Retention.'},
  cheap: {id:'trustedrouter/cheap', n:'cheap', tier:3, pin:0.01,  pout:0.01,  desc:'Cheapest capable model, confidential compute + E2EE. ~$0.01 / Mtok.'},
  fusion:{id:'trustedrouter/fusion',n:'fusion',tier:0, pin:0,     pout:0,     desc:'Fuses several open models into one answer — aims to beat any single frontier model.'},
- zdr:   {id:'trustedrouter/zdr',   n:'zdr',   tier:3, pin:0.04,  pout:0.11,  desc:'Pool restricted to zero-retention + confidential providers only.'},
+ zdr:   {id:'trustedrouter/zdr',   n:'zdr',   tier:3, pin:0.04,  pout:0.11,  desc:'Pool restricted to Zero Data Retention + confidential providers only.'},
  e2e:   {id:'trustedrouter/e2e',   n:'e2e',   tier:3, pin:0.04,  pout:0.11,  desc:'End-to-end encrypted open-weight pool.'},
  free:  {id:'trustedrouter/free',  n:'free',  tier:0, pin:0.01,  pout:0.01,  desc:'Free tier for prototyping.'},
 };
@@ -743,8 +743,8 @@ function buildExamples(){
 }
 const PRIV_NOTE = {
  0:['#aebfd9','All 222 models, every provider. The gateway is still attested — but the upstream may retain prompts per its own policy.'],
- 2:['#7fe5f5','~107 routes whose providers contractually retain nothing. The default for production.'],
- 3:['#7ee6a3','~30 routes that run inside a Trusted Execution Environment (TEE) with end-to-end encryption — the hardware attests that even the provider can\'t read your prompt. For regulated / sensitive data.'],
+ 2:['#7fe5f5','Zero Data Retention (ZDR): ~107 routes whose providers contractually retain nothing — your prompts and outputs are never logged or stored once the response is returned. The default for production.'],
+ 3:['#7ee6a3','End to End Encrypted (TEE: Trusted Execution Environment): ~30 routes that run inside a TEE — your prompt is encrypted end to end and the hardware attests that even the provider can\'t read it. For regulated / sensitive data.'],
 };
 function updatePrivNote(){
   const [c,txt]=PRIV_NOTE[state.priv];
