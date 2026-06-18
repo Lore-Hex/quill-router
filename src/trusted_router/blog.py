@@ -21,7 +21,7 @@ class BlogPost:
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug="how-to-choose-a-model",
-        title="How to choose a model, Pick 2: smart, fast, cheap",
+        title="How to choose a model, Pick 2: smart, fast, or cheap",
         description=(
             "People keep asking which model is best. There isn't one — every model "
             "is a tradeoff of smart, cheap, and fast, and you get two. So we plotted "
