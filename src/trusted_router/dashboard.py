@@ -5,6 +5,7 @@ settings-driven values and renders the Jinja2 template."""
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -654,6 +655,43 @@ def _og_image_url(settings: Settings, og_card: str | None) -> str:
     return f"https://{settings.trusted_domain}/og.png"
 
 
+_IMG_SRC_RE = re.compile(r'<img\b[^>]*?\bsrc=["\']([^"\']+)["\']', re.IGNORECASE)
+_SVG_RE = re.compile(r"<svg\b", re.IGNORECASE)
+
+
+def _first_body_image(body_html: str) -> tuple[str, str] | None:
+    """First image-like element in document order: ('img', src) or ('svg', '')."""
+    img = _IMG_SRC_RE.search(body_html)
+    svg = _SVG_RE.search(body_html)
+    if img and (not svg or img.start() < svg.start()):
+        return ("img", img.group(1))
+    if svg:
+        return ("svg", "")
+    return None
+
+
+def _absolute_url(settings: Settings, url: str) -> str:
+    if url.startswith(("http://", "https://")):
+        return url
+    return f"https://{settings.trusted_domain}/{url.lstrip('/')}"
+
+
+def _blog_og_image(settings: Settings, post: BlogPost) -> str:
+    """Social card for a blog post: explicit override, else the post's first
+    embedded image (an <img> src, or the rasterized PNG of the first inline
+    <svg> at static/og/blog/<slug>.png), else the default brand card."""
+    if post.og_image:
+        return _absolute_url(settings, post.og_image)
+    first = _first_body_image(post.body_html)
+    if first and first[0] == "img":
+        return _absolute_url(settings, first[1])
+    if first and first[0] == "svg":
+        card = STATIC_DIR / "og" / "blog" / f"{post.slug}.png"
+        if card.is_file():
+            return f"https://{settings.trusted_domain}/static/og/blog/{post.slug}.png"
+    return f"https://{settings.trusted_domain}/og.png"
+
+
 def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
     graph = [node for node in nodes if node]
     if len(graph) == 1:
@@ -728,6 +766,7 @@ def _blog_post_json_ld(settings: Settings, post: BlogPost) -> str:
             "datePublished": post.published_date,
             "dateModified": post.published_date,
             "url": f"https://{settings.trusted_domain}{post.href}",
+            "image": _blog_og_image(settings, post),
             "author": {"@type": "Person", "name": "Joseph Perla"},
             "publisher": {
                 "@type": "Organization",
@@ -841,6 +880,8 @@ def public_blog_post_html(settings: Settings, slug: str) -> str | None:
         heading=post.title,
         description=post.description,
         post=post,
+        og_image=_blog_og_image(settings, post),
+        og_image_alt=post.title,
         json_ld_blob=_blog_post_json_ld(settings, post),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,

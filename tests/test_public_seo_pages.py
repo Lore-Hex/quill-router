@@ -118,8 +118,8 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     blog_payload = _json_ld(blog.text)
     blog_types = {item["@type"] for item in blog_payload["@graph"]}
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
-    assert "micro-hybrid" in blog.text
-    assert "OpenRouter Fusion announcement" in blog.text
+    assert "DRACO" in blog.text
+    assert "TrustedRouter-Fusion-Draco on GitHub" in blog.text
 
     frontier_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert frontier_blog.status_code == 200
@@ -332,3 +332,29 @@ def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -
         assert "/models/minimax/minimax-m3/performance" in response.text
         assert "/providers/minimax" in response.text
         assert "openrouter.ai" not in response.text.lower()
+
+
+def test_first_body_image_picks_first_in_document_order() -> None:
+    from trusted_router.dashboard import _first_body_image
+
+    assert _first_body_image("<p>no imagery</p>") is None
+    assert _first_body_image('<p>x</p><img src="/a.png" alt="a"><svg></svg>') == ("img", "/a.png")
+    assert _first_body_image('<figure><svg viewBox="0 0 1 1"></svg></figure>') == ("svg", "")
+    # whichever appears first wins
+    assert _first_body_image('<svg></svg><img src="/b.png">')[0] == "svg"
+
+
+def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
+    # post that opens with an inline <svg> -> its rasterized card
+    sota = client.get("/blog/fusion-evals-open-source")
+    card = "https://trustedrouter.com/static/og/blog/fusion-evals-open-source.png"
+    assert f'property="og:image" content="{card}"' in sota.text
+    assert f'name="twitter:image" content="{card}"' in sota.text
+    assert "static/og/blog/fusion-evals-open-source.png" in json.dumps(_json_ld(sota.text))
+    assert client.get("/static/og/blog/fusion-evals-open-source.png").status_code == 200
+    # the card alt is the post title, not the generic brand alt
+    assert 'property="og:image:alt" content="New SOTA: TrustedRouter Fusion beats Fable and Frontier"' in sota.text
+
+    # post with no imagery -> default brand card
+    plain = client.get("/blog/the-models-that-say-no")
+    assert 'property="og:image" content="https://trustedrouter.com/og.png"' in plain.text

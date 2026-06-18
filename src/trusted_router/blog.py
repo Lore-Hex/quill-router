@@ -12,6 +12,11 @@ class BlogPost:
     source_label: str | None
     source_url: str | None
     body_html: str
+    # Explicit social-card image (absolute URL or "/static/..." path). When None,
+    # the renderer falls back to the post's first embedded image (an <img>, or a
+    # rasterized PNG of the first inline <svg> at static/og/blog/<slug>.png), then
+    # to the default brand card.
+    og_image: str | None = None
 
     @property
     def href(self) -> str:

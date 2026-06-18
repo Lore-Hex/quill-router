@@ -18,7 +18,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/docs/fusion": "Run a panel of models inside the attested gateway.",
         "/blog": "TrustedRouter blog",
         "/blog/frontier-fusion-mythos-target": "Chasing Mythos-level Fusion in the open",
-        "/blog/fusion-evals-open-source": "public code, explicit model lists",
+        "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Fusion beats Fable and Frontier",
         "/security": "TrustedRouter does not store prompt or output content by default.",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
