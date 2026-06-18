@@ -44,7 +44,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="the-ai-models-that-go-silent-on-china",
-        title="The AI models that go silent on China",
+        title="FreedomBench: AI models that refuse to answer the truth about China",
         description="GLM-5.2 is one of the best open models in the world, and on sixty plain facts the Chinese government censors it returns blanks \u2014 29 of 60, going dark on Tiananmen and Falun Gong entirely. FreedomBench measures which models stay silent, and tells a real refusal apart from a server choking.",
         published_date="2026-06-17",
         source_label="FreedomBench on GitHub",
