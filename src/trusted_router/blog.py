@@ -20,6 +20,27 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="there-is-no-best-ai-model",
+        title="There is no best AI model",
+        description=(
+            "People keep asking which model is best. There isn't one — every model "
+            "is a tradeoff of smart, cheap, and fast, and you get two. So we plotted "
+            "all 220+ on a triangle you can drag, off the live catalog, and it picks "
+            "the one your task and your privacy actually need."
+        ),
+        published_date="2026-06-17",
+        source_label="Try it — the iron triangle picker",
+        source_url="https://trustedrouter.com/choose",
+        body_html="""
+<p>People keep asking me which model is the best one, and there's no answer to give. There isn't a best model, the way there isn't a best vehicle — a motorcycle and a dump truck are both exactly right, depending on what you're moving. Every language model sits on the same three-way tradeoff: smart, cheap, fast. You get two. The frontier models are smart and quick and they cost twenty dollars a million tokens. The little open models are cheap and quick and dimmer. The big open ones are smart and cheap and slow. Nobody ships all three corners at once, because the model that did would eat the rest alive, and the rest is more than two hundred models.</p>
+<p>So we drew the picture. <a href="/choose">/choose</a> is a ternary chart — smart at one corner, cheap at another, fast at the third — with every model TrustedRouter can reach plotted where it actually lives. Two hundred and twenty of them. You drag a dot to the mix you want, say how private the data has to be and what you're actually trying to do, and it lights up the models that fit while the rest go dim, with the price sitting right next to each name. Prices, context windows, and privacy tiers come straight off the live catalog, so what you're looking at is what you can call the second you load the page.</p>
+<p>What surprises people is how far the right corner moves in a single week. Refactor a gnarly React component and write its tests, and you want the smart corner — pay for the frontier, because a botched refactor costs you an afternoon and the twenty-dollar model earns its keep. Summarize ten thousand support tickets, and you're in the cheap corner, where a four-cent model does the job and paying frontier prices to compress text is just lighting money on fire. Same engineer, same Tuesday, opposite corners. The real mistake is buying one model and running everything you have through it.</p>
+<p>There's a fourth thing the triangle can't draw on two axes, which is who gets to see the prompt. Every route through TrustedRouter is attested, so /choose lets you say the data can touch any provider, or that it has to land on a zero-retention route that logs nothing, or that it has to run inside a trusted execution environment where even we can't read it. Turn that dial tighter and watch the triangle shrink: models fall off the board, the price floor climbs. That is the real cost of privacy, drawn in front of you instead of buried in a procurement call.</p>
+<p>The fair complaint is that the smart and fast ratings are a judgment call, and they are — our editorial read on where each model lands, good enough to compare two of them at a glance. The price, the context window, and the privacy tier carry no opinion; they come off the live <span class="mono">/v1/models</span> feed. So read the triangle as a map. A map doesn't have to be a benchmark to keep you from driving the dump truck out for a quart of milk.</p>
+<p>We built it into the gateway on purpose. Once you can see that the right model changes with the job, marrying one vendor for a year looks reckless. Routing every call through one API means moving from the smart corner to the cheap one is a one-line change — swap the model name, ship. The triangle shows you where to go; the gateway is the road that gets you there. Drag the dot, read the price, change the string. That's the whole job.</p>
+""",
+    ),
+    BlogPost(
         slug="the-best-open-models-arent-on-your-leaderboard",
         title="The best open models aren't on your leaderboard",
         description=(
