@@ -16,7 +16,7 @@
     {% if section == "benchmarks" %}
     {% if benchmark_scores %}
     <h3>Published benchmark scores</h3>
-    <p class="muted-copy">First-party model-card and open-leaderboard scores for {{ model.name }} — every row links to its primary source. TrustedRouter does not run these evals; we cite them, and only attach a score to the exact checkpoint it was measured on.</p>
+    <p class="muted-copy">Benchmark scores for {{ model.name }} — every row links to its source, and a score is only ever attached to the exact checkpoint it was measured on. Vendor model-card and open-leaderboard numbers are cited, not run by us. Rows marked <span class="lb-badge">TrustedRouter · replays published</span> are our own runs of this model through the gateway, with the full per-item replay published in <a href="https://github.com/Lore-Hex/trustedrouter-benchmarks" rel="nofollow noopener">trustedrouter-benchmarks</a> so anyone can re-grade them.</p>
     <div class="leaderboard-table-wrap">
       <table class="leaderboard-table">
         <thead>
@@ -28,7 +28,7 @@
             <td><a href="{{ s.about_url }}">{{ s.label }}</a>{% if s.config_note %}<div class="lb-note">{{ s.config_note }}</div>{% endif %}</td>
             <td>{{ s.category }}</td>
             <td>{{ s.display }}</td>
-            <td><a href="{{ s.source_url }}" rel="nofollow noopener">{{ s.source_name }}</a>{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
+            <td><a href="{{ s.source_url }}" rel="nofollow noopener">{{ s.source_name }}</a>{% if s.reproducible %} <span class="lb-badge">replay</span>{% endif %}{% if s.as_of_date %}<div class="lb-note">{{ s.as_of_date }}</div>{% endif %}</td>
           </tr>
           {% endfor %}
         </tbody>

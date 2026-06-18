@@ -43,7 +43,8 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert models.status_code == 200
     assert models.text.count("<url>") >= 200
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3</loc>" in models.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" not in models.text
+    # minimax-m3 now has cited benchmark scores, so its /benchmarks page is indexed.
+    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" in models.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" in models.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" in models.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in models.text
@@ -289,7 +290,9 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
         assert f"MiniMax M3 {expected_label}" in response.text
         assert "openrouter.ai" not in response.text.lower()
         assert '<nav class="section-tabs"' in response.text
-        if section in {"providers", "pricing"}:
+        # benchmarks is indexable once a model has cited benchmark scores —
+        # minimax-m3 now ships TrustedRouter SimpleQA/GSM8K/Aider rows.
+        if section in {"providers", "pricing", "benchmarks"}:
             assert '<meta name="robots" content="noindex,follow">' not in response.text
             assert (
                 f'<link rel="canonical" href="https://trustedrouter.com/models/minimax/minimax-m3/{section}">'
@@ -355,6 +358,9 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
     # the card alt is the post title, not the generic brand alt
     assert 'property="og:image:alt" content="New SOTA: TrustedRouter Fusion beats Fable and Frontier"' in sota.text
 
-    # post with no imagery -> default brand card
+    # The diagram sweep gave every post an OG diagram, so each post now uses its
+    # OWN rasterized card (the imageless -> default brand-card path is covered by
+    # the _first_body_image unit tests above).
     plain = client.get("/blog/the-models-that-say-no")
-    assert 'property="og:image" content="https://trustedrouter.com/og.png"' in plain.text
+    plain_card = "https://trustedrouter.com/static/og/blog/the-models-that-say-no.png"
+    assert f'property="og:image" content="{plain_card}"' in plain.text

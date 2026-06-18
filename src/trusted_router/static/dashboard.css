@@ -597,6 +597,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .leaderboard-table td a:hover { text-decoration:underline; }
 .lb-badge { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:999px; font-size:11px; color:var(--muted); background:var(--line2); border:1px solid var(--line); }
 .lb-note { color:var(--muted); font-size:11px; line-height:1.3; margin-top:2px; white-space:normal; max-width:280px; }
+.lb-badge { display:inline-block; font-size:10px; padding:1px 7px; border-radius:999px; background:#15203542; border:1px solid var(--line2); color:var(--muted); vertical-align:middle; letter-spacing:.02em; white-space:nowrap; }
 
 /* ===== Homepage (modern redesign) ===== */
 .home { display:block; }
