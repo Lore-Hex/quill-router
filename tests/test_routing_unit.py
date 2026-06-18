@@ -426,3 +426,39 @@ def test_same_preference_tier_keeps_catalog_order() -> None:
     b = _credits_endpoint("cerebras")
     ordered = _sort_endpoint_candidates([a, b], provider_route_preferences({}))
     assert [ep.provider for _, ep in ordered] == ["deepinfra", "cerebras"]
+
+
+# ── OpenAI bare/dated model-id aliasing ─────────────────────────────────
+# LiteLLM / the OpenAI SDK send the bare name (`gpt-4.1`) or OpenAI's dated
+# snapshot (`gpt-4.1-2025-04-14`); the catalog ids are vendor-prefixed. These
+# must resolve to the canonical id so standard OpenAI tooling works shim-free.
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        ("gpt-4.1", "openai/gpt-4.1"),
+        ("gpt-4.1-2025-04-14", "openai/gpt-4.1"),  # dated snapshot
+        ("gpt-4.1-mini", "openai/gpt-4.1-mini"),
+        ("gpt-4.1-nano-2025-04-14", "openai/gpt-4.1-nano"),  # bare + dated
+        ("openai/gpt-4.1", "openai/gpt-4.1"),  # canonical id unchanged
+    ],
+)
+def test_chat_route_candidates_resolves_openai_aliases(requested: str, expected: str) -> None:
+    candidates = chat_route_candidates({"model": requested}, _settings())
+    assert [c.id for c in candidates] == [expected]
+
+
+def test_chat_route_candidates_unknown_model_still_rejected() -> None:
+    # The aliaser is conservative: an id that resolves to nothing in the catalog
+    # must still surface MODEL_NOT_SUPPORTED, not get silently rewritten.
+    with pytest.raises(HTTPException):
+        chat_route_candidates({"model": "gpt-9.9-imaginary-2099-01-01"}, _settings())
+
+
+def test_resolve_model_alias_is_a_noop_for_canonical_and_meta_ids() -> None:
+    from trusted_router.routing import resolve_model_alias
+
+    assert resolve_model_alias("openai/gpt-4.1") == "openai/gpt-4.1"
+    assert resolve_model_alias("trustedrouter/auto") == "trustedrouter/auto"
+    assert resolve_model_alias("totally-unknown") == "totally-unknown"

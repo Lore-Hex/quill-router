@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -322,6 +323,35 @@ def _routing_for_body(
     return ids, prefs
 
 
+# OpenAI-style dated snapshot suffix, e.g. the "-2025-04-14" in
+# "gpt-4.1-2025-04-14". Anthropic-style undashed dates ("20241022") don't match.
+_DATED_SNAPSHOT_RE = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def resolve_model_alias(model_id: str) -> str:
+    """Map a bare or dated OpenAI-style id to its canonical catalog id.
+
+    The OpenAI SDK and LiteLLM send the *bare* name (`gpt-4.1`) or OpenAI's
+    *dated snapshot* (`gpt-4.1-2025-04-14`); our catalog ids are vendor-prefixed
+    (`openai/gpt-4.1`). Accept what that tooling sends so it works against TR with
+    no client-side shim. Conservative by design: only rewrites when the resolved
+    id actually exists in the catalog — a genuinely unknown model is returned
+    unchanged and still surfaces MODEL_NOT_SUPPORTED downstream. Catalog ids
+    (already vendor-prefixed) short-circuit on the first check, so real ids and
+    meta ids (AUTO / fusion / zdr / …) are never altered.
+    """
+    if model_id in MODELS:
+        return model_id
+    base = _DATED_SNAPSHOT_RE.sub("", model_id)
+    for candidate in (model_id, base):
+        if candidate in MODELS:
+            return candidate
+        prefixed = f"openai/{candidate}"
+        if prefixed in MODELS:
+            return prefixed
+    return model_id
+
+
 def _requested_model_ids(
     body: dict[str, Any], settings: Settings
 ) -> tuple[list[str], dict[str, str]]:
@@ -330,6 +360,7 @@ def _requested_model_ids(
 
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
+        stripped = resolve_model_alias(stripped)
         if stripped == FUSION_MODEL_ID:
             raise api_error(
                 501,

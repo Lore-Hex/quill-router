@@ -38,6 +38,7 @@ from trusted_router.routing import (
     chat_route_candidates,
     chat_route_endpoint_candidates,
     provider_route_preferences,
+    resolve_model_alias,
 )
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.services.inference import (
@@ -375,6 +376,9 @@ def _require_chat_model(body: dict[str, Any]) -> Model:
     model_id = str(body.get("model") or "")
     if not model_id:
         raise api_error(400, "model is required", ErrorType.BAD_REQUEST)
+    # Accept bare/dated OpenAI-style ids (gpt-4.1, gpt-4.1-2025-04-14) on the
+    # direct path, same as the routing resolver does for the gateway path.
+    model_id = resolve_model_alias(model_id)
     model = MODELS.get(model_id)
     if model is None or not model.supports_chat:
         raise api_error(
