@@ -1,0 +1,22 @@
+{# Recruiting banner shown at the top of the blog (index + posts). #}
+<style>
+  .hiring-banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    max-width: 720px; margin: 0 auto 24px; padding: 13px 18px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--code-bg);
+    text-decoration: none; transition: border-color .15s ease; }
+  .hiring-banner:hover { border-color: var(--blue); }
+  .hiring-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: #fff; background: var(--blue);
+    padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .hiring-msg { flex: 1 1 300px; color: var(--ink); font-size: 15px; line-height: 1.5;
+    font-family: Inter, system-ui, sans-serif; }
+  .hiring-msg strong { color: var(--inkstrong); font-weight: 650; }
+  .hiring-cta { color: var(--blue); font-size: 14.5px; font-weight: 600;
+    white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+  @media (max-width: 700px) { .hiring-banner { gap: 10px; padding: 12px 14px; } }
+</style>
+<a class="hiring-banner" href="mailto:careers@trustedrouter.com?subject=PhD%20researcher%20%E2%80%94%20TrustedRouter">
+  <span class="hiring-tag">We're hiring</span>
+  <span class="hiring-msg">We're looking for <strong>PhD researchers</strong> to join the team and work on exciting frontier problems.</span>
+  <span class="hiring-cta">Get in touch &rarr;</span>
+</a>
