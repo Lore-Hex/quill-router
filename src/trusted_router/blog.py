@@ -81,7 +81,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     ),
     BlogPost(
         slug="open-fusion-beats-fable-5",
-        title="An all-open-weights panel, fused, beats Fable 5",
+        title="Surpassing Frontier with Open Source Fusion",
         description="A committee of five downloadable open-weights models, each running its own research loop and fused into one answer, scores 69.9 on DRACO and beats Anthropic's mid-tier closed Fable 5 at 65.3. No frontier API touches the stack, and the whole thing runs on your own hardware.",
         published_date="2026-06-17",
         source_label="TrustedRouter-Fusion-Draco on GitHub",
