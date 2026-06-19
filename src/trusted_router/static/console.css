@@ -214,6 +214,25 @@ body.console {
   color: var(--red);
 }
 
+.key-budget-form {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  max-width: 260px;
+}
+
+.key-budget-form .btn {
+  min-height: 36px;
+  justify-content: center;
+}
+
+.key-budget-current {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .warning-note {
   border: 1px solid var(--warn-border);
   background: var(--warn-bg);

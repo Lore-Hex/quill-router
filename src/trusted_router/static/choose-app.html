@@ -102,6 +102,9 @@ select.priv{width:100%;appearance:none;background:var(--panel2);border:1px solid
   background-repeat:no-repeat;background-position:right 14px center}
 .privnote{font-size:11.5px;color:var(--muted);margin-top:9px;display:flex;gap:8px;align-items:flex-start;line-height:1.4}
 .privnote svg{flex:0 0 auto;margin-top:1px}
+.provider-strip{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.provider-chip{font-size:10.5px;padding:4px 8px;border-radius:999px;background:#10251a;border:1px solid #245c3c;color:#a7f3c6;font-weight:700}
+.provider-chip.note{background:#111a2b;border-color:#263a5a;color:#9fb6d6;font-weight:600}
 
 textarea#prob{width:100%;background:var(--panel2);border:1px solid var(--line2);color:var(--ink);font:inherit;font-size:14px;
   padding:11px 13px;border-radius:11px;resize:vertical;min-height:64px}
@@ -231,9 +234,15 @@ footer a:hover{color:var(--ink)}
         <select class="priv" id="priv">
           <option value="0" selected>🌐 Open — any provider (most choice, best price)</option>
           <option value="2">🔒 Zero Data Retention (ZDR) — no prompt logging</option>
-          <option value="3">🛡️ End to End Encrypted (TEE: Trusted Execution Environment) — confidential compute</option>
+          <option value="3">🛡️ End to End Encrypted — Tinfoil-first TEE providers</option>
         </select>
         <div class="privnote" id="privnote"></div>
+        <div class="provider-strip" aria-label="End to End Encrypted providers">
+          <span class="provider-chip">Tinfoil</span>
+          <span class="provider-chip">Phala</span>
+          <span class="provider-chip">Venice</span>
+          <span class="provider-chip note">available through trustedrouter/e2e</span>
+        </div>
       </div>
 
       <div class="card block">
@@ -341,7 +350,7 @@ const ROUTES = {
  cheap: {id:'trustedrouter/cheap', n:'cheap', tier:3, pin:0.01,  pout:0.01,  desc:'Cheapest capable model, confidential compute + E2EE. ~$0.01 / Mtok.'},
  fusion:{id:'trustedrouter/fusion',n:'fusion',tier:0, pin:0,     pout:0,     desc:'Fuses several open models into one answer — aims to beat any single frontier model.'},
  zdr:   {id:'trustedrouter/zdr',   n:'zdr',   tier:3, pin:0.04,  pout:0.11,  desc:'Pool restricted to Zero Data Retention + confidential providers only.'},
- e2e:   {id:'trustedrouter/e2e',   n:'e2e',   tier:3, pin:0.04,  pout:0.11,  desc:'End-to-end encrypted open-weight pool.'},
+ e2e:   {id:'trustedrouter/e2e',   n:'e2e',   tier:3, pin:0.04,  pout:0.11,  desc:'Tinfoil-first end-to-end encrypted provider pool, with Phala and Venice routes where available.'},
  free:  {id:'trustedrouter/free',  n:'free',  tier:0, pin:0.01,  pout:0.01,  desc:'Free tier for prototyping.'},
 };
 
@@ -639,15 +648,17 @@ function whyLabel(m,qual){
 
 function pickRoute(){
   const p=state.pref;
-  if(state.priv>=3 && p.c>=0.4) return ROUTES.cheap;
-  if(state.priv>=3) return ROUTES.zdr;
+  if(state.priv>=3 && p.c>=0.5) return ROUTES.cheap;
+  if(state.priv>=3) return ROUTES.e2e;
   if(p.s>=0.45 && state.intel==='frontier') return ROUTES.fusion;
   if(p.c>=0.5) return ROUTES.cheap;
   return ROUTES.auto;
 }
 function renderPitch(qual){
   const primary=pickRoute();
-  const second = primary.id===ROUTES.auto.id ? ROUTES.fusion : ROUTES.auto;
+  const second = primary.id===ROUTES.auto.id
+    ? ROUTES.fusion
+    : (state.priv>=3 && primary.id!==ROUTES.cheap.id ? ROUTES.cheap : ROUTES.auto);
   const t1=TIER[primary.tier], t2=TIER[second.tier];
   const noFit = !qual || !qual.length;
   const pitch=document.getElementById('pitch');
@@ -675,7 +686,7 @@ function renderPitch(qual){
     </div>
     <div class="trust">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 8-8 10-4.5-2-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
-      Attested gateway · stores no prompt or output content · one bill across Anthropic, OpenAI, Google, DeepSeek, Moonshot, Z.ai, MiniMax, Mistral &amp; more.
+      Attested gateway · stores no prompt or output content · E2E pool includes Tinfoil, Phala, and Venice routes where available.
     </div>`;
 }
 
@@ -744,7 +755,7 @@ function buildExamples(){
 const PRIV_NOTE = {
  0:['#aebfd9','All 222 models, every provider. The gateway is still attested — but the upstream may retain prompts per its own policy.'],
  2:['#7fe5f5','Zero Data Retention (ZDR): ~107 routes whose providers contractually retain nothing — your prompts and outputs are never logged or stored once the response is returned. The default for production.'],
- 3:['#7ee6a3','End to End Encrypted (TEE: Trusted Execution Environment): ~30 routes that run inside a TEE — your prompt is encrypted end to end and the hardware attests that even the provider can\'t read it. For regulated / sensitive data.'],
+ 3:['#7ee6a3','End to End Encrypted (TEE): Tinfoil-first routes, plus Phala and Venice where available. Prompts are encrypted end to end into attested provider compute for regulated or sensitive data.'],
 };
 function updatePrivNote(){
   const [c,txt]=PRIV_NOTE[state.priv];

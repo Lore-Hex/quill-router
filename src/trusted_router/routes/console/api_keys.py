@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
-from trusted_router.money import dollars_to_microdollars
+from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.storage import STORE, ApiKey
 
@@ -66,12 +66,39 @@ def register(app: FastAPI) -> None:
             api_base_url=settings.api_base_url,
         ))
 
+    @app.post("/console/api-keys/{key_hash}/limit")
+    async def console_update_api_key_limit(
+        ctx: ConsoleDep,
+        key_hash: str,
+        limit: str = Form(""),
+    ) -> Response:
+        key = STORE.get_key_by_hash(key_hash)
+        if key is None or key.workspace_id != ctx.workspace.id:
+            raise HTTPException(status_code=404, detail="API key not found")
+
+        limit_microdollars = None
+        normalized_limit = limit.strip()
+        if normalized_limit:
+            try:
+                limit_microdollars = dollars_to_microdollars(normalized_limit)
+            except ValueError:
+                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+            if limit_microdollars < 0:
+                return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+
+        STORE.update_key(key_hash, {"limit_microdollars": limit_microdollars})
+        return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
+
 
 def _key_view(key: ApiKey) -> dict[str, Any]:
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
     return {
+        "hash": key.hash,
         "name": key.name,
         "label": key.label,
         "limit_display": limit_display,
+        "limit_input": (
+            "" if key.limit_microdollars is None else microdollars_to_decimal(key.limit_microdollars)
+        ),
         "disabled": key.disabled,
     }

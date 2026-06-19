@@ -750,6 +750,92 @@ def test_console_create_api_key_uses_decimal_money_and_rejects_invalid_limit(
     assert [key.name for key in STORE.list_keys(workspace_id)] == ["precise-limit"]
 
 
+def test_console_api_key_budget_can_be_edited_and_cleared(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    created = client.post(
+        "/console/api-keys",
+        data={"name": "editable-budget", "limit": "1"},
+    )
+    assert created.status_code == 200
+    workspace_id = next(iter(STORE.workspaces))
+    key = STORE.list_keys(workspace_id)[0]
+
+    page = client.get("/console/api-keys")
+    assert page.status_code == 200
+    assert f'action="/console/api-keys/{key.hash}/limit"' in page.text
+    assert 'value="1"' in page.text
+
+    updated = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "25.123456"},
+        follow_redirects=False,
+    )
+    assert updated.status_code == 303
+    assert updated.headers["location"] == "/console/api-keys?saved=limit"
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars == 25_123_456
+
+    updated_page = client.get("/console/api-keys")
+    assert 'value="25.123456"' in updated_page.text
+    assert "Current: $25.12" in updated_page.text
+
+    cleared = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": ""},
+        follow_redirects=False,
+    )
+    assert cleared.status_code == 303
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars is None
+
+
+def test_console_api_key_budget_rejects_invalid_and_wrong_workspace_keys(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, raw_token = console_session
+    session = STORE.get_auth_session_by_raw(raw_token)
+    assert session is not None
+    workspace_id = STORE.list_workspaces_for_user(session.user_id)[0].id
+    _, key = STORE.create_api_key(
+        workspace_id=workspace_id,
+        name="unchanged-budget",
+        creator_user_id=session.user_id,
+        limit_microdollars=12_000_000,
+    )
+
+    invalid = client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "not-a-number"},
+        follow_redirects=False,
+    )
+    assert invalid.status_code == 303
+    assert invalid.headers["location"] == "/console/api-keys?error=limit"
+    refreshed = STORE.get_key_by_hash(key.hash)
+    assert refreshed is not None
+    assert refreshed.limit_microdollars == 12_000_000
+
+    other_user = STORE.ensure_user("other@example.com", email="other@example.com")
+    other_workspace = STORE.create_workspace(owner_user_id=other_user.id, name="Other Workspace")
+    _, other_key = STORE.create_api_key(
+        workspace_id=other_workspace.id,
+        name="other-workspace-key",
+        creator_user_id=other_user.id,
+    )
+    blocked = client.post(
+        f"/console/api-keys/{other_key.hash}/limit",
+        data={"limit": "99"},
+        follow_redirects=False,
+    )
+    assert blocked.status_code == 404
+    other_refreshed = STORE.get_key_by_hash(other_key.hash)
+    assert other_refreshed is not None
+    assert other_refreshed.limit_microdollars is None
+
+
 def test_console_workspace_selector_persists_session_workspace(
     console_session: tuple[TestClient, str],
 ) -> None:

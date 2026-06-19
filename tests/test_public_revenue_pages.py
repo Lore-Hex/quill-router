@@ -88,6 +88,8 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert 'id="tr-choose-frame"' in response.text
     # The renamed privacy tier and the router-route payload show up in copy.
     assert "Trusted Execution Environment" in response.text
+    assert "Tinfoil" in response.text
+    assert "trustedrouter/e2e" in response.text
     assert "trustedrouter/fusion" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
     # into static/og/, so _og_image_url resolves it rather than the default).
@@ -105,6 +107,9 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "iron triangle of LLMs" in response.text
     # Embedded-mode hook that hides the in-app header inside the iframe.
     assert "tr-choose-height" in response.text
+    assert "Tinfoil-first TEE providers" in response.text
+    assert "trustedrouter/e2e" in response.text
+    assert "E2E pool includes Tinfoil" in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
     assert "priv: 0," in response.text
@@ -122,6 +127,10 @@ def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "final_models" in response.text
     assert "fallback_final_models" in response.text
     assert "synthesize_non_refusals" in response.text
+    assert "MiniMax M3 as the judge and final synthesizer" in response.text
+    assert "minimax/minimax-m3" in response.text
+    assert "google/gemma-4-31b-it" in response.text
+    assert "deepseek/deepseek-v4-pro" in response.text
     assert "Final fallback can switch before the first byte" in response.text
     assert "TrustedRouter stores billing and route metadata, not prompt/output content by default." in response.text
     assert "OpenAI compatible API" in response.text

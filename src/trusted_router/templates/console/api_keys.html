@@ -20,7 +20,7 @@
     <form class="form" method="post" action="/console/api-keys">
       <div class="row">
         <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-        <label>Monthly limit (USD, optional)<input name="limit" type="number" min="0" step="1" placeholder="e.g. 100"></label>
+        <label>Budget (USD, optional)<input name="limit" type="number" min="0" step="0.000001" placeholder="e.g. 100"></label>
       </div>
       <button class="btn primary" type="submit">Create key</button>
     </form>
@@ -30,13 +30,19 @@
   <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} active</span></div>
   <div class="panel-body">
     <table>
-      <thead><tr><th>Name</th><th>Label</th><th>Limit</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Label</th><th>Budget</th><th>Status</th></tr></thead>
       <tbody>
         {% for k in keys %}
         <tr>
           <td>{{ k.name }}</td>
           <td><code>{{ k.label }}</code></td>
-          <td>{{ k.limit_display }}</td>
+          <td>
+            <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
+              <input name="limit" type="number" min="0" step="0.000001" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Budget for {{ k.name }}">
+              <button class="btn" type="submit">Save</button>
+            </form>
+            <div class="key-budget-current">Current: {{ k.limit_display }}</div>
+          </td>
           <td>{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
         </tr>
         {% endfor %}

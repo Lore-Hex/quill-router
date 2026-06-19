@@ -13,7 +13,8 @@
     <ul class="check-list">
       <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
       <li>Judge and final models can each have up to 8 fallbacks.</li>
-      <li><code>synthesize_non_refusals</code> removes panel refusals before synthesis.</li>
+      <li>Default quality mode uses MiniMax M3 as the judge and final synthesizer.</li>
+      <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
       <li>TrustedRouter stores billing and route metadata, not prompt/output content by default.</li>
     </ul>
     <div class="hero-actions">
@@ -35,17 +36,6 @@
       "type": "trustedrouter:fusion",
       "parameters": {
         "preset": "quality",
-        "selection_strategy": "synthesize_non_refusals",
-        "judge_models": [
-          "~anthropic/claude-latest",
-          "~google/gemini-pro-latest",
-          "~zai/glm-latest"
-        ],
-        "fallback_final_models": [
-          "~anthropic/claude-latest",
-          "~google/gemini-pro-latest",
-          "~kimi/latest"
-        ],
         "max_completion_tokens": 800
       }
     }]
@@ -61,7 +51,9 @@
       <p>
         The gateway runs <code>analysis_models</code> in order, with normal
         provider fallback for each route. A failed or empty panel member is
-        recorded as a panel failure, not a client-visible failure.
+        recorded as a panel failure, not a client-visible failure. The quality
+        preset uses MiniMax M3, Kimi latest, GLM latest, Gemma 4 31B, and
+        DeepSeek V4 Pro unless you supply a custom panel.
       </p>
     </div>
     <div class="marketing-card">
@@ -69,7 +61,8 @@
       <p>
         The judge sees the panel outputs and produces an internal assessment.
         <code>judge_models</code>, <code>fallback_judges</code>, and
-        <code>judges</code> are aliases for the same ordered fallback list.
+        <code>judges</code> are aliases for the same ordered fallback list. If
+        omitted, MiniMax M3 is the first judge for the quality preset.
       </p>
     </div>
     <div class="marketing-card">
@@ -78,6 +71,7 @@
         The final model writes the visible answer. <code>final_models</code>,
         <code>fallback_final_models</code>, <code>synthesis_models</code>, and
         <code>synthesizer_models</code> are aliases for that ordered fallback list.
+        If omitted, MiniMax M3 is the first final synthesizer for the quality preset.
       </p>
     </div>
   </div>
@@ -90,12 +84,12 @@
       <table class="data-table">
         <thead><tr><th>Name</th><th>Use</th></tr></thead>
         <tbody>
-          <tr><td><code>preset</code></td><td><code>quality</code> or <code>budget</code>. Sets a built-in panel unless <code>analysis_models</code> is supplied.</td></tr>
+          <tr><td><code>preset</code></td><td><code>quality</code> or <code>budget</code>. Sets a built-in panel unless <code>analysis_models</code> is supplied. Quality defaults to an open-model panel: MiniMax M3, Kimi latest, GLM latest, Gemma 4 31B, and DeepSeek V4 Pro.</td></tr>
           <tr><td><code>analysis_models</code></td><td>Panel model IDs. Must contain 1 to 8 models.</td></tr>
           <tr><td><code>model</code></td><td>Legacy shorthand for the judge/final model when specific fallback lists are not supplied.</td></tr>
-          <tr><td><code>selection_strategy</code></td><td><code>synthesize</code>, <code>synthesize_non_refusals</code>, <code>first_success</code>, or <code>first_non_refusal</code>.</td></tr>
-          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>.</td></tr>
-          <tr><td><code>final_models</code></td><td>Ordered final-answer fallback list. Also accepts <code>fallback_final_models</code>, <code>synthesis_models</code>, or <code>synthesizer_models</code>.</td></tr>
+          <tr><td><code>selection_strategy</code></td><td><code>synthesize</code>, <code>synthesize_non_refusals</code>, <code>first_success</code>, or <code>first_non_refusal</code>. The default is <code>synthesize_non_refusals</code>.</td></tr>
+          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>. Defaults to the first panel model, which is MiniMax M3 in quality mode.</td></tr>
+          <tr><td><code>final_models</code></td><td>Ordered final-answer fallback list. Also accepts <code>fallback_final_models</code>, <code>synthesis_models</code>, or <code>synthesizer_models</code>. Defaults to the first panel model, which is MiniMax M3 in quality mode.</td></tr>
           <tr><td><code>max_completion_tokens</code></td><td>Caps each internal panel, judge, and final completion.</td></tr>
           <tr><td><code>max_tool_calls</code></td><td>Reserved compatibility field, accepted from 1 to 16.</td></tr>
         </tbody>
@@ -104,7 +98,10 @@
         Exact model IDs are accepted. The gateway also resolves <code>~anthropic/claude-latest</code>,
         <code>~openai/gpt-latest</code>, <code>~google/gemini-pro-latest</code>,
         <code>~google/gemini-flash-latest</code>, <code>~kimi/latest</code>, and
-        <code>~zai/glm-latest</code> aliases.
+        <code>~zai/glm-latest</code> aliases. The built-in quality panel uses
+        <code>minimax/minimax-m3</code>, <code>~kimi/latest</code>,
+        <code>~zai/glm-latest</code>, <code>google/gemma-4-31b-it</code>, and
+        <code>deepseek/deepseek-v4-pro</code>.
       </p>
     </div>
   </div>
@@ -124,17 +121,6 @@ client = TrustedRouter(api_key=os.environ["TRUSTEDROUTER_API_KEY"])
 result = client.fusion(
     messages=[{"role": "user", "content": "Give the best answer."}],
     preset="quality",
-    selection_strategy="synthesize_non_refusals",
-    fallback_judges=[
-        "~anthropic/claude-latest",
-        "~google/gemini-pro-latest",
-        "~zai/glm-latest",
-    ],
-    fallback_final_models=[
-        "~anthropic/claude-latest",
-        "~google/gemini-pro-latest",
-        "~kimi/latest",
-    ],
 )
 
 print(result.choices[0].message.content)</code></pre>
@@ -149,18 +135,7 @@ const client = new TrustedRouter({
 
 const result = await client.fusion({
   messages: [{ role: "user", content: "Give the best answer." }],
-  preset: "quality",
-  selectionStrategy: "synthesize_non_refusals",
-  fallbackJudges: [
-    "~anthropic/claude-latest",
-    "~google/gemini-pro-latest",
-    "~zai/glm-latest"
-  ],
-  fallbackFinalModels: [
-    "~anthropic/claude-latest",
-    "~google/gemini-pro-latest",
-    "~kimi/latest"
-  ]
+  preset: "quality"
 });
 
 console.log(result.choices[0].message.content);</code></pre>
