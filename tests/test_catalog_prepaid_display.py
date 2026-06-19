@@ -102,6 +102,32 @@ def test_nebius_deprecation_does_not_remove_other_provider_routes() -> None:
     assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
 
 
+def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
+    deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
+    tinfoil_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "tinfoil"
+    ]
+
+    assert tinfoil_endpoints
+    for endpoint in tinfoil_endpoints:
+        assert endpoint.model_id not in deprecated
+        assert endpoint.upstream_id not in deprecated
+
+    glm_52 = MODEL_ENDPOINTS["z-ai/glm-5.2@tinfoil/prepaid"]
+    gemma4 = MODEL_ENDPOINTS["google/gemma-4-31b-it@tinfoil/prepaid"]
+    assert glm_52.upstream_id == "glm-5-2"
+    assert gemma4.upstream_id == "gemma4-31b"
+
+    assert "z-ai/glm-5.1@tinfoil/prepaid" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.1@tinfoil/byok" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/prepaid" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-instruct@tinfoil/byok" not in MODEL_ENDPOINTS
+    # Provider-scoped deprecation: non-Tinfoil routes for these model families
+    # remain available when their provider still serves them.
+    assert "z-ai/glm-5.1@zai/prepaid" in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-instruct@phala/prepaid" in MODEL_ENDPOINTS
+
+
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
     gemini_lite_preview = MODEL_ENDPOINTS[

@@ -1,0 +1,41 @@
+{
+  "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil announced GLM 5.2 as native glm-5-2 and the GLM 5.1 / Qwen3-VL-30B deprecations for 2026-06-22; this manifest publishes the current replacement routes while deprecated Tinfoil routes are filtered in catalog.py.",
+  "provider": "tinfoil",
+  "source": "https://inference.tinfoil.sh/v1/models",
+  "generated_at": "2026-06-18T00:00:00Z",
+  "model_count": 2,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5-2",
+      "display_name": "Tinfoil GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 384000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 5250000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma4-31b",
+      "display_name": "Tinfoil Gemma 4 31B",
+      "title": "google/gemma-4-31b-it",
+      "context_length": 256000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1000000,
+      "model_type": "chat",
+      "features": ["multimodal"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}

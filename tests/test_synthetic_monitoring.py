@@ -1566,6 +1566,11 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert not (
         set(pool.get("nebius", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["nebius"]
     )
+    assert not (
+        set(pool.get("tinfoil", [])) & _PROVIDER_DEPRECATED_UPSTREAM_MODELS["tinfoil"]
+    )
+    assert "z-ai/glm-5.2" in pool.get("tinfoil", [])
+    assert "google/gemma-4-31b-it" in pool.get("tinfoil", [])
 
 
 def test_choose_rotation_target_two_stage_pick() -> None:

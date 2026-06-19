@@ -26,6 +26,8 @@ URL = "https://inference.tinfoil.sh/v1/models"
 
 EXPECTED_MODELS = [
     "moonshotai/kimi-k2.6",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
 ]
 
 # Tinfoil-native id → TR-canonical id. Most are renamings to align
@@ -34,10 +36,12 @@ EXPECTED_MODELS = [
 # match the upstream model.
 _NATIVE_TO_OR_ID = {
     "kimi-k2-6": "moonshotai/kimi-k2.6",
+    "kimi-k2-7-code": "moonshotai/kimi-k2.7-code",
     "glm-5-1": "z-ai/glm-5.1",
+    "glm-5-2": "z-ai/glm-5.2",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
-    "gemma4-31b": "google/gemma-4-31b",
-    "qwen3-vl-30b": "qwen/qwen3-vl-30b",
+    "gemma4-31b": "google/gemma-4-31b-it",
+    "qwen3-vl-30b": "qwen/qwen3-vl-30b-a3b-instruct",
     "llama3-3-70b": "meta-llama/llama-3.3-70b-instruct",
     "gpt-oss-120b": "openai/gpt-oss-120b",
     "voxtral-small-24b": "mistralai/voxtral-small-24b",

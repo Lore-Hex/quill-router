@@ -1046,6 +1046,19 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "zai-org/GLM-5",
         }
     ),
+    # Tinfoil notified users that GLM 5.1 and Qwen3-VL-30B are deprecated on
+    # 2026-06-22. Keep this provider-scoped: GLM 5.1 / Qwen routes on other
+    # providers are unaffected, while Tinfoil callers should move to glm-5-2
+    # and gemma4-31b respectively.
+    "tinfoil": frozenset(
+        {
+            "z-ai/glm-5.1",
+            "glm-5-1",
+            "qwen/qwen3-vl-30b",
+            "qwen/qwen3-vl-30b-a3b-instruct",
+            "qwen3-vl-30b",
+        }
+    ),
 }
 
 
@@ -1342,6 +1355,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "gemini",
         "fireworks",
         "zai",
+        "tinfoil",
         "xiaomi",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
@@ -1397,7 +1411,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             context_length = _as_positive_int(raw_model.get("context_length"))
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
 
-            models[model_id] = Model(
+            model = Model(
                 id=model_id,
                 name=name,
                 provider=publisher,
@@ -1418,6 +1432,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 price_tiers=tiers,
                 published_price_tiers=tiers,
             )
+            models.setdefault(model_id, model)
 
             if provider_slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
                 credits_id = f"{model_id}@{provider_slug}/prepaid"
