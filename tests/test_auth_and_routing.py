@@ -327,6 +327,40 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
     ]
 
 
+def test_gateway_authorize_expands_fast_router_pool() -> None:
+    app = create_app(Settings(environment="test"))
+    local_client = TestClient(app)
+    created = local_client.post(
+        "/v1/keys",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"name": "gateway"},
+    ).json()
+
+    authorize = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "trustedrouter/fast",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["requested_model"] == "trustedrouter/fast"
+    assert data["model"] == "cerebras/gpt-oss-120b"
+    assert data["provider"] == "cerebras"
+    route_candidates = data["route_candidates"]
+    assert [item["model"] for item in route_candidates[:4]] == [
+        "cerebras/gpt-oss-120b",
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "xiaomi/mimo-v2-flash",
+        "cerebras/zai-glm-4.7",
+    ]
+    assert {item["provider"] for item in route_candidates} == {"cerebras", "xiaomi"}
+
+
 def test_default_regions_only_list_actual_attested_deployments(client: TestClient) -> None:
     """We only enumerate regions where a Confidential Space VM is
     actually deployed. Listing aspirational regions broke TLS for

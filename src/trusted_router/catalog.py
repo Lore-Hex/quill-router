@@ -800,6 +800,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
 AUTO_MODEL_ID = "trustedrouter/auto"
 FREE_MODEL_ID = "trustedrouter/free"
 CHEAP_MODEL_ID = "trustedrouter/cheap"
+FAST_MODEL_ID = "trustedrouter/fast"
 EU_MODEL_ID = "trustedrouter/eu"
 ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
@@ -810,6 +811,7 @@ META_MODEL_IDS = frozenset(
         AUTO_MODEL_ID,
         FREE_MODEL_ID,
         CHEAP_MODEL_ID,
+        FAST_MODEL_ID,
         EU_MODEL_ID,
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
@@ -897,6 +899,15 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
+    ),
+    FAST_MODEL_ID: Model(
+        id=FAST_MODEL_ID,
+        name="TrustedRouter Fast",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     EU_MODEL_ID: Model(
         id=EU_MODEL_ID,
@@ -1897,6 +1908,29 @@ def cheap_candidate_models(limit: int = 8) -> list[Model]:
     return sorted(by_provider.values(), key=_price_sort_key)[:limit]
 
 
+def fast_candidate_models(limit: int = 8) -> list[Model]:
+    # Low-latency pool: Cerebras first, then Xiaomi MiMo's UltraSpeed tier.
+    # Keep this as a small explicit pool so callers who choose
+    # `trustedrouter/fast` do not accidentally get a cheap-but-slower model
+    # just because it has a lower token price.
+    preferred_ids = [
+        "cerebras/gpt-oss-120b",
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "xiaomi/mimo-v2-flash",
+        "cerebras/zai-glm-4.7",
+    ]
+    candidates: list[Model] = []
+    seen: set[str] = set()
+    for model_id in preferred_ids:
+        model = MODELS.get(model_id)
+        if model is not None and _is_regular_chat_model(model):
+            candidates.append(model)
+            seen.add(model.id)
+        if len(candidates) >= limit:
+            return candidates
+    return candidates
+
+
 def monitor_candidate_models(limit: int = 12) -> list[Model]:
     # Order is ASCENDING by cost-per-probe so the steady-state synthetic
     # spend hits the cheapest reliable model first; rollover only
@@ -2054,6 +2088,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return free_candidate_models()
     if model_id == CHEAP_MODEL_ID:
         return cheap_candidate_models()
+    if model_id == FAST_MODEL_ID:
+        return fast_candidate_models()
     if model_id == EU_MODEL_ID:
         return eu_candidate_models()
     if model_id == ZDR_MODEL_ID:
@@ -2072,6 +2108,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "free_pool"
     if model_id == CHEAP_MODEL_ID:
         return "cheap_pool"
+    if model_id == FAST_MODEL_ID:
+        return "fast_pool"
     if model_id == EU_MODEL_ID:
         return "eu_pool"
     if model_id == ZDR_MODEL_ID:
