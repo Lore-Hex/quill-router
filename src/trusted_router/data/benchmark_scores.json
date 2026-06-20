@@ -157,7 +157,7 @@
     {
       "model_id": "openai/gpt-5.5",
       "benchmark_key": "ifeval",
-      "score": 96.4,
+      "score": 95.2,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
@@ -166,9 +166,9 @@
       "config_note": "100-prompt subset, 0-shot; Google's deterministic verifiers (no judge); score = avg of strict/loose x prompt/instruction"
     },
     {
-      "model_id": "tencent/hy3-preview",
+      "model_id": "z-ai/glm-5.2",
       "benchmark_key": "ifeval",
-      "score": 92.0,
+      "score": 93.9,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
@@ -179,7 +179,18 @@
     {
       "model_id": "anthropic/claude-opus-4.8",
       "benchmark_key": "ifeval",
-      "score": 91.1,
+      "score": 91.5,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "100-prompt subset, 0-shot; Google's deterministic verifiers (no judge); score = avg of strict/loose x prompt/instruction"
+    },
+    {
+      "model_id": "tencent/hy3-preview",
+      "benchmark_key": "ifeval",
+      "score": 91.2,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
@@ -190,7 +201,7 @@
     {
       "model_id": "deepseek/deepseek-v4-flash",
       "benchmark_key": "ifeval",
-      "score": 50.6,
+      "score": 50.2,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
@@ -210,7 +221,7 @@
       "config_note": "100-prompt subset, 0-shot; Google's deterministic verifiers (no judge); score = avg of strict/loose x prompt/instruction"
     },
     {
-      "model_id": "deepseek/deepseek-v4-pro",
+      "model_id": "moonshotai/kimi-k2.7-code",
       "benchmark_key": "ifeval",
       "score": 36.5,
       "unit": "percent",
@@ -221,9 +232,9 @@
       "config_note": "100-prompt subset, 0-shot; Google's deterministic verifiers (no judge); score = avg of strict/loose x prompt/instruction"
     },
     {
-      "model_id": "moonshotai/kimi-k2.7-code",
+      "model_id": "deepseek/deepseek-v4-pro",
       "benchmark_key": "ifeval",
-      "score": 36.5,
+      "score": 36.2,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/ifeval_panel.json",
@@ -531,7 +542,7 @@
     {
       "model_id": "deepseek/deepseek-v4-pro",
       "benchmark_key": "simpleqa_verified",
-      "score": 55.0,
+      "score": 55.1,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -553,7 +564,7 @@
     {
       "model_id": "z-ai/glm-5.1",
       "benchmark_key": "simpleqa_verified",
-      "score": 49.7,
+      "score": 51.6,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -564,7 +575,18 @@
     {
       "model_id": "moonshotai/kimi-k2.6",
       "benchmark_key": "simpleqa_verified",
-      "score": 49.2,
+      "score": 49.7,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "250 closed-book questions, no tools; GPT-4.1 autorater (Google's exact prompt); 32768-token budget"
+    },
+    {
+      "model_id": "z-ai/glm-5.2",
+      "benchmark_key": "simpleqa_verified",
+      "score": 48.3,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -575,7 +597,7 @@
     {
       "model_id": "z-ai/glm-5",
       "benchmark_key": "simpleqa_verified",
-      "score": 46.1,
+      "score": 46.5,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -586,7 +608,7 @@
     {
       "model_id": "moonshotai/kimi-k2.7-code",
       "benchmark_key": "simpleqa_verified",
-      "score": 39.8,
+      "score": 41.1,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -597,7 +619,7 @@
     {
       "model_id": "deepseek/deepseek-v4-flash",
       "benchmark_key": "simpleqa_verified",
-      "score": 37.7,
+      "score": 37.2,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -608,7 +630,7 @@
     {
       "model_id": "xiaomi/mimo-v2.5-pro",
       "benchmark_key": "simpleqa_verified",
-      "score": 34.0,
+      "score": 33.6,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -619,7 +641,7 @@
     {
       "model_id": "tencent/hy3-preview",
       "benchmark_key": "simpleqa_verified",
-      "score": 27.6,
+      "score": 28.0,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -630,7 +652,7 @@
     {
       "model_id": "deepseek/deepseek-v3.2",
       "benchmark_key": "simpleqa_verified",
-      "score": 26.0,
+      "score": 25.9,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -652,7 +674,7 @@
     {
       "model_id": "xiaomi/mimo-v2.5",
       "benchmark_key": "simpleqa_verified",
-      "score": 21.1,
+      "score": 20.9,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
       "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
@@ -661,15 +683,169 @@
       "config_note": "250 closed-book questions, no tools; GPT-4.1 autorater (Google's exact prompt); 32768-token budget"
     },
     {
-      "model_id": "z-ai/glm-5.2",
-      "benchmark_key": "simpleqa_verified",
-      "score": 6.1,
+      "model_id": "anthropic/claude-opus-4.8",
+      "benchmark_key": "mmlu_pro",
+      "score": 88.0,
       "unit": "percent",
       "source_name": "TrustedRouter Benchmarks",
-      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/simpleqa_verified_panel.json",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
       "source_class": "T",
       "as_of_date": "2026-06-18",
-      "config_note": "250 closed-book questions, no tools; GPT-4.1 autorater (Google's exact prompt); 32768-token budget"
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "moonshotai/kimi-k2.6",
+      "benchmark_key": "mmlu_pro",
+      "score": 87.3,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "moonshotai/kimi-k2.7-code",
+      "benchmark_key": "mmlu_pro",
+      "score": 86.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "openai/gpt-5.5",
+      "benchmark_key": "mmlu_pro",
+      "score": 85.3,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "deepseek/deepseek-v3.2",
+      "benchmark_key": "mmlu_pro",
+      "score": 84.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "deepseek/deepseek-v4-flash",
+      "benchmark_key": "mmlu_pro",
+      "score": 84.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "minimax/minimax-m3",
+      "benchmark_key": "mmlu_pro",
+      "score": 84.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "deepseek/deepseek-v4-pro",
+      "benchmark_key": "mmlu_pro",
+      "score": 83.3,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "xiaomi/mimo-v2.5",
+      "benchmark_key": "mmlu_pro",
+      "score": 83.3,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "google/gemini-3.1-pro-preview",
+      "benchmark_key": "mmlu_pro",
+      "score": 83.3,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "xiaomi/mimo-v2.5-pro",
+      "benchmark_key": "mmlu_pro",
+      "score": 82.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "z-ai/glm-5",
+      "benchmark_key": "mmlu_pro",
+      "score": 82.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "z-ai/glm-5.2",
+      "benchmark_key": "mmlu_pro",
+      "score": 82.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "z-ai/glm-5.1",
+      "benchmark_key": "mmlu_pro",
+      "score": 80.7,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
+    },
+    {
+      "model_id": "tencent/hy3-preview",
+      "benchmark_key": "mmlu_pro",
+      "score": 76.0,
+      "unit": "percent",
+      "source_name": "TrustedRouter Benchmarks",
+      "source_url": "https://github.com/Lore-Hex/trustedrouter-benchmarks/blob/main/results/mmlu_pro_panel.json",
+      "source_class": "T",
+      "as_of_date": "2026-06-18",
+      "config_note": "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"
     }
   ]
 }

@@ -41,6 +41,8 @@ BENCHMARKS = [
      "34 Exercism exercises (Python), pass@1, real unit tests (no judge)"),
     ("simpleqa_verified", "SIMPLEQA_VERIFIED", 0, "results/simpleqa_verified_panel.json",
      "250 closed-book questions, no tools; GPT-4.1 autorater (Google's exact prompt); 32768-token budget"),
+    ("mmlu_pro", "MMLU_PRO", 0, "results/mmlu_pro_panel.json",
+     "200-question stride-sampled subset (TIGER-Lab/MMLU-Pro), 10-choice CoT, letter-match; no judge"),
 ]
 
 
