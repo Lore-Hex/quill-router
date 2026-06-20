@@ -134,6 +134,16 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "nowhere near the target" in frontier_blog.text
 
 
+def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
+    response = client.get("/blog")
+    assert response.status_code == 200
+    assert 'class="blog-thumb"' in response.text
+    assert 'src="https://trustedrouter.com/static/og/blog/fusion-is-two-jobs.png"' in response.text
+    assert 'alt="Fusion is two jobs, and no model wins both visual summary"' in response.text
+    assert 'href="/blog/fusion-is-two-jobs"' in response.text
+    assert response.text.count('class="blog-thumb"') >= 10
+
+
 def _json_ld(html: str) -> dict[str, object]:
     match = re.search(
         r'<script type="application/ld\+json">(?P<payload>.*?)</script>',

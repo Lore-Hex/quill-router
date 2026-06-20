@@ -242,6 +242,12 @@ class PublicPage:
     faq_items: tuple[tuple[str, str], ...] = ()
 
 
+@dataclass(frozen=True)
+class BlogIndexPost:
+    post: BlogPost
+    image: str
+
+
 PUBLIC_PAGES: dict[str, PublicPage] = {
     "choose": PublicPage(
         template="public/choose.html",
@@ -692,6 +698,10 @@ def _blog_og_image(settings: Settings, post: BlogPost) -> str:
     return f"https://{settings.trusted_domain}/og.png"
 
 
+def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
+    return tuple(BlogIndexPost(post=post, image=_blog_og_image(settings, post)) for post in BLOG_POSTS)
+
+
 def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
     graph = [node for node in nodes if node]
     if len(graph) == 1:
@@ -860,7 +870,7 @@ def public_blog_index_html(settings: Settings) -> str:
             "Engineering notes on attested AI routing, Fusion evals, provider privacy, "
             "and open source model routing."
         ),
-        posts=BLOG_POSTS,
+        posts=_blog_index_posts(settings),
         json_ld_blob=_blog_index_json_ld(settings),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,

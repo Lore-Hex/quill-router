@@ -6,18 +6,22 @@
 {% block body %}
 {% include "public/_hiring_banner.html" %}
 <style>
-  .blog-index { max-width: 720px; margin: 0 auto; padding: 6px 4px 56px; }
+  .blog-index { max-width: 980px; margin: 0 auto; padding: 6px 4px 56px; }
   .blog-index-head h1 { font-size: 40px; line-height: 1.12; letter-spacing: -0.015em;
     margin: 4px 0 10px; max-width: none; color: var(--inkstrong); }
   .blog-index-head p { color: var(--muted); font-size: 18px; line-height: 1.55;
     margin: 0 0 8px; max-width: 620px; }
   .blog-list { margin-top: 14px; }
-  .blog-list-item { padding: 26px 0; border-top: 1px solid var(--line); }
+  .blog-list-item { display: grid; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+    gap: 22px; align-items: start; padding: 26px 0; border-top: 1px solid var(--line); }
   .blog-list-item:first-child { border-top: none; }
+  .blog-thumb { display: block; aspect-ratio: 1200 / 630; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .blog-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .blog-list-item .blog-date { color: var(--muted); font-size: 13.5px;
     letter-spacing: 0.02em; text-transform: uppercase; }
   .blog-list-item h2 { font-size: 27px; line-height: 1.2; letter-spacing: -0.01em;
-    margin: 7px 0 8px; }
+    margin: 5px 0 8px; }
   .blog-list-item h2 a { color: var(--inkstrong); text-decoration: none; }
   .blog-list-item h2 a:hover { color: var(--blue); }
   .blog-list-item .blog-dek { font-family: Charter, "Iowan Old Style", Georgia, serif;
@@ -28,6 +32,7 @@
   .blog-list-item .blog-src a { color: var(--muted); }
   @media (max-width: 700px) {
     .blog-index-head h1 { font-size: 32px; }
+    .blog-list-item { grid-template-columns: 1fr; gap: 12px; }
     .blog-list-item h2 { font-size: 23px; }
   }
 </style>
@@ -37,15 +42,26 @@
     <p>{{ description }}</p>
   </div>
   <div class="blog-list">
-    {% for post in posts %}
+    {% for item in posts %}
     <article class="blog-list-item">
-      <div class="blog-date">{{ post.published_date }}</div>
-      <h2><a href="{{ post.href }}">{{ post.title }}</a></h2>
-      <p class="blog-dek">{{ post.description }}</p>
-      <a class="blog-readmore" href="{{ post.href }}">Read &rarr;</a>
-      {% if post.source_url %}
-      <p class="blog-src">Source: <a href="{{ post.source_url }}">{{ post.source_label }}</a></p>
-      {% endif %}
+      <a class="blog-thumb" href="{{ item.post.href }}" aria-label="Read {{ item.post.title }}">
+        <img
+          src="{{ item.image }}"
+          alt="{{ item.post.title }} visual summary"
+          loading="{{ 'eager' if loop.first else 'lazy' }}"
+          decoding="async"
+          {% if loop.first %}fetchpriority="high"{% endif %}
+        >
+      </a>
+      <div class="blog-copy">
+        <div class="blog-date">{{ item.post.published_date }}</div>
+        <h2><a href="{{ item.post.href }}">{{ item.post.title }}</a></h2>
+        <p class="blog-dek">{{ item.post.description }}</p>
+        <a class="blog-readmore" href="{{ item.post.href }}">Read &rarr;</a>
+        {% if item.post.source_url %}
+        <p class="blog-src">Source: <a href="{{ item.post.source_url }}">{{ item.post.source_label }}</a></p>
+        {% endif %}
+      </div>
     </article>
     {% endfor %}
   </div>
