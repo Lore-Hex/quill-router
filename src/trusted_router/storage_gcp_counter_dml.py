@@ -66,11 +66,15 @@ def release_credit(
     For refund pass actual=0 (releases the hold, books no usage). Returns the
     modified-row count; the caller asserts == 1 (a 0-row release must not be
     silently accepted — it strands the hold and loses the charge).
+
+    The `reserved >= @hold` guard makes a stale/double release a 0-row no-op
+    instead of driving `reserved` negative (which would inflate apparent
+    availability) — row-count 0 trips the caller's assert/alarm.
     """
     sql = (
         "UPDATE tr_credit_balance "
         "SET reserved = reserved - @hold, total_usage = total_usage + @actual "
-        "WHERE workspace_id=@ws AND shard=@shard"
+        "WHERE workspace_id=@ws AND shard=@shard AND reserved >= @hold"
     )
     return transaction.execute_update(
         sql,

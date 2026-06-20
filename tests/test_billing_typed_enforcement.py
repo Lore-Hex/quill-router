@@ -123,7 +123,45 @@ def test_release_credit_settles_and_refunds() -> None:
 
     # a second hold, then refund (actual=0): release hold, book nothing
     assert store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, 200_000))
-    store._database.run_in_transaction(lambda t: release_credit(t, pt, ws, 200_000, 0))
+    refund_count = store._database.run_in_transaction(
+        lambda t: release_credit(t, pt, ws, 200_000, 0)
+    )
+    assert refund_count == 1
     typed = _typed(db, ws)
     assert typed["reserved"] == 0
     assert typed["total_usage"] == 480_000  # unchanged by the refund
+
+
+def test_release_underflow_is_noop_not_negative() -> None:
+    """A stale/double release of more than `reserved` must be a 0-row no-op, not
+    drive reserved negative (which would inflate apparent availability)."""
+    store, db, _ = make_fake_store()
+    ws = "ws_underflow"
+    _seed_credit(store, ws, 1_000_000)
+    pt = store._param_types
+    assert store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, 200_000))
+
+    count = store._database.run_in_transaction(
+        lambda t: release_credit(t, pt, ws, 500_000, 0)  # more than the 200k held
+    )
+    assert count == 0  # trips the caller's must-be-1 assert/alarm
+    assert _typed(db, ws)["reserved"] == 200_000  # unchanged, never negative
+
+
+def test_dml_after_mutation_is_rejected() -> None:
+    """The fake fails fast on DML+mutation mixing (forbidden, docs §5), so future
+    authorize/settle code that accidentally mixes is caught in tests."""
+    import pytest
+
+    store, _db, _ = make_fake_store()
+    ws = "ws_mix"
+    _seed_credit(store, ws, 1_000_000)
+    pt = store._param_types
+
+    def mix(transaction) -> None:
+        store._write_entity_tx(transaction, "credit", ws, CreditAccount(
+            workspace_id=ws, total_credits_microdollars=1_000_000))  # mutation
+        reserve_credit(transaction, pt, ws, 100_000)  # DML -> must raise
+
+    with pytest.raises(RuntimeError, match="DML.*mutation"):
+        store._database.run_in_transaction(mix)

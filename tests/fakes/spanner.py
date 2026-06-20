@@ -128,6 +128,10 @@ class _FakeTransaction:
         self.read_versions: dict[tuple[str, str], int] = {}
         self.read_snapshots: dict[tuple[str, str], str | None] = {}
         self.pending_writes: list[tuple] = []
+        # DML+mutation mixing is forbidden in one transaction (real Spanner
+        # buffers mutations after DML and DML can't see them); fail fast if both.
+        self._did_mutation = False
+        self._did_dml = False
 
     def execute_sql(
         self,
@@ -139,14 +143,13 @@ class _FakeTransaction:
         return _execute_sql(self.db, self, sql, params or {})
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
-        """In-txn view of a typed row (read-your-writes) + record read version."""
+        """In-txn view of a typed row for DML: sees prior DML writes
+        (update_typed = read-your-writes) but NOT buffered mutations (real Spanner
+        DML can't see mutations; mixing is rejected in execute_update). Records
+        the read version on first read for conflict detection."""
         for op in reversed(self.pending_writes):
             if op[0] == "update_typed" and op[1] == table and op[2] == pk:
                 return dict(op[3])
-            if op[0] == "upsert_typed" and op[1] == table and (op[3][0], op[3][1]) == pk:
-                return dict(zip(op[2], op[3], strict=True))
-            if op[0] == "delete_typed" and op[1] == table and op[2] == pk:
-                return None
         version_key = ("typed", table, pk)
         if version_key not in self.read_versions:
             self.read_versions[version_key] = self.db.typed_versions.get((table, pk), 0)
@@ -162,6 +165,12 @@ class _FakeTransaction:
         and serialize via abort-retry), evaluates the WHERE predicate, and
         conditionally buffers the SET. Returns the modified-row count.
         """
+        if self._did_mutation:
+            raise RuntimeError(
+                "DML after a mutation in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_dml = True
         p = params or {}
         if "UPDATE tr_credit_balance SET reserved = reserved + @est" in sql:
             pk = (p["ws"], p["shard"])
@@ -176,7 +185,8 @@ class _FakeTransaction:
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)
-            if rec is None:
+            # mirrors the `AND reserved >= @hold` guard: underflow = 0-row no-op
+            if rec is None or rec["reserved"] < p["hold"]:
                 return 0
             new = dict(
                 rec,
@@ -190,6 +200,12 @@ class _FakeTransaction:
     def insert_or_update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
     ) -> None:
+        if self._did_dml:
+            raise RuntimeError(
+                "mutation after DML in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_mutation = True
         for value_tuple in values:
             if table == "tr_entities":
                 kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
@@ -198,6 +214,12 @@ class _FakeTransaction:
                 self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
     def delete(self, table: str, keyset: _KeySet) -> None:
+        if self._did_dml:
+            raise RuntimeError(
+                "mutation after DML in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_mutation = True
         for entry in keyset.keys:
             if table == "tr_entities":
                 kind, entity_id = entry[0], entry[1]
@@ -249,12 +271,15 @@ class _FakeBatch:
                     self.db.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    self.db.typed.setdefault(table, {})[
-                        (value_tuple[0], value_tuple[1])
-                    ] = dict(zip(columns, value_tuple, strict=True))
+                    pk = (value_tuple[0], value_tuple[1])
+                    self.db.typed.setdefault(table, {})[pk] = dict(
+                        zip(columns, value_tuple, strict=True)
+                    )
+                    self.db.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.db.typed.get(table, {}).pop(pk, None)
+                    self.db.typed_versions.pop((table, pk), None)
         return None
 
     def insert_or_update(
