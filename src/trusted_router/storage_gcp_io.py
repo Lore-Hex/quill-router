@@ -13,7 +13,7 @@ here, just plumbing.
 
 from __future__ import annotations
 
-import random
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -55,7 +55,8 @@ def run_in_transaction_with_retry(database: Any, func: Callable[..., T], *, atte
         except Aborted:
             if attempt >= attempts:
                 raise
-            time.sleep(delay + random.uniform(0.0, delay))
+            jitter = secrets.randbelow(1_000_000) / 1_000_000 * delay
+            time.sleep(delay + jitter)
             delay = min(delay * 2.0, 2.0)
     raise AssertionError("unreachable")  # pragma: no cover
 
