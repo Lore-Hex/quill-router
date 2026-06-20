@@ -103,7 +103,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
 test("homepage exposes privacy, no-subscription, and open-source claims", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByText("Privacy-first AI gateway").first()).toBeVisible();
+  await expect(page.getByText("End-to-End Encrypted AI gateway").first()).toBeVisible();
   await expect(page.getByText("No subscription required")).toBeVisible();
   await expect(page.getByText("inspect, fork, or run yourself")).toBeVisible();
   await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();

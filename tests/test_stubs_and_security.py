@@ -176,6 +176,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     # static routing-diagram hero + reliability stat cards replace the
     # animated orbital scene and the world map.
     assert "Get API key" in dashboard.text
+    assert "End-to-End Encrypted AI gateway" in dashboard.text
     assert "ATTESTED GATEWAY" in dashboard.text  # routing-diagram hero
     assert "Live regions" in dashboard.text  # reliability stats
     assert "trustedrouter/auto" in dashboard.text  # routing model
