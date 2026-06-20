@@ -14,7 +14,13 @@ import json
 
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import CreditAccount, GatewayAuthorization
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
+from trusted_router.storage_gcp_counter_reconcile import backfill, compare
+from trusted_router.storage_gcp_counters import (
+    CREDIT_BALANCE_TABLE,
+    KEY_LIMIT_TABLE,
+    credit_drift,
+    key_drift,
+)
 
 
 def _json_credit(db, workspace_id: str) -> dict:
@@ -194,3 +200,99 @@ def test_uncapped_key_mirrors_null_limit() -> None:
     )
     assert _typed_key(db, key.hash)["limit_micro"] is None
     assert_key_mirror_matches(db, key.hash)
+
+
+# ── Step 2: backfill + drift comparator ─────────────────────────────────────
+
+def test_credit_drift_pure() -> None:
+    body = {
+        "total_credits_microdollars": 1_000_000,
+        "total_usage_microdollars": 200_000,
+        "reserved_microdollars": 50_000,
+    }
+    match = {"total_credits": 1_000_000, "total_usage": 200_000, "reserved": 50_000}
+    assert credit_drift(body, match) == {}
+    assert credit_drift(body, None)  # missing mirror = drift on all fields
+    bad = dict(match, reserved=49_999)
+    drift = credit_drift(body, bad)
+    assert drift == {"reserved": (50_000, 49_999)}
+
+
+def test_key_drift_pure_handles_null_limit_and_bool() -> None:
+    body = {
+        "limit_microdollars": None,
+        "usage_microdollars": 10,
+        "byok_usage_microdollars": 0,
+        "reserved_microdollars": 0,
+        "include_byok_in_limit": True,
+    }
+    typed = {"limit_micro": None, "usage": 10, "byok_usage": 0, "reserved": 0, "include_byok": True}
+    assert key_drift(body, typed) == {}
+    assert "include_byok" in key_drift(body, dict(typed, include_byok=False))
+
+
+def test_compare_clean_after_mirror() -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_cmp"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=3_000_000)
+    )
+    _raw, key = store.api_keys.create(
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=2_000_000
+    )
+    store.reserve(ws, key.hash, 400_000)
+    store.reserve_key_limit(key.hash, 400_000, usage_type="Credits")
+
+    report = compare(store)
+    assert report.clean, report.summary() + f" {report.samples}"
+    assert report.credit_rows == 1
+    assert report.key_rows == 1
+
+
+def test_compare_detects_corrupted_typed_row() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_corrupt"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    assert compare(store).clean
+    # Corrupt the typed mirror out from under the JSON authority.
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] = 999_999
+    report = compare(store)
+    assert not report.clean
+    assert report.credit_drift == 1
+    assert f"credit:{ws}" in report.samples
+
+
+def test_backfill_fills_pre_flag_rows() -> None:
+    """Rows written before the flag was on have no typed mirror; backfill adds
+    them and compare goes clean."""
+    store, db, _ = make_fake_store()
+    store._counter_mirror_enabled = False  # simulate pre-flag writes (JSON only)
+    ws = "ws_backfill"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=2_500_000)
+    )
+    _raw, key = store.api_keys.create(
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=1_000_000
+    )
+    # No typed rows yet -> compare sees missing-mirror drift.
+    assert CREDIT_BALANCE_TABLE not in db.typed
+    assert not compare(store).clean
+
+    counts = backfill(store)
+    assert counts == {"credit": 1, "api_key": 1}
+    report = compare(store)
+    assert report.clean, report.summary() + f" {report.samples}"
+
+
+def test_backfill_is_idempotent() -> None:
+    store, _db, _ = make_fake_store()
+    store._counter_mirror_enabled = False
+    ws = "ws_idem"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    backfill(store)
+    backfill(store)  # second run must not corrupt anything
+    assert compare(store).clean

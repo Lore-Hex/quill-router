@@ -219,6 +219,14 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Typed counter tables (Step 2 reconcile scans): SELECT <cols> FROM <table>.
+    for typed_table in ("tr_credit_balance", "tr_key_limit"):
+        if f"FROM {typed_table}" in sql:
+            cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+            return [
+                [rec.get(c) for c in cols]
+                for rec in db.typed.get(typed_table, {}).values()
+            ]
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:

@@ -130,3 +130,55 @@ def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module:
         table,
         spanner_module.KeySet(keys=[(entity_id, UNSHARDED) for entity_id in entity_ids]),
     )
+
+
+# ── Step 2: reconciliation (pure drift detection) ───────────────────────────
+# The per-write mirror is atomic (same txn) so it cannot tear, but an INDEPENDENT
+# full-row comparator is the red-team P2 defense: it catches a missing typed row
+# (pre-flag rows not yet backfilled) or any value divergence, which the per-write
+# path is structurally blind to. The flip to typed enforcement (Step 3) is gated
+# on this comparator reading zero across production.
+
+# JSON body field  ->  typed-table column
+CREDIT_DRIFT_FIELDS = {
+    "total_credits_microdollars": "total_credits",
+    "total_usage_microdollars": "total_usage",
+    "reserved_microdollars": "reserved",
+}
+KEY_DRIFT_FIELDS = {
+    "limit_microdollars": "limit_micro",
+    "usage_microdollars": "usage",
+    "byok_usage_microdollars": "byok_usage",
+    "reserved_microdollars": "reserved",
+    "include_byok_in_limit": "include_byok",
+}
+
+
+def _drift(json_body: dict, typed_row: dict | None, fields: dict[str, str]) -> dict:
+    """Return {field: (json_value, typed_value)} for every mismatch.
+
+    typed_row None (missing mirror) reports every field as drift. A normalized
+    int/bool/None compare avoids false positives from JSON 0-vs-missing.
+    """
+    out: dict[str, tuple] = {}
+    for json_field, typed_col in fields.items():
+        jv = json_body.get(json_field, 0)
+        tv = None if typed_row is None else typed_row.get(typed_col)
+        # default-0 for int counters when the JSON omits the field
+        if jv is None and typed_col != "limit_micro":
+            jv = 0
+        if not isinstance(jv, bool) and isinstance(jv, int | type(None)) and tv is not None:
+            tv = int(tv) if not isinstance(tv, bool) and tv is not None else tv
+        if jv != tv:
+            out[typed_col] = (jv, tv)
+    return out
+
+
+def credit_drift(json_body: dict, typed_row: dict | None) -> dict:
+    """Mismatched credit counters between the authoritative JSON and typed row."""
+    return _drift(json_body, typed_row, CREDIT_DRIFT_FIELDS)
+
+
+def key_drift(json_body: dict, typed_row: dict | None) -> dict:
+    """Mismatched api_key counters between the authoritative JSON and typed row."""
+    return _drift(json_body, typed_row, KEY_DRIFT_FIELDS)
