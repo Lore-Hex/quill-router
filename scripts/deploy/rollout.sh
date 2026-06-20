@@ -46,6 +46,7 @@ add_secret_env_if_exists "KIMI_API_KEY" "trustedrouter-kimi-api-key"
 add_secret_env_if_exists "ZAI_API_KEY" "trustedrouter-zai-api-key"
 add_secret_env_if_exists "TOGETHER_API_KEY" "trustedrouter-together-api-key"
 add_secret_env_if_exists "FIREWORKS_API_KEY" "trustedrouter-fireworks-api-key"
+add_secret_env_if_exists "DEEPINFRA_API_KEY" "trustedrouter-deepinfra-api-key"
 # 2026-05 — six new backends.
 add_secret_env_if_exists "GROK_API_KEY" "trustedrouter-grok-api-key"
 add_secret_env_if_exists "NOVITA_API_KEY" "trustedrouter-novita-api-key"
