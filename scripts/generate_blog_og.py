@@ -38,15 +38,23 @@ def card_svg(inner_svg: str) -> str:
     """Wrap a post's <svg> in a 1200x630 white card, fitted and centered."""
     open_tag = _OPEN.match(inner_svg).group(0)
     body = inner_svg[len(open_tag):]
+    # drop the inline brand mark so the card's own (cleaner, edge-placed) one is the only one
+    body = re.sub(r"<text[^>]*>TrustedRouter\.com</text>", "", body)
     # strip sizing/style so our nested placement controls layout; keep viewBox + the rest
     open_tag = _WH.sub("", _STYLE.sub("", open_tag))
+    # reserve a strip at the bottom for the TrustedRouter.com brand mark
     nested = (
-        f'<svg x="{PAD}" y="{PAD}" width="{W - 2 * PAD}" height="{H - 2 * PAD}" '
+        f'<svg x="{PAD}" y="{PAD}" width="{W - 2 * PAD}" height="{H - 2 * PAD - 40}" '
         f'preserveAspectRatio="xMidYMid meet"{open_tag[4:-1]}>{body}'
+    )
+    brand = (
+        f'<text x="{W - PAD}" y="{H - 16}" text-anchor="end" '
+        f'font-family="Inter,Arial,sans-serif" font-size="24" font-weight="700" '
+        f'fill="#0f6e56">TrustedRouter.com</text>'
     )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">'
-        f'<rect width="{W}" height="{H}" fill="#ffffff"/>{nested}</svg>'
+        f'<rect width="{W}" height="{H}" fill="#ffffff"/>{nested}{brand}</svg>'
     )
 
 
