@@ -47,6 +47,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
+from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
@@ -181,6 +182,14 @@ class SpannerBigtableStore:
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
+
+        # Step 1 of the typed-counter migration: when enabled, every credit /
+        # api_key write also mirrors exact values onto the typed tables in the
+        # same transaction (see storage_gcp_counters + docs). Default OFF so the
+        # code is safe to deploy BEFORE the DDL is applied; flip
+        # TR_TYPED_COUNTER_MIRROR=1 only once tr_credit_balance / tr_key_limit
+        # exist, or the mirror writes would fail the billing transactions.
+        self._counter_mirror_enabled = os.environ.get("TR_TYPED_COUNTER_MIRROR", "") == "1"
         io = SpannerIO(
             database=self._database,
             write_entity_batch=self._write_entity_batch,
@@ -1211,6 +1220,10 @@ class SpannerBigtableStore:
             columns=("kind", "id", "body", "updated_at"),
             values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
         )
+        # Step 1: mirror hot counters (credit / api_key) onto typed tables in the
+        # SAME batch so they commit atomically with the authoritative JSON row.
+        if getattr(self, "_counter_mirror_enabled", False):
+            mirror_counter_write(batch, kind, entity_id, value, self._spanner.COMMIT_TIMESTAMP)
 
     def _write_entity_tx(self, transaction: Any, kind: str, entity_id: str, value: Any) -> None:
         transaction.insert_or_update(
@@ -1218,6 +1231,9 @@ class SpannerBigtableStore:
             columns=("kind", "id", "body", "updated_at"),
             values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
         )
+        # Step 1: mirror hot counters in the SAME transaction (atomic, no tear).
+        if getattr(self, "_counter_mirror_enabled", False):
+            mirror_counter_write(transaction, kind, entity_id, value, self._spanner.COMMIT_TIMESTAMP)
 
     def _delete_entities(self, kind: str, entity_ids: list[str]) -> None:
         with self._database.batch() as batch:
