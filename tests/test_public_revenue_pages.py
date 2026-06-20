@@ -127,7 +127,10 @@ def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "final_models" in response.text
     assert "fallback_final_models" in response.text
     assert "synthesize_non_refusals" in response.text
-    assert "MiniMax M3 as the judge and final synthesizer" in response.text
+    assert "judges with Kimi K2.7 Code" in response.text
+    assert "synthesizes with GLM 5.2" in response.text
+    assert "moonshotai/kimi-k2.7-code" in response.text
+    assert "z-ai/glm-5.2" in response.text
     assert "minimax/minimax-m3" in response.text
     assert "google/gemma-4-31b-it" in response.text
     assert "deepseek/deepseek-v4-pro" in response.text
