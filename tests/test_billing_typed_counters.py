@@ -296,3 +296,46 @@ def test_backfill_is_idempotent() -> None:
     backfill(store)
     backfill(store)  # second run must not corrupt anything
     assert compare(store).clean
+
+
+def test_compare_detects_orphan_typed_row() -> None:
+    """A typed row with no JSON authority (e.g. missed delete) must be flagged,
+    not silently CLEAN (codex Step-2 #1)."""
+    store, db, _ = make_fake_store()
+    ws = "ws_orphan"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    assert compare(store).clean
+    # Authoritative JSON row vanishes but the typed mirror lingers.
+    del db.rows[("credit", ws)]
+    report = compare(store)
+    assert not report.clean
+    assert report.credit_orphans == 1
+    assert f"credit-orphan:{ws}" in report.samples
+
+
+def test_drift_no_false_positive_on_omitted_legacy_fields() -> None:
+    """Legacy JSON bodies that omit limit_microdollars / include_byok_in_limit
+    must not read as drift against a correctly-defaulted typed row."""
+    # Uncapped, include_byok defaulted true, counters absent.
+    legacy_key = {"hash": "k", "usage_microdollars": 0}
+    typed = {"limit_micro": None, "usage": 0, "byok_usage": 0, "reserved": 0, "include_byok": True}
+    assert key_drift(legacy_key, typed) == {}
+    # bool vs int representation of include_byok must compare equal.
+    assert key_drift(legacy_key, dict(typed, include_byok=1)) == {}
+
+
+def test_backfill_dry_run_still_compares_and_signals_drift() -> None:
+    """--dry-run must not look like a clean gate: compare still runs (codex #4)."""
+    store, db, _ = make_fake_store()
+    store._counter_mirror_enabled = False
+    ws = "ws_dry"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    # dry-run plans the row but writes nothing -> drift remains.
+    counts = backfill(store, dry_run=True)
+    assert counts["credit"] == 1
+    assert CREDIT_BALANCE_TABLE not in db.typed
+    assert not compare(store).clean

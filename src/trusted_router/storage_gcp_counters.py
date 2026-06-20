@@ -139,36 +139,47 @@ def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module:
 # path is structurally blind to. The flip to typed enforcement (Step 3) is gated
 # on this comparator reading zero across production.
 
-# JSON body field  ->  typed-table column
-CREDIT_DRIFT_FIELDS = {
-    "total_credits_microdollars": "total_credits",
-    "total_usage_microdollars": "total_usage",
-    "reserved_microdollars": "reserved",
-}
-KEY_DRIFT_FIELDS = {
-    "limit_microdollars": "limit_micro",
-    "usage_microdollars": "usage",
-    "byok_usage_microdollars": "byok_usage",
-    "reserved_microdollars": "reserved",
-    "include_byok_in_limit": "include_byok",
-}
+# (json body field, typed column, default-when-the-json-field-is-absent).
+# Defaults MUST match the model + the mirror writer so legacy JSON rows that
+# omit a field don't read as false drift: int counters -> 0, an uncapped key's
+# limit -> None, include_byok -> True.
+CREDIT_DRIFT_FIELDS = (
+    ("total_credits_microdollars", "total_credits", 0),
+    ("total_usage_microdollars", "total_usage", 0),
+    ("reserved_microdollars", "reserved", 0),
+)
+KEY_DRIFT_FIELDS = (
+    ("limit_microdollars", "limit_micro", None),
+    ("usage_microdollars", "usage", 0),
+    ("byok_usage_microdollars", "byok_usage", 0),
+    ("reserved_microdollars", "reserved", 0),
+    ("include_byok_in_limit", "include_byok", True),
+)
 
 
-def _drift(json_body: dict, typed_row: dict | None, fields: dict[str, str]) -> dict:
-    """Return {field: (json_value, typed_value)} for every mismatch.
+def _norm(value: Any, default: Any) -> Any:
+    """Normalize a value to its default's type for an apples-to-apples compare.
 
-    typed_row None (missing mirror) reports every field as drift. A normalized
-    int/bool/None compare avoids false positives from JSON 0-vs-missing.
+    bool default -> bool; int default -> int; None-default (nullable limit) keeps
+    None or coerces to int. A None json value falls back to the field default.
+    """
+    if isinstance(default, bool):
+        return default if value is None else bool(value)
+    if value is None:
+        return None if default is None else int(default)
+    return int(value)
+
+
+def _drift(json_body: dict, typed_row: dict | None, fields: tuple) -> dict:
+    """Return {typed_col: (json_value, typed_value)} for every mismatch.
+
+    typed_row None (missing mirror) reports drift on every field whose default is
+    not None (so a missing mirror is always flagged via at least one field).
     """
     out: dict[str, tuple] = {}
-    for json_field, typed_col in fields.items():
-        jv = json_body.get(json_field, 0)
-        tv = None if typed_row is None else typed_row.get(typed_col)
-        # default-0 for int counters when the JSON omits the field
-        if jv is None and typed_col != "limit_micro":
-            jv = 0
-        if not isinstance(jv, bool) and isinstance(jv, int | type(None)) and tv is not None:
-            tv = int(tv) if not isinstance(tv, bool) and tv is not None else tv
+    for json_field, typed_col, default in fields:
+        jv = _norm(json_body.get(json_field, default), default)
+        tv = None if typed_row is None else _norm(typed_row.get(typed_col), default)
         if jv != tv:
             out[typed_col] = (jv, tv)
     return out

@@ -43,17 +43,17 @@ def main() -> int:
     if args.backfill:
         counts = backfill(store, dry_run=args.dry_run)
         verb = "would mirror" if args.dry_run else "mirrored"
-        print(f"backfill: {verb} credit={counts['credit']} api_key={counts['api_key']}")
+        # NOTE: this counts every JSON row that would be (re)mirrored, not only
+        # missing/stale ones — it is NOT a drift signal. The comparator below is.
+        print(f"backfill: {verb} credit={counts['credit']} api_key={counts['api_key']} rows")
 
-    # Always finish with a comparator reading unless a pure dry-run backfill.
-    if not (args.backfill and args.dry_run):
-        report = compare(store)
-        print(report.summary())
-        for entity_id, drift in report.samples.items():
-            print(f"  DRIFT {entity_id}: {drift}")
-        if not report.clean:
-            return 1
-    return 0
+    # ALWAYS finish with the comparator — including after --dry-run — so the exit
+    # code can never be mistaken for a clean-gate signal (codex Step-2 #4).
+    report = compare(store)
+    print(report.summary())
+    for entity_id, drift in report.samples.items():
+        print(f"  DRIFT {entity_id}: {drift}")
+    return 0 if report.clean else 1
 
 
 if __name__ == "__main__":

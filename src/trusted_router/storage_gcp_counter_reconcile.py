@@ -20,6 +20,7 @@ scan plus a direct typed-table scan.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,60 +45,90 @@ class DriftReport:
     key_rows: int = 0
     credit_drift: int = 0
     key_drift: int = 0
+    credit_orphans: int = 0  # typed rows with no JSON authority
+    key_orphans: int = 0
     # up to a few examples for triage: {id: {col: (json, typed)}}
     samples: dict[str, dict] = field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
-        return self.credit_drift == 0 and self.key_drift == 0
+        return (
+            self.credit_drift == 0
+            and self.key_drift == 0
+            and self.credit_orphans == 0
+            and self.key_orphans == 0
+        )
 
     def summary(self) -> str:
         return (
-            f"credit: {self.credit_drift}/{self.credit_rows} drift | "
-            f"key: {self.key_drift}/{self.key_rows} drift | "
+            f"credit: {self.credit_drift}/{self.credit_rows} drift, "
+            f"{self.credit_orphans} orphan | "
+            f"key: {self.key_drift}/{self.key_rows} drift, {self.key_orphans} orphan | "
             f"{'CLEAN' if self.clean else 'DRIFT'}"
         )
 
 
-def _scan_typed(store: Any, sql: str, key_col: str, value_cols: list[str]) -> dict[str, dict]:
-    with store._database.snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(sql))
+def _scan_json(snapshot: Any, kind: str, id_field: str, pt: Any) -> dict[str, dict]:
     out: dict[str, dict] = {}
-    for row in rows:
-        record = dict(zip([key_col, *value_cols], row, strict=True))
-        out[record[key_col]] = record
+    for row in snapshot.execute_sql(
+        "SELECT body FROM tr_entities WHERE kind=@kind",
+        params={"kind": kind},
+        param_types={"kind": pt.STRING},
+    ):
+        body = json.loads(row[0])
+        out[body[id_field]] = body
     return out
 
 
 def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
-    """Scan JSON vs typed and report per-row counter drift. Read-only."""
-    report = DriftReport()
+    """Scan JSON vs typed in ONE consistent snapshot and report drift + orphans.
 
-    json_credit = {b["workspace_id"]: b for b in store._list_entities("credit", cls=dict)}
-    typed_credit = _scan_typed(
-        store, _CREDIT_TYPED_SCAN, "workspace_id",
-        ["total_credits", "total_usage", "reserved"],
-    )
+    Read-only. A single multi-use snapshot reads JSON and typed at the same
+    timestamp, so a live dual-write in flight cannot produce a transient false
+    positive (codex Step-2 #3). Reports value drift, missing mirrors, AND orphan
+    typed rows that have no JSON authority (codex Step-2 #1).
+    """
+    report = DriftReport()
+    pt = store._param_types
+
+    with store._database.snapshot(multi_use=True) as snapshot:
+        json_credit = _scan_json(snapshot, "credit", "workspace_id", pt)
+        json_key = _scan_json(snapshot, "api_key", "hash", pt)
+        typed_credit = {
+            r[0]: {"total_credits": r[1], "total_usage": r[2], "reserved": r[3]}
+            for r in snapshot.execute_sql(_CREDIT_TYPED_SCAN)
+        }
+        typed_key = {
+            r[0]: {
+                "limit_micro": r[1], "usage": r[2], "byok_usage": r[3],
+                "reserved": r[4], "include_byok": r[5],
+            }
+            for r in snapshot.execute_sql(_KEY_TYPED_SCAN)
+        }
+
+    def _sample(key: str, value: dict) -> None:
+        if len(report.samples) < max_samples:
+            report.samples[key] = value
+
     report.credit_rows = len(json_credit)
     for ws_id, body in json_credit.items():
         drift = credit_drift(body, typed_credit.get(ws_id))
         if drift:
             report.credit_drift += 1
-            if len(report.samples) < max_samples:
-                report.samples[f"credit:{ws_id}"] = drift
+            _sample(f"credit:{ws_id}", drift)
+    for ws_id in typed_credit.keys() - json_credit.keys():
+        report.credit_orphans += 1
+        _sample(f"credit-orphan:{ws_id}", {"orphan_typed_row": True})
 
-    json_key = {b["hash"]: b for b in store._list_entities("api_key", cls=dict)}
-    typed_key = _scan_typed(
-        store, _KEY_TYPED_SCAN, "key_hash",
-        ["limit_micro", "usage", "byok_usage", "reserved", "include_byok"],
-    )
     report.key_rows = len(json_key)
     for key_hash, body in json_key.items():
         drift = key_drift(body, typed_key.get(key_hash))
         if drift:
             report.key_drift += 1
-            if len(report.samples) < max_samples:
-                report.samples[f"api_key:{key_hash}"] = drift
+            _sample(f"api_key:{key_hash}", drift)
+    for key_hash in typed_key.keys() - json_key.keys():
+        report.key_orphans += 1
+        _sample(f"api_key-orphan:{key_hash}", {"orphan_typed_row": True})
 
     return report
 

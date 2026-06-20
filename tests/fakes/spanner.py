@@ -100,7 +100,8 @@ class FakeSpannerDatabase:
                     self.typed.get(table, {}).pop(pk, None)
             return True
 
-    def snapshot(self) -> _FakeSnapshot:
+    def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
+        # accepts multi_use=True etc.; the fake allows repeated reads regardless
         return _FakeSnapshot(self)
 
     def batch(self) -> _FakeBatch:
