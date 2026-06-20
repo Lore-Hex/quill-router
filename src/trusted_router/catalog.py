@@ -806,6 +806,10 @@ ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 FUSION_MODEL_ID = "trustedrouter/fusion"
+# Code-tuned fusion variant: same panel/synthesizers as fusion, but judged by
+# kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
+# enclave, cmd/enclave/fusion.go).
+FUSION_CODE_MODEL_ID = "trustedrouter/fusion-code"
 META_MODEL_IDS = frozenset(
     {
         AUTO_MODEL_ID,
@@ -817,6 +821,7 @@ META_MODEL_IDS = frozenset(
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
         FUSION_MODEL_ID,
+        FUSION_CODE_MODEL_ID,
     }
 )
 
@@ -948,6 +953,15 @@ MODELS: dict[str, Model] = {
     FUSION_MODEL_ID: Model(
         id=FUSION_MODEL_ID,
         name="TrustedRouter Fusion",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    FUSION_CODE_MODEL_ID: Model(
+        id=FUSION_CODE_MODEL_ID,
+        name="TrustedRouter Fusion Code",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2118,7 +2132,7 @@ def _meta_route_kind(model_id: str) -> str:
         return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
-    if model_id == FUSION_MODEL_ID:
+    if model_id in (FUSION_MODEL_ID, FUSION_CODE_MODEL_ID):
         return "fusion_panel"
     if model_id == AUTO_MODEL_ID:
         return "auto_pool"
