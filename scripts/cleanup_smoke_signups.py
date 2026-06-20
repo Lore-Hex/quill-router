@@ -124,8 +124,12 @@ def main() -> int:
             from google.cloud.spanner_v1 import KeySet
             for ak_id in _ak_ids:
                 transaction.delete("tr_entities", KeySet(keys=[("api_key", ak_id)]))
+                # Keep the typed counter mirror in sync (Step 1 migration): a
+                # leftover tr_key_limit row would be exact-mirror drift.
+                transaction.delete("tr_key_limit", KeySet(keys=[(ak_id, 0)]))
             for wsid in _ws_ids:
                 transaction.delete("tr_entities", KeySet(keys=[("credit", wsid)]))
+                transaction.delete("tr_credit_balance", KeySet(keys=[(wsid, 0)]))
                 transaction.delete("tr_entities", KeySet(keys=[("workspace", wsid)]))
             for m_id in _member_ids:
                 transaction.delete("tr_entities", KeySet(keys=[("member", m_id)]))

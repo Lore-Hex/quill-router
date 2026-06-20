@@ -46,6 +46,9 @@ class FakeSpannerDatabase:
 
     def __init__(self, *, ready_barrier: threading.Barrier | None = None) -> None:
         self.rows: dict[tuple[str, str], _Row] = {}
+        # Typed counter tables (tr_credit_balance, tr_key_limit): table ->
+        # (pk col0, pk col1) -> {column: value}. PK is the first two columns.
+        self.typed: dict[str, dict[tuple, dict]] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -87,9 +90,18 @@ class FakeSpannerDatabase:
                 elif op[0] == "delete":
                     _, _table, kind, entity_id = op
                     self.rows.pop((kind, entity_id), None)
+                elif op[0] == "upsert_typed":
+                    _, table, columns, value_tuple = op
+                    self.typed.setdefault(table, {})[
+                        (value_tuple[0], value_tuple[1])
+                    ] = dict(zip(columns, value_tuple, strict=True))
+                elif op[0] == "delete_typed":
+                    _, table, pk = op
+                    self.typed.get(table, {}).pop(pk, None)
             return True
 
-    def snapshot(self) -> _FakeSnapshot:
+    def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
+        # accepts multi_use=True etc.; the fake allows repeated reads regardless
         return _FakeSnapshot(self)
 
     def batch(self) -> _FakeBatch:
@@ -116,13 +128,19 @@ class _FakeTransaction:
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
     ) -> None:
         for value_tuple in values:
-            kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
-            self.pending_writes.append(("upsert", table, kind, entity_id, body))
+            if table == "tr_entities":
+                kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
+                self.pending_writes.append(("upsert", table, kind, entity_id, body))
+            else:
+                self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:
-            kind, entity_id = entry[0], entry[1]
-            self.pending_writes.append(("delete", table, kind, entity_id))
+            if table == "tr_entities":
+                kind, entity_id = entry[0], entry[1]
+                self.pending_writes.append(("delete", table, kind, entity_id))
+            else:
+                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
 
 
 class _FakeSnapshot:
@@ -166,19 +184,33 @@ class _FakeBatch:
                 elif op[0] == "delete":
                     _, _table, kind, entity_id = op
                     self.db.rows.pop((kind, entity_id), None)
+                elif op[0] == "upsert_typed":
+                    _, table, columns, value_tuple = op
+                    self.db.typed.setdefault(table, {})[
+                        (value_tuple[0], value_tuple[1])
+                    ] = dict(zip(columns, value_tuple, strict=True))
+                elif op[0] == "delete_typed":
+                    _, table, pk = op
+                    self.db.typed.get(table, {}).pop(pk, None)
         return None
 
     def insert_or_update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
     ) -> None:
         for value_tuple in values:
-            kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
-            self.pending_writes.append(("upsert", table, kind, entity_id, body))
+            if table == "tr_entities":
+                kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
+                self.pending_writes.append(("upsert", table, kind, entity_id, body))
+            else:
+                self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:
-            kind, entity_id = entry[0], entry[1]
-            self.pending_writes.append(("delete", table, kind, entity_id))
+            if table == "tr_entities":
+                kind, entity_id = entry[0], entry[1]
+                self.pending_writes.append(("delete", table, kind, entity_id))
+            else:
+                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
 
 
 def _execute_sql(
@@ -188,6 +220,14 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Typed counter tables (Step 2 reconcile scans): SELECT <cols> FROM <table>.
+    for typed_table in ("tr_credit_balance", "tr_key_limit"):
+        if f"FROM {typed_table}" in sql:
+            cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+            return [
+                [rec.get(c) for c in cols]
+                for rec in db.typed.get(typed_table, {}).values()
+            ]
     if "AND id=@id" in sql:
         entity_id = params["id"]
         if txn is not None:
@@ -280,6 +320,7 @@ def make_fake_store(
     store._param_types = _ParamTypes
     store._database = db
     store._bt_table = bt
+    store._counter_mirror_enabled = True  # exercise the Step-1 typed-counter mirror
     io = SpannerIO(
         database=db,
         write_entity_batch=store._write_entity_batch,
