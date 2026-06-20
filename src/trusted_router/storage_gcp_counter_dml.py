@@ -189,3 +189,107 @@ def release_key(
             "shard": param_types.INT64,
         },
     )
+
+
+# ── tr_reservation: durable hold record + scoped idempotency + settle claim ──
+# The reservation row records the EXACT holds taken at authorize (so settle
+# releases exactly those, codex#1 #5), the resolved usage types (hold vs settled,
+# codex#2 #2), and the scoped idempotency key. The atomic authorize INSERTs it;
+# settle/refund CLAIM it (first-writer-wins). All DML so it composes into the
+# DML-only authorize/settle transactions (no mutation mixing).
+
+RESERVATION_COLUMNS = (
+    "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
+    "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
+    "idempotency_scope", "idempotency_fingerprint", "expires_at",
+)
+
+
+def read_reservation_by_idempotency(
+    transaction: Any, param_types: Any, idempotency_scope: str
+) -> dict | None:
+    """Point-read the existing reservation for a scoped idempotency key (replay).
+
+    Returns the row (incl. fingerprint + the exact holds) or None. The caller
+    verifies the fingerprint and replays without re-debiting.
+    """
+    rows = list(
+        transaction.execute_sql(
+            "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
+            "hold_usage_type, idempotency_fingerprint, settled "
+            "FROM tr_reservation WHERE idempotency_scope=@scope",
+            params={"scope": idempotency_scope},
+            param_types={"scope": param_types.STRING},
+        )
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "reservation_id": r[0],
+        "credit_reserved_micro": r[1],
+        "key_reserved_micro": r[2],
+        "hold_usage_type": r[3],
+        "idempotency_fingerprint": r[4],
+        "settled": r[5],
+    }
+
+
+def read_reservation(transaction: Any, param_types: Any, reservation_id: str) -> dict | None:
+    """Point-read a reservation by id (for settle/refund and the reaper)."""
+    rows = list(
+        transaction.execute_sql(
+            "SELECT reservation_id, workspace_id, key_hash, ws_shard, key_shard, "
+            "credit_reserved_micro, key_reserved_micro, hold_usage_type, "
+            "settled_usage_type, settled "
+            "FROM tr_reservation WHERE reservation_id=@rid",
+            params={"rid": reservation_id},
+            param_types={"rid": param_types.STRING},
+        )
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    keys = (
+        "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
+        "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
+        "settled_usage_type", "settled",
+    )
+    return dict(zip(keys, r, strict=True))
+
+
+def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> None:
+    """INSERT a reservation row. Raises ALREADY_EXISTS (NOT retried) on a scoped
+    idempotency-key conflict — the caller converts that to the replay path."""
+    pt = param_types
+    types = {
+        "reservation_id": pt.STRING, "workspace_id": pt.STRING, "key_hash": pt.STRING,
+        "ws_shard": pt.INT64, "key_shard": pt.INT64,
+        "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
+        "hold_usage_type": pt.STRING, "idempotency_scope": pt.STRING,
+        "idempotency_fingerprint": pt.STRING, "expires_at": pt.TIMESTAMP,
+    }
+    cols = ", ".join(RESERVATION_COLUMNS)
+    binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
+    transaction.execute_update(
+        f"INSERT INTO tr_reservation ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
+        params={c: fields.get(c) for c in RESERVATION_COLUMNS},
+        param_types={c: types[c] for c in RESERVATION_COLUMNS},
+    )
+
+
+def claim_reservation(
+    transaction: Any, param_types: Any, reservation_id: str, *, settled_usage_type: str
+) -> bool:
+    """Claim a reservation for settle/refund: first caller wins.
+
+    True = this caller won the claim (row-count 1, settled flipped false->true);
+    False = already settled (row-count 0, a replay) -> do NOT touch counters.
+    """
+    count = transaction.execute_update(
+        "UPDATE tr_reservation SET settled=true, settled_usage_type=@sut "
+        "WHERE reservation_id=@rid AND settled=false",
+        params={"rid": reservation_id, "sut": settled_usage_type},
+        param_types={"rid": param_types.STRING, "sut": param_types.STRING},
+    )
+    return count == 1

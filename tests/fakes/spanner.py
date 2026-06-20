@@ -10,6 +10,7 @@ class _ParamTypes:
     STRING = "STRING"
     INT64 = "INT64"
     BOOL = "BOOL"
+    TIMESTAMP = "TIMESTAMP"
 
 
 @dataclass
@@ -35,6 +36,12 @@ class FakeAborted(Exception):
     pass
 
 
+class FakeAlreadyExists(Exception):
+    """Unique-index violation (e.g. duplicate idempotency_scope). Unlike Aborted,
+    run_in_transaction does NOT retry this — the caller must convert it to the
+    replay path (codex Step-3 #4)."""
+
+
 class FakeSpannerDatabase:
     """In-process Spanner replacement that simulates snapshot-isolation
     conflict-abort. Implements only the surface used by SpannerBigtableStore:
@@ -54,6 +61,11 @@ class FakeSpannerDatabase:
         # concurrent execute_update reservers serialize via abort-retry (the fake
         # analogue of the real row write lock).
         self.typed_versions: dict[tuple, int] = {}
+        # tr_reservation: 1-col PK (reservation_id) + a UNIQUE index on
+        # idempotency_scope. Modeled separately from the 2-col typed counters.
+        self.reservations: dict[str, dict] = {}
+        self.reservation_versions: dict[str, int] = {}
+        self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -84,6 +96,12 @@ class FakeSpannerDatabase:
             for key, observed in txn.read_versions.items():
                 if isinstance(key, tuple) and len(key) == 3 and key[0] == "typed":
                     current_version = self.typed_versions.get((key[1], key[2]), 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "res":
+                    current_version = self.reservation_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "idemp":
+                    # presence-based: a same-scope insert committed since our read
+                    # flips this, aborting the loser so its retry raises ALREADY_EXISTS
+                    current_version = 1 if key[1] in self.reservation_idemp else 0
                 else:
                     current = self.rows.get(key)
                     current_version = current.version if current is not None else 0
@@ -113,6 +131,18 @@ class FakeSpannerDatabase:
                     _, table, pk = op
                     self.typed.get(table, {}).pop(pk, None)
                     self.typed_versions.pop((table, pk), None)
+                elif op[0] == "insert_reservation":
+                    _, record = op
+                    rid = record["reservation_id"]
+                    self.reservations[rid] = record
+                    self.reservation_versions[rid] = new_version
+                    scope = record.get("idempotency_scope")
+                    if scope is not None:
+                        self.reservation_idemp[scope] = rid
+                elif op[0] == "update_reservation":
+                    _, rid, record = op
+                    self.reservations[rid] = record
+                    self.reservation_versions[rid] = new_version
             return True
 
     def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
@@ -142,6 +172,19 @@ class _FakeTransaction:
         param_types: Any = None,
     ) -> list[list[str]]:
         return _execute_sql(self.db, self, sql, params or {})
+
+    def _reservation_current(self, rid: str) -> dict | None:
+        """In-txn view of a reservation (read-your-writes) + record read version."""
+        for op in reversed(self.pending_writes):
+            if op[0] == "update_reservation" and op[1] == rid:
+                return dict(op[2])
+            if op[0] == "insert_reservation" and op[1]["reservation_id"] == rid:
+                return dict(op[1])
+        version_key = ("res", rid)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = self.db.reservation_versions.get(rid, 0)
+        rec = self.db.reservations.get(rid)
+        return dict(rec) if rec is not None else None
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
         """In-txn view of a typed row for DML: sees prior DML writes
@@ -219,6 +262,27 @@ class _FakeTransaction:
             new = dict(rec, reserved=rec["reserved"] - p["hold"])
             new[col] = rec[col] + p["actual"]
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_reservation"):
+            scope = p.get("idempotency_scope")
+            if scope is not None:
+                if scope in self.db.reservation_idemp:
+                    raise FakeAlreadyExists(scope)  # unique-index conflict (committed)
+                idemp_key = ("idemp", scope)
+                if idemp_key not in self.read_versions:
+                    self.read_versions[idemp_key] = 0  # observed absent
+            record = dict(p)
+            record["settled"] = False
+            record["settled_usage_type"] = None
+            record["actual_micro"] = None
+            self.pending_writes.append(("insert_reservation", record))
+            return 1
+        if "UPDATE tr_reservation SET settled=true" in sql:
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec["settled"]:
+                return 0  # missing or already-claimed (replay)
+            new = dict(rec, settled=True, settled_usage_type=p["sut"])
+            self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
         raise NotImplementedError(sql)
 
@@ -333,6 +397,36 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # tr_reservation reads (idempotency replay + by-id for settle/reaper).
+    if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
+        scope = params["scope"]
+        rid = None
+        if txn is not None:
+            for op in reversed(txn.pending_writes):
+                if op[0] == "insert_reservation" and op[1].get("idempotency_scope") == scope:
+                    rid = op[1]["reservation_id"]
+                    break
+            if rid is None:
+                rid = db.reservation_idemp.get(scope)
+            idemp_key = ("idemp", scope)
+            if idemp_key not in txn.read_versions:
+                txn.read_versions[idemp_key] = 1 if scope in db.reservation_idemp else 0
+        else:
+            rid = db.reservation_idemp.get(scope)
+        if rid is None:
+            return []
+        rec = txn._reservation_current(rid) if txn is not None else db.reservations.get(rid)
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
+    if "FROM tr_reservation WHERE reservation_id=@rid" in sql:
+        rid = params["rid"]
+        rec = txn._reservation_current(rid) if txn is not None else db.reservations.get(rid)
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
     # Typed key-limit point-read (reserve_key 0-row classification). Honors the
     # WHERE, so it must precede the full-scan branch below.
     if "FROM tr_key_limit WHERE key_hash=@kh" in sql:

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from tests.fakes.spanner import make_fake_store
 from trusted_router.storage import CreditAccount
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
@@ -151,8 +153,6 @@ def test_release_underflow_is_noop_not_negative() -> None:
 def test_dml_after_mutation_is_rejected() -> None:
     """The fake fails fast on DML+mutation mixing (forbidden, docs §5), so future
     authorize/settle code that accidentally mixes is caught in tests."""
-    import pytest
-
     store, _db, _ = make_fake_store()
     ws = "ws_mix"
     _seed_credit(store, ws, 1_000_000)
@@ -324,3 +324,120 @@ def test_reserve_key_uncapped_concurrent_no_aborts() -> None:
     _run_workers([threading.Thread(target=once, daemon=True) for _ in range(n)], barrier)
     assert results == [KEY_NO_HOLD] * n, results
     assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
+
+
+# ── tr_reservation: durable hold + scoped idempotency + settle claim ─────────
+
+from tests.fakes.spanner import FakeAlreadyExists  # noqa: E402
+from trusted_router.storage_gcp_counter_dml import (  # noqa: E402
+    claim_reservation,
+    insert_reservation,
+    read_reservation,
+    read_reservation_by_idempotency,
+)
+
+
+def _insert_res(store, *, rid, scope=None, fingerprint=None, credit_hold=0, key_hold=0):
+    def txn(t):
+        insert_reservation(
+            t, store._param_types,
+            reservation_id=rid, workspace_id="ws", key_hash="kh",
+            ws_shard=0, key_shard=0, credit_reserved_micro=credit_hold,
+            key_reserved_micro=key_hold, hold_usage_type="Credits",
+            idempotency_scope=scope, idempotency_fingerprint=fingerprint,
+            expires_at="2026-01-01T00:00:00Z",
+        )
+    store._database.run_in_transaction(txn)
+
+
+def test_reservation_insert_and_reads() -> None:
+    store, _db, _ = make_fake_store()
+    _insert_res(store, rid="r1", scope="ws#kh#abc", fingerprint="fp1", credit_hold=500_000)
+    pt = store._param_types
+
+    by_idem = store._database.run_in_transaction(
+        lambda t: read_reservation_by_idempotency(t, pt, "ws#kh#abc")
+    )
+    assert by_idem["reservation_id"] == "r1"
+    assert by_idem["credit_reserved_micro"] == 500_000
+    assert by_idem["idempotency_fingerprint"] == "fp1"
+    assert by_idem["settled"] is False
+
+    by_id = store._database.run_in_transaction(lambda t: read_reservation(t, pt, "r1"))
+    assert by_id["workspace_id"] == "ws"
+    assert by_id["credit_reserved_micro"] == 500_000
+
+    miss = store._database.run_in_transaction(
+        lambda t: read_reservation_by_idempotency(t, pt, "nope")
+    )
+    assert miss is None
+
+
+def test_reservation_duplicate_idempotency_scope_raises_already_exists() -> None:
+    store, _db, _ = make_fake_store()
+    _insert_res(store, rid="r1", scope="dup")
+    with pytest.raises(FakeAlreadyExists):
+        _insert_res(store, rid="r2", scope="dup")  # same scope -> unique conflict
+
+
+def test_reservation_concurrent_same_scope_one_wins() -> None:
+    """Two concurrent first-calls with the same idempotency scope: exactly one
+    INSERT commits, the other raises ALREADY_EXISTS (codex Step-3 #4) — the loser
+    is NOT silently retried into a second debit."""
+    barrier = threading.Barrier(3)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def insert(rid: str) -> None:
+        try:
+            _insert_res(store, rid=rid, scope="race")
+            with lock:
+                outcomes.append("ok")
+        except FakeAlreadyExists:
+            with lock:
+                outcomes.append("already_exists")
+
+    _run_workers(
+        [threading.Thread(target=insert, args=(f"r{i}",), daemon=True) for i in range(2)],
+        barrier,
+    )
+    assert outcomes.count("ok") == 1, outcomes
+    assert outcomes.count("already_exists") == 1, outcomes
+    assert len(db.reservation_idemp) == 1
+
+
+def test_reservation_claim_first_writer_wins() -> None:
+    store, _db, _ = make_fake_store()
+    _insert_res(store, rid="rc", credit_hold=100_000)
+    pt = store._param_types
+    first = store._database.run_in_transaction(
+        lambda t: claim_reservation(t, pt, "rc", settled_usage_type="Credits")
+    )
+    second = store._database.run_in_transaction(
+        lambda t: claim_reservation(t, pt, "rc", settled_usage_type="Credits")
+    )
+    assert first is True
+    assert second is False  # already settled -> replay no-op
+    row = store._database.run_in_transaction(lambda t: read_reservation(t, pt, "rc"))
+    assert row["settled"] is True
+    assert row["settled_usage_type"] == "Credits"
+
+
+def test_reservation_claim_race_settles_once() -> None:
+    barrier = threading.Barrier(7)
+    store, _db, _ = make_fake_store(ready_barrier=barrier)
+    _insert_res(store, rid="rr", credit_hold=100_000)
+    pt = store._param_types
+    wins: list[bool] = []
+    lock = threading.Lock()
+
+    def claim() -> None:
+        w = store._database.run_in_transaction(
+            lambda t: claim_reservation(t, pt, "rr", settled_usage_type="Credits")
+        )
+        with lock:
+            wins.append(w)
+
+    _run_workers([threading.Thread(target=claim, daemon=True) for _ in range(6)], barrier)
+    assert wins.count(True) == 1, wins  # exactly one claim wins
