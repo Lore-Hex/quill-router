@@ -106,3 +106,27 @@ def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: 
             columns=KEY_LIMIT_COLUMNS,
             values=[key_limit_mirror_row(entity_id, value, commit_ts)],
         )
+
+
+def _typed_table_for(kind: str) -> str | None:
+    if kind == "credit":
+        return CREDIT_BALANCE_TABLE
+    if kind == "api_key":
+        return KEY_LIMIT_TABLE
+    return None
+
+
+def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module: Any) -> None:
+    """Mirror a credit/api_key delete onto its typed table on the same writer.
+
+    Without this, deleting the authoritative JSON row leaves a stale typed row
+    behind — exact-mirror drift that would poison Step 2 reconciliation. No-op
+    for non-counter kinds.
+    """
+    table = _typed_table_for(kind)
+    if table is None:
+        return
+    writer.delete(
+        table,
+        spanner_module.KeySet(keys=[(entity_id, UNSHARDED) for entity_id in entity_ids]),
+    )

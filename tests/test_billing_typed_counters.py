@@ -154,6 +154,21 @@ def test_finalize_mirrors_both_credit_and_key() -> None:
     assert_key_mirror_matches(db, key.hash)
 
 
+def test_api_key_delete_removes_typed_mirror_row() -> None:
+    """Deleting the authoritative JSON api_key must also drop the typed mirror,
+    or Step 2 reconciliation sees a phantom typed row (drift)."""
+    store, db, _ = make_fake_store()
+    ws = "ws_delete"
+    _raw, key = store.api_keys.create(
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=1_000_000
+    )
+    assert (key.hash, 0) in db.typed[KEY_LIMIT_TABLE]
+
+    assert store.api_keys.delete(key.hash) is True
+    assert ("api_key", key.hash) not in db.rows
+    assert (key.hash, 0) not in db.typed.get(KEY_LIMIT_TABLE, {})
+
+
 def test_mirror_disabled_writes_no_typed_rows() -> None:
     """Default-off safety: with the flag off, no typed rows are written, so the
     code is safe to deploy before the DDL exists."""

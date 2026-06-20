@@ -47,6 +47,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
+from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
@@ -1241,9 +1242,15 @@ class SpannerBigtableStore:
                 self.entity_table,
                 self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
             )
+            # Step 1: mirror credit/api_key deletes onto the typed table so a
+            # deleted row never leaves a stale typed mirror (drift).
+            if getattr(self, "_counter_mirror_enabled", False):
+                mirror_counter_delete(batch, kind, entity_ids, self._spanner)
 
     def _delete_entities_tx(self, transaction: Any, kind: str, entity_ids: list[str]) -> None:
         transaction.delete(
             self.entity_table,
             self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
         )
+        if getattr(self, "_counter_mirror_enabled", False):
+            mirror_counter_delete(transaction, kind, entity_ids, self._spanner)

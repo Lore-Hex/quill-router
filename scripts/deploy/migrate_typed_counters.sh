@@ -45,6 +45,25 @@ apply_ddl() {
     --instance="$INSTANCE" "${PROJECT_ARG[@]}" --ddl="$1"
 }
 
+# Idempotent guard: ensure a timestamp column carries allow_commit_timestamp=true.
+# Needed because the mirror writes the COMMIT_TIMESTAMP sentinel into
+# source_updated_at; without the option the first mirrored write fails the txn.
+# Covers tables created by an earlier version of this script without the option.
+ensure_commit_ts_col() {
+  local table="$1" col="$2" n
+  n=$(gcloud spanner databases execute-sql "$DATABASE" \
+        --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+        --sql="SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMN_OPTIONS
+               WHERE table_name='${table}' AND column_name='${col}'
+                 AND option_name='allow_commit_timestamp' AND option_value='TRUE'" \
+        --format='value(rows[0])' 2>/dev/null || echo 0)
+  if [ "${n:-0}" = "0" ]; then
+    apply_ddl "ALTER TABLE ${table} ALTER COLUMN ${col} TIMESTAMP OPTIONS (allow_commit_timestamp=true)"
+  else
+    log "${table}.${col} already has allow_commit_timestamp, skip"
+  fi
+}
+
 # shard is in the PK from day one (DEFAULT 0): the long tail lives on shard 0;
 # sharding a whale later is a data change, not a schema migration.
 if table_exists tr_credit_balance; then log "tr_credit_balance exists, skip"; else
@@ -54,7 +73,7 @@ if table_exists tr_credit_balance; then log "tr_credit_balance exists, skip"; el
     total_credits INT64 NOT NULL DEFAULT (0),
     total_usage INT64 NOT NULL DEFAULT (0),
     reserved INT64 NOT NULL DEFAULT (0),
-    source_updated_at TIMESTAMP,
+    source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   ) PRIMARY KEY (workspace_id, shard)"
 fi
@@ -68,10 +87,15 @@ if table_exists tr_key_limit; then log "tr_key_limit exists, skip"; else
     byok_usage INT64 NOT NULL DEFAULT (0),
     reserved INT64 NOT NULL DEFAULT (0),
     include_byok BOOL NOT NULL DEFAULT (true),
-    source_updated_at TIMESTAMP,
+    source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   ) PRIMARY KEY (key_hash, shard)"
 fi
+
+# Backfill the commit-timestamp option on source_updated_at for tables that may
+# predate the option being added to the CREATE statements above.
+ensure_commit_ts_col tr_credit_balance source_updated_at
+ensure_commit_ts_col tr_key_limit source_updated_at
 
 # tr_reservation + its indexes are used at the Step 3 enforcement flip; created
 # now so the schema is in place ahead of cutover.

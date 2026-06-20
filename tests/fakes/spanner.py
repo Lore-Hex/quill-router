@@ -95,6 +95,9 @@ class FakeSpannerDatabase:
                     self.typed.setdefault(table, {})[
                         (value_tuple[0], value_tuple[1])
                     ] = dict(zip(columns, value_tuple, strict=True))
+                elif op[0] == "delete_typed":
+                    _, table, pk = op
+                    self.typed.get(table, {}).pop(pk, None)
             return True
 
     def snapshot(self) -> _FakeSnapshot:
@@ -132,8 +135,11 @@ class _FakeTransaction:
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:
-            kind, entity_id = entry[0], entry[1]
-            self.pending_writes.append(("delete", table, kind, entity_id))
+            if table == "tr_entities":
+                kind, entity_id = entry[0], entry[1]
+                self.pending_writes.append(("delete", table, kind, entity_id))
+            else:
+                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
 
 
 class _FakeSnapshot:
@@ -182,6 +188,9 @@ class _FakeBatch:
                     self.db.typed.setdefault(table, {})[
                         (value_tuple[0], value_tuple[1])
                     ] = dict(zip(columns, value_tuple, strict=True))
+                elif op[0] == "delete_typed":
+                    _, table, pk = op
+                    self.db.typed.get(table, {}).pop(pk, None)
         return None
 
     def insert_or_update(
@@ -196,8 +205,11 @@ class _FakeBatch:
 
     def delete(self, table: str, keyset: _KeySet) -> None:
         for entry in keyset.keys:
-            kind, entity_id = entry[0], entry[1]
-            self.pending_writes.append(("delete", table, kind, entity_id))
+            if table == "tr_entities":
+                kind, entity_id = entry[0], entry[1]
+                self.pending_writes.append(("delete", table, kind, entity_id))
+            else:
+                self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
 
 
 def _execute_sql(
