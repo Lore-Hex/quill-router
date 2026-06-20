@@ -9,6 +9,7 @@ from typing import Any
 class _ParamTypes:
     STRING = "STRING"
     INT64 = "INT64"
+    BOOL = "BOOL"
 
 
 @dataclass
@@ -195,6 +196,30 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
             return 1
+        if "UPDATE tr_key_limit SET reserved = reserved + @est" in sql:
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["limit_micro"] is None:
+                return 0  # missing or uncapped (limit_micro IS NOT NULL fails)
+            if p["is_byok"] and not rec["include_byok"]:
+                return 0  # BYOK excluded from the cap
+            included_byok = rec["byok_usage"] if rec["include_byok"] else 0
+            avail = rec["limit_micro"] - rec["usage"] - included_byok - rec["reserved"]
+            if avail >= p["est"]:
+                new = dict(rec, reserved=rec["reserved"] + p["est"])
+                self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
+                return 1
+            return 0
+        if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["reserved"] < p["hold"]:
+                return 0
+            col = "byok_usage" if "byok_usage = byok_usage + @actual" in sql else "usage"
+            new = dict(rec, reserved=rec["reserved"] - p["hold"])
+            new[col] = rec[col] + p["actual"]
+            self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
+            return 1
         raise NotImplementedError(sql)
 
     def insert_or_update(
@@ -308,6 +333,19 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Typed key-limit point-read (reserve_key 0-row classification). Honors the
+    # WHERE, so it must precede the full-scan branch below.
+    if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
+        pk = (params["kh"], params["shard"])
+        rec = (
+            txn._typed_current("tr_key_limit", pk)
+            if txn is not None
+            else db.typed.get("tr_key_limit", {}).get(pk)
+        )
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
     # Typed counter tables (Step 2 reconcile scans): SELECT <cols> FROM <table>.
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:
