@@ -49,7 +49,7 @@ from trusted_router.storage_gcp_codec import (
 )
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
-from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
@@ -242,7 +242,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
             return new_user
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def signup(
         self,
@@ -366,7 +366,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             return None if workspace.deleted else workspace
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
@@ -445,7 +445,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
             return new_user
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def set_user_email(self, user_id: str, email: str) -> User | None:
         normalized_email = _normalize_email(email)
@@ -470,7 +470,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": user.id})
             return user
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def mark_user_email_verified(self, user_id: str) -> User | None:
         def txn(transaction: Any) -> User | None:
@@ -481,7 +481,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "user", user.id, user)
             return user
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     # OAuth authorization codes delegate to storage_gcp_oauth_codes.
     def create_oauth_authorization_code(
@@ -689,7 +689,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "stripe_event", event_id, {"created_at": iso_now()})
             return True
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def update_auto_refill_settings(
         self,
@@ -709,7 +709,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace_id, account)
             return account
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def set_stripe_customer(
         self,
@@ -728,7 +728,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace_id, account)
             return account
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def clear_stripe_payment_method(self, workspace_id: str) -> CreditAccount | None:
         def txn(transaction: Any) -> CreditAccount | None:
@@ -742,7 +742,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace_id, account)
             return account
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def record_auto_refill_outcome(
         self,
@@ -759,7 +759,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "credit", workspace_id, account)
             return account
 
-        return self._database.run_in_transaction(txn)
+        return self._run_in_transaction(txn)
 
     def reserve(
         self,
@@ -909,7 +909,7 @@ class SpannerBigtableStore:
             )
             return True
 
-        finalized = self._database.run_in_transaction(txn)
+        finalized = self._run_in_transaction(txn)
         if finalized and success and generation is not None:
             self.generation_store.index_after_commit(generation)
         return bool(finalized)
@@ -1137,6 +1137,15 @@ class SpannerBigtableStore:
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         with self._database.snapshot() as snapshot:
             return self._read_entity_from(snapshot, kind, entity_id, cls)
+
+    def _run_in_transaction(self, func: Any, *, attempts: int = 8) -> Any:
+        """Bounded ABORTED-retry wrapper around Spanner run_in_transaction.
+
+        Thin instance shim over storage_gcp_io.run_in_transaction_with_retry so
+        the store's many call sites stay terse; the shared helper documents the
+        hot-row-contention rationale and the caller-idempotency contract.
+        """
+        return run_in_transaction_with_retry(self._database, func, attempts=attempts)
 
     def _read_entity_tx(self, transaction: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:
         return self._read_entity_from(transaction, kind, entity_id, cls)

@@ -25,7 +25,7 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
-from trusted_router.storage_gcp_io import SpannerIO
+from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_models import (
     ApiKey,
     CreditAccount,
@@ -170,7 +170,7 @@ class SpannerApiKeys:
             key.reserved_microdollars += amount_microdollars
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
-        self._io.database.run_in_transaction(txn)
+        run_in_transaction_with_retry(self._io.database, txn)
 
     def settle_limit(
         self,
@@ -205,7 +205,7 @@ class SpannerApiKeys:
                 key.usage_microdollars += cost_microdollars
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
-        self._io.database.run_in_transaction(txn)
+        run_in_transaction_with_retry(self._io.database, txn)
 
     def _release_limit(
         self,
@@ -223,7 +223,7 @@ class SpannerApiKeys:
             key.reserved_microdollars = max(0, key.reserved_microdollars - reserved_microdollars)
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
-        self._io.database.run_in_transaction(txn)
+        run_in_transaction_with_retry(self._io.database, txn)
 
     # ── Credit reservations ─────────────────────────────────────────────
     def reserve(
@@ -286,7 +286,7 @@ class SpannerApiKeys:
                 )
             return reservation
 
-        return self._io.database.run_in_transaction(txn)
+        return run_in_transaction_with_retry(self._io.database, txn)
 
     def settle(self, reservation_id: str, actual_microdollars: int) -> None:
         self._finish_reservation(reservation_id, actual_microdollars, success=True)
@@ -311,7 +311,7 @@ class SpannerApiKeys:
             self._io.write_entity_tx(transaction, "credit", account.workspace_id, account)
             self._io.write_entity_tx(transaction, "reservation", reservation.id, reservation)
 
-        self._io.database.run_in_transaction(txn)
+        run_in_transaction_with_retry(self._io.database, txn)
 
     def _read_credit_tx(self, transaction: Any, workspace_id: str) -> CreditAccount:
         account = self._io.read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
