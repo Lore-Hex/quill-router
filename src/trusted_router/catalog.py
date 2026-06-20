@@ -1337,7 +1337,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Novita, Nebius, MiniMax, Cerebras, Gemini, Fireworks, and Z.AI currently use this path because their
+    Novita, Nebius, MiniMax, Cerebras, Gemini, Fireworks, DeepInfra, and Z.AI currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
     Claude Opus 4.8, which shipped after the snapshot — the attested gateway
@@ -1354,6 +1354,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "cerebras",
         "gemini",
         "fireworks",
+        "deepinfra",
         "zai",
         "tinfoil",
         "xiaomi",

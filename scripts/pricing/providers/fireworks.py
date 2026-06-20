@@ -16,6 +16,7 @@ EXPECTED_MODELS = [
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k2.5",
     "deepseek/deepseek-v4-pro",
+    "z-ai/glm-5.2",
     "z-ai/glm-5.1",
     "openai/gpt-oss-120b",
 ]

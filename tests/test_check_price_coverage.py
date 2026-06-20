@@ -48,6 +48,31 @@ def test_zai_model_discovery_extracts_glm_ids_from_docs() -> None:
     }
 
 
+def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
+    payload = {
+        "data": [
+            {"id": "zai-org/GLM-5.2"},
+            {"id": "accounts/fireworks/models/glm-5p2"},
+            {"id": "zai-org/glm-5.1"},
+            {"id": "not-a-glm-model"},
+        ]
+    }
+
+    assert check_price_coverage._provider_glm_model_ids(payload) == {
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+
+
+def test_provider_glm_required_gate_targets_current_flagships() -> None:
+    assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.2")
+    assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.3")
+    assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-6")
+    assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.1")
+    assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5-turbo")
+    assert not check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-4.7-h")
+
+
 def test_model_discovery_warns_when_docs_mention_unpublished_model() -> None:
     warnings, info = check_price_coverage._model_discovery_audit(
         fetch_text=lambda _url: "Supported Models: GLM-5.2, GLM-4.7",
@@ -85,6 +110,85 @@ def test_provider_model_discovery_warns_on_unpublished_manifest_model() -> None:
     )
 
     assert any("minimax/minimax-m9" in warning for warning in warnings)
+
+
+def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    def fake_fetch_json(url: str, _env_names: tuple[str, ...]) -> dict:
+        if "deepinfra.com" in url:
+            return {"data": [{"id": "zai-org/GLM-5.2"}]}
+        if "fireworks.ai" in url:
+            return {"data": [{"id": "accounts/fireworks/models/glm-5p2"}]}
+        if "novita.ai" in url:
+            return {"data": [{"id": "zai-org/glm-5.2"}]}
+        return _known_provider_model_payload(url, _env_names)
+
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-4.7",
+        fetch_json=fake_fetch_json,
+        published_model_ids={"z-ai/glm-4.7"},
+    )
+
+    assert any(
+        "deepinfra: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
+        in warning
+        for warning in warnings
+    )
+    assert any(
+        "fireworks: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
+        in warning
+        for warning in warnings
+    )
+    assert any(
+        "novita: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
+        in warning
+        for warning in warnings
+    )
+
+
+def test_provider_glm_discovery_keeps_legacy_variants_visibility_only(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", tmp_path)
+
+    def fake_fetch_json(url: str, _env_names: tuple[str, ...]) -> dict:
+        if "novita.ai" in url:
+            return {"data": [{"id": "zai-org/glm-4.7-h"}]}
+        return _known_provider_model_payload(url, _env_names)
+
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-4.7",
+        fetch_json=fake_fetch_json,
+        published_model_ids={"z-ai/glm-4.7"},
+    )
+
+    assert any(
+        "novita: live GLM variant model API lists unpublished model(s) z-ai/glm-4.7-h"
+        in warning
+        for warning in warnings
+    )
+    assert not any("current model API" in warning for warning in warnings)
+
+
+def test_strict_model_discovery_fails_glm_provider_warnings(
+    monkeypatch,
+    capsys,
+) -> None:
+    def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
+        warning = (
+            "deepinfra: live GLM current model API lists unpublished model(s) "
+            "z-ai/glm-5.3 — add/update provider_models/deepinfra.json"
+        )
+        return ([warning], ["openai: live scraper ✓"], [warning])
+
+    monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
+
+    rc = check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
+
+    assert rc == 1
+    assert "z-ai/glm-5.3" in capsys.readouterr().out
 
 
 def test_strict_model_discovery_fails_only_discovery_warnings(

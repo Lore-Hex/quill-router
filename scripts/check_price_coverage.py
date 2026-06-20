@@ -63,6 +63,7 @@ _FIREWORKS_MODEL_IDS = {
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p5": "moonshotai/kimi-k2.5",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
 }
@@ -114,6 +115,27 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://api.novita.ai/openai/v1/models",
         ("NOVITA_API_KEY",),
         _identity_model_id,
+    ),
+)
+
+_GLM_DISCOVERABLE_PROVIDER_APIS: tuple[
+    tuple[str, str, tuple[str, ...]],
+    ...
+] = (
+    (
+        "deepinfra",
+        "https://api.deepinfra.com/v1/openai/models",
+        ("DEEPINFRA_API_KEY",),
+    ),
+    (
+        "fireworks",
+        "https://api.fireworks.ai/inference/v1/models",
+        ("FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"),
+    ),
+    (
+        "novita",
+        "https://api.novita.ai/openai/v1/models",
+        ("NOVITA_API_KEY",),
     ),
 )
 
@@ -226,6 +248,53 @@ def _discover_zai_coding_plan_models(text: str) -> set[str]:
     return models
 
 
+def _normalize_glm_model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    if not value:
+        return None
+    value = value.removeprefix("accounts/fireworks/models/")
+    value = value.removeprefix("zai-org/")
+    value = value.removeprefix("z-ai/")
+    value = value.removeprefix("models/")
+    value = value.replace("_", "-")
+    value = re.sub(r"glm-(\d+)p(\d+)", r"glm-\1.\2", value)
+    value = re.sub(r"glm-(\d+)-(\d+)", r"glm-\1.\2", value)
+    match = _ZAI_MODEL_RE.fullmatch(value)
+    if not match:
+        return None
+    slug = match.group(0).removesuffix("[1m]")
+    return f"z-ai/{slug}"
+
+
+def _provider_glm_model_ids(payload: Any) -> set[str]:
+    discovered: set[str] = set()
+    for row in _json_model_rows(payload):
+        for key in ("id", "name", "title"):
+            raw_id = row.get(key)
+            if not isinstance(raw_id, str):
+                continue
+            normalized = _normalize_glm_model_id(raw_id)
+            if normalized:
+                discovered.add(normalized)
+    return discovered
+
+
+def _is_required_provider_glm_model_id(model_id: str) -> bool:
+    """Return true for new flagship GLM releases that must be published.
+
+    Provider APIs expose many legacy GLM variants. Those are useful visibility
+    warnings, but they should not block the release bot. GLM 5.2 is the current
+    published flagship line; future GLM 5.x and 6.x+ releases should fail closed
+    until the catalog has explicit routes/prices.
+    """
+    match = re.match(r"^z-ai/glm-(\d+)(?:\.(\d+))?(?:-[a-z0-9-]+)?$", model_id)
+    if not match:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return major > 5 or (major == 5 and minor >= 2)
+
+
 def _model_discovery_audit(
     *,
     fetch_text: Callable[[str], str],
@@ -286,6 +355,34 @@ def _model_discovery_audit(
             )
         else:
             warnings.append(f"{slug}: model discovery returned no model ids")
+
+    for slug, url, env_names in _GLM_DISCOVERABLE_PROVIDER_APIS:
+        published = published_model_ids | _manifest_provider_model_ids(slug)
+        try:
+            payload = fetch_json(url, env_names)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(
+                f"{slug}: GLM model discovery fetch failed ({type(exc).__name__}: {exc})"
+            )
+            continue
+        discovered = _provider_glm_model_ids(payload)
+        missing = sorted(discovered - published)
+        required_missing = [
+            model_id for model_id in missing if _is_required_provider_glm_model_id(model_id)
+        ]
+        optional_missing = [model_id for model_id in missing if model_id not in required_missing]
+        if required_missing:
+            warnings.append(
+                f"{slug}: live GLM current model API lists unpublished model(s) "
+                f"{', '.join(required_missing)} — add/update provider_models/{slug}.json"
+            )
+        if optional_missing:
+            warnings.append(
+                f"{slug}: live GLM variant model API lists unpublished model(s) "
+                f"{', '.join(optional_missing)} — review before publishing"
+            )
+        if discovered and not missing:
+            info.append(f"{slug}: GLM model discovery matched catalog ({len(discovered)} id(s)) ✓")
     return warnings, info
 
 
@@ -333,7 +430,10 @@ def _run_audit(
         )
         warnings.extend(discovery_warnings)
         hard_fail_warnings.extend(
-            warning for warning in discovery_warnings if warning.startswith("zai:")
+            warning
+            for warning in discovery_warnings
+            if warning.startswith("zai:")
+            or "live GLM current model API lists unpublished" in warning
         )
         info.extend(discovery_info)
 

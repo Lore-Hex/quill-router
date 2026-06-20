@@ -95,7 +95,12 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
         ),
         (
             "fireworks",
-            {"moonshotai/kimi-k2.6", "deepseek/deepseek-v4-pro", "openai/gpt-oss-120b"},
+            {
+                "moonshotai/kimi-k2.6",
+                "deepseek/deepseek-v4-pro",
+                "z-ai/glm-5.2",
+                "openai/gpt-oss-120b",
+            },
             (0.05, 10.0),
         ),
         (

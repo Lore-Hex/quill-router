@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-05-15T08:13:36Z",
-  "model_count": 104,
+  "generated_at": "2026-06-20T00:00:00Z",
+  "model_count": 105,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -2788,6 +2788,35 @@
       ],
       "endpoints": [
         "anthropic",
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/glm-5.2",
+      "display_name": "GLM 5.2",
+      "title": "zai-org/glm-5.2",
+      "created": 1781262235,
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 14000,
+      "output_token_price_per_m": 44000,
+      "cached_input_token_price_per_m": 2600,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless",
+        "structured-outputs"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
         "chat/completions"
       ],
       "status": 1

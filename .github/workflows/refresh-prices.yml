@@ -197,6 +197,7 @@ jobs:
           # Stage the snapshot AND any self-healed parser modules.
           git add \
             src/trusted_router/data/openrouter_snapshot.json \
+            src/trusted_router/data/provider_models/ \
             scripts/pricing/parsers/
 
           if git diff --cached --quiet; then

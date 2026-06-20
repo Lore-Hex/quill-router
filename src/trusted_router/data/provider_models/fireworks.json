@@ -1,10 +1,10 @@
 {
-  "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models and direct chat completions on 2026-06-15. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
+  "_about": "Provider-native supplement for the Fireworks AI serverless models enabled on the TrustedRouter Fireworks account. Verified against https://api.fireworks.ai/inference/v1/models and direct chat completions. Fireworks uses full accounts/fireworks/models/... upstream IDs, so the enclave preserves upstream_id verbatim for this provider.",
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
   "price_source": "https://docs.fireworks.ai/serverless/pricing",
-  "generated_at": "2026-06-15T00:00:00Z",
-  "model_count": 5,
+  "generated_at": "2026-06-20T00:00:00Z",
+  "model_count": 6,
   "models": [
     {
       "id": "moonshotai/kimi-k2.6",
@@ -52,6 +52,23 @@
       "cached_input_token_price_per_m": 145000,
       "model_type": "chat",
       "features": ["reasoning", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "accounts/fireworks/models/glm-5p2",
+      "display_name": "GLM 5.2 on Fireworks",
+      "title": "accounts/fireworks/models/glm-5p2",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "serverless"],
       "input_modalities": ["text"],
       "output_modalities": ["text"],
       "endpoints": ["chat/completions"],

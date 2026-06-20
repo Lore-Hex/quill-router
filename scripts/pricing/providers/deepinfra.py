@@ -40,6 +40,7 @@ URL = "https://api.deepinfra.com/v1/openai/models"
 
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
+    "z-ai/glm-5.2",
 ]
 
 

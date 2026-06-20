@@ -10,6 +10,7 @@ MODEL_LABELS = {
     "Kimi K2.5": "moonshotai/kimi-k2.5",
     "DeepSeek V4 Pro": "deepseek/deepseek-v4-pro",
     "DeepSeek V4 Flash": "deepseek/deepseek-v4-flash",
+    "GLM 5.2": "z-ai/glm-5.2",
     "GLM 5.1": "z-ai/glm-5.1",
     "OpenAI GPT OSS 120B": "openai/gpt-oss-120b",
     "OpenAI GPT OSS 20B": "openai/gpt-oss-20b",
