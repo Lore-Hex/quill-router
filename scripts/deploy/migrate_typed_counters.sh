@@ -58,7 +58,7 @@ ensure_commit_ts_col() {
                  AND option_name='allow_commit_timestamp' AND option_value='TRUE'" \
         --format='value(rows[0])' 2>/dev/null || echo 0)
   if [ "${n:-0}" = "0" ]; then
-    apply_ddl "ALTER TABLE ${table} ALTER COLUMN ${col} TIMESTAMP OPTIONS (allow_commit_timestamp=true)"
+    apply_ddl "ALTER TABLE ${table} ALTER COLUMN ${col} SET OPTIONS (allow_commit_timestamp=true)"
   else
     log "${table}.${col} already has allow_commit_timestamp, skip"
   fi

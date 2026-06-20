@@ -72,7 +72,8 @@ CREATE TABLE tr_credit_balance (
   total_credits     INT64 NOT NULL DEFAULT (0),
   total_usage       INT64 NOT NULL DEFAULT (0),
   reserved          INT64 NOT NULL DEFAULT (0),
-  source_updated_at TIMESTAMP,   -- the JSON row's updated_at this mirror reflects
+  -- both timestamps take the COMMIT_TIMESTAMP sentinel, so both need the option
+  source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   updated_at        TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (workspace_id, shard);
 
@@ -84,7 +85,7 @@ CREATE TABLE tr_key_limit (
   byok_usage        INT64 NOT NULL DEFAULT (0),
   reserved          INT64 NOT NULL DEFAULT (0),
   include_byok      BOOL  NOT NULL DEFAULT (true),
-  source_updated_at TIMESTAMP,
+  source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   updated_at        TIMESTAMP OPTIONS (allow_commit_timestamp=true),
 ) PRIMARY KEY (key_hash, shard);
 
