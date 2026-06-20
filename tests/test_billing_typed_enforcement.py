@@ -264,3 +264,63 @@ def test_release_key_settles_usage_and_byok() -> None:
     assert row["reserved"] == 0
     assert row["usage"] == 480_000
     assert row["byok_usage"] == 0
+
+
+def test_reserve_key_include_byok_true_counts_byok_usage() -> None:
+    """With include_byok=true, prior BYOK usage consumes the cap headroom."""
+    store, _db, _ = make_fake_store()
+    key = _make_key(store, "ws_ib", limit=1_000_000, include_byok=True)
+    store.api_keys.add_usage(key.hash, 400_000, is_byok=True)  # byok_usage=400k
+    pt = store._param_types
+    # available = 1_000_000 - 0 - 400_000 - 0 = 600_000
+    assert store._database.run_in_transaction(
+        lambda t: reserve_key(t, pt, key.hash, 700_000, is_byok=False)
+    ) == KEY_INSUFFICIENT
+    assert store._database.run_in_transaction(
+        lambda t: reserve_key(t, pt, key.hash, 500_000, is_byok=False)
+    ) == KEY_ACCEPTED
+
+
+def test_release_key_book_to_byok_and_underflow() -> None:
+    store, db, _ = make_fake_store()
+    key = _make_key(store, "ws_kb", limit=2_000_000)
+    pt = store._param_types
+    assert store._database.run_in_transaction(
+        lambda t: reserve_key(t, pt, key.hash, 300_000, is_byok=False)
+    ) == KEY_ACCEPTED
+    # settle as BYOK usage -> books byok_usage, not usage
+    assert store._database.run_in_transaction(
+        lambda t: release_key(t, pt, key.hash, 300_000, 250_000, book_to_byok=True)
+    ) == 1
+    row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    assert row["reserved"] == 0
+    assert row["byok_usage"] == 250_000
+    assert row["usage"] == 0
+    # underflow: releasing more than held is a 0-row no-op (never negative)
+    assert store._database.run_in_transaction(
+        lambda t: release_key(t, pt, key.hash, 500_000, 0, book_to_byok=False)
+    ) == 0
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
+
+
+def test_reserve_key_uncapped_concurrent_no_aborts() -> None:
+    """Concurrent reservers on an UNCAPPED key all get no-hold and the 0-row
+    classification path does not introduce lock-upgrade contention."""
+    n = 6
+    barrier = threading.Barrier(n + 1)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    key = _make_key(store, "ws_uncc", limit=None)
+    pt = store._param_types
+    results: list[str] = []
+    lock = threading.Lock()
+
+    def once() -> None:
+        r = store._database.run_in_transaction(
+            lambda t: reserve_key(t, pt, key.hash, 100_000, is_byok=False)
+        )
+        with lock:
+            results.append(r)
+
+    _run_workers([threading.Thread(target=once, daemon=True) for _ in range(n)], barrier)
+    assert results == [KEY_NO_HOLD] * n, results
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
