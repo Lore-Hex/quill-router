@@ -49,6 +49,10 @@ class FakeSpannerDatabase:
         # Typed counter tables (tr_credit_balance, tr_key_limit): table ->
         # (pk col0, pk col1) -> {column: value}. PK is the first two columns.
         self.typed: dict[str, dict[tuple, dict]] = {}
+        # Per typed-row version for conditional-DML conflict detection, so two
+        # concurrent execute_update reservers serialize via abort-retry (the fake
+        # analogue of the real row write lock).
+        self.typed_versions: dict[tuple, int] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -77,8 +81,11 @@ class FakeSpannerDatabase:
     def _try_commit(self, txn: _FakeTransaction) -> bool:
         with self._commit_lock:
             for key, observed in txn.read_versions.items():
-                current = self.rows.get(key)
-                current_version = current.version if current is not None else 0
+                if isinstance(key, tuple) and len(key) == 3 and key[0] == "typed":
+                    current_version = self.typed_versions.get((key[1], key[2]), 0)
+                else:
+                    current = self.rows.get(key)
+                    current_version = current.version if current is not None else 0
                 if current_version != observed:
                     return False
             self._global_version += 1
@@ -92,12 +99,19 @@ class FakeSpannerDatabase:
                     self.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    self.typed.setdefault(table, {})[
-                        (value_tuple[0], value_tuple[1])
-                    ] = dict(zip(columns, value_tuple, strict=True))
+                    pk = (value_tuple[0], value_tuple[1])
+                    self.typed.setdefault(table, {})[pk] = dict(
+                        zip(columns, value_tuple, strict=True)
+                    )
+                    self.typed_versions[(table, pk)] = new_version
+                elif op[0] == "update_typed":  # conditional-DML write
+                    _, table, pk, record = op
+                    self.typed.setdefault(table, {})[pk] = record
+                    self.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.typed.get(table, {}).pop(pk, None)
+                    self.typed_versions.pop((table, pk), None)
             return True
 
     def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
@@ -123,6 +137,55 @@ class _FakeTransaction:
         param_types: Any = None,
     ) -> list[list[str]]:
         return _execute_sql(self.db, self, sql, params or {})
+
+    def _typed_current(self, table: str, pk: tuple) -> dict | None:
+        """In-txn view of a typed row (read-your-writes) + record read version."""
+        for op in reversed(self.pending_writes):
+            if op[0] == "update_typed" and op[1] == table and op[2] == pk:
+                return dict(op[3])
+            if op[0] == "upsert_typed" and op[1] == table and (op[3][0], op[3][1]) == pk:
+                return dict(zip(op[2], op[3], strict=True))
+            if op[0] == "delete_typed" and op[1] == table and op[2] == pk:
+                return None
+        version_key = ("typed", table, pk)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = self.db.typed_versions.get((table, pk), 0)
+        rec = self.db.typed.get(table, {}).get(pk)
+        return dict(rec) if rec is not None else None
+
+    def execute_update(
+        self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
+    ) -> int:
+        """Model the conditional-DML statements used by storage_gcp_counter_dml.
+
+        Reads the typed row into the read-set (so concurrent reservers conflict
+        and serialize via abort-retry), evaluates the WHERE predicate, and
+        conditionally buffers the SET. Returns the modified-row count.
+        """
+        p = params or {}
+        if "UPDATE tr_credit_balance SET reserved = reserved + @est" in sql:
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            if (rec["total_credits"] - rec["total_usage"] - rec["reserved"]) >= p["est"]:
+                new = dict(rec, reserved=rec["reserved"] + p["est"])
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                return 1
+            return 0
+        if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                reserved=rec["reserved"] - p["hold"],
+                total_usage=rec["total_usage"] + p["actual"],
+            )
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        raise NotImplementedError(sql)
 
     def insert_or_update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
