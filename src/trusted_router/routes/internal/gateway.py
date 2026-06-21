@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import uuid
 from typing import Any
 
@@ -53,8 +52,6 @@ from trusted_router.services.broadcast import (
 )
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
 from trusted_router.types import ErrorType, UsageType
-
-logger = logging.getLogger("trusted_router")
 
 
 def register(router: APIRouter) -> None:
@@ -227,13 +224,6 @@ def register(router: APIRouter) -> None:
                 allowlist_csv=settings.typed_billing_workspace_ids,
                 denylist_csv=settings.typed_billing_workspace_denylist,
             )
-        _log_typed_billing_decision(
-            body=body,
-            workspace_id=workspace.id,
-            settings=settings,
-            typed_authz_available=_typed_authz is not None,
-            typed_cohort=_typed_cohort,
-        )
         if _typed_authz is not None and _typed_cohort:
             import datetime as _dt
 
@@ -423,48 +413,6 @@ def _gateway_authorize_fingerprint(
     material["key_hash"] = key_hash
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def _log_typed_billing_decision(
-    *,
-    body: GatewayAuthorizeRequest,
-    workspace_id: str,
-    settings: Settings,
-    typed_authz_available: bool,
-    typed_cohort: bool,
-) -> None:
-    """Emit a narrow prod breadcrumb for the typed billing cutover.
-
-    This intentionally logs only synthetic-monitor or explicitly configured cutover
-    workspaces, and never logs prompts, API keys, or raw request metadata.
-    """
-    metadata = body.metadata if isinstance(body.metadata, dict) else {}
-    is_synthetic = str(metadata.get("trustedrouter_synthetic", "")).lower() == "true"
-    allowlist = settings.typed_billing_workspace_ids or ""
-    denylist = settings.typed_billing_workspace_denylist or ""
-    allowlist_ids = {item.strip() for item in allowlist.split(",") if item.strip()}
-    denylist_ids = {item.strip() for item in denylist.split(",") if item.strip()}
-    workspace_allowlisted = workspace_id in allowlist_ids
-    workspace_denylisted = workspace_id in denylist_ids
-    if not is_synthetic and not workspace_allowlisted and not workspace_denylisted:
-        return
-
-    store_target = getattr(STORE, "target", STORE)
-    logger.warning(
-        "typed_billing_decision ws=%s synthetic=%s typed_authz=%s cohort=%s "
-        "workspace_allowlisted=%s workspace_denylisted=%s allowlist_count=%s "
-        "denylist_count=%s settings=%s store=%s",
-        workspace_id,
-        is_synthetic,
-        typed_authz_available,
-        typed_cohort,
-        workspace_allowlisted,
-        workspace_denylisted,
-        len(allowlist_ids),
-        len(denylist_ids),
-        type(settings).__name__,
-        type(store_target).__name__,
-    )
 
 
 def _authorization_endpoint_candidates(

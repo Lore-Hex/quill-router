@@ -17,9 +17,6 @@ import threading
 import pytest
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.config import Settings
-from trusted_router.routes.internal.gateway import _log_typed_billing_decision
-from trusted_router.schemas import GatewayAuthorizeRequest
 from trusted_router.storage import CreditAccount
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
@@ -983,49 +980,3 @@ def test_typed_origin_and_idempotency_guarded_by_mirror_flag() -> None:
     store._counter_mirror_enabled = False
     assert store.is_typed_reservation("any", "auth") is False
     assert store.get_typed_authorization_by_idempotency("ws", "kh", "k") is None
-
-
-def test_typed_billing_decision_log_is_scoped_to_synthetic(caplog) -> None:
-    settings = Settings(
-        environment="test",
-        typed_billing_workspace_ids="ws_synthetic",
-    )
-    body = GatewayAuthorizeRequest(
-        api_key_lookup_hash="lookup",
-        model="trustedrouter/monitor",
-        metadata={"trustedrouter_synthetic": "true"},
-    )
-
-    with caplog.at_level("WARNING", logger="trusted_router"):
-        _log_typed_billing_decision(
-            body=body,
-            workspace_id="ws_synthetic",
-            settings=settings,
-            typed_authz_available=True,
-            typed_cohort=False,
-        )
-
-    assert "typed_billing_decision" in caplog.text
-    assert "ws=ws_synthetic" in caplog.text
-    assert "synthetic=True" in caplog.text
-    assert "typed_authz=True" in caplog.text
-    assert "cohort=False" in caplog.text
-    assert "workspace_allowlisted=True" in caplog.text
-    assert "workspace_denylisted=False" in caplog.text
-    assert "allowlist_count=1" in caplog.text
-
-
-def test_typed_billing_decision_log_ignores_unrelated_authorizes(caplog) -> None:
-    settings = Settings(environment="test", typed_billing_workspace_ids="ws_synthetic")
-    body = GatewayAuthorizeRequest(api_key_lookup_hash="lookup", model="trustedrouter/auto")
-
-    with caplog.at_level("WARNING", logger="trusted_router"):
-        _log_typed_billing_decision(
-            body=body,
-            workspace_id="ws_other",
-            settings=settings,
-            typed_authz_available=True,
-            typed_cohort=True,
-        )
-
-    assert "typed_billing_decision" not in caplog.text
