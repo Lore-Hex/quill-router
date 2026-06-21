@@ -580,3 +580,104 @@ def test_authorize_atomic_concurrent_same_scope_one_debit() -> None:
     assert outcomes.count(AuthorizeOutcome.REPLAY) == 1, outcomes
     assert len(db.reservations) == 1  # exactly one reservation
     assert _typed(db, ws)["reserved"] == 1_000_000  # one debit
+
+
+# ── 3c: claim-gated settle ──────────────────────────────────────────────────
+
+from trusted_router.storage_gcp_authorize import SettleOutcome, settle_atomic  # noqa: E402
+
+
+def _settle(store, *, rid, actual, settled_ut="Credits", success=True):
+    return settle_atomic(
+        store._database, store._param_types,
+        reservation_id=rid, actual_micro=actual,
+        settled_usage_type=settled_ut, success=success,
+    )
+
+
+def test_settle_end_to_end_books_actual_on_both() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_e2e"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    assert auth["outcome"] == AuthorizeOutcome.ACCEPTED
+
+    res = _settle(store, rid=auth["reservation_id"], actual=900_000)
+    assert res["outcome"] == SettleOutcome.SETTLED
+    credit = _typed(db, ws)
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 900_000  # available now 4.1M
+    krow = db.typed[_KLT][(key.hash, 0)]
+    assert krow["reserved"] == 0
+    assert krow["usage"] == 900_000
+    assert krow["byok_usage"] == 0
+
+
+def test_settle_refund_releases_without_booking() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_refund"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    res = _settle(store, rid=auth["reservation_id"], actual=0, success=False)
+    assert res["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 0  # refund books nothing
+    assert db.typed[_KLT][(key.hash, 0)]["usage"] == 0
+
+
+def test_settle_replay_does_not_double_apply() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_settle_replay"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    first = _settle(store, rid=auth["reservation_id"], actual=900_000)
+    second = _settle(store, rid=auth["reservation_id"], actual=900_000)
+    assert first["outcome"] == SettleOutcome.SETTLED
+    assert second["outcome"] == SettleOutcome.ALREADY_SETTLED
+    assert _typed(db, ws)["total_usage"] == 900_000  # booked exactly once
+
+
+def test_settle_race_settles_once() -> None:
+    ws = "ws_settle_race"
+    barrier = threading.Barrier(7)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid = auth["reservation_id"]
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def go() -> None:
+        r = _settle(store, rid=rid, actual=900_000)
+        with lock:
+            outcomes.append(r["outcome"])
+
+    _run_workers([threading.Thread(target=go, daemon=True) for _ in range(6)], barrier)
+    assert outcomes.count(SettleOutcome.SETTLED) == 1, outcomes
+    assert _typed(db, ws)["total_usage"] == 900_000  # charged exactly once
+    assert _typed(db, ws)["reserved"] == 0
+
+
+def test_settle_byok_books_byok_usage_only() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_settle_byok"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000, include_byok=True)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, has_credit=False)
+    res = _settle(store, rid=auth["reservation_id"], actual=800_000, settled_ut="BYOK")
+    assert res["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["total_usage"] == 0  # no credit usage for BYOK
+    krow = db.typed[_KLT][(key.hash, 0)]
+    assert krow["byok_usage"] == 800_000
+    assert krow["usage"] == 0
+    assert krow["reserved"] == 0
+
+
+def test_settle_not_found() -> None:
+    store, _db, _ = make_fake_store()
+    res = _settle(store, rid="nonexistent", actual=100)
+    assert res["outcome"] == SettleOutcome.NOT_FOUND

@@ -146,3 +146,81 @@ def authorize_atomic(
             return run_in_transaction_with_retry(database, replay_txn)
         except _Reject as reject:
             return {"outcome": reject.outcome}
+
+
+class SettleOutcome:
+    SETTLED = "settled"  # this caller claimed + released the holds
+    ALREADY_SETTLED = "already_settled"  # replay: another caller already settled
+    NOT_FOUND = "not_found"  # no such reservation
+    ERROR = "error"  # a release row-count != 1 -> rolled back, re-drive/alarm
+
+
+class _SettleError(Exception):
+    """A release returned row-count != 1 — roll the settle back (don't leave the
+    reservation claimed with the hold unreleased / charge unbooked)."""
+
+
+def settle_atomic(
+    database: Any,
+    param_types: Any,
+    *,
+    reservation_id: str,
+    actual_micro: int,
+    settled_usage_type: str,
+    success: bool,
+) -> dict:
+    """Claim-gated settle/refund in ONE transaction (key then credit lock order).
+
+    Claim flips settled false->true (first-writer-wins); only the winner releases
+    the EXACT recorded holds and books `actual`. `success=False` is a refund:
+    release the holds, book nothing. Booking matches the legacy finalize: key
+    usage by settled usage type (usage vs byok_usage); credit total_usage only
+    when the settled usage type is Credits.
+    """
+    from trusted_router.storage_gcp_counter_dml import (
+        claim_reservation,
+        read_reservation,
+        release_credit,
+        release_key,
+    )
+
+    pt = param_types
+    book_actual = actual_micro if success else 0
+    book_to_byok = settled_usage_type == "BYOK"
+
+    def txn(transaction: Any) -> dict:
+        res = read_reservation(transaction, pt, reservation_id)
+        if res is None:
+            return {"outcome": SettleOutcome.NOT_FOUND}
+        won = claim_reservation(
+            transaction, pt, reservation_id,
+            actual_micro=book_actual, settled_usage_type=settled_usage_type,
+        )
+        if not won:
+            return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
+
+        # key first, then credit (single lock order everywhere — codex#2 #2).
+        key_actual = book_actual  # key usage counts under both Credits and BYOK
+        key_count = release_key(
+            transaction, pt, res["key_hash"], res["key_reserved_micro"],
+            key_actual, book_to_byok=book_to_byok,
+        )
+        # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
+        # may 0-row and is tolerated (best-effort usage tracking).
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
+
+        if res["credit_reserved_micro"] > 0:
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
+                credit_actual,
+            )
+            if credit_count != 1:
+                raise _SettleError("credit release row-count != 1")
+        return {"outcome": SettleOutcome.SETTLED}
+
+    try:
+        return run_in_transaction_with_retry(database, txn)
+    except _SettleError:
+        return {"outcome": SettleOutcome.ERROR}
