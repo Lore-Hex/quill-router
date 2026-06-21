@@ -25,6 +25,118 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="what-makes-a-fusion-panel-work",
+        title="What actually makes a fusion panel work",
+        description=(
+            "We took a five-model open-weights fusion committee apart on DRACO. The "
+            "fuser barely matters on an open panel, only two of five models carry the "
+            "score \u2014 yet you cannot strip the panel without paying. A panel's value "
+            "is its diversity, and it is invisible to any single test."
+        ),
+        published_date="2026-06-21",
+        source_label="TrustedRouter-Fusion-Draco on GitHub",
+        source_url="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco",
+        body_html="""
+
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="56" font-size="34" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">the fuser grid flattens on an open panel</tspan></text>
+<text x="60" y="90" font-size="19" fill="#6b7280">DRACO · same gemini-3.1-pro grader · grouped by judge, colored by synthesizer · whiskers ±1 SE</text>
+<line x1="150" y1="445" x2="1090" y2="445" stroke="#eceae4"/><text x="138" y="450" font-size="15" text-anchor="end" fill="#9a9890">50</text>
+<line x1="150" y1="378" x2="1090" y2="378" stroke="#eceae4"/><text x="138" y="383" font-size="15" text-anchor="end" fill="#9a9890">55</text>
+<line x1="150" y1="311" x2="1090" y2="311" stroke="#eceae4"/><text x="138" y="316" font-size="15" text-anchor="end" fill="#9a9890">60</text>
+<line x1="150" y1="244" x2="1090" y2="244" stroke="#eceae4"/><text x="138" y="249" font-size="15" text-anchor="end" fill="#9a9890">65</text>
+<line x1="150" y1="177" x2="1090" y2="177" stroke="#eceae4"/><text x="138" y="182" font-size="15" text-anchor="end" fill="#9a9890">70</text>
+<text x="307" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">M3 judge</text>
+<rect x="204" y="200" width="58" height="312" rx="4" fill="#3b82c4"/>
+<line x1="233" y1="224" x2="233" y2="176" stroke="#1f2937" stroke-width="2"/><line x1="227" y1="224" x2="239" y2="224" stroke="#1f2937" stroke-width="2"/><line x1="227" y1="176" x2="239" y2="176" stroke="#1f2937" stroke-width="2"/>
+<text x="233" y="168" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">68.3</text>
+<rect x="278" y="188" width="58" height="324" rx="4" fill="#1d9e75"/>
+<line x1="307" y1="211" x2="307" y2="166" stroke="#1f2937" stroke-width="2"/><line x1="301" y1="211" x2="313" y2="211" stroke="#1f2937" stroke-width="2"/><line x1="301" y1="166" x2="313" y2="166" stroke="#1f2937" stroke-width="2"/>
+<text x="307" y="158" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.1</text>
+<rect x="352" y="256" width="58" height="256" rx="4" fill="#e0992f"/>
+<line x1="381" y1="280" x2="381" y2="231" stroke="#1f2937" stroke-width="2"/><line x1="375" y1="280" x2="387" y2="280" stroke="#1f2937" stroke-width="2"/><line x1="375" y1="231" x2="387" y2="231" stroke="#1f2937" stroke-width="2"/>
+<text x="381" y="223" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">64.1</text>
+<text x="620" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">GLM-5.2 judge</text>
+<rect x="517" y="206" width="58" height="306" rx="4" fill="#3b82c4"/>
+<line x1="546" y1="229" x2="546" y2="183" stroke="#1f2937" stroke-width="2"/><line x1="540" y1="229" x2="552" y2="229" stroke="#1f2937" stroke-width="2"/><line x1="540" y1="183" x2="552" y2="183" stroke="#1f2937" stroke-width="2"/>
+<text x="546" y="175" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">67.8</text>
+<rect x="591" y="180" width="58" height="332" rx="4" fill="#1d9e75"/>
+<line x1="620" y1="201" x2="620" y2="159" stroke="#1f2937" stroke-width="2"/><line x1="614" y1="201" x2="626" y2="201" stroke="#1f2937" stroke-width="2"/><line x1="614" y1="159" x2="626" y2="159" stroke="#1f2937" stroke-width="2"/>
+<text x="620" y="151" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.8</text>
+<rect x="665" y="239" width="58" height="273" rx="4" fill="#e0992f"/>
+<line x1="694" y1="263" x2="694" y2="215" stroke="#1f2937" stroke-width="2"/><line x1="688" y1="263" x2="700" y2="263" stroke="#1f2937" stroke-width="2"/><line x1="688" y1="215" x2="700" y2="215" stroke="#1f2937" stroke-width="2"/>
+<text x="694" y="207" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">65.4</text>
+<text x="933" y="546" font-size="20" font-weight="600" text-anchor="middle" fill="#111827">Kimi-k2.6 judge</text>
+<rect x="830" y="230" width="58" height="282" rx="4" fill="#3b82c4"/>
+<line x1="859" y1="256" x2="859" y2="204" stroke="#1f2937" stroke-width="2"/><line x1="853" y1="256" x2="865" y2="256" stroke="#1f2937" stroke-width="2"/><line x1="853" y1="204" x2="865" y2="204" stroke="#1f2937" stroke-width="2"/>
+<text x="859" y="196" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">66.0</text>
+<rect x="904" y="188" width="58" height="324" rx="4" fill="#1d9e75"/>
+<line x1="933" y1="199" x2="933" y2="176" stroke="#1f2937" stroke-width="2"/><line x1="927" y1="199" x2="939" y2="199" stroke="#1f2937" stroke-width="2"/><line x1="927" y1="176" x2="939" y2="176" stroke="#1f2937" stroke-width="2"/>
+<text x="933" y="168" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">69.2</text>
+<rect x="978" y="462" width="58" height="50" rx="4" fill="#e0992f"/>
+<line x1="1007" y1="490" x2="1007" y2="434" stroke="#1f2937" stroke-width="2"/><line x1="1001" y1="490" x2="1013" y2="490" stroke="#1f2937" stroke-width="2"/><line x1="1001" y1="434" x2="1013" y2="434" stroke="#1f2937" stroke-width="2"/>
+<text x="1007" y="426" font-size="16" font-weight="700" text-anchor="middle" fill="#111827">48.8</text>
+<text x="150" y="582" font-size="16" fill="#6b7280">synthesizer:</text>
+<rect x="258" y="570" width="14" height="14" rx="3" fill="#3b82c4"/><text x="278" y="582" font-size="16" fill="#374151">M3</text>
+<rect x="408" y="570" width="14" height="14" rx="3" fill="#1d9e75"/><text x="428" y="582" font-size="16" fill="#374151">GLM-5.2</text>
+<rect x="558" y="570" width="14" height="14" rx="3" fill="#e0992f"/><text x="578" y="582" font-size="16" fill="#374151">Kimi-k2.6</text>
+<text x="150" y="610" font-size="16" fill="#888780">GLM is the best synthesizer; the judge barely moves the score; the top three configs are within noise.</text>
+<text x="1188" y="610" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p>Fusion — a committee of models, each writing its own answer, merged into one — beats any single model on deep research. We have <a href="/blog/fusion-evals-open-source">shown that</a>. But a committee has parts: who sits on the panel, who judges, who synthesizes. Which parts actually matter? We took a five-model open-weights committee apart on <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">DRACO</a> — 100 agentic deep-research tasks, graded by <span class="mono">gemini-3.1-pro</span> — one piece at a time. The answers were not the ones we expected.</p>
+<p><strong>The fuser barely matters — on an open panel.</strong> Hold the five panelists fixed and sweep every judge × synthesizer combination, and the score hardly moves: any config with a <span class="mono">GLM-5.2</span> synthesizer lands around 69, and the judge is statistical noise (the three GLM-synth bars above overlap inside ±1 SE). That is the <em>opposite</em> of a frontier-mixed panel, where the same grid swings eight points — 48.7 to <a href="/blog/fusion-is-two-jobs">73.4</a> — and the choice of fuser is everything. The lesson is mechanical: a clever fuser only earns its keep when the panel is <em>diverse</em>. When the panelists are close in capability, there is little to reconcile and the fuser washes out; mix in frontier models and suddenly the synthesizer's judgment decides the answer.</p>
+<p><strong>Most of the panel looks like dead weight.</strong> So we pulled each panelist out and re-scored the committee. Only two of the five — <a href="https://www.minimax.io"><span class="mono">MiniMax M3</span></a> and <a href="https://www.deepseek.com"><span class="mono">DeepSeek V4 Pro</span></a> — significantly hurt the score when removed. The other three were individually indistinguishable from free, including the two models that were <em>also</em> serving as the judge and the synthesizer. Read the leave-one-out alone and you would fire three of your five panelists.</p>
+<figure style="margin:32px 0">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="56" font-size="33" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">two of five panelists carry the committee</tspan></text>
+<text x="60" y="90" font-size="19" fill="#6b7280">DRACO leave-one-out · drop in score when each member leaves the open panel · ±1 SE · n≈100</text>
+<line x1="487" y1="150" x2="487" y2="548" stroke="#f0eee8"/><text x="487" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-4</text>
+<line x1="619" y1="150" x2="619" y2="548" stroke="#f0eee8"/><text x="619" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-3</text>
+<line x1="751" y1="150" x2="751" y2="548" stroke="#f0eee8"/><text x="751" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-2</text>
+<line x1="883" y1="150" x2="883" y2="548" stroke="#f0eee8"/><text x="883" y="566" font-size="14" text-anchor="middle" fill="#9a9890">-1</text>
+<line x1="1015" y1="150" x2="1015" y2="548" stroke="#f0eee8"/><text x="1015" y="566" font-size="14" text-anchor="middle" fill="#9a9890">+0</text>
+<line x1="1015" y1="150" x2="1015" y2="548" stroke="#6b7280" stroke-width="1.5"/>
+<text x="1023" y="158" font-size="15" fill="#6b7280">baseline 69.1</text>
+<text x="40" y="189" font-size="21" font-weight="600" fill="#111827">M3</text>
+<text x="40" y="210" font-size="15" fill="#9a9890">panel</text>
+<rect x="500" y="168" width="515" height="46" rx="5" fill="#1d9e75"/>
+<line x1="381" y1="191" x2="619" y2="191" stroke="#1f2937" stroke-width="2"/><line x1="381" y1="184" x2="381" y2="198" stroke="#1f2937" stroke-width="2"/><line x1="619" y1="184" x2="619" y2="198" stroke="#1f2937" stroke-width="2"/>
+<text x="369" y="198" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-3.9</text>
+<text x="758" y="198" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">load-bearing</text>
+<text x="40" y="271" font-size="21" font-weight="600" fill="#111827">DeepSeek V4 Pro</text>
+<text x="40" y="292" font-size="15" fill="#9a9890">panel</text>
+<rect x="738" y="250" width="277" height="46" rx="5" fill="#1d9e75"/>
+<line x1="619" y1="273" x2="857" y2="273" stroke="#1f2937" stroke-width="2"/><line x1="619" y1="266" x2="619" y2="280" stroke="#1f2937" stroke-width="2"/><line x1="857" y1="266" x2="857" y2="280" stroke="#1f2937" stroke-width="2"/>
+<text x="607" y="280" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-2.1</text>
+<text x="876" y="280" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">load-bearing</text>
+<text x="40" y="353" font-size="21" font-weight="600" fill="#111827">Kimi K2.6</text>
+<text x="40" y="374" font-size="15" fill="#0f6e56">judge</text>
+<rect x="896" y="332" width="119" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="777" y1="355" x2="1015" y2="355" stroke="#1f2937" stroke-width="2"/><line x1="777" y1="348" x2="777" y2="362" stroke="#1f2937" stroke-width="2"/><line x1="1015" y1="348" x2="1015" y2="362" stroke="#1f2937" stroke-width="2"/>
+<text x="765" y="362" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.9</text>
+<text x="40" y="435" font-size="21" font-weight="600" fill="#111827">Gemma-4</text>
+<text x="40" y="456" font-size="15" fill="#9a9890">panel</text>
+<rect x="909" y="414" width="106" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="804" y1="437" x2="1015" y2="437" stroke="#1f2937" stroke-width="2"/><line x1="804" y1="430" x2="804" y2="444" stroke="#1f2937" stroke-width="2"/><line x1="1015" y1="430" x2="1015" y2="444" stroke="#1f2937" stroke-width="2"/>
+<text x="792" y="444" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.8</text>
+<text x="40" y="517" font-size="21" font-weight="600" fill="#111827">GLM-5.2</text>
+<text x="40" y="538" font-size="15" fill="#0f6e56">synth</text>
+<rect x="923" y="496" width="92" height="46" rx="5" fill="#b4b2a9"/>
+<line x1="817" y1="519" x2="1028" y2="519" stroke="#1f2937" stroke-width="2"/><line x1="817" y1="512" x2="817" y2="526" stroke="#1f2937" stroke-width="2"/><line x1="1028" y1="512" x2="1028" y2="526" stroke="#1f2937" stroke-width="2"/>
+<text x="805" y="526" font-size="22" font-weight="700" text-anchor="end" fill="#111827">-0.7</text>
+<text x="60" y="600" font-size="16" fill="#888780">Only M3 and DeepSeek hurt significantly when removed; the other three — judge, synth, and Gemma-4 — are within noise.</text>
+<text x="1188" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+</figure>
+<p><strong>But you cannot strip the panel.</strong> That would be a mistake — and we have the experiment to prove it. When we actually built a three-member panel, dropping the two "free" role-players, the score fell <strong>3.4 points</strong> — nearly as much as removing the single most important model. The drop looks marginal in an unpaired view, but the panels are 0.80-correlated per task, so the right test is paired: per-task, the three-member panel loses <strong>−3.4 ± 0.95</strong> against the full committee (t = −3.6; a 20,000-sample bootstrap 95% CI of [−5.3, −1.6] that excludes zero). Each member is individually droppable; the panel is not. Removing one is free because the others cover the gap — remove two and the gaps open. The breadth is doing work that no single leave-one-out can see. Call it a <em>redundancy floor</em>.</p>
+<p><strong>And the deepest surprise: the most valuable panelist is not the smartest model.</strong> <span class="mono">DeepSeek V4 Pro</span> is mid-pack as a solo researcher (59.9 on DRACO), and the strongest open solo, <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> at 63.0, is not even on this committee. Yet DeepSeek and M3 carry it while stronger models sit on the bench. Fusion does not reward raw capability — it rewards <em>uncorrelated error</em>. A model earns its seat by failing in different places than the rest, so that where one hallucinates a date or misses a source, the others do not, and the synthesizer keeps what survives cross-examination. We are now measuring the per-task error structure directly — grading each panelist's report on every task and correlating the residuals — and will publish the matrix; the prediction is simple and testable: DeepSeek's errors are the least correlated with the rest, which is exactly why dropping it hurts the most.</p>
+<p>Three findings, one shape: a fusion panel's value lives in its <em>diversity</em>, and diversity is invisible to every single-component test. The fuser is flat until the panel is varied; each member looks free until you remove enough of them; the workhorses are the diverse models, not the strong ones. None of it shows up if you only ever measure one thing at a time.</p>
+<p>This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a> — open code, open results, reproducible end to end. The harness, the exact panel, and the DRACO tasks are all <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>. If you have a PhD and want to work on what actually makes an ensemble of models think, <a href="/careers">apply</a>.</p>
+""",
+    ),
+    BlogPost(
         slug="fusion-is-two-jobs",
         title="Fusion is two jobs, and no model wins both",
         description="Fusing a model panel into one answer is two jobs — a judge that reads the panel and a synthesizer that writes the final answer — and the best model for each is a different one. Across the strongest open models, GLM-5.2 writes the best fused answer but judges its own writing worst; the best open fuser pairs a Kimi-k2.6 judge with a GLM-5.2 synthesizer, 73.4 on DRACO, beating any single model that does both jobs.",
@@ -156,7 +268,7 @@ The model already knows the truth. Whether you hear it depends on whose server y
 <text x="1150" y="456" font-size="21" text-anchor="end" fill="#6b7280">~$250</text>
 <line x1="60" y1="556" x2="1140" y2="556" stroke="#eceae4"/>
 <text x="60" y="584" font-size="18" fill="#374151"><tspan font-weight="700" fill="#0f6e56">Open committee</tspan> (all open weights): MiniMax M3 · Kimi K2.6 · DeepSeek V4 Pro · Gemma-4 · GLM-5.2</text>
-<text x="60" y="610" font-size="15" fill="#9a9890">Kimi-k2.6 judge + GLM-5.2 synth (3 reps, ±1 SE) — the same fuser that tops the frontier panel at 73.4. Fable figures modeled. Gemini grades only — not in cost.</text>
+<text x="60" y="610" font-size="15" fill="#9a9890">Best fuser (Kimi-k2.6 judge + GLM-5.2 synth), 3 reps ±1 SE. Fable figures modeled; gemini grades only.</text>
 <text x="1188" y="610" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 <p>Fuse a panel of research agents with the right open-weights engine and you pass a closed frontier model on deep research, for a fraction of its price. Our best fuser — a <a href="https://www.moonshot.ai"><span class="mono">Kimi K2.6</span></a> judge feeding a <a href="https://z.ai"><span class="mono">GLM-5.2</span></a> synthesizer, both downloadable — scores <strong>73.4</strong> on <a href="/blog/fusion-evals-open-source">DRACO</a> over a strong research panel, eight points clear of Anthropic's <a href="https://www.anthropic.com/claude"><span class="mono">Fable 5</span></a> at <strong>65.3</strong>. Keep the panel itself fully open too — <a href="https://www.minimax.io"><span class="mono">MiniMax M3</span></a>, <span class="mono">Kimi K2.6</span>, <a href="https://www.deepseek.com"><span class="mono">DeepSeek V4 Pro</span></a>, <a href="https://ai.google.dev/gemma"><span class="mono">Gemma-4</span></a>, <span class="mono">GLM-5.2</span>, no closed API anywhere — and the committee still beats <span class="mono">Fable 5</span> at <strong>69.2</strong> for about a third the price. Same <span class="mono">gemini-3.1-pro</span> grader as everywhere; <a href="/blog/fusion-is-two-jobs">the full judge × synthesizer grid</a> is how we found the 73.4 pair.</p><p>The reason this works is that fusion rewards diverse error, and five independently-trained open models disagree in useful ways. Each panelist searches the web, reads its own sources, and writes its own report; where one hallucinates a date or misses a primary source, the others usually don't, and the synthesizer keeps what survives cross-examination. A single model, even a good closed one like <span class="mono">Fable 5</span>, has one failure mode and repeats it through the whole answer. The committee has five, mostly uncorrelated, and the judge catches the difference. We have argued before that the strongest open models <a href="/blog/the-best-open-models-arent-on-your-leaderboard">never show up on the leaderboards that rank them solo</a>, and this is the mechanism: their value shows up in the ensemble, and a single-shot score never measures it.</p><table class="data-table"><tr><th>Panel</th><th>Synthesizer</th><th>DRACO</th><th>Cost / 100 tasks</th></tr><tr><td><strong>Best fuser · frontier panel</strong></td><td><strong><span class="mono">Kimi-k2.6</span> judge → <span class="mono">GLM-5.2</span></strong></td><td><strong>73.4</strong></td><td>~$500 modeled</td></tr><tr><td><strong>All-open (M3 / K2.6 / V4 Pro / Gemma-4 / GLM-5.2)</strong></td><td><strong><span class="mono">Kimi-k2.6</span> judge → <span class="mono">GLM-5.2</span></strong></td><td><strong>69.2</strong></td><td><strong>~$80</strong> (≈⅓ of Fable)</td></tr><tr><td><span class="mono">Fable 5</span> + <span class="mono">GPT-5.5</span></td><td><span class="mono">GPT-5.5</span></td><td>69.0</td><td>~$450 modeled</td></tr><tr><td><span class="mono">Fable 5</span> solo</td><td>—</td><td>65.3</td><td>~$250 modeled</td></tr></table><p>The obvious objection: does this beat the closed frontier? No. Our frontier-mixed panel, with <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> and <span class="mono">Opus</span> sitting on the committee, scores 73.4 with the same <span class="mono">Kimi-k2.6</span> → <span class="mono">GLM-5.2</span> fuser. Letting real frontier models into the panel buys about four points over the open-only version, and that gap is consistent run to run — but a panel of closed frontier models costs more than any single one of them, several times the open committee's bill. The open committee also edges past the best closed-ish fusion we have published, a <span class="mono">Fable 5</span> plus <span class="mono">GPT-5.5</span> panel at 69.0. So we make the narrower, fully defensible claim: a committee that touches no proprietary API anywhere clears a single mid-tier closed model by a real margin.</p><p>And the committee that wins is the cheaper one to rent. <span class="mono">Fable 5</span> lists at <strong>$10</strong> per million input tokens and <strong>$50</strong> per million output; every open model on the panel comes in under $1.55 in and $4.85 out, most of them well under a dollar in. So even with five of them each running a full research pass and a sixth pass to fuse the reports, the open committee's bill comes to about <strong>$80</strong> over the hundred-task benchmark — roughly a third of the <strong>~$250</strong> a single <span class="mono">Fable 5</span> run models to at the same token budget (<span class="mono">Fable 5</span>'s own rate is <a href="/blog/ten-cheap-runs-beat-the-frontier">route-blocked and unpublished</a>, so that figure is a model, not a bill). It scores higher and costs about a third as much — and that is before you count that the weights are yours to run.</p><p>The synthesizer is the seat that carries the result, and the <a href="/blog/the-best-synthesizers">best one we tested</a> is <span class="mono">GLM-5.2</span> — open weights, and it heads the committee at 69.2. Its one liability is that it <a href="/blog/the-ai-models-that-go-silent-on-china">censors</a> — on politically loaded tasks it <a href="/blog/the-best-fuser-goes-blank-on-taiwan">refuses or goes blank</a>, Taiwan being the cleanest example, and a synthesizer that won't write the answer is worthless on exactly the questions where fusion matters most. TrustedRouter Fusion covers that case directly: when the synthesizer returns nothing, it falls through to a backup model — here <span class="mono">Gemma-4</span>, also open weights — and the run keeps going. Run <span class="mono">GLM-5.2</span> for the top score and the fallback catches the rare blank; run the runner-up <span class="mono">MiniMax M3</span> as the censorship-safe default and you never trip it at all — either way no task reaches for a closed model to get unblocked.</p><p>What makes the result matter is what it removes. This configuration has no API key, no per-token bill, no provider that can deprecate the model under you or refuse a prompt class on its own policy. The panelists are open weights, the synthesizer is open weights, the fallback is open weights, and the whole loop runs on hardware you own. For deep research with its long horizon, many sources, and real cost per query, that is the difference between renting a capability and holding one. The pieces, the exact panel, and the DRACO harness are all public: the models we route are listed on <a href="/models">our models page</a>, and the fusion code is in <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">TrustedRouter-Fusion-Draco</a>. Five models you can download, judged by the same grader as everything else, land above a closed model people pay for.</p>
