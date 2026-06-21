@@ -12,6 +12,11 @@ class BlogPost:
     source_label: str | None
     source_url: str | None
     body_html: str
+    # DEFERRED (review 2026-06-21): the inline <svg> bar charts inside body_html
+    # are hand-authored + hand-tuned per post (bespoke positions/colors/copy). A
+    # shared chart helper was rated low-value/high-effort and deliberately NOT
+    # extracted — kept inline on purpose.
+    #
     # Explicit social-card image (absolute URL or "/static/..." path). When None,
     # the renderer falls back to the post's first embedded image (an <img>, or a
     # rasterized PNG of the first inline <svg> at static/og/blog/<slug>.png), then
