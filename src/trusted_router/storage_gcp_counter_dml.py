@@ -201,7 +201,7 @@ def release_key(
 RESERVATION_COLUMNS = (
     "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
     "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
-    "idempotency_scope", "idempotency_fingerprint", "expires_at",
+    "authorization_id", "idempotency_scope", "idempotency_fingerprint", "expires_at",
 )
 
 
@@ -216,7 +216,7 @@ def read_reservation_by_idempotency(
     rows = list(
         transaction.execute_sql(
             "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
-            "hold_usage_type, idempotency_fingerprint, settled "
+            "hold_usage_type, authorization_id, idempotency_fingerprint, settled "
             "FROM tr_reservation WHERE idempotency_scope=@scope",
             params={"scope": idempotency_scope},
             param_types={"scope": param_types.STRING},
@@ -230,8 +230,9 @@ def read_reservation_by_idempotency(
         "credit_reserved_micro": r[1],
         "key_reserved_micro": r[2],
         "hold_usage_type": r[3],
-        "idempotency_fingerprint": r[4],
-        "settled": r[5],
+        "authorization_id": r[4],
+        "idempotency_fingerprint": r[5],
+        "settled": r[6],
     }
 
 
@@ -266,8 +267,9 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
         "reservation_id": pt.STRING, "workspace_id": pt.STRING, "key_hash": pt.STRING,
         "ws_shard": pt.INT64, "key_shard": pt.INT64,
         "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
-        "hold_usage_type": pt.STRING, "idempotency_scope": pt.STRING,
-        "idempotency_fingerprint": pt.STRING, "expires_at": pt.TIMESTAMP,
+        "hold_usage_type": pt.STRING, "authorization_id": pt.STRING,
+        "idempotency_scope": pt.STRING, "idempotency_fingerprint": pt.STRING,
+        "expires_at": pt.TIMESTAMP,
     }
     cols = ", ".join(RESERVATION_COLUMNS)
     binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
@@ -304,3 +306,22 @@ def claim_reservation(
         },
     )
     return count == 1
+
+
+def insert_entity_dml(
+    transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str
+) -> None:
+    """DML INSERT of a tr_entities JSON row (e.g. gateway_authorization), so it
+    composes into the DML-only authorize transaction instead of a mutation.
+    PENDING_COMMIT_TIMESTAMP() is the last touch of the row; raises ALREADY_EXISTS
+    on a duplicate (kind,id)."""
+    transaction.execute_update(
+        "INSERT INTO tr_entities (kind, id, body, updated_at) "
+        "VALUES (@kind, @id, @body, PENDING_COMMIT_TIMESTAMP())",
+        params={"kind": kind, "id": entity_id, "body": body_json},
+        param_types={
+            "kind": param_types.STRING,
+            "id": param_types.STRING,
+            "body": param_types.STRING,
+        },
+    )

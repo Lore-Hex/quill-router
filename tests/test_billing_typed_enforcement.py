@@ -449,3 +449,134 @@ def test_reservation_claim_race_settles_once() -> None:
 
     _run_workers([threading.Thread(target=claim, daemon=True) for _ in range(6)], barrier)
     assert wins.count(True) == 1, wins  # exactly one claim wins
+
+
+# ── 3b-3: the atomic authorize transaction (keystone) ───────────────────────
+
+import json as _json  # noqa: E402
+
+from trusted_router.storage_gcp_authorize import (  # noqa: E402
+    AuthorizeOutcome,
+    authorize_atomic,
+)
+from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as _KLT  # noqa: E402
+
+
+def _auth_body(aid, rid):
+    return _json.dumps({"id": aid, "credit_reservation_id": rid, "model": "m"})
+
+
+def _authorize(store, *, ws, key_hash, estimate, has_credit=True, scope=None, fp=None):
+    return authorize_atomic(
+        store._database, store._param_types,
+        workspace_id=ws, key_hash=key_hash, estimate=estimate,
+        has_credit_candidate=has_credit,
+        reservation_usage_type=("Credits" if has_credit else "BYOK"),
+        idempotency_scope=scope, idempotency_fingerprint=fp,
+        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+    )
+
+
+def test_authorize_atomic_accepts_and_holds_both() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_auth"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    res = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    assert res["outcome"] == AuthorizeOutcome.ACCEPTED
+    assert _typed(db, ws)["reserved"] == 1_000_000  # credit hold
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 1_000_000  # key hold
+    # reservation + auth entity written atomically
+    assert res["reservation_id"] in db.reservations
+    assert ("gateway_authorization", res["authorization_id"]) in db.rows
+    resv = db.reservations[res["reservation_id"]]
+    assert resv["credit_reserved_micro"] == 1_000_000
+    assert resv["key_reserved_micro"] == 1_000_000
+    assert resv["authorization_id"] == res["authorization_id"]
+
+
+def test_authorize_atomic_insufficient_credits_leaks_no_hold() -> None:
+    """THE atomicity test (codex#1 #1): credit reject must roll back the key hold
+    taken earlier in the same transaction — no leaked reserved."""
+    store, db, _ = make_fake_store()
+    ws = "ws_auth_poor"
+    _seed_credit(store, ws, 500_000)  # less than the estimate
+    key = _make_key(store, ws, limit=5_000_000)  # key has plenty
+    res = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    assert res["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert _typed(db, ws)["reserved"] == 0  # credit untouched
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 0  # KEY HOLD ROLLED BACK
+    assert db.reservations == {}  # nothing persisted
+
+
+def test_authorize_atomic_key_limit_exceeded() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_auth_cap"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=100_000)  # tiny cap
+    res = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    assert res["outcome"] == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    assert _typed(db, ws)["reserved"] == 0  # credit never touched (key checked first)
+    assert db.reservations == {}
+
+
+def test_authorize_atomic_idempotent_replay() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_auth_idem"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    first = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="s1", fp="fp1")
+    assert first["outcome"] == AuthorizeOutcome.ACCEPTED
+    reserved_after_first = _typed(db, ws)["reserved"]
+
+    replay = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="s1", fp="fp1")
+    assert replay["outcome"] == AuthorizeOutcome.REPLAY
+    assert replay["authorization_id"] == first["authorization_id"]
+    assert replay["reservation_id"] == first["reservation_id"]
+    assert _typed(db, ws)["reserved"] == reserved_after_first  # NO second debit
+    assert len(db.reservations) == 1
+
+
+def test_authorize_atomic_idempotency_fingerprint_mismatch() -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_auth_mm"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="s2", fp="fpA")
+    mism = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="s2", fp="fpB")
+    assert mism["outcome"] == AuthorizeOutcome.IDEMPOTENCY_MISMATCH
+
+
+def test_authorize_atomic_byok_no_credit_hold() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_auth_byok"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000, include_byok=True)
+    res = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, has_credit=False)
+    assert res["outcome"] == AuthorizeOutcome.ACCEPTED
+    assert _typed(db, ws)["reserved"] == 0  # no credit hold for BYOK
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 1_000_000  # key hold (include_byok)
+    assert db.reservations[res["reservation_id"]]["credit_reserved_micro"] == 0
+
+
+def test_authorize_atomic_concurrent_same_scope_one_debit() -> None:
+    """Two concurrent first-calls, same idempotency scope: exactly one debits,
+    the other replays (ALREADY_EXISTS -> replay) — never a double reservation."""
+    ws = "ws_auth_race"
+    barrier = threading.Barrier(3)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def go() -> None:
+        r = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="race", fp="fp")
+        with lock:
+            outcomes.append(r["outcome"])
+
+    _run_workers([threading.Thread(target=go, daemon=True) for _ in range(2)], barrier)
+    assert outcomes.count(AuthorizeOutcome.ACCEPTED) == 1, outcomes
+    assert outcomes.count(AuthorizeOutcome.REPLAY) == 1, outcomes
+    assert len(db.reservations) == 1  # exactly one reservation
+    assert _typed(db, ws)["reserved"] == 1_000_000  # one debit
