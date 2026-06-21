@@ -136,8 +136,12 @@ def authorize_atomic(
     except AlreadyExists:
         # Concurrent first-call lost the unique-idempotency-index race: the winner
         # committed; re-read and replay (codex Step-3 #4) — never a second debit.
+        # The conflict was on idempotency_scope, so it is necessarily non-None.
+        assert idempotency_scope is not None
+        conflict_scope: str = idempotency_scope
+
         def replay_txn(transaction: Any) -> dict:
-            existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
+            existing = read_reservation_by_idempotency(transaction, pt, conflict_scope)
             if existing is None:  # pragma: no cover - winner must exist post-conflict
                 raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
             # Same fingerprint check as the normal replay path (codex keystone

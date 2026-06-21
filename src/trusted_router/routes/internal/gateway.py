@@ -603,10 +603,13 @@ def _settle_gateway_authorization(
     # JSON (codex 3e). Default: no typed reservation (or InMemory store) -> legacy
     # path unchanged.
     _is_typed = getattr(STORE, "is_typed_reservation", None)
-    if _is_typed is not None and _is_typed(
-        authorization.credit_reservation_id, authorization.id
+    _typed_finalize = getattr(STORE, "typed_finalize_gateway_authorization", None)
+    if (
+        _is_typed is not None
+        and _typed_finalize is not None
+        and _is_typed(authorization.credit_reservation_id, authorization.id)
     ):
-        finalized = STORE.typed_finalize_gateway_authorization(
+        finalized = _typed_finalize(
             authorization.id,
             success=success,
             actual_microdollars=actual_cost,
