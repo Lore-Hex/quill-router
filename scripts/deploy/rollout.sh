@@ -107,6 +107,15 @@ ENV_VARS=(
   # typed tables before the enforcement cohort flag. The typed tables already
   # exist (migrate_typed_counters.sh). Remove to revert the dual-write.
   "TR_TYPED_COUNTER_MIRROR=1"
+  # Billing typed-counter migration cutover, step 5 — ENFORCEMENT cohort. Each
+  # listed workspace's gateway authorize/settle flows go through the typed
+  # conditional-DML path (the deadlock fix). Settle/refund route by reservation
+  # ORIGIN, so straddling requests stay matched. First cohort = the internal
+  # synthetic-monitor workspace (highest-concurrency, validated continuously by
+  # prod-smoke gateway_authorize_settle). DDL applied, mirror live, drift
+  # comparator CLEAN before this. Empty = no enforcement; add to a denylist env
+  # to kill-switch a workspace. Ramp by appending more workspace IDs.
+  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
