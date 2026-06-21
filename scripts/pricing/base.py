@@ -57,6 +57,13 @@ PARSER_IMPORT_WHITELIST = frozenset(
         "json",
         "typing",
         "dataclasses",
+        # `from __future__ import annotations` is a compile-time directive,
+        # not a runtime import — it can't pull in executable code. The
+        # self-heal LLM emits it (it's idiomatic and present in every
+        # committed parser), and rejecting it made EVERY self-heal attempt
+        # fail the whitelist, so venice/novita/mistral could never recover
+        # from a deterministic-parse failure and went stale hourly.
+        "__future__",
     }
 )
 
@@ -574,7 +581,12 @@ def ast_whitelist_check(source: str) -> list[str]:
         errors.append("missing top-level function `parse`")
         return errors
 
-    # Validate parse(html: str) -> dict signature.
+    # Validate the parse() signature: exactly one positional arg. The arg
+    # NAME is not constrained — sandbox_run_parser invokes `parse(html)`
+    # positionally (the value is the captured page source regardless of the
+    # parameter's name), and the self-heal LLM frequently names it `text`/
+    # `markdown`/`source`. Requiring the literal name `html` rejected
+    # otherwise-valid self-heal output and was a no-op for safety.
     args = parse_func_node.args
     if (
         len(args.args) != 1
@@ -583,9 +595,7 @@ def ast_whitelist_check(source: str) -> list[str]:
         or args.kwonlyargs
         or args.posonlyargs
     ):
-        errors.append("parse() must take exactly one positional arg `html`")
-    elif args.args[0].arg != "html":
-        errors.append("parse() first arg must be named `html`")
+        errors.append("parse() must take exactly one positional arg")
 
     # Walk the entire AST once for blacklisted name references.
     for sub in ast.walk(tree):

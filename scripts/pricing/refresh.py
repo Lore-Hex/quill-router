@@ -449,6 +449,24 @@ def _cross_check_ids(
     return notes
 
 
+def _is_unpriced(price: ModelPrice) -> bool:
+    """A provider-direct ModelPrice whose headline tier is $0 prompt AND
+    $0 completion is treated as UNPRICED, not as a genuinely free model.
+
+    Keyed providers in this catalog do not serve free models; a $0/$0 row
+    is always a feed/parse artifact — a `:free`/preview variant that
+    collapsed onto the paid id, a /v1/models row listed without pricing
+    (coerced to 0), or an intermittent omission. Letting such a $0 into
+    the `cheapest`-tier selection zeroes the model's headline, trips
+    check_price_spike's both-prices-to-zero guard, and freezes the entire
+    hourly refresh (observed: a ~2-week stall, last good commit 2026-06-07,
+    over 6 popular open models like gemma-3-4b-it / llama-3.3-70b that are
+    in fact served at real prices). If a genuinely-free model is ever
+    needed, add it to an explicit allowlist rather than trusting a 0."""
+    headline = price.tiers[0]
+    return headline.prompt_micro_per_m <= 0 and headline.completion_micro_per_m <= 0
+
+
 def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
     """Render a ModelPrice into the snapshot's `pricing` block. The
     headline (low-tier) rate is exposed as `pricing.prompt` /
@@ -544,19 +562,61 @@ def _merge_snapshot(
             # this case ("parser found N models OR doesn't list").
             continue
         new_model = dict(or_model)
-        # Model-level headline pricing = the cheapest provider-direct
-        # tier across all endpoints (matches OR's convention and what
-        # /v1/models top-level pricing should show).
-        cheapest = min(by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m)
+        # Drop $0/$0 provider tiers BEFORE selecting the headline. A zero
+        # price from a keyed provider is a feed artifact, not a free model
+        # (see _is_unpriced) — and because the headline is the *cheapest*
+        # tier, a single spurious $0 would otherwise win `min()` and zero
+        # the model, freezing the whole refresh via the spike watchdog.
+        priced_by_slug = {
+            slug: price for slug, price in by_slug.items() if not _is_unpriced(price)
+        }
         new_pricing = dict(new_model.get("pricing") or {})
-        new_pricing.update(_price_to_pricing_block(cheapest))
-        new_model["pricing"] = new_pricing
-        # Tag pricing_source as self-healed if ANY of the slugs that
-        # priced this model went through the LLM rewrite.
-        if any(slug in healed_slugs for slug in by_slug):
-            new_model["pricing_source"] = "self_healed_provider"
+        if priced_by_slug:
+            # Model-level headline pricing = the cheapest *positively-priced*
+            # provider-direct tier (matches OR's convention and what
+            # /v1/models top-level pricing should show).
+            cheapest = min(
+                priced_by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m
+            )
+            new_pricing.update(_price_to_pricing_block(cheapest))
+            new_model["pricing"] = new_pricing
+            # Tag pricing_source as self-healed if ANY of the slugs that
+            # priced this model went through the LLM rewrite.
+            if any(slug in healed_slugs for slug in priced_by_slug):
+                new_model["pricing_source"] = "self_healed_provider"
+            else:
+                new_model["pricing_source"] = "provider_direct"
         else:
-            new_model["pricing_source"] = "provider_direct"
+            # Every keyed provider returned $0 for a model that OR prices
+            # above $0 — a feed glitch across all of them at once. Fall
+            # back to OR's cross-check price (the one place OR is used as a
+            # billing source, by explicit design, as a last resort) rather
+            # than emitting $0 (freezes the refresh) or dropping a model we
+            # actually serve. If OR has no usable price either, skip it.
+            or_price = _or_pricing_to_micro_per_m(or_model.get("pricing") or {})
+            if or_price is None or _is_unpriced(or_price):
+                continue
+            new_pricing.update(_price_to_pricing_block(or_price))
+            new_model["pricing"] = new_pricing
+            new_model["pricing_source"] = "openrouter_fallback"
+            # Keep OR's endpoints (with their OR pricing) so the model
+            # stays routable — rebuilding from priced_by_slug would drop
+            # every endpoint (it's empty here) and the no-endpoints guard
+            # below would then delete a model we actually serve.
+            or_endpoints: list[dict[str, Any]] = []
+            for ep in new_model.get("endpoints") or []:
+                if not isinstance(ep, dict) or not isinstance(
+                    ep.get("tr_provider_slug"), str
+                ):
+                    continue
+                or_ep = dict(ep)
+                or_ep["pricing_source"] = "openrouter_fallback"
+                or_endpoints.append(or_ep)
+            if not or_endpoints:
+                continue
+            new_model["endpoints"] = or_endpoints
+            merged_models.append(new_model)
+            continue
 
         new_endpoints: list[dict[str, Any]] = []
         seen_slugs: set[str] = set()
@@ -565,11 +625,11 @@ def _merge_snapshot(
             ep_slug = new_ep.get("tr_provider_slug")
             if not isinstance(ep_slug, str):
                 continue
-            ep_price = by_slug.get(ep_slug)
+            ep_price = priced_by_slug.get(ep_slug)
             if ep_price is None:
-                # Drop non-priced endpoints — without provider-direct
-                # pricing we can't bill the route, so listing it is
-                # misleading.
+                # Drop non-priced AND $0-priced endpoints — without a real
+                # provider-direct price we can't bill the route, so listing
+                # it is misleading (and a $0 here would understate cost).
                 continue
             new_ep_pricing = dict(new_ep.get("pricing") or {})
             new_ep_pricing.update(_price_to_pricing_block(ep_price))
@@ -596,7 +656,7 @@ def _merge_snapshot(
         # it into the catalog — OR's /endpoints feed lags or omits them
         # entirely, but we still bill correctly because the parser pulled
         # the price straight off the provider's own pricing page / API.
-        for missing_slug, missing_price in by_slug.items():
+        for missing_slug, missing_price in priced_by_slug.items():
             if missing_slug in seen_slugs:
                 continue
             synth_slug_map = upstream_id_maps.get(missing_slug) or {}

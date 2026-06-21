@@ -123,6 +123,22 @@ def test_ast_whitelist_passes_clean_parser() -> None:
     assert ast_whitelist_check(_VALID_PARSER) == []
 
 
+def test_ast_whitelist_allows_future_import_and_any_arg_name() -> None:
+    """Regression for the self-heal freeze: the LLM-rewritten parsers emit
+    `from __future__ import annotations` (idiomatic, present in every
+    committed parser) and often name the arg `text`/`markdown` instead of
+    `html`. Both used to fail the whitelist, so venice/novita/mistral could
+    never self-heal and went stale hourly. `__future__` is a compile-time
+    directive (no runtime import) and parse() is called positionally."""
+    src = (
+        "from __future__ import annotations\n"
+        "import re\n\n"
+        "def parse(markdown: str) -> dict:\n"
+        '    return {"x/y": {"prompt_micro_per_m": 1, "completion_micro_per_m": 2}}\n'
+    )
+    assert ast_whitelist_check(src) == []
+
+
 def test_ast_whitelist_rejects_subprocess_import() -> None:
     src = "import subprocess\n\ndef parse(html: str) -> dict:\n    return {}\n"
     errors = ast_whitelist_check(src)
