@@ -242,7 +242,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
         transaction.execute_sql(
             "SELECT reservation_id, workspace_id, key_hash, ws_shard, key_shard, "
             "credit_reserved_micro, key_reserved_micro, hold_usage_type, "
-            "settled_usage_type, actual_micro, settled "
+            "settled_usage_type, actual_micro, authorization_id, settled "
             "FROM tr_reservation WHERE reservation_id=@rid",
             params={"rid": reservation_id},
             param_types={"rid": param_types.STRING},
@@ -254,7 +254,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
     keys = (
         "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
         "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
-        "settled_usage_type", "actual_micro", "settled",
+        "settled_usage_type", "actual_micro", "authorization_id", "settled",
     )
     return dict(zip(keys, r, strict=True))
 

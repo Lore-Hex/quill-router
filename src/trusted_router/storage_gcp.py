@@ -924,6 +924,39 @@ class SpannerBigtableStore:
             self.generation_store.index_after_commit(generation)
         return bool(finalized)
 
+    # ── Typed-column billing (Step 3): thin wrappers over storage_gcp_authorize.
+    # The atomic conditional-DML authorize/settle engine. Gated by the route on
+    # the cohort flag (authorize) and reservation origin (settle/refund).
+    def authorize_gateway_atomic(self, **kwargs: Any) -> dict:
+        from trusted_router.storage_gcp_authorize import authorize_atomic
+
+        return authorize_atomic(self._database, self._param_types, **kwargs)
+
+    def typed_finalize_gateway(self, **kwargs: Any) -> dict:
+        from trusted_router.storage_gcp_authorize import typed_finalize_atomic
+
+        return typed_finalize_atomic(self._database, self._param_types, **kwargs)
+
+    def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
+        from trusted_router.storage_gcp_authorize import (
+            reap_expired_reservations as _reap,
+        )
+
+        return _reap(self._database, self._param_types, now=now, limit=limit)
+
+    def is_typed_reservation(self, reservation_id: str | None, authorization_id: str) -> bool:
+        """Settle/refund origin detection (codex 3e): typed iff a tr_reservation
+        row exists for this reservation id AND its authorization_id matches — so a
+        request that reserved typed settles typed, and a JSON one settles JSON,
+        regardless of the current cohort flag."""
+        if not reservation_id:
+            return False
+        from trusted_router.storage_gcp_counter_dml import read_reservation
+
+        with self._database.snapshot() as snapshot:
+            res = read_reservation(snapshot, self._param_types, reservation_id)
+        return res is not None and res.get("authorization_id") == authorization_id
+
     def reserve_key_limit(
         self,
         key_hash: str,

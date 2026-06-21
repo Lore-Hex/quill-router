@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
 
+    # Typed-column billing enforcement cutover (docs/design/billing-typed-counters).
+    # Per-workspace allowlist (CSV) that authorize uses the typed conditional-DML
+    # path for; settle/refund route by reservation ORIGIN, not this flag. Default
+    # empty = legacy path everywhere (zero behavior change). "*" = all workspaces.
+    # The denylist is an emergency kill switch that always wins.
+    typed_billing_workspace_ids: str = ""
+    typed_billing_workspace_denylist: str = ""
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False

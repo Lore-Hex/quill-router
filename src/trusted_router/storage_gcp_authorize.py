@@ -355,3 +355,16 @@ def typed_finalize_atomic(
         return run_in_transaction_with_retry(database, txn)
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
+
+
+def typed_billing_enabled_for_workspace(
+    workspace_id: str, *, allowlist_csv: str, denylist_csv: str
+) -> bool:
+    """Cohort gate for the typed AUTHORIZE path. Default-off; the denylist is an
+    emergency kill switch that always wins; "*" in the allowlist = all. Settle/
+    refund route by reservation ORIGIN, not this gate (codex 3e)."""
+    deny = {w.strip() for w in denylist_csv.split(",") if w.strip()}
+    if workspace_id in deny:
+        return False
+    allow = {w.strip() for w in allowlist_csv.split(",") if w.strip()}
+    return "*" in allow or workspace_id in allow

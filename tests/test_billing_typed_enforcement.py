@@ -890,3 +890,62 @@ def test_typed_finalize_race_books_once() -> None:
     _run_workers([threading.Thread(target=go, daemon=True) for _ in range(6)], barrier)
     assert outcomes.count(SettleOutcome.SETTLED) == 1, outcomes
     assert _typed(db, ws)["total_usage"] == 900_000  # charged exactly once
+
+
+# ── 3e-2: cohort gate + store wrappers + origin detection ───────────────────
+
+from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace  # noqa: E402
+
+
+def test_cohort_gate_allowlist_denylist_wildcard() -> None:
+    f = typed_billing_enabled_for_workspace
+    assert f("ws1", allowlist_csv="ws1,ws2", denylist_csv="") is True
+    assert f("ws3", allowlist_csv="ws1,ws2", denylist_csv="") is False
+    assert f("ws9", allowlist_csv="*", denylist_csv="") is True
+    assert f("ws1", allowlist_csv="*", denylist_csv="ws1") is False  # denylist wins
+    assert f("ws1", allowlist_csv="", denylist_csv="") is False  # default off
+
+
+def test_store_authorize_wrapper_and_origin_detection() -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_wrap"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    res = store.authorize_gateway_atomic(
+        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
+        has_credit_candidate=True, reservation_usage_type="Credits",
+        idempotency_scope=None, idempotency_fingerprint=None,
+        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+    )
+    assert res["outcome"] == AuthorizeOutcome.ACCEPTED
+    rid, aid = res["reservation_id"], res["authorization_id"]
+    # origin detection: this reservation is typed and matches its authorization
+    assert store.is_typed_reservation(rid, aid) is True
+    # a JSON-origin (no tr_reservation) or mismatched auth is not typed
+    assert store.is_typed_reservation(rid, "gwa-someone-else") is False
+    assert store.is_typed_reservation("json-reservation-id", aid) is False
+    assert store.is_typed_reservation(None, aid) is False
+
+
+def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_wrap2"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    res = store.authorize_gateway_atomic(
+        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
+        has_credit_candidate=True, reservation_usage_type="Credits",
+        idempotency_scope=None, idempotency_fingerprint=None,
+        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+    )
+    rid, aid = res["reservation_id"], res["authorization_id"]
+    out = store.typed_finalize_gateway(
+        reservation_id=rid, authorization_id=aid, success=True, actual_micro=900_000,
+        settled_usage_type="Credits", now=_TS,
+        auth_body_settled=_json.dumps({"id": aid, "settled": True}),
+        generation_writes=[("generation", f"g-{rid}", "{}")],
+    )
+    assert out["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["total_usage"] == 900_000
+    # reaper wrapper: nothing expired+unsettled now
+    assert store.reap_expired_reservations(now=_NOW) == 0
