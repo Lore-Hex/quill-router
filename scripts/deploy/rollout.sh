@@ -115,7 +115,10 @@ ENV_VARS=(
   # prod-smoke gateway_authorize_settle). DDL applied, mirror live, drift
   # comparator CLEAN before this. Empty = no enforcement; add to a denylist env
   # to kill-switch a workspace. Ramp by appending more workspace IDs.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d"
+  # Ramp 1 (2026-06-21): +063e9fb9 — the most active REAL workspace (live
+  # in-flight reservations, funded), pre-flight comparator CLEAN + available>0.
+  # First real (non-synthetic, real-model CREDITS) traffic on the typed path.
+  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
