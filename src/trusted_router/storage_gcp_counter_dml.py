@@ -241,7 +241,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
         transaction.execute_sql(
             "SELECT reservation_id, workspace_id, key_hash, ws_shard, key_shard, "
             "credit_reserved_micro, key_reserved_micro, hold_usage_type, "
-            "settled_usage_type, settled "
+            "settled_usage_type, actual_micro, settled "
             "FROM tr_reservation WHERE reservation_id=@rid",
             params={"rid": reservation_id},
             param_types={"rid": param_types.STRING},
@@ -253,7 +253,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
     keys = (
         "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
         "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
-        "settled_usage_type", "settled",
+        "settled_usage_type", "actual_micro", "settled",
     )
     return dict(zip(keys, r, strict=True))
 
@@ -279,17 +279,28 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
 
 
 def claim_reservation(
-    transaction: Any, param_types: Any, reservation_id: str, *, settled_usage_type: str
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+    *,
+    actual_micro: int,
+    settled_usage_type: str,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
     True = this caller won the claim (row-count 1, settled flipped false->true);
     False = already settled (row-count 0, a replay) -> do NOT touch counters.
+    Persists `actual_micro` + `settled_usage_type` so the durable reservation
+    records the exact settled amount for audit / reaper reconciliation.
     """
     count = transaction.execute_update(
-        "UPDATE tr_reservation SET settled=true, settled_usage_type=@sut "
-        "WHERE reservation_id=@rid AND settled=false",
-        params={"rid": reservation_id, "sut": settled_usage_type},
-        param_types={"rid": param_types.STRING, "sut": param_types.STRING},
+        "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
+        "settled_usage_type=@sut WHERE reservation_id=@rid AND settled=false",
+        params={"rid": reservation_id, "actual": int(actual_micro), "sut": settled_usage_type},
+        param_types={
+            "rid": param_types.STRING,
+            "actual": param_types.INT64,
+            "sut": param_types.STRING,
+        },
     )
     return count == 1

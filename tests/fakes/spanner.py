@@ -36,10 +36,21 @@ class FakeAborted(Exception):
     pass
 
 
-class FakeAlreadyExists(Exception):
-    """Unique-index violation (e.g. duplicate idempotency_scope). Unlike Aborted,
-    run_in_transaction does NOT retry this — the caller must convert it to the
-    replay path (codex Step-3 #4)."""
+try:  # subclass the real exception so production `except AlreadyExists` catches it
+    from google.api_core.exceptions import AlreadyExists as _AlreadyExists
+except ImportError:  # pragma: no cover - google always present in the test venv
+    _AlreadyExists = Exception  # type: ignore[assignment,misc]
+
+
+class FakeAlreadyExists(_AlreadyExists):
+    """Unique-index / duplicate-PK violation (e.g. duplicate idempotency_scope or
+    reservation_id). Unlike Aborted, run_in_transaction does NOT retry this — the
+    caller must convert it to the replay path (codex Step-3 #4). Subclasses the
+    real google.api_core.exceptions.AlreadyExists so the same `except AlreadyExists`
+    works in prod and tests."""
+
+    def __init__(self, detail: str = "already exists") -> None:
+        super().__init__(detail)
 
 
 class FakeSpannerDatabase:
@@ -264,6 +275,12 @@ class _FakeTransaction:
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):
+            rid = p["reservation_id"]
+            if rid in self.db.reservations:
+                raise FakeAlreadyExists(rid)  # duplicate PK
+            res_key = ("res", rid)
+            if res_key not in self.read_versions:
+                self.read_versions[res_key] = self.db.reservation_versions.get(rid, 0)
             scope = p.get("idempotency_scope")
             if scope is not None:
                 if scope in self.db.reservation_idemp:
@@ -281,7 +298,9 @@ class _FakeTransaction:
             rec = self._reservation_current(p["rid"])
             if rec is None or rec["settled"]:
                 return 0  # missing or already-claimed (replay)
-            new = dict(rec, settled=True, settled_usage_type=p["sut"])
+            new = dict(
+                rec, settled=True, settled_usage_type=p["sut"], actual_micro=p["actual"]
+            )
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
         raise NotImplementedError(sql)

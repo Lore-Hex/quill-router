@@ -412,16 +412,24 @@ def test_reservation_claim_first_writer_wins() -> None:
     _insert_res(store, rid="rc", credit_hold=100_000)
     pt = store._param_types
     first = store._database.run_in_transaction(
-        lambda t: claim_reservation(t, pt, "rc", settled_usage_type="Credits")
+        lambda t: claim_reservation(t, pt, "rc", actual_micro=95_000, settled_usage_type="Credits")
     )
     second = store._database.run_in_transaction(
-        lambda t: claim_reservation(t, pt, "rc", settled_usage_type="Credits")
+        lambda t: claim_reservation(t, pt, "rc", actual_micro=99_000, settled_usage_type="Credits")
     )
     assert first is True
     assert second is False  # already settled -> replay no-op
     row = store._database.run_in_transaction(lambda t: read_reservation(t, pt, "rc"))
     assert row["settled"] is True
     assert row["settled_usage_type"] == "Credits"
+    assert row["actual_micro"] == 95_000  # first claim's actual, durably recorded
+
+
+def test_reservation_duplicate_id_raises_already_exists() -> None:
+    store, _db, _ = make_fake_store()
+    _insert_res(store, rid="dupid")
+    with pytest.raises(FakeAlreadyExists):
+        _insert_res(store, rid="dupid", scope="different")  # same PK -> conflict
 
 
 def test_reservation_claim_race_settles_once() -> None:
@@ -434,7 +442,7 @@ def test_reservation_claim_race_settles_once() -> None:
 
     def claim() -> None:
         w = store._database.run_in_transaction(
-            lambda t: claim_reservation(t, pt, "rr", settled_usage_type="Credits")
+            lambda t: claim_reservation(t, pt, "rr", actual_micro=90_000, settled_usage_type="Credits")
         )
         with lock:
             wins.append(w)
