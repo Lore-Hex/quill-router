@@ -325,3 +325,37 @@ def insert_entity_dml(
             "body": param_types.STRING,
         },
     )
+
+
+def insert_entity_dml_at(
+    transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str, now: Any
+) -> None:
+    """DML INSERT a tr_entities row with a client `updated_at` (NOT
+    PENDING_COMMIT_TIMESTAMP), so MULTIPLE tr_entities DML statements can run in
+    one transaction without the PCT same-table trap (codex 3e). Raises
+    ALREADY_EXISTS on duplicate (kind,id)."""
+    transaction.execute_update(
+        "INSERT INTO tr_entities (kind, id, body, updated_at) "
+        "VALUES (@kind, @id, @body, @now)",
+        params={"kind": kind, "id": entity_id, "body": body_json, "now": now},
+        param_types={
+            "kind": param_types.STRING, "id": param_types.STRING,
+            "body": param_types.STRING, "now": param_types.TIMESTAMP,
+        },
+    )
+
+
+def update_entity_body_dml(
+    transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str, now: Any
+) -> int:
+    """DML UPDATE a tr_entities row's body (e.g. mark gateway_authorization
+    settled) with a client `updated_at`. Returns the modified-row count."""
+    return transaction.execute_update(
+        "UPDATE tr_entities SET body=@body, updated_at=@now "
+        "WHERE kind=@kind AND id=@id",
+        params={"kind": kind, "id": entity_id, "body": body_json, "now": now},
+        param_types={
+            "kind": param_types.STRING, "id": param_types.STRING,
+            "body": param_types.STRING, "now": param_types.TIMESTAMP,
+        },
+    )

@@ -795,3 +795,98 @@ def test_authorize_atomic_concurrent_same_scope_different_fingerprint() -> None:
     )
     assert outcomes.count(AuthorizeOutcome.ACCEPTED) == 1, outcomes
     assert outcomes.count(AuthorizeOutcome.IDEMPOTENCY_MISMATCH) == 1, outcomes
+
+
+# ── 3e-1: full-DML typed finalize (reproduces legacy finalize) ──────────────
+
+from trusted_router.storage_gcp_authorize import typed_finalize_atomic  # noqa: E402
+
+_TS = "2026-02-01T00:00:00Z"
+
+
+def _typed_finalize(store, *, rid, aid, actual, settled_ut="Credits", success=True, gen=True):
+    writes = []
+    if gen and success:
+        writes = [
+            ("generation", f"gen-{rid}", _json.dumps({"id": f"gen-{rid}", "cost": actual})),
+            ("generation_by_workspace", f"genidx-{rid}", _json.dumps({"generation_id": f"gen-{rid}"})),
+        ]
+    auth_settled = _json.dumps({"id": aid, "settled": True})
+    return typed_finalize_atomic(
+        store._database, store._param_types,
+        reservation_id=rid, authorization_id=aid, success=success,
+        actual_micro=actual, settled_usage_type=settled_ut, now=_TS,
+        auth_body_settled=auth_settled, generation_writes=writes,
+    )
+
+
+def test_typed_finalize_full_success() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_tf"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid, aid = auth["reservation_id"], auth["authorization_id"]
+
+    res = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
+    assert res["outcome"] == SettleOutcome.SETTLED
+    # counters
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 900_000
+    assert db.typed[_KLT][(key.hash, 0)]["usage"] == 900_000
+    # generation entities written in the same txn
+    assert ("generation", f"gen-{rid}") in db.rows
+    assert ("generation_by_workspace", f"genidx-{rid}") in db.rows
+    # auth marked settled
+    assert _json.loads(db.rows[("gateway_authorization", aid)].body)["settled"] is True
+
+
+def test_typed_finalize_refund_no_generation_no_booking() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_tf_refund"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid, aid = auth["reservation_id"], auth["authorization_id"]
+
+    res = _typed_finalize(store, rid=rid, aid=aid, actual=0, success=False)
+    assert res["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 0  # refund books nothing
+    assert ("generation", f"gen-{rid}") not in db.rows  # no generation on failure
+    assert _json.loads(db.rows[("gateway_authorization", aid)].body)["settled"] is True
+
+
+def test_typed_finalize_replay_books_once() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_tf_replay"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid, aid = auth["reservation_id"], auth["authorization_id"]
+    first = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
+    second = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
+    assert first["outcome"] == SettleOutcome.SETTLED
+    assert second["outcome"] == SettleOutcome.ALREADY_SETTLED
+    assert _typed(db, ws)["total_usage"] == 900_000  # booked once
+
+
+def test_typed_finalize_race_books_once() -> None:
+    ws = "ws_tf_race"
+    barrier = threading.Barrier(7)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid, aid = auth["reservation_id"], auth["authorization_id"]
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def go() -> None:
+        r = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
+        with lock:
+            outcomes.append(r["outcome"])
+
+    _run_workers([threading.Thread(target=go, daemon=True) for _ in range(6)], barrier)
+    assert outcomes.count(SettleOutcome.SETTLED) == 1, outcomes
+    assert _typed(db, ws)["total_usage"] == 900_000  # charged exactly once

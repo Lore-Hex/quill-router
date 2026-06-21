@@ -157,6 +157,9 @@ class FakeSpannerDatabase:
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                elif op[0] == "update_entity_dml":  # DML UPDATE tr_entities body
+                    _, kind, entity_id, body = op
+                    self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
             return True
 
     def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
@@ -313,6 +316,23 @@ class _FakeTransaction:
             if entity_key not in self.read_versions:
                 self.read_versions[entity_key] = 0  # observed absent
             self.pending_writes.append(("insert_entity_dml", p["kind"], p["id"], p["body"]))
+            return 1
+        if sql.startswith("UPDATE tr_entities SET body=@body"):
+            entity_key = (p["kind"], p["id"])
+            # read-your-writes within the txn, else committed
+            pending = None
+            for op in reversed(self.pending_writes):
+                if op[0] in ("insert_entity_dml", "update_entity_dml") and (op[1], op[2]) == entity_key:
+                    pending = op
+                    break
+            if pending is None:
+                if entity_key not in self.read_versions:
+                    self.read_versions[entity_key] = (
+                        self.db.rows[entity_key].version if entity_key in self.db.rows else 0
+                    )
+                if entity_key not in self.db.rows:
+                    return 0  # no such row
+            self.pending_writes.append(("update_entity_dml", p["kind"], p["id"], p["body"]))
             return 1
         raise NotImplementedError(sql)
 

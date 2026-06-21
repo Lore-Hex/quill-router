@@ -267,3 +267,91 @@ def reap_expired_reservations(
         if result["outcome"] == SettleOutcome.SETTLED:
             reaped += 1
     return reaped
+
+
+def typed_finalize_atomic(
+    database: Any,
+    param_types: Any,
+    *,
+    reservation_id: str,
+    authorization_id: str,
+    success: bool,
+    actual_micro: int,
+    settled_usage_type: str,
+    now: Any,
+    auth_body_settled: str,
+    generation_writes: list | None = None,
+) -> dict:
+    """Full DML-only finalize for the typed path (codex 3e, Option B).
+
+    ONE transaction reproduces legacy finalize_gateway_authorization's whole
+    behavior so a crash can't leave counters charged but the generation missing /
+    auth unsettled: claim the reservation -> release the EXACT holds (key then
+    credit) and book actual -> on success DML-insert the generation entities ->
+    DML-mark the gateway_authorization settled. All writes use a client `now`
+    timestamp (NOT PENDING_COMMIT_TIMESTAMP) so the multiple tr_entities DML
+    statements don't hit the PCT same-table trap. The caller does the Bigtable
+    index AFTER commit (like legacy index_after_commit), and must NOT use
+    SpannerGenerations.add() (it would double-book key usage already booked here).
+
+    `generation_writes` = [(kind, entity_id, body_json), ...] inserted only on
+    success. `auth_body_settled` = the gateway_authorization JSON body with
+    settled=true. Returns {outcome: settled|already_settled|not_found|error}.
+    """
+    from trusted_router.storage_gcp_counter_dml import (
+        claim_reservation,
+        insert_entity_dml_at,
+        read_reservation,
+        release_credit,
+        release_key,
+        update_entity_body_dml,
+    )
+
+    pt = param_types
+    book_actual = actual_micro if success else 0
+    book_to_byok = settled_usage_type == "BYOK"
+    writes = generation_writes or []
+
+    def txn(transaction: Any) -> dict:
+        res = read_reservation(transaction, pt, reservation_id)
+        if res is None:
+            return {"outcome": SettleOutcome.NOT_FOUND}
+        won = claim_reservation(
+            transaction, pt, reservation_id,
+            actual_micro=book_actual, settled_usage_type=settled_usage_type,
+        )
+        if not won:
+            return {"outcome": SettleOutcome.ALREADY_SETTLED}
+
+        key_count = release_key(
+            transaction, pt, res["key_hash"], res["key_reserved_micro"],
+            book_actual, book_to_byok=book_to_byok,
+        )
+        if res["key_reserved_micro"] > 0 and key_count != 1:
+            raise _SettleError("key release row-count != 1")
+
+        if res["credit_reserved_micro"] > 0:
+            credit_actual = book_actual if settled_usage_type == "Credits" else 0
+            credit_count = release_credit(
+                transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
+                credit_actual,
+            )
+            if credit_count != 1:
+                raise _SettleError("credit release row-count != 1")
+
+        if success:
+            for kind, entity_id, body_json in writes:
+                insert_entity_dml_at(transaction, pt, kind, entity_id, body_json, now)
+
+        marked = update_entity_body_dml(
+            transaction, pt, "gateway_authorization", authorization_id,
+            auth_body_settled, now,
+        )
+        if marked != 1:
+            raise _SettleError("gateway_authorization update row-count != 1")
+        return {"outcome": SettleOutcome.SETTLED}
+
+    try:
+        return run_in_transaction_with_retry(database, txn)
+    except _SettleError:
+        return {"outcome": SettleOutcome.ERROR}
