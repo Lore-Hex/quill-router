@@ -111,6 +111,7 @@ if table_exists tr_reservation; then log "tr_reservation exists, skip"; else
     actual_micro INT64,
     hold_usage_type STRING(16),
     settled_usage_type STRING(16),
+    authorization_id STRING(64),
     settled BOOL NOT NULL DEFAULT (false),
     idempotency_scope STRING(256),
     idempotency_fingerprint STRING(64),

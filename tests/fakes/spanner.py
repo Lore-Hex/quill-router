@@ -9,6 +9,8 @@ from typing import Any
 class _ParamTypes:
     STRING = "STRING"
     INT64 = "INT64"
+    BOOL = "BOOL"
+    TIMESTAMP = "TIMESTAMP"
 
 
 @dataclass
@@ -34,6 +36,23 @@ class FakeAborted(Exception):
     pass
 
 
+try:  # subclass the real exception so production `except AlreadyExists` catches it
+    from google.api_core.exceptions import AlreadyExists as _AlreadyExists
+except ImportError:  # pragma: no cover - google always present in the test venv
+    _AlreadyExists = Exception  # type: ignore[assignment,misc]
+
+
+class FakeAlreadyExists(_AlreadyExists):
+    """Unique-index / duplicate-PK violation (e.g. duplicate idempotency_scope or
+    reservation_id). Unlike Aborted, run_in_transaction does NOT retry this — the
+    caller must convert it to the replay path (codex Step-3 #4). Subclasses the
+    real google.api_core.exceptions.AlreadyExists so the same `except AlreadyExists`
+    works in prod and tests."""
+
+    def __init__(self, detail: str = "already exists") -> None:
+        super().__init__(detail)
+
+
 class FakeSpannerDatabase:
     """In-process Spanner replacement that simulates snapshot-isolation
     conflict-abort. Implements only the surface used by SpannerBigtableStore:
@@ -49,6 +68,15 @@ class FakeSpannerDatabase:
         # Typed counter tables (tr_credit_balance, tr_key_limit): table ->
         # (pk col0, pk col1) -> {column: value}. PK is the first two columns.
         self.typed: dict[str, dict[tuple, dict]] = {}
+        # Per typed-row version for conditional-DML conflict detection, so two
+        # concurrent execute_update reservers serialize via abort-retry (the fake
+        # analogue of the real row write lock).
+        self.typed_versions: dict[tuple, int] = {}
+        # tr_reservation: 1-col PK (reservation_id) + a UNIQUE index on
+        # idempotency_scope. Modeled separately from the 2-col typed counters.
+        self.reservations: dict[str, dict] = {}
+        self.reservation_versions: dict[str, int] = {}
+        self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -77,8 +105,17 @@ class FakeSpannerDatabase:
     def _try_commit(self, txn: _FakeTransaction) -> bool:
         with self._commit_lock:
             for key, observed in txn.read_versions.items():
-                current = self.rows.get(key)
-                current_version = current.version if current is not None else 0
+                if isinstance(key, tuple) and len(key) == 3 and key[0] == "typed":
+                    current_version = self.typed_versions.get((key[1], key[2]), 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "res":
+                    current_version = self.reservation_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "idemp":
+                    # presence-based: a same-scope insert committed since our read
+                    # flips this, aborting the loser so its retry raises ALREADY_EXISTS
+                    current_version = 1 if key[1] in self.reservation_idemp else 0
+                else:
+                    current = self.rows.get(key)
+                    current_version = current.version if current is not None else 0
                 if current_version != observed:
                     return False
             self._global_version += 1
@@ -92,12 +129,37 @@ class FakeSpannerDatabase:
                     self.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    self.typed.setdefault(table, {})[
-                        (value_tuple[0], value_tuple[1])
-                    ] = dict(zip(columns, value_tuple, strict=True))
+                    pk = (value_tuple[0], value_tuple[1])
+                    self.typed.setdefault(table, {})[pk] = dict(
+                        zip(columns, value_tuple, strict=True)
+                    )
+                    self.typed_versions[(table, pk)] = new_version
+                elif op[0] == "update_typed":  # conditional-DML write
+                    _, table, pk, record = op
+                    self.typed.setdefault(table, {})[pk] = record
+                    self.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.typed.get(table, {}).pop(pk, None)
+                    self.typed_versions.pop((table, pk), None)
+                elif op[0] == "insert_reservation":
+                    _, record = op
+                    rid = record["reservation_id"]
+                    self.reservations[rid] = record
+                    self.reservation_versions[rid] = new_version
+                    scope = record.get("idempotency_scope")
+                    if scope is not None:
+                        self.reservation_idemp[scope] = rid
+                elif op[0] == "update_reservation":
+                    _, rid, record = op
+                    self.reservations[rid] = record
+                    self.reservation_versions[rid] = new_version
+                elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
+                    _, kind, entity_id, body = op
+                    self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
+                elif op[0] == "update_entity_dml":  # DML UPDATE tr_entities body
+                    _, kind, entity_id, body = op
+                    self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
             return True
 
     def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
@@ -114,6 +176,10 @@ class _FakeTransaction:
         self.read_versions: dict[tuple[str, str], int] = {}
         self.read_snapshots: dict[tuple[str, str], str | None] = {}
         self.pending_writes: list[tuple] = []
+        # DML+mutation mixing is forbidden in one transaction (real Spanner
+        # buffers mutations after DML and DML can't see them); fail fast if both.
+        self._did_mutation = False
+        self._did_dml = False
 
     def execute_sql(
         self,
@@ -124,9 +190,161 @@ class _FakeTransaction:
     ) -> list[list[str]]:
         return _execute_sql(self.db, self, sql, params or {})
 
+    def _reservation_current(self, rid: str) -> dict | None:
+        """In-txn view of a reservation (read-your-writes) + record read version."""
+        for op in reversed(self.pending_writes):
+            if op[0] == "update_reservation" and op[1] == rid:
+                return dict(op[2])
+            if op[0] == "insert_reservation" and op[1]["reservation_id"] == rid:
+                return dict(op[1])
+        version_key = ("res", rid)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = self.db.reservation_versions.get(rid, 0)
+        rec = self.db.reservations.get(rid)
+        return dict(rec) if rec is not None else None
+
+    def _typed_current(self, table: str, pk: tuple) -> dict | None:
+        """In-txn view of a typed row for DML: sees prior DML writes
+        (update_typed = read-your-writes) but NOT buffered mutations (real Spanner
+        DML can't see mutations; mixing is rejected in execute_update). Records
+        the read version on first read for conflict detection."""
+        for op in reversed(self.pending_writes):
+            if op[0] == "update_typed" and op[1] == table and op[2] == pk:
+                return dict(op[3])
+        version_key = ("typed", table, pk)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = self.db.typed_versions.get((table, pk), 0)
+        rec = self.db.typed.get(table, {}).get(pk)
+        return dict(rec) if rec is not None else None
+
+    def execute_update(
+        self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
+    ) -> int:
+        """Model the conditional-DML statements used by storage_gcp_counter_dml.
+
+        Reads the typed row into the read-set (so concurrent reservers conflict
+        and serialize via abort-retry), evaluates the WHERE predicate, and
+        conditionally buffers the SET. Returns the modified-row count.
+        """
+        if self._did_mutation:
+            raise RuntimeError(
+                "DML after a mutation in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_dml = True
+        p = params or {}
+        if "UPDATE tr_credit_balance SET reserved = reserved + @est" in sql:
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            if (rec["total_credits"] - rec["total_usage"] - rec["reserved"]) >= p["est"]:
+                new = dict(rec, reserved=rec["reserved"] + p["est"])
+                self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+                return 1
+            return 0
+        if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            # mirrors the `AND reserved >= @hold` guard: underflow = 0-row no-op
+            if rec is None or rec["reserved"] < p["hold"]:
+                return 0
+            new = dict(
+                rec,
+                reserved=rec["reserved"] - p["hold"],
+                total_usage=rec["total_usage"] + p["actual"],
+            )
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if "UPDATE tr_key_limit SET reserved = reserved + @est" in sql:
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["limit_micro"] is None:
+                return 0  # missing or uncapped (limit_micro IS NOT NULL fails)
+            if p["is_byok"] and not rec["include_byok"]:
+                return 0  # BYOK excluded from the cap
+            included_byok = rec["byok_usage"] if rec["include_byok"] else 0
+            avail = rec["limit_micro"] - rec["usage"] - included_byok - rec["reserved"]
+            if avail >= p["est"]:
+                new = dict(rec, reserved=rec["reserved"] + p["est"])
+                self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
+                return 1
+            return 0
+        if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
+            pk = (p["kh"], p["shard"])
+            rec = self._typed_current("tr_key_limit", pk)
+            if rec is None or rec["reserved"] < p["hold"]:
+                return 0
+            col = "byok_usage" if "byok_usage = byok_usage + @actual" in sql else "usage"
+            new = dict(rec, reserved=rec["reserved"] - p["hold"])
+            new[col] = rec[col] + p["actual"]
+            self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_reservation"):
+            rid = p["reservation_id"]
+            if rid in self.db.reservations:
+                raise FakeAlreadyExists(rid)  # duplicate PK
+            res_key = ("res", rid)
+            if res_key not in self.read_versions:
+                self.read_versions[res_key] = self.db.reservation_versions.get(rid, 0)
+            scope = p.get("idempotency_scope")
+            if scope is not None:
+                if scope in self.db.reservation_idemp:
+                    raise FakeAlreadyExists(scope)  # unique-index conflict (committed)
+                idemp_key = ("idemp", scope)
+                if idemp_key not in self.read_versions:
+                    self.read_versions[idemp_key] = 0  # observed absent
+            record = dict(p)
+            record["settled"] = False
+            record["settled_usage_type"] = None
+            record["actual_micro"] = None
+            self.pending_writes.append(("insert_reservation", record))
+            return 1
+        if "UPDATE tr_reservation SET settled=true" in sql:
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec["settled"]:
+                return 0  # missing or already-claimed (replay)
+            new = dict(
+                rec, settled=True, settled_usage_type=p["sut"], actual_micro=p["actual"]
+            )
+            self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
+        if sql.startswith("INSERT INTO tr_entities"):
+            entity_key = (p["kind"], p["id"])
+            if entity_key in self.db.rows:
+                raise FakeAlreadyExists(f"{p['kind']}/{p['id']}")  # duplicate PK
+            if entity_key not in self.read_versions:
+                self.read_versions[entity_key] = 0  # observed absent
+            self.pending_writes.append(("insert_entity_dml", p["kind"], p["id"], p["body"]))
+            return 1
+        if sql.startswith("UPDATE tr_entities SET body=@body"):
+            entity_key = (p["kind"], p["id"])
+            # read-your-writes within the txn, else committed
+            pending = None
+            for op in reversed(self.pending_writes):
+                if op[0] in ("insert_entity_dml", "update_entity_dml") and (op[1], op[2]) == entity_key:
+                    pending = op
+                    break
+            if pending is None:
+                if entity_key not in self.read_versions:
+                    self.read_versions[entity_key] = (
+                        self.db.rows[entity_key].version if entity_key in self.db.rows else 0
+                    )
+                if entity_key not in self.db.rows:
+                    return 0  # no such row
+            self.pending_writes.append(("update_entity_dml", p["kind"], p["id"], p["body"]))
+            return 1
+        raise NotImplementedError(sql)
+
     def insert_or_update(
         self, *, table: str, columns: tuple[str, ...], values: list[tuple]
     ) -> None:
+        if self._did_dml:
+            raise RuntimeError(
+                "mutation after DML in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_mutation = True
         for value_tuple in values:
             if table == "tr_entities":
                 kind, entity_id, body = value_tuple[0], value_tuple[1], value_tuple[2]
@@ -135,6 +353,12 @@ class _FakeTransaction:
                 self.pending_writes.append(("upsert_typed", table, columns, value_tuple))
 
     def delete(self, table: str, keyset: _KeySet) -> None:
+        if self._did_dml:
+            raise RuntimeError(
+                "mutation after DML in the same transaction — DML+mutation "
+                "mixing is forbidden (see docs §5)"
+            )
+        self._did_mutation = True
         for entry in keyset.keys:
             if table == "tr_entities":
                 kind, entity_id = entry[0], entry[1]
@@ -186,12 +410,15 @@ class _FakeBatch:
                     self.db.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    self.db.typed.setdefault(table, {})[
-                        (value_tuple[0], value_tuple[1])
-                    ] = dict(zip(columns, value_tuple, strict=True))
+                    pk = (value_tuple[0], value_tuple[1])
+                    self.db.typed.setdefault(table, {})[pk] = dict(
+                        zip(columns, value_tuple, strict=True)
+                    )
+                    self.db.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.db.typed.get(table, {}).pop(pk, None)
+                    self.db.typed_versions.pop((table, pk), None)
         return None
 
     def insert_or_update(
@@ -220,6 +447,61 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Reaper scan: expired unsettled reservations.
+    if "FROM tr_reservation WHERE settled=false AND expires_at" in sql:
+        now = params["now"]
+        limit = int(params.get("limit", 100))
+        out: list[list] = []
+        for rid, rec in db.reservations.items():
+            exp = rec.get("expires_at")
+            if not rec.get("settled") and exp is not None and exp < now:
+                out.append([rid])
+                if len(out) >= limit:
+                    break
+        return out
+    # tr_reservation reads (idempotency replay + by-id for settle/reaper).
+    if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
+        scope = params["scope"]
+        rid = None
+        if txn is not None:
+            for op in reversed(txn.pending_writes):
+                if op[0] == "insert_reservation" and op[1].get("idempotency_scope") == scope:
+                    rid = op[1]["reservation_id"]
+                    break
+            if rid is None:
+                rid = db.reservation_idemp.get(scope)
+            idemp_key = ("idemp", scope)
+            if idemp_key not in txn.read_versions:
+                txn.read_versions[idemp_key] = 1 if scope in db.reservation_idemp else 0
+        else:
+            rid = db.reservation_idemp.get(scope)
+        if rid is None:
+            return []
+        rec = txn._reservation_current(rid) if txn is not None else db.reservations.get(rid)
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
+    if "FROM tr_reservation WHERE reservation_id=@rid" in sql:
+        rid = params["rid"]
+        rec = txn._reservation_current(rid) if txn is not None else db.reservations.get(rid)
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
+    # Typed key-limit point-read (reserve_key 0-row classification). Honors the
+    # WHERE, so it must precede the full-scan branch below.
+    if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
+        pk = (params["kh"], params["shard"])
+        rec = (
+            txn._typed_current("tr_key_limit", pk)
+            if txn is not None
+            else db.typed.get("tr_key_limit", {}).get(pk)
+        )
+        if rec is None:
+            return []
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
+        return [[rec.get(c) for c in cols]]
     # Typed counter tables (Step 2 reconcile scans): SELECT <cols> FROM <table>.
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:

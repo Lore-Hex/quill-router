@@ -924,6 +924,195 @@ class SpannerBigtableStore:
             self.generation_store.index_after_commit(generation)
         return bool(finalized)
 
+    # ── Typed-column billing (Step 3): thin wrappers over storage_gcp_authorize.
+    # The atomic conditional-DML authorize/settle engine. Gated by the route on
+    # the cohort flag (authorize) and reservation origin (settle/refund).
+    def authorize_gateway_atomic(self, **kwargs: Any) -> dict:
+        from trusted_router.storage_gcp_authorize import authorize_atomic
+
+        return authorize_atomic(self._database, self._param_types, **kwargs)
+
+    def typed_finalize_gateway(self, **kwargs: Any) -> dict:
+        from trusted_router.storage_gcp_authorize import typed_finalize_atomic
+
+        return typed_finalize_atomic(self._database, self._param_types, **kwargs)
+
+    def typed_finalize_gateway_authorization(
+        self,
+        authorization_id: str,
+        *,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None = None,
+    ) -> bool:
+        """Route-facing typed settle: same contract as
+        finalize_gateway_authorization (returns False on replay/already-settled)
+        but via the DML-only typed_finalize_atomic. Builds the generation entity
+        bodies + the settled gateway_authorization body, then indexes Bigtable
+        after commit (NOT generation_store.add — that would double-book key usage
+        the typed settle already booked)."""
+        from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
+
+        authorization = self.get_gateway_authorization(authorization_id)
+        if authorization is None or authorization.credit_reservation_id is None:
+            return False
+        actual_usage_type = UsageType.coerce(selected_usage_type)
+        generation_writes: list[tuple[str, str, str]] = []
+        if success and generation is not None:
+            generation_writes = [
+                ("generation", generation.id, _json_body(generation)),
+                (
+                    "generation_by_workspace",
+                    _generation_workspace_id(generation),
+                    _json_body({"generation_id": generation.id}),
+                ),
+            ]
+        authorization.settled = True
+        result = typed_finalize_atomic(
+            self._database,
+            self._param_types,
+            reservation_id=authorization.credit_reservation_id,
+            authorization_id=authorization_id,
+            success=success,
+            actual_micro=actual_microdollars,
+            settled_usage_type=str(actual_usage_type),
+            now=dt.datetime.now(dt.UTC),
+            auth_body_settled=_json_body(authorization),
+            generation_writes=generation_writes,
+        )
+        if result["outcome"] == SettleOutcome.ERROR:
+            raise RuntimeError("typed finalize failed: release row-count != 1")
+        if result["outcome"] == SettleOutcome.SETTLED:
+            if success and generation is not None:
+                self.generation_store.index_after_commit(generation)
+            return True
+        return False  # already_settled / not_found
+
+    def authorize_gateway_typed(
+        self,
+        *,
+        workspace_id: str,
+        key_hash: str,
+        estimate: int,
+        has_credit_candidate: bool,
+        reservation_usage_type: UsageType | str,
+        model_id: str,
+        provider: str,
+        requested_model_id: str | None,
+        candidate_model_ids: list[str],
+        region: str | None,
+        endpoint_id: str | None,
+        candidate_endpoint_ids: list[str],
+        idempotency_key: str | None,
+        idempotency_fingerprint: str | None,
+        expires_at: Any,
+    ) -> tuple[str, GatewayAuthorization | None]:
+        """Route-facing typed authorize. Runs the atomic conditional-DML authorize
+        (holds + reservation + gateway_authorization DML-insert) and returns
+        (outcome, authorization). outcome in accepted/replay/insufficient_credits/
+        key_limit_exceeded/key_missing/idempotency_mismatch."""
+        from trusted_router.storage_gcp_authorize import AuthorizeOutcome, authorize_atomic
+        from trusted_router.storage_gcp_keys import (
+            _gateway_authorization_idempotency_index_id,
+        )
+
+        usage = UsageType.coerce(reservation_usage_type)
+        scope = (
+            _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
+            if idempotency_key is not None
+            else None
+        )
+
+        def build_body(authorization_id: str, reservation_id: str) -> str:
+            auth = GatewayAuthorization(
+                id=authorization_id,
+                workspace_id=workspace_id,
+                key_hash=key_hash,
+                model_id=model_id,
+                provider=provider,
+                usage_type=usage,
+                estimated_microdollars=estimate,
+                credit_reservation_id=reservation_id,
+                requested_model_id=requested_model_id,
+                candidate_model_ids=list(candidate_model_ids or []),
+                region=region,
+                endpoint_id=endpoint_id,
+                candidate_endpoint_ids=list(candidate_endpoint_ids or []),
+                idempotency_key=idempotency_key,
+                idempotency_fingerprint=idempotency_fingerprint,
+            )
+            return _json_body(auth)
+
+        result = authorize_atomic(
+            self._database,
+            self._param_types,
+            workspace_id=workspace_id,
+            key_hash=key_hash,
+            estimate=estimate,
+            has_credit_candidate=has_credit_candidate,
+            reservation_usage_type=str(usage),
+            idempotency_scope=scope,
+            idempotency_fingerprint=idempotency_fingerprint,
+            expires_at=expires_at,
+            build_auth_body=build_body,
+        )
+        outcome = result["outcome"]
+        authorization: GatewayAuthorization | None = None
+        if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
+            authorization = self.get_gateway_authorization(result["authorization_id"])
+        return outcome, authorization
+
+    def reap_expired_reservations(self, *, now: Any, limit: int = 100) -> int:
+        from trusted_router.storage_gcp_authorize import (
+            reap_expired_reservations as _reap,
+        )
+
+        return _reap(self._database, self._param_types, now=now, limit=limit)
+
+    def is_typed_reservation(self, reservation_id: str | None, authorization_id: str) -> bool:
+        """Settle/refund origin detection (codex 3e): typed iff a tr_reservation
+        row exists for this reservation id AND its authorization_id matches — so a
+        request that reserved typed settles typed, and a JSON one settles JSON,
+        regardless of the current cohort flag.
+
+        Guarded by the mirror flag: when off, no typed tables/reservations exist
+        (the cutover turns the mirror on, after the DDL, before any typed
+        authorize), so we never query tr_reservation before it exists — avoiding a
+        flag-off settle 500 if the route deploys ahead of the schema (codex 3e
+        route review #3)."""
+        if not getattr(self, "_counter_mirror_enabled", False) or not reservation_id:
+            return False
+        from trusted_router.storage_gcp_counter_dml import read_reservation
+
+        with self._database.snapshot() as snapshot:
+            res = read_reservation(snapshot, self._param_types, reservation_id)
+        return res is not None and res.get("authorization_id") == authorization_id
+
+    def get_typed_authorization_by_idempotency(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None:
+        """Find a typed authorization by its scoped idempotency key, INDEPENDENT
+        of the current cohort flag, so a retry after a cohort flag-off/denylist
+        rollback still replays the typed authorization instead of falling to the
+        legacy path and creating a second hold (codex 3e route review #2). Returns
+        None when the mirror is off (no typed tables yet)."""
+        if not getattr(self, "_counter_mirror_enabled", False):
+            return None
+        from trusted_router.storage_gcp_counter_dml import read_reservation_by_idempotency
+        from trusted_router.storage_gcp_keys import (
+            _gateway_authorization_idempotency_index_id,
+        )
+
+        scope = _gateway_authorization_idempotency_index_id(
+            workspace_id, key_hash, idempotency_key
+        )
+        with self._database.snapshot() as snapshot:
+            existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
+        if existing is None:
+            return None
+        return self.get_gateway_authorization(existing["authorization_id"])
+
     def reserve_key_limit(
         self,
         key_hash: str,
