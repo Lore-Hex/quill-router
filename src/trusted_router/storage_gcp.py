@@ -1074,14 +1074,44 @@ class SpannerBigtableStore:
         """Settle/refund origin detection (codex 3e): typed iff a tr_reservation
         row exists for this reservation id AND its authorization_id matches — so a
         request that reserved typed settles typed, and a JSON one settles JSON,
-        regardless of the current cohort flag."""
-        if not reservation_id:
+        regardless of the current cohort flag.
+
+        Guarded by the mirror flag: when off, no typed tables/reservations exist
+        (the cutover turns the mirror on, after the DDL, before any typed
+        authorize), so we never query tr_reservation before it exists — avoiding a
+        flag-off settle 500 if the route deploys ahead of the schema (codex 3e
+        route review #3)."""
+        if not getattr(self, "_counter_mirror_enabled", False) or not reservation_id:
             return False
         from trusted_router.storage_gcp_counter_dml import read_reservation
 
         with self._database.snapshot() as snapshot:
             res = read_reservation(snapshot, self._param_types, reservation_id)
         return res is not None and res.get("authorization_id") == authorization_id
+
+    def get_typed_authorization_by_idempotency(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None:
+        """Find a typed authorization by its scoped idempotency key, INDEPENDENT
+        of the current cohort flag, so a retry after a cohort flag-off/denylist
+        rollback still replays the typed authorization instead of falling to the
+        legacy path and creating a second hold (codex 3e route review #2). Returns
+        None when the mirror is off (no typed tables yet)."""
+        if not getattr(self, "_counter_mirror_enabled", False):
+            return None
+        from trusted_router.storage_gcp_counter_dml import read_reservation_by_idempotency
+        from trusted_router.storage_gcp_keys import (
+            _gateway_authorization_idempotency_index_id,
+        )
+
+        scope = _gateway_authorization_idempotency_index_id(
+            workspace_id, key_hash, idempotency_key
+        )
+        with self._database.snapshot() as snapshot:
+            existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
+        if existing is None:
+            return None
+        return self.get_gateway_authorization(existing["authorization_id"])
 
     def reserve_key_limit(
         self,

@@ -149,16 +149,10 @@ def register(router: APIRouter) -> None:
             key_hash=api_key.hash,
             body=body_dict,
         )
-        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
-            workspace.id, api_key.hash, request_idempotency_key
-        )
-        if existing_authorization is not None:
-            if existing_authorization.idempotency_fingerprint != request_fingerprint:
-                raise api_error(
-                    409,
-                    "Idempotency key was already used for a different gateway request",
-                    ErrorType.CONFLICT,
-                )
+        def _replay_response(existing_authorization: Any) -> dict[str, Any]:
+            # Build the replay response from the STORED authorization (NOT current
+            # routing), so a replay across catalog/pricing/BYOK drift advertises
+            # the endpoint that was actually authorized (codex 3e route review #1).
             existing_candidates = _authorization_endpoint_candidates(
                 existing_authorization, endpoint_candidates
             )
@@ -192,6 +186,27 @@ def register(router: APIRouter) -> None:
                 endpoint_candidates=existing_candidates,
                 idempotent_replay=True,
             )
+
+        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
+            workspace.id, api_key.hash, request_idempotency_key
+        )
+        if existing_authorization is None:
+            # Typed authorizations have no JSON idempotency index; look them up
+            # INDEPENDENT of the cohort flag so a retry after a cohort flag-off /
+            # denylist rollback still replays (codex 3e route review #2).
+            _typed_idem = getattr(STORE, "get_typed_authorization_by_idempotency", None)
+            if _typed_idem is not None:
+                existing_authorization = _typed_idem(
+                    workspace.id, api_key.hash, request_idempotency_key
+                )
+        if existing_authorization is not None:
+            if existing_authorization.idempotency_fingerprint != request_fingerprint:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            return _replay_response(existing_authorization)
         credit_reservation_id: str | None = None
         idempotent_replay = False
         # Typed-column billing cutover: when this workspace is in the cohort AND
@@ -248,8 +263,10 @@ def register(router: APIRouter) -> None:
                 )
             if authorization is None:
                 raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
+            if outcome == AuthorizeOutcome.REPLAY:
+                # concurrent-race replay: respond from the STORED authorization
+                return _replay_response(authorization)
             credit_reservation_id = authorization.credit_reservation_id
-            idempotent_replay = outcome == AuthorizeOutcome.REPLAY
         else:
             try:
                 STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)

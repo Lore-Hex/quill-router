@@ -949,3 +949,34 @@ def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
     assert _typed(db, ws)["total_usage"] == 900_000
     # reaper wrapper: nothing expired+unsettled now
     assert store.reap_expired_reservations(now=_NOW) == 0
+
+
+def test_typed_idempotency_lookup_survives_cohort_rollback() -> None:
+    """get_typed_authorization_by_idempotency finds a typed auth INDEPENDENT of
+    the cohort flag, so a retry after rollback replays (codex 3e route #2)."""
+    store, _db, _ = make_fake_store()
+    ws = "ws_idem_rollback"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    res = store.authorize_gateway_typed(
+        workspace_id=ws, key_hash=key.hash, estimate=1_000_000,
+        has_credit_candidate=True, reservation_usage_type="Credits",
+        model_id="m", provider="openai", requested_model_id=None,
+        candidate_model_ids=["m"], region="us", endpoint_id="e",
+        candidate_endpoint_ids=["e"], idempotency_key="idem-1",
+        idempotency_fingerprint="fp1", expires_at="2026-01-01T00:00:00Z",
+    )
+    assert res[0] == AuthorizeOutcome.ACCEPTED
+    found = store.get_typed_authorization_by_idempotency(ws, key.hash, "idem-1")
+    assert found is not None
+    assert found.id == res[1].id  # same authorization, regardless of cohort flag
+    assert store.get_typed_authorization_by_idempotency(ws, key.hash, "other") is None
+
+
+def test_typed_origin_and_idempotency_guarded_by_mirror_flag() -> None:
+    """With the mirror off (no typed tables yet) the origin/idempotency lookups
+    short-circuit to legacy without querying tr_reservation (codex 3e route #3)."""
+    store, _db, _ = make_fake_store()
+    store._counter_mirror_enabled = False
+    assert store.is_typed_reservation("any", "auth") is False
+    assert store.get_typed_authorization_by_idempotency("ws", "kh", "k") is None
