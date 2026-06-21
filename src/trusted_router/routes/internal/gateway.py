@@ -193,49 +193,107 @@ def register(router: APIRouter) -> None:
                 idempotent_replay=True,
             )
         credit_reservation_id: str | None = None
-        try:
-            STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-        except ValueError as exc:
-            raise api_error(
-                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
-            ) from exc
+        idempotent_replay = False
+        # Typed-column billing cutover: when this workspace is in the cohort AND
+        # the store supports it (Spanner), authorize via the atomic conditional-DML
+        # path (the deadlock fix). Default-off -> the legacy path below, unchanged.
+        _typed_authz = getattr(STORE, "authorize_gateway_typed", None)
+        _typed_cohort = False
+        if _typed_authz is not None:
+            from trusted_router.storage_gcp_authorize import (
+                typed_billing_enabled_for_workspace,
+            )
 
-        if has_credit_candidate:
-            try:
-                credit_reservation = STORE.reserve(
-                    workspace.id,
-                    api_key.hash,
-                    estimate,
-                    idempotency_key=request_idempotency_key,
-                )
-                credit_reservation_id = credit_reservation.id
-            except ValueError as exc:
-                STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            _typed_cohort = typed_billing_enabled_for_workspace(
+                workspace.id,
+                allowlist_csv=settings.typed_billing_workspace_ids,
+                denylist_csv=settings.typed_billing_workspace_denylist,
+            )
+        if _typed_authz is not None and _typed_cohort:
+            import datetime as _dt
+
+            from trusted_router.storage_gcp_authorize import AuthorizeOutcome
+
+            # expires_at = generous execution deadline (> max stream + settle
+            # retry window) so the reaper only reclaims genuinely-abandoned holds.
+            expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=7200)
+            outcome, authorization = _typed_authz(
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                estimate=estimate,
+                has_credit_candidate=has_credit_candidate,
+                reservation_usage_type=reservation_usage_type,
+                model_id=model.id,
+                provider=endpoint.provider,
+                requested_model_id=requested_model_id,
+                candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+                region=region,
+                endpoint_id=endpoint.id,
+                candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+                idempotency_key=request_idempotency_key,
+                idempotency_fingerprint=request_fingerprint,
+                expires_at=expires_at,
+            )
+            if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
+                raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+            if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
                 raise api_error(
-                    402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
+                    402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+                )
+            if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
+                raise api_error(
+                    409,
+                    "Idempotency key was already used for a different gateway request",
+                    ErrorType.CONFLICT,
+                )
+            if authorization is None:
+                raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
+            credit_reservation_id = authorization.credit_reservation_id
+            idempotent_replay = outcome == AuthorizeOutcome.REPLAY
+        else:
+            try:
+                STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            except ValueError as exc:
+                raise api_error(
+                    402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
                 ) from exc
 
-        authorization = STORE.create_gateway_authorization(
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            model_id=model.id,
-            provider=endpoint.provider,
-            usage_type=reservation_usage_type,
-            estimated_microdollars=estimate,
-            credit_reservation_id=credit_reservation_id,
-            requested_model_id=requested_model_id,
-            candidate_model_ids=[
-                candidate_model.id for candidate_model, _endpoint in endpoint_candidates
-            ],
-            region=region,
-            endpoint_id=endpoint.id,
-            candidate_endpoint_ids=[
-                candidate_endpoint.id
-                for _candidate_model, candidate_endpoint in endpoint_candidates
-            ],
-            idempotency_key=request_idempotency_key,
-            idempotency_fingerprint=request_fingerprint,
-        )
+            if has_credit_candidate:
+                try:
+                    credit_reservation = STORE.reserve(
+                        workspace.id,
+                        api_key.hash,
+                        estimate,
+                        idempotency_key=request_idempotency_key,
+                    )
+                    credit_reservation_id = credit_reservation.id
+                except ValueError as exc:
+                    STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+                    raise api_error(
+                        402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
+                    ) from exc
+
+            authorization = STORE.create_gateway_authorization(
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                model_id=model.id,
+                provider=endpoint.provider,
+                usage_type=reservation_usage_type,
+                estimated_microdollars=estimate,
+                credit_reservation_id=credit_reservation_id,
+                requested_model_id=requested_model_id,
+                candidate_model_ids=[
+                    candidate_model.id for candidate_model, _endpoint in endpoint_candidates
+                ],
+                region=region,
+                endpoint_id=endpoint.id,
+                candidate_endpoint_ids=[
+                    candidate_endpoint.id
+                    for _candidate_model, candidate_endpoint in endpoint_candidates
+                ],
+                idempotency_key=request_idempotency_key,
+                idempotency_fingerprint=request_fingerprint,
+            )
         byok_config = (
             STORE.get_byok_provider(workspace.id, endpoint.provider)
             if model_usage_type.is_byok()
@@ -262,7 +320,7 @@ def register(router: APIRouter) -> None:
             settings=settings,
             broadcast_destinations=broadcast_destinations,
             endpoint_candidates=endpoint_candidates,
-            idempotent_replay=False,
+            idempotent_replay=idempotent_replay,
         )
 
     @router.post("/internal/gateway/settle")
@@ -523,13 +581,29 @@ def _settle_gateway_authorization(
         )
         generation_id = generation.id
 
-    finalized = STORE.finalize_gateway_authorization(
-        authorization.id,
-        success=success,
-        actual_microdollars=actual_cost,
-        selected_usage_type=selected_usage_type,
-        generation=generation,
-    )
+    # Typed-column billing cutover: settle by reservation ORIGIN, not the cohort
+    # flag, so a request that reserved typed settles typed and a JSON one settles
+    # JSON (codex 3e). Default: no typed reservation (or InMemory store) -> legacy
+    # path unchanged.
+    _is_typed = getattr(STORE, "is_typed_reservation", None)
+    if _is_typed is not None and _is_typed(
+        authorization.credit_reservation_id, authorization.id
+    ):
+        finalized = STORE.typed_finalize_gateway_authorization(
+            authorization.id,
+            success=success,
+            actual_microdollars=actual_cost,
+            selected_usage_type=selected_usage_type,
+            generation=generation,
+        )
+    else:
+        finalized = STORE.finalize_gateway_authorization(
+            authorization.id,
+            success=success,
+            actual_microdollars=actual_cost,
+            selected_usage_type=selected_usage_type,
+            generation=generation,
+        )
     if not finalized:
         return {
             "data": {
