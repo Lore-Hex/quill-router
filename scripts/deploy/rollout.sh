@@ -100,6 +100,13 @@ ENV_VARS=(
   # Empty AXIOM_API_TOKEN at runtime → handler is not registered (graceful no-op).
   "AXIOM_DATASET=trusted-router"
   "AXIOM_URL=https://api.axiom.co"
+  # Billing typed-counter migration cutover, step 2 (docs/design/
+  # billing-typed-counters.md): dual-write the hot credit/api_key counters to
+  # the typed Spanner tables. Enforcement stays on the JSON path; this only
+  # turns on the exact-mirror so backfill + the drift comparator can verify the
+  # typed tables before the enforcement cohort flag. The typed tables already
+  # exist (migrate_typed_counters.sh). Remove to revert the dual-write.
+  "TR_TYPED_COUNTER_MIRROR=1"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
