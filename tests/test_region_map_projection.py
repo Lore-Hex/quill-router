@@ -91,7 +91,7 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
-def test_default_region_map_shows_seven_region_marketing_footprint() -> None:
+def test_default_region_map_shows_eight_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)
 
@@ -100,12 +100,14 @@ def test_default_region_map_shows_seven_region_marketing_footprint() -> None:
         "europe-west4",
         "us-east4",
         "asia-northeast1",
+        "asia-east2",
         "asia-southeast1",
         "southamerica-east1",
         "aws-us-west-2",
     ]
     assert [r["status_label"] for r in rendered[:2]] == ["live", "live"]
     assert all(r["status_label"] == "edge" for r in rendered[2:])
+    assert next(r for r in rendered if r["id"] == "asia-east2")["city"] == "Hong Kong"
 
 
 def test_region_map_payload_skips_unknown_region_ids() -> None:

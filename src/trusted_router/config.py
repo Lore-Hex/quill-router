@@ -158,7 +158,8 @@ class Settings(BaseSettings):
     regions: str = "us-central1,us-east4,europe-west4"
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
-        "asia-northeast1,asia-southeast1,southamerica-east1,aws-us-west-2"
+        "asia-northeast1,asia-east2,asia-southeast1,"
+        "southamerica-east1,aws-us-west-2"
     )
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
