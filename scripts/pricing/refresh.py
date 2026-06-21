@@ -522,6 +522,7 @@ def _merge_snapshot(
     or_snapshot: dict[str, Any],
     provider_index: dict[str, dict[str, ModelPrice]],
     healed_slugs: set[str],
+    prev_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the final snapshot.
 
@@ -543,6 +544,14 @@ def _merge_snapshot(
         for m in or_snapshot.get("models", [])
         if isinstance(m, dict) and isinstance(m.get("id"), str)
     }
+    # Previous committed snapshot, used to carry forward the METADATA
+    # (endpoints, context_length, modalities) of models OR has delisted
+    # but a provider still prices — see the or_model fallback below.
+    prev_by_id = {
+        m["id"]: m
+        for m in (prev_snapshot or {}).get("models", [])
+        if isinstance(m, dict) and isinstance(m.get("id"), str)
+    }
     # Per-slug OR-id -> provider-native-id map. Used at endpoint merge
     # time to override `model_id` for providers whose upstream API
     # rejects the OR canonical id (Venice today). Loaded once from each
@@ -556,10 +565,29 @@ def _merge_snapshot(
     for model_id, by_slug in provider_index.items():
         or_model = or_by_id.get(model_id)
         if or_model is None:
-            # Provider gave us a price for a model OR doesn't list. We
-            # have no endpoint metadata, so we can't construct a valid
-            # catalog entry. Skip — the cross-check note already flags
-            # this case ("parser found N models OR doesn't list").
+            # OR delisted this model, but a provider still prices it (it's
+            # in provider_index) — e.g. Anthropic still serves claude-opus-4 /
+            # claude-sonnet-4 under dated snapshot ids, and z-ai still serves
+            # glm-4.5-air. Carry the PREVIOUS snapshot's metadata forward and
+            # reprice from the live provider-direct result, rather than
+            # dropping a model we can still bill and route. Only models with
+            # neither OR metadata NOR a prior entry are skipped (we have no
+            # way to construct a valid catalog entry for those).
+            or_model = prev_by_id.get(model_id)
+            if or_model is None:
+                continue
+        if model_id.endswith(":free"):
+            # `:free` SKUs are the one LEGITIMATE $0 price — a routing tier
+            # OpenRouter offers, not a provider billing artifact. They power
+            # the trustedrouter/free meta-model. Skip the $0-unpriced guard
+            # (which exists for spurious provider zeros) and keep the entry
+            # at $0 with its endpoints, so the free pool isn't emptied by
+            # the very fix that unfroze the refresh.
+            free_model = dict(or_model)
+            free_model["pricing_source"] = "free_tier"
+            if not (free_model.get("endpoints") or []):
+                continue
+            merged_models.append(free_model)
             continue
         new_model = dict(or_model)
         # Drop $0/$0 provider tiers BEFORE selecting the headline. A zero
@@ -574,9 +602,18 @@ def _merge_snapshot(
         if priced_by_slug:
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
-            # /v1/models top-level pricing should show).
+            # /v1/models top-level pricing should show). Tie-break on
+            # completion so a prompt-price tie picks the genuinely cheaper
+            # endpoint — otherwise the winner among equal-prompt providers
+            # is dict-order-arbitrary and its (possibly much higher)
+            # completion rate becomes the headline, manufacturing phantom
+            # ">=2x completion spike" watchdog trips on every refresh.
             cheapest = min(
-                priced_by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m
+                priced_by_slug.values(),
+                key=lambda p: (
+                    p.tiers[0].prompt_micro_per_m,
+                    p.tiers[0].completion_micro_per_m,
+                ),
             )
             new_pricing.update(_price_to_pricing_block(cheapest))
             new_model["pricing"] = new_pricing
@@ -802,7 +839,9 @@ def main(argv: list[str] | None = None) -> int:
     disagreements = _cross_check(provider_index, or_snapshot)
     id_mismatches = _cross_check_ids(results, or_snapshot)
 
-    merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
+    merged = _merge_snapshot(
+        or_snapshot, provider_index, set(healed), prev_snapshot=_read_existing_snapshot()
+    )
 
     if not args.summary_only:
         _write_snapshot(merged)

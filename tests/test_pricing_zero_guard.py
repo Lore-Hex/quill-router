@@ -108,6 +108,49 @@ def test_positive_price_path_unchanged() -> None:
     assert model["pricing_source"] == "provider_direct"
 
 
+def test_or_delisted_but_servable_model_is_carried_forward() -> None:
+    """A model OR delists but a provider still prices (e.g. Anthropic still
+    serves claude-opus-4 under a dated id) must NOT vanish from the catalog —
+    its metadata is carried forward from the previous snapshot and repriced
+    from the live provider result."""
+    mid = "anthropic/claude-opus-4"
+    # OR no longer lists it.
+    or_snap = {"models": [], "tr_keyed_providers": ["anthropic"]}
+    # ...but it was in the previous committed snapshot (metadata source)...
+    prev = _or_snapshot(mid, ["anthropic"], {"prompt": "0.000015", "completion": "0.000075"})
+    # ...and a provider still prices it this run.
+    provider_index = {mid: {"anthropic": _mp(15_000_000, 75_000_000)}}
+    merged = R._merge_snapshot(or_snap, provider_index, set(), prev_snapshot=prev)
+    model = next((m for m in merged["models"] if m["id"] == mid), None)
+    assert model is not None, "OR-delisted-but-servable model was dropped"
+    assert model["pricing"]["prompt"] == "0.000015"
+    assert model["endpoints"]
+
+
+def test_or_delisted_with_no_prior_metadata_is_dropped() -> None:
+    """If OR delists a model AND there's no prior entry to carry forward,
+    it's dropped — we can't construct a valid catalog entry from a price
+    alone."""
+    mid = "ghost/model"
+    or_snap = {"models": [], "tr_keyed_providers": ["together"]}
+    provider_index = {mid: {"together": _mp(1, 1)}}
+    merged = R._merge_snapshot(or_snap, provider_index, set(), prev_snapshot={"models": []})
+    assert not any(m["id"] == mid for m in merged["models"])
+
+
+def test_free_tier_model_survives_at_zero() -> None:
+    """`:free` SKUs are the one legitimate $0 — the $0-unpriced guard must
+    NOT drop them, or trustedrouter/free empties."""
+    mid = "z-ai/glm-4.5-air:free"
+    or_snap = _or_snapshot(mid, ["zai"], {"prompt": "0", "completion": "0"})
+    provider_index = {mid: {"zai": _mp(0, 0)}}
+    merged = R._merge_snapshot(or_snap, provider_index, set())
+    model = next((m for m in merged["models"] if m["id"] == mid), None)
+    assert model is not None, "free-tier model was dropped by the $0 guard"
+    assert model["pricing_source"] == "free_tier"
+    assert model["endpoints"]
+
+
 def test_is_unpriced_helper() -> None:
     assert R._is_unpriced(_mp(0, 0))
     assert not R._is_unpriced(_mp(1, 0))
