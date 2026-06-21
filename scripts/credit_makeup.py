@@ -29,6 +29,10 @@ os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
+# Keep production manual credits safe during the typed-billing cutover. This
+# uses the normal STORE.credit_workspace_once path, but it must also update the
+# typed counter mirror that the cohort-enforced authorize path reads.
+os.environ["TR_TYPED_COUNTER_MIRROR"] = "1"
 
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
