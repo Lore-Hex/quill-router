@@ -140,6 +140,11 @@ def authorize_atomic(
             existing = read_reservation_by_idempotency(transaction, pt, idempotency_scope)
             if existing is None:  # pragma: no cover - winner must exist post-conflict
                 raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
+            # Same fingerprint check as the normal replay path (codex keystone
+            # review): a concurrent same-scope but DIFFERENT-body loser must get
+            # IDEMPOTENCY_MISMATCH, not the winner's authorization as a replay.
+            if existing["idempotency_fingerprint"] != idempotency_fingerprint:
+                raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
             return _replay(existing)
 
         try:
@@ -224,3 +229,41 @@ def settle_atomic(
         return run_in_transaction_with_retry(database, txn)
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
+
+
+def reap_expired_reservations(
+    database: Any, param_types: Any, *, now: Any, limit: int = 100
+) -> int:
+    """Reclaim crashed-before-settle reservations (settled=false AND expires_at<now).
+
+    Releases each stranded reservation's holds via the SAME claim-gated settle
+    path (success=False = refund, books nothing), so a late settle racing the
+    reaper is safe — whoever claims the row first wins, the other no-ops.
+
+    `expires_at` is set at authorize to the EXECUTION DEADLINE (max stream
+    duration + settle-retry window + margin), so a reaped reservation is genuinely
+    abandoned; releasing without a charge is the bounded-loss accept (red-team P1).
+    A durable settle outbox (gateway persists actuals on response) is the planned
+    enhancement to recover the rare completed-but-settle-lost charge instead of
+    releasing it free; until then, keep `expires_at` generous. Returns the count
+    reaped.
+    """
+    pt = param_types
+    with database.snapshot() as snapshot:
+        rows = list(
+            snapshot.execute_sql(
+                "SELECT reservation_id FROM tr_reservation "
+                "WHERE settled=false AND expires_at < @now LIMIT @limit",
+                params={"now": now, "limit": int(limit)},
+                param_types={"now": pt.TIMESTAMP, "limit": pt.INT64},
+            )
+        )
+    reaped = 0
+    for (reservation_id,) in rows:
+        result = settle_atomic(
+            database, pt, reservation_id=reservation_id, actual_micro=0,
+            settled_usage_type="Credits", success=False,
+        )
+        if result["outcome"] == SettleOutcome.SETTLED:
+            reaped += 1
+    return reaped

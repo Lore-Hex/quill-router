@@ -466,14 +466,15 @@ def _auth_body(aid, rid):
     return _json.dumps({"id": aid, "credit_reservation_id": rid, "model": "m"})
 
 
-def _authorize(store, *, ws, key_hash, estimate, has_credit=True, scope=None, fp=None):
+def _authorize(store, *, ws, key_hash, estimate, has_credit=True, scope=None, fp=None,
+               expires="2026-01-01T00:00:00Z"):
     return authorize_atomic(
         store._database, store._param_types,
         workspace_id=ws, key_hash=key_hash, estimate=estimate,
         has_credit_candidate=has_credit,
         reservation_usage_type=("Credits" if has_credit else "BYOK"),
         idempotency_scope=scope, idempotency_fingerprint=fp,
-        expires_at="2026-01-01T00:00:00Z", build_auth_body=_auth_body,
+        expires_at=expires, build_auth_body=_auth_body,
     )
 
 
@@ -681,3 +682,116 @@ def test_settle_not_found() -> None:
     store, _db, _ = make_fake_store()
     res = _settle(store, rid="nonexistent", actual=100)
     assert res["outcome"] == SettleOutcome.NOT_FOUND
+
+
+# ── 3d: crash reaper ────────────────────────────────────────────────────────
+
+from trusted_router.storage_gcp_authorize import reap_expired_reservations  # noqa: E402
+
+_NOW = "2026-06-01T00:00:00Z"  # after the default authorize expiry, before 2027
+
+
+def test_reaper_reclaims_expired_unsettled_holds() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_reap"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)  # expires 2026-01-01
+    assert _typed(db, ws)["reserved"] == 1_000_000
+
+    reaped = reap_expired_reservations(store._database, store._param_types, now=_NOW)
+    assert reaped == 1
+    assert _typed(db, ws)["reserved"] == 0  # hold released
+    assert _typed(db, ws)["total_usage"] == 0  # no charge (abandoned)
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 0
+    # reservation now settled -> a second reap is a no-op
+    assert reap_expired_reservations(store._database, store._param_types, now=_NOW) == 0
+
+
+def test_reaper_skips_not_yet_expired() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_reap_future"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, expires="2027-01-01T00:00:00Z")
+    reaped = reap_expired_reservations(store._database, store._param_types, now=_NOW)
+    assert reaped == 0
+    assert _typed(db, ws)["reserved"] == 1_000_000  # hold preserved
+
+
+def test_reaper_skips_already_settled() -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_reap_settled"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    _settle(store, rid=auth["reservation_id"], actual=900_000)  # settled before reap
+    assert reap_expired_reservations(store._database, store._param_types, now=_NOW) == 0
+
+
+def test_reaper_vs_late_settle_one_wins() -> None:
+    """A real settle landing as the reaper runs must not double-apply: the claim
+    makes exactly one of {settle, reap} win."""
+    ws = "ws_reap_race"
+    barrier = threading.Barrier(3)
+    store, db, _ = make_fake_store(ready_barrier=barrier)
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid = auth["reservation_id"]
+    results: list[str] = []
+    lock = threading.Lock()
+
+    def settler() -> None:
+        r = _settle(store, rid=rid, actual=900_000)
+        with lock:
+            results.append(("settle", r["outcome"]))
+
+    def reaper() -> None:
+        try:
+            barrier.wait(timeout=10)
+        except threading.BrokenBarrierError:
+            pass
+        reap_expired_reservations(store._database, store._param_types, now=_NOW)
+
+    t_settle = threading.Thread(target=settler, daemon=True)
+    t_reap = threading.Thread(target=reaper, daemon=True)
+    t_settle.start()
+    t_reap.start()
+    try:
+        barrier.wait(timeout=10)
+    except threading.BrokenBarrierError:
+        pass
+    t_settle.join(timeout=10)
+    t_reap.join(timeout=10)
+
+    # The reservation is settled exactly once; usage is either the real charge
+    # (settle won) or 0 (reaper won) — never both, never negative.
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] in (0, 900_000)
+    assert db.reservations[rid]["settled"] is True
+
+
+def test_authorize_atomic_concurrent_same_scope_different_fingerprint() -> None:
+    """Concurrent same-scope but DIFFERENT-body calls: the winner is ACCEPTED, the
+    loser hits the unique-index conflict and must get IDEMPOTENCY_MISMATCH (NOT a
+    replay of the winner's authorization) — codex keystone review."""
+    ws = "ws_auth_race_mm"
+    barrier = threading.Barrier(3)
+    store, _db, _ = make_fake_store(ready_barrier=barrier)
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def go(fp: str) -> None:
+        r = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000, scope="rscope", fp=fp)
+        with lock:
+            outcomes.append(r["outcome"])
+
+    _run_workers(
+        [threading.Thread(target=go, args=(f"fp{i}",), daemon=True) for i in range(2)],
+        barrier,
+    )
+    assert outcomes.count(AuthorizeOutcome.ACCEPTED) == 1, outcomes
+    assert outcomes.count(AuthorizeOutcome.IDEMPOTENCY_MISMATCH) == 1, outcomes

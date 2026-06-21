@@ -427,6 +427,18 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Reaper scan: expired unsettled reservations.
+    if "FROM tr_reservation WHERE settled=false AND expires_at" in sql:
+        now = params["now"]
+        limit = int(params.get("limit", 100))
+        out: list[list] = []
+        for rid, rec in db.reservations.items():
+            exp = rec.get("expires_at")
+            if not rec.get("settled") and exp is not None and exp < now:
+                out.append([rid])
+                if len(out) >= limit:
+                    break
+        return out
     # tr_reservation reads (idempotency replay + by-id for settle/reaper).
     if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
         scope = params["scope"]
