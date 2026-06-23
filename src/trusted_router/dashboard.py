@@ -86,6 +86,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/legal/hipaa-readiness",
     "/legal/subprocessors",
     "/chat",
+    "/fusion",
     "/compare/openrouter",
     "/compare/vercel-ai-gateway",
     "/compare/litellm",
@@ -1165,6 +1166,21 @@ def public_chat_html(settings: Settings) -> str:
         description=(
             "Try any model and compare up to four at once. Zero "
             "tokens spent until you sign in."
+        ),
+        google_enabled=settings.google_oauth_enabled,
+        github_enabled=settings.github_oauth_enabled,
+        static_version=_static_version(settings),
+    )
+
+
+def public_fusion_html(settings: Settings) -> str:
+    return _env().get_template("public/fusion_playground.html").render(
+        api_base_url="/chat-proxy/v1",
+        site_url=f"https://{settings.trusted_domain}/fusion",
+        title="Fusion | TrustedRouter",
+        heading="Fusion",
+        description=(
+            "Try trustedrouter/fusion with a model panel, fallback judges, and a final synthesizer."
         ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,

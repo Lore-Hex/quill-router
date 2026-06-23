@@ -34,6 +34,7 @@ from trusted_router.dashboard import (
     public_blog_post_html,
     public_chat_html,
     public_dpa_html,
+    public_fusion_html,
     public_hipaa_readiness_html,
     public_leaderboard_html,
     public_legal_html,
@@ -570,6 +571,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/chat")
     async def chat() -> str:
         return public_chat_html(settings)
+
+    @public_html_route("/fusion")
+    async def fusion() -> str:
+        return public_fusion_html(settings)
 
     # Per-model detail page. Path captures `{author}/{slug}` (e.g.
     # `z-ai/glm-4.6`, `moonshotai/kimi-k2.6`) so the URL exactly mirrors

@@ -1,0 +1,310 @@
+:root {
+  --fusion-bg: #0d1117;
+  --fusion-panel: #111827;
+  --fusion-panel-2: #0f172a;
+  --fusion-border: #273244;
+  --fusion-ink: #e7edf7;
+  --fusion-muted: #8b9ab0;
+  --fusion-soft: #131d2e;
+  --fusion-accent: #22c55e;
+  --fusion-blue: #8aa7ff;
+  --fusion-warn: #f59e0b;
+  --fusion-error: #f87171;
+  --fusion-radius: 8px;
+  --fusion-font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fusion-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.public-wrap {
+  max-width: none;
+  padding: 0;
+}
+
+.fusion-shell {
+  display: grid;
+  grid-template-columns: 270px minmax(0, 1fr);
+  min-height: calc(100vh - 56px);
+  background: var(--fusion-bg);
+  color: var(--fusion-ink);
+  font-family: var(--fusion-font);
+  border-top: 1px solid var(--fusion-border);
+}
+
+.fusion-sidebar {
+  background: #080d14;
+  border-right: 1px solid var(--fusion-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fusion-sidebar-head {
+  padding: 14px;
+  border-bottom: 1px solid var(--fusion-border);
+  display: grid;
+  gap: 10px;
+}
+
+.fusion-new,
+.fusion-run {
+  width: 100%;
+  justify-content: center;
+}
+
+.fusion-muted,
+.fusion-empty,
+.fusion-meta {
+  color: var(--fusion-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fusion-run-list {
+  padding: 10px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.fusion-run-card {
+  width: 100%;
+  border: 1px solid var(--fusion-border);
+  border-radius: var(--fusion-radius);
+  background: var(--fusion-panel);
+  color: var(--fusion-ink);
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.fusion-run-card:hover {
+  border-color: #3b4b65;
+  background: #152033;
+}
+
+.fusion-run-card strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fusion-run-card span {
+  color: var(--fusion-muted);
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.fusion-main {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.fusion-header {
+  padding: 22px clamp(18px, 3vw, 34px);
+  border-bottom: 1px solid var(--fusion-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fusion-kicker {
+  color: var(--fusion-accent);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.fusion-header h1,
+.fusion-output h2 {
+  margin: 4px 0 0;
+  letter-spacing: -.02em;
+}
+
+.fusion-header h1 {
+  font-size: clamp(24px, 4vw, 38px);
+}
+
+.fusion-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fusion-grid {
+  padding: clamp(16px, 3vw, 34px);
+  display: grid;
+  grid-template-columns: minmax(320px, 520px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.fusion-composer,
+.fusion-output {
+  border: 1px solid var(--fusion-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--fusion-panel), var(--fusion-panel-2));
+}
+
+.fusion-composer {
+  padding: 16px;
+  display: grid;
+  gap: 13px;
+}
+
+.fusion-output {
+  min-height: 560px;
+  display: grid;
+  grid-template-rows: auto minmax(240px, 1fr) auto auto;
+}
+
+.fusion-output-head {
+  padding: 16px;
+  border-bottom: 1px solid var(--fusion-border);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.fusion-row {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 10px;
+}
+
+.fusion-field {
+  display: grid;
+  gap: 7px;
+  color: var(--fusion-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fusion-field input,
+.fusion-field select,
+.fusion-field textarea {
+  width: 100%;
+  border: 1px solid var(--fusion-border);
+  border-radius: var(--fusion-radius);
+  background: #0b1220;
+  color: var(--fusion-ink);
+  padding: 10px 11px;
+  font: 13px/1.45 var(--fusion-font);
+}
+
+.fusion-field textarea[data-fusion-panel],
+.fusion-field input[data-fusion-judges],
+.fusion-field input[data-fusion-finals],
+.fusion-code code {
+  font-family: var(--fusion-mono);
+}
+
+.fusion-field input:focus,
+.fusion-field select:focus,
+.fusion-field textarea:focus {
+  outline: none;
+  border-color: #456087;
+  box-shadow: 0 0 0 3px rgba(69, 96, 135, .35);
+}
+
+.fusion-options {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.fusion-option-pill {
+  border: 1px solid #244937;
+  background: #10251a;
+  color: #b8f1cb;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fusion-answer {
+  margin: 0;
+  padding: 18px;
+  color: var(--fusion-ink);
+  white-space: pre-wrap;
+  font: 14px/1.65 var(--fusion-font);
+  overflow: auto;
+}
+
+.fusion-answer.loading {
+  color: var(--fusion-muted);
+}
+
+.fusion-meta {
+  padding: 0 18px 16px;
+}
+
+.fusion-code {
+  border-top: 1px solid var(--fusion-border);
+  padding: 12px 16px;
+}
+
+.fusion-code summary {
+  color: var(--fusion-muted);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.fusion-code pre {
+  margin: 12px 0 0;
+  overflow: auto;
+  background: #070b14;
+  border: 1px solid var(--fusion-border);
+  border-radius: var(--fusion-radius);
+  padding: 12px;
+}
+
+.fusion-error {
+  margin: 0;
+  border: 1px solid rgba(248, 113, 113, .45);
+  background: rgba(248, 113, 113, .12);
+  color: #fecaca;
+  padding: 10px 12px;
+  border-radius: var(--fusion-radius);
+  font-size: 13px;
+}
+
+@media (max-width: 980px) {
+  .fusion-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .fusion-sidebar {
+    display: none;
+  }
+
+  .fusion-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fusion-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 620px) {
+  .fusion-row {
+    grid-template-columns: 1fr;
+  }
+
+  .fusion-output-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

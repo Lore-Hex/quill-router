@@ -1,0 +1,114 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}{% endblock %}
+
+{% block body %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="/static/fusion.css?v={{ static_version|default('local') }}">
+
+<section class="fusion-shell" data-fusion-shell>
+  <aside class="fusion-sidebar" aria-label="Fusion runs">
+    <div class="fusion-sidebar-head">
+      <button class="btn primary fusion-new" type="button" data-action="new-fusion">New Fusion</button>
+      <span class="fusion-muted">Local history only. Prompts are not saved server-side.</span>
+    </div>
+    <div class="fusion-run-list" data-run-list>
+      <div class="fusion-empty">No runs yet.</div>
+    </div>
+  </aside>
+
+  <main class="fusion-main">
+    <header class="fusion-header">
+      <div>
+        <span class="fusion-kicker">OpenAI compatible API · trustedrouter/fusion</span>
+        <h1>Compare a panel. Return one answer.</h1>
+      </div>
+      <div class="fusion-header-actions">
+        <a class="btn" href="/docs/fusion">Docs</a>
+        <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+      </div>
+    </header>
+
+    <section class="fusion-grid">
+      <form class="fusion-composer" data-fusion-form>
+        <label class="fusion-field fusion-field-wide">
+          Prompt
+          <textarea data-fusion-prompt rows="8" placeholder="Ask a hard question where multiple model opinions help."></textarea>
+        </label>
+
+        <div class="fusion-row">
+          <label class="fusion-field">
+            Preset
+            <select data-fusion-preset>
+              <option value="quality" selected>Quality</option>
+              <option value="budget">Budget</option>
+            </select>
+          </label>
+          <label class="fusion-field">
+            Max tokens
+            <input data-fusion-max-tokens type="number" min="64" max="4096" step="64" value="900">
+          </label>
+        </div>
+
+        <label class="fusion-field fusion-field-wide">
+          Panel models
+          <textarea data-fusion-panel rows="3" spellcheck="false"></textarea>
+        </label>
+        <label class="fusion-field fusion-field-wide">
+          Judge fallback list
+          <input data-fusion-judges spellcheck="false">
+        </label>
+        <label class="fusion-field fusion-field-wide">
+          Final answer fallback list
+          <input data-fusion-finals spellcheck="false">
+        </label>
+
+        <div class="fusion-options">
+          <span class="fusion-option-pill">synthesize_non_refusals</span>
+          <span class="fusion-option-pill">open model defaults</span>
+          <span class="fusion-option-pill">judge + final fallbacks</span>
+        </div>
+
+        <button class="btn primary fusion-run" type="submit" data-fusion-run>Run Fusion</button>
+        <p class="fusion-error" data-fusion-error hidden></p>
+      </form>
+
+      <section class="fusion-output" aria-label="Fusion output">
+        <div class="fusion-output-head">
+          <div>
+            <span class="fusion-kicker">Result</span>
+            <h2 data-result-title>Ready</h2>
+          </div>
+          <button class="btn" type="button" data-action="copy-code">Copy API call</button>
+        </div>
+        <pre class="fusion-answer" data-fusion-answer>Sign in, enter a prompt, then run Fusion.</pre>
+        <div class="fusion-meta" data-fusion-meta></div>
+        <details class="fusion-code">
+          <summary>API request</summary>
+          <pre><code data-fusion-code></code></pre>
+        </details>
+      </section>
+    </section>
+  </main>
+</section>
+
+<script>
+  window.__TR_FUSION__ = {
+    apiBaseUrl: "{{ api_base_url }}",
+    issueKeyPath: "/internal/chat/issue-browser-key",
+    keyCookieName: "tr_chat_key",
+    defaultPanel: [
+      "minimax/minimax-m3",
+      "moonshotai/kimi-k2.7-code",
+      "z-ai/glm-5.2",
+      "google/gemma-4-31b-it",
+      "deepseek/deepseek-v4-pro"
+    ],
+    defaultJudges: ["moonshotai/kimi-k2.7-code", "minimax/minimax-m3"],
+    defaultFinals: ["z-ai/glm-5.2", "minimax/minimax-m3"],
+  };
+</script>
+<script src="/static/fusion.js?v={{ static_version|default('local') }}" defer></script>
+{% endblock %}

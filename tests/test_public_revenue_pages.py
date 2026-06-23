@@ -16,6 +16,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/fusion": "Run a panel of models inside the attested gateway.",
+        "/fusion": "Compare a panel. Return one answer.",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Fusion beats Fable and Frontier",
         "/security": "TrustedRouter does not store prompt or output content by default.",
@@ -63,6 +64,7 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
         "/docs/fusion",
+        "/fusion",
         "/blog",
         "/blog/fusion-evals-open-source",
         "/security",
@@ -86,7 +88,8 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert 'id="tr-choose-frame"' in response.text
     # The renamed privacy tier and the router-route payload show up in copy.
     assert "Trusted Execution Environment" in response.text
-    assert "Tinfoil" in response.text
+    assert "Tinfoil first" not in response.text
+    assert "providers such as" not in response.text
     assert "trustedrouter/e2e" in response.text
     assert "trustedrouter/fusion" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
@@ -105,12 +108,32 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "iron triangle of LLMs" in response.text
     # Embedded-mode hook that hides the in-app header inside the iframe.
     assert "tr-choose-height" in response.text
-    assert "Tinfoil-first TEE providers" in response.text
+    assert "Tinfoil-first TEE providers" not in response.text
     assert "trustedrouter/e2e" in response.text
-    assert "E2E pool includes Tinfoil" in response.text
+    assert "E2E pool includes Tinfoil" not in response.text
+    assert "provider route choices shown on each model card" in response.text
+    assert "PROVIDER_LOOKUP" in response.text
+    assert "/v1/models" in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
     assert "priv: 0," in response.text
+
+
+def test_fusion_playground_is_public_and_uses_browser_key_proxy(client: TestClient) -> None:
+    response = client.get("/fusion")
+
+    assert response.status_code == 200
+    assert "trustedrouter/fusion" in response.text
+    assert "Compare a panel. Return one answer." in response.text
+    assert "/chat-proxy/v1" in response.text
+    assert "/internal/chat/issue-browser-key" in response.text
+    assert "/static/fusion.css" in response.text
+    assert "/static/fusion.js" in response.text
+    assert "synthesize_non_refusals" in response.text
+    assert "moonshotai/kimi-k2.7-code" in response.text
+    assert "z-ai/glm-5.2" in response.text
+    assert client.head("/fusion").status_code == 200
+    assert client.get("/fusion/", follow_redirects=False).status_code == 200
 
 
 def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
