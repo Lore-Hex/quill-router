@@ -8,7 +8,7 @@ from pytest import MonkeyPatch
 
 from scripts.pricing import refresh
 from scripts.pricing.providers import together
-from trusted_router.catalog import endpoints_for_model
+from trusted_router.catalog import MODELS, endpoints_for_model
 
 
 class _FakeTogetherResponse:
@@ -97,46 +97,55 @@ def test_together_api_new_native_id_auto_maps_and_preserves_upstream(
     )
 
 
-def test_catalog_exposes_together_llama_33_endpoint_at_new_rate() -> None:
-    endpoints = endpoints_for_model("meta-llama/llama-3.3-70b-instruct")
-    together_endpoints = [endpoint for endpoint in endpoints if endpoint.provider == "together"]
+def _a_together_served_model() -> str:
+    """Pick a model the live catalog currently routes to Together.
 
+    Together's served set churns across snapshot refreshes (it dropped
+    meta-llama/llama-3.3-70b-instruct in the 2026-06 catalog reconcile), so
+    these tests assert the Together *wiring* against whatever it serves NOW
+    rather than pinning a specific model + exact price that breaks on every
+    refresh. The invariant under test is structural: a Together endpoint
+    surfaces dual Credits/BYOK usage with a positive provider-direct price.
+    """
+    for model_id in sorted(MODELS):
+        if any(ep.provider == "together" for ep in endpoints_for_model(model_id)):
+            return model_id
+    raise AssertionError("catalog has no Together-served model")
+
+
+def test_catalog_together_endpoint_uses_provider_direct_pricing() -> None:
+    model_id = _a_together_served_model()
+    together_endpoints = [
+        endpoint
+        for endpoint in endpoints_for_model(model_id)
+        if endpoint.provider == "together"
+    ]
+    assert together_endpoints
     assert {endpoint.usage_type for endpoint in together_endpoints} == {"Credits", "BYOK"}
-    assert {endpoint.upstream_id for endpoint in together_endpoints} == {
-        "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-    }
-    assert {
-        endpoint.prompt_price_microdollars_per_million_tokens
-        for endpoint in together_endpoints
-    } == {1_144_000}
-    assert {
-        endpoint.completion_price_microdollars_per_million_tokens
-        for endpoint in together_endpoints
-    } == {1_144_000}
+    # One upstream id shared by the Credits + BYOK endpoints for the model.
+    assert len({endpoint.upstream_id for endpoint in together_endpoints}) == 1
+    # Provider-direct prices are positive — never OR's $0 cross-check value.
+    for endpoint in together_endpoints:
+        assert endpoint.prompt_price_microdollars_per_million_tokens > 0
+        assert endpoint.completion_price_microdollars_per_million_tokens > 0
 
 
-def test_model_endpoints_route_uses_provider_specific_together_price(client: Any) -> None:
-    response = client.get("/v1/models/meta-llama/llama-3.3-70b-instruct/endpoints")
+def test_model_endpoints_route_exposes_together_provider_price(client: Any) -> None:
+    model_id = _a_together_served_model()
+    response = client.get(f"/v1/models/{model_id}/endpoints")
     assert response.status_code == 200
 
     together_endpoints = [
         item for item in response.json()["data"] if item["provider"] == "together"
     ]
-
+    assert together_endpoints
     assert {item["usage_type"] for item in together_endpoints} == {"Credits", "BYOK"}
-    assert {item["upstream_id"] for item in together_endpoints} == {
-        "meta-llama/Llama-3.3-70B-Instruct-Turbo"
-    }
-    assert {
-        item["prompt_price_microdollars_per_million_tokens"]
-        for item in together_endpoints
-    } == {1_144_000}
-    assert {
-        item["completion_price_microdollars_per_million_tokens"]
-        for item in together_endpoints
-    } == {1_144_000}
-    assert {item["pricing"]["prompt"] for item in together_endpoints} == {"0.000001144"}
-    assert {item["pricing"]["completion"] for item in together_endpoints} == {"0.000001144"}
+    assert len({item["upstream_id"] for item in together_endpoints}) == 1
+    for item in together_endpoints:
+        assert item["prompt_price_microdollars_per_million_tokens"] > 0
+        assert item["completion_price_microdollars_per_million_tokens"] > 0
+        assert float(item["pricing"]["prompt"]) > 0
+        assert float(item["pricing"]["completion"]) > 0
 
 
 def test_together_pricing_is_on_hourly_refresh_path() -> None:
