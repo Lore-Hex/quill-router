@@ -326,6 +326,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
+    "docs/x402": PublicPage(
+        template="public/x402.html",
+        title="x402 Stablecoin Funding For Agents",
+        description=(
+            "Let agents add TrustedRouter prepaid credits with Stripe x402 while "
+            "prompt traffic stays inside the attested API gateway."
+        ),
+    ),
     "eu": PublicPage(
         template="public/eu.html",
         og_card="eu.png",
