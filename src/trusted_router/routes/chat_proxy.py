@@ -130,7 +130,12 @@ async def _forward(
         # Surface as a 502 — the chat client classifies this as
         # "Upstream provider hiccup" in friendlyStreamError().
         return StreamingResponse(
-            content=iter([b'{"error":{"message":"upstream unreachable","type":"bad_gateway","code":502}}']),
+            content=iter(
+                [
+                    b'{"error":{"message":"upstream unreachable","type":"bad_gateway",'
+                    b'"code":502,"source":"router"}}'
+                ]
+            ),
             status_code=502,
             media_type="application/json",
         )

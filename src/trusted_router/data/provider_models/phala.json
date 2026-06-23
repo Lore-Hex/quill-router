@@ -1,0 +1,26 @@
+{
+  "_about": "Provider-native supplement for Phala Confidential AI routes live ahead of the shared OpenRouter snapshot. Verified against https://api.redpill.ai/v1/models with the confidential tier key on 2026-06-22. The enclave maps z-ai/glm-5.2 to phala/glm-5.2 for the TEE tier.",
+  "provider": "phala",
+  "source": "https://api.redpill.ai/v1/models",
+  "generated_at": "2026-06-22T00:00:00Z",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "phala/glm-5.2",
+      "display_name": "Phala GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 700000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "structured-outputs", "confidential-compute"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}

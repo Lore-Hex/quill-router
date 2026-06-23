@@ -88,6 +88,7 @@ PROVIDER_SLUGS = [
     "lightning",
     "gmi",
     "deepinfra",
+    "friendli",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

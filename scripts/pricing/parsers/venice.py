@@ -18,6 +18,7 @@ import re
 # Venice uses dash-separated forms ("zai-org-glm-4.6") that don't quite
 # match OR's canonical ("z-ai/glm-4.6"). Map the families we route to.
 _NAME_TO_OR_ID = {
+    "zai-org-glm-5-2": "z-ai/glm-5.2",
     "zai-org-glm-5-1": "z-ai/glm-5.1",
     "zai-org-glm-5": "z-ai/glm-5",
     "z-ai-glm-5-turbo": "z-ai/glm-5-turbo",

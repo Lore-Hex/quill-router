@@ -116,6 +116,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("NOVITA_API_KEY",),
         _identity_model_id,
     ),
+    (
+        "friendli",
+        "https://api.friendli.ai/serverless/v1/models",
+        ("FRIENDLI_API_KEY",),
+        _identity_model_id,
+    ),
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[
@@ -136,6 +142,41 @@ _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[
         "novita",
         "https://api.novita.ai/openai/v1/models",
         ("NOVITA_API_KEY",),
+    ),
+    (
+        "gmi",
+        "https://api.gmi-serving.com/v1/models",
+        ("GMI_API_KEY",),
+    ),
+    (
+        "together",
+        "https://api.together.xyz/v1/models",
+        ("TOGETHER_API_KEY",),
+    ),
+    (
+        "phala",
+        "https://api.redpill.ai/v1/models",
+        ("PHALA_CONFIDENTIAL_API_KEY", "PHALA_API_KEY"),
+    ),
+    (
+        "siliconflow",
+        "https://api.siliconflow.com/v1/models",
+        ("SILICON_FLOW_API_KEY", "SILICONFLOW_API_KEY"),
+    ),
+    (
+        "venice",
+        "https://api.venice.ai/api/v1/models",
+        ("VENICE_API_KEY",),
+    ),
+    (
+        "parasail",
+        "https://api.parasail.io/v1/models",
+        ("PARASAIL_API_KEY",),
+    ),
+    (
+        "friendli",
+        "https://api.friendli.ai/serverless/v1/models",
+        ("FRIENDLI_API_KEY",),
     ),
 )
 

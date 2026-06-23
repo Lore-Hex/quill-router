@@ -49,6 +49,7 @@ EXPECTED_MODELS = [
     "z-ai/glm-4.7",
     "z-ai/glm-5",
     "z-ai/glm-5.1",
+    "z-ai/glm-5.2",
     "moonshotai/kimi-k2.5",
     "moonshotai/kimi-k2.6",
     "minimax/minimax-m2.5",
@@ -130,6 +131,9 @@ _NATIVE_TO_OR_ID = {
     "parasail-glm-51": "z-ai/glm-5.1",
     "zai-org/GLM-5.1": "z-ai/glm-5.1",
     "zai-org/GLM-5.1-FP8": "z-ai/glm-5.1",
+    "parasail-glm-52": "z-ai/glm-5.2",
+    "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
     "parasail-glm47": "z-ai/glm-4.7",
     "zai-org/GLM-4.7": "z-ai/glm-4.7",
     "zai-org/GLM-4.7-FP8": "z-ai/glm-4.7",
@@ -209,6 +213,7 @@ _RATES_USD_PER_M: dict[str, tuple[float, float, float | None]] = {
     # z-ai
     "z-ai/glm-5": (1.00, 3.20, 0.20),
     "z-ai/glm-5.1": (1.40, 4.40, 0.26),
+    "z-ai/glm-5.2": (1.40, 4.40, 0.26),
     "z-ai/glm-4.7": (0.45, 2.10, 0.11),
     # moonshot
     "moonshotai/kimi-k2.5": (0.60, 2.80, 0.20),

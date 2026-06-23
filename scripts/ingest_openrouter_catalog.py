@@ -38,7 +38,7 @@ HTTP_TIMEOUT = 30.0
 MAX_WORKERS = 8
 
 # OpenRouter's per-endpoint `provider_name` → TR provider slug. Anything
-# not in this table gets filtered out (TR has no key for it).
+# not in this table gets filtered out (TR has no key/gateway client for it).
 PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "Anthropic": "anthropic",
     "OpenAI": "openai",
@@ -96,6 +96,7 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     # missing endpoints, but if OR adds them we pick them up.
     "GMI": "gmi",
     "GMI Cloud": "gmi",
+    "GMICloud": "gmi",
     # Nebius Token Factory + MiniMax first-party endpoints. TR also
     # carries provider-native manifests for both, but keep OR ingest
     # aware so any future OpenRouter endpoint feed rows merge cleanly.
@@ -105,6 +106,12 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "MiniMax": "minimax",
     "Minimax": "minimax",
     "MiniMax AI": "minimax",
+    # FriendliAI — OpenAI-compatible Model API at
+    # api.friendli.ai/serverless/v1. Added after GLM 5.2 landed there
+    # day-zero; keep it in the ingest so future Friendli rows are picked
+    # up as soon as the hourly snapshot refresh runs.
+    "Friendli": "friendli",
+    "FriendliAI": "friendli",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

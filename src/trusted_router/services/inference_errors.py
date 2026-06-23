@@ -30,7 +30,7 @@ def provider_http_error(exc: ProviderError) -> HTTPException:
     elif exc.status_code in {500, 502, 503, 504, 529}:
         status = 502
         type_ = ErrorType.PROVIDER_ERROR
-    return api_error(status, f"{exc.provider}: {exc.message}", type_)
+    return api_error(status, f"{exc.provider}: {exc.message}", type_, source="provider")
 
 
 def provider_error_type(status_code: int) -> str:
@@ -92,4 +92,5 @@ def all_candidates_failed(errors: list[str]) -> HTTPException:
         502,
         "All route candidates failed: " + suffix,
         ErrorType.PROVIDER_ERROR,
+        source="provider",
     )

@@ -200,6 +200,7 @@ def test_chat_proxy_returns_502_on_upstream_network_error(
     )
     assert response.status_code == 502
     assert response.json()["error"]["type"] == "bad_gateway"
+    assert response.json()["error"]["source"] == "router"
 
 
 def test_chat_proxy_strips_hop_by_hop_request_headers(

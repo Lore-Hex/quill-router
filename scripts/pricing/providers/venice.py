@@ -25,6 +25,7 @@ JINA_HEADERS = {"X-Return-Format": "markdown"}
 
 EXPECTED_MODELS = [
     "z-ai/glm-4.6",
+    "z-ai/glm-5.2",
 ]
 
 # OR-canonical id → Venice native id (what the enclave puts in
@@ -33,6 +34,7 @@ EXPECTED_MODELS = [
 # indexing pricing rows; this map goes OR→native for the upstream
 # request body. If the parser learns a new model, mirror it here.
 UPSTREAM_ID_MAP = {
+    "z-ai/glm-5.2": "zai-org-glm-5-2",
     "z-ai/glm-5.1": "zai-org-glm-5-1",
     "z-ai/glm-5": "zai-org-glm-5",
     "z-ai/glm-5-turbo": "z-ai-glm-5-turbo",

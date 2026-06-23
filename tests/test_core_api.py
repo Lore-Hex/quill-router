@@ -196,6 +196,7 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
     )
     assert malformed.status_code == 400
     assert malformed.json()["error"]["type"] == "bad_request"
+    assert malformed.json()["error"]["source"] == "router"
 
     bad_role = client.post(
         "/v1/chat/completions",
@@ -264,6 +265,7 @@ def test_provider_errors_map_to_openrouter_style_errors(
     )
     assert resp.status_code == 429
     assert resp.json()["error"]["type"] == "provider_rate_limited"
+    assert resp.json()["error"]["source"] == "provider"
 
 
 def test_provider_errors_do_not_echo_prompt_or_create_generation(
@@ -291,6 +293,7 @@ def test_provider_errors_do_not_echo_prompt_or_create_generation(
     )
 
     assert resp.status_code == 502
+    assert resp.json()["error"]["source"] == "provider"
     assert prompt not in resp.text
     assert STORE.generation_store.generations == {}
     key = next(iter(STORE.api_keys.keys.values()))

@@ -1,0 +1,26 @@
+{
+  "_about": "Provider-native supplement for GMI Cloud models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.gmi-serving.com/v1/models on 2026-06-22. GMI exposes GLM 5.2 as zai-org/GLM-5.2-FP8.",
+  "provider": "gmi",
+  "source": "https://api.gmi-serving.com/v1/models",
+  "generated_at": "2026-06-22T00:00:00Z",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2-FP8",
+      "display_name": "GMI Cloud GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 980000,
+      "output_token_price_per_m": 3080000,
+      "cached_input_token_price_per_m": 182000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}

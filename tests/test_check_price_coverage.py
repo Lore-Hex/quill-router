@@ -20,6 +20,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "meta-llama/Llama-3.3-70B-Instruct"}]}
     if "api.novita.ai" in url:
         return {"data": [{"id": "deepseek/deepseek-v4-flash"}]}
+    if "api.friendli.ai" in url:
+        return {"data": [{"id": "meta-llama-3.3-70b-instruct"}]}
     return {"data": []}
 
 

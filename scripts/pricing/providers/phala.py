@@ -48,6 +48,7 @@ EXPECTED_MODELS = [
     "openai/gpt-oss-120b",
     "deepseek/deepseek-v3.2",
     "z-ai/glm-5",
+    "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
     "google/gemma-3-27b-it",
 ]
@@ -65,6 +66,7 @@ _NATIVE_TO_OR_ID = {
     "phala/gemma-3-27b-it": "google/gemma-3-27b-it",
     "phala/glm-5": "z-ai/glm-5",
     "phala/glm-5.1": "z-ai/glm-5.1",
+    "phala/glm-5.2": "z-ai/glm-5.2",
     "phala/glm-4.7": "z-ai/glm-4.7",
     "phala/glm-4.7-flash": "z-ai/glm-4.7-flash",
     "phala/kimi-k2.5": "moonshotai/kimi-k2.5",

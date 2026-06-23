@@ -633,6 +633,20 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://gmicloud.ai/legal/privacy",
     ),
+    # FriendliAI — OpenAI-compatible serverless Model API at
+    # api.friendli.ai/serverless/v1. Hosts GLM 5.2 plus a compact
+    # high-value open-model catalog. Pricing + upstream IDs are read
+    # directly from /models by scripts/pricing/providers/friendli.py.
+    "friendli": Provider(
+        slug="friendli",
+        name="FriendliAI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Friendli's legal/privacy "
+            "terms are linked for users who need to review API data handling."
+        ),
+        provider_policy_url="https://friendli.ai/terms",
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -785,6 +799,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "lightning",
         "gmi",
         "deepinfra",
+        "friendli",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
@@ -1380,6 +1395,13 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "gemini",
         "fireworks",
         "deepinfra",
+        "gmi",
+        "together",
+        "phala",
+        "siliconflow",
+        "venice",
+        "parasail",
+        "friendli",
         "zai",
         "tinfoil",
         "xiaomi",

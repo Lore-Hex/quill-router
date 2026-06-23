@@ -49,9 +49,17 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("moonshotai/kimi-k2.7-code", "kimi"),
         ("moonshotai/kimi-k2.7-code", "novita"),
         ("z-ai/glm-5.2", "zai"),
+        ("z-ai/glm-5.2", "gmi"),
         ("z-ai/glm-5.2", "deepinfra"),
         ("z-ai/glm-5.2", "fireworks"),
         ("z-ai/glm-5.2", "novita"),
+        ("z-ai/glm-5.2", "phala"),
+        ("z-ai/glm-5.2", "siliconflow"),
+        ("z-ai/glm-5.2", "tinfoil"),
+        ("z-ai/glm-5.2", "together"),
+        ("z-ai/glm-5.2", "venice"),
+        ("z-ai/glm-5.2", "parasail"),
+        ("z-ai/glm-5.2", "friendli"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -524,23 +532,43 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     model = MODELS["z-ai/glm-5.2"]
     prepaid = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/prepaid"]
     byok = MODEL_ENDPOINTS["z-ai/glm-5.2@zai/byok"]
+    gmi = MODEL_ENDPOINTS["z-ai/glm-5.2@gmi/prepaid"]
     deepinfra = MODEL_ENDPOINTS["z-ai/glm-5.2@deepinfra/prepaid"]
     fireworks = MODEL_ENDPOINTS["z-ai/glm-5.2@fireworks/prepaid"]
     novita = MODEL_ENDPOINTS["z-ai/glm-5.2@novita/prepaid"]
+    phala = MODEL_ENDPOINTS["z-ai/glm-5.2@phala/prepaid"]
+    siliconflow = MODEL_ENDPOINTS["z-ai/glm-5.2@siliconflow/prepaid"]
+    tinfoil = MODEL_ENDPOINTS["z-ai/glm-5.2@tinfoil/prepaid"]
+    together = MODEL_ENDPOINTS["z-ai/glm-5.2@together/prepaid"]
+    venice = MODEL_ENDPOINTS["z-ai/glm-5.2@venice/prepaid"]
+    parasail = MODEL_ENDPOINTS["z-ai/glm-5.2@parasail/prepaid"]
+    friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
     assert model.supports_chat
     assert prepaid.upstream_id == "glm-5.2"
     assert byok.upstream_id == "glm-5.2"
+    assert gmi.upstream_id == "zai-org/GLM-5.2-FP8"
     assert deepinfra.upstream_id == "zai-org/GLM-5.2"
     assert fireworks.upstream_id == "accounts/fireworks/models/glm-5p2"
     assert novita.upstream_id == "zai-org/glm-5.2"
+    assert phala.upstream_id == "phala/glm-5.2"
+    assert siliconflow.upstream_id == "zai-org/GLM-5.2"
+    assert tinfoil.upstream_id == "glm-5-2"
+    assert together.upstream_id == "zai-org/GLM-5.2"
+    assert venice.upstream_id == "zai-org-glm-5-2"
+    assert parasail.upstream_id == "parasail-glm-52"
+    assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert prepaid.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert prepaid.completion_price_microdollars_per_million_tokens == 4_840_000
+    assert gmi.prompt_price_microdollars_per_million_tokens == 1_078_000
+    assert gmi.completion_price_microdollars_per_million_tokens == 3_388_000
     assert deepinfra.prompt_price_microdollars_per_million_tokens == 1_320_000
     assert deepinfra.completion_price_microdollars_per_million_tokens == 4_620_000
     assert fireworks.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert fireworks.completion_price_microdollars_per_million_tokens == 4_840_000
     assert novita.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert novita.completion_price_microdollars_per_million_tokens == 4_840_000
+    assert friendli.prompt_price_microdollars_per_million_tokens == 1_540_000
+    assert friendli.completion_price_microdollars_per_million_tokens == 4_840_000

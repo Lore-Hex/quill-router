@@ -39,6 +39,7 @@ URL = "https://api.gmi-serving.com/v1/models"
 
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
+    "z-ai/glm-5.2",
 ]
 
 
@@ -53,6 +54,7 @@ _NATIVE_TO_OR_ID = {
     "deepseek-ai/DeepSeek-V3.1": "deepseek/deepseek-v3.1",
     "zai-org/GLM-5-FP8": "z-ai/glm-5",
     "zai-org/GLM-5.1-FP8": "z-ai/glm-5.1",
+    "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
     "anthropic/claude-opus-4.7": "anthropic/claude-opus-4.7",
     "openai/gpt-5.4-nano": "openai/gpt-5.4-nano",
     "openai/gpt-5.5": "openai/gpt-5.5",

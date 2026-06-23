@@ -1,0 +1,26 @@
+{
+  "_about": "Provider-native supplement for Venice models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.venice.ai/api/v1/models on 2026-06-22.",
+  "provider": "venice",
+  "source": "https://api.venice.ai/api/v1/models",
+  "generated_at": "2026-06-22T00:00:00Z",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org-glm-5-2",
+      "display_name": "Venice GLM 5.2",
+      "title": "z-ai/glm-5.2",
+      "context_length": 1000000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "structured-outputs"],
+      "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    }
+  ]
+}
