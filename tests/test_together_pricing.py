@@ -25,6 +25,10 @@ class _FakeTogetherResponse:
                 {
                     "id": "moonshotai/Kimi-K2.7-Code",
                     "pricing": {"input": 0.95, "output": 4.00},
+                },
+                {
+                    "id": "zai-org/GLM-5.2",
+                    "pricing": {"input": 1.40, "output": 4.40},
                 }
             ]
         }
