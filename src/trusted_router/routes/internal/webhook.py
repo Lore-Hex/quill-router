@@ -13,18 +13,22 @@ here, not in __init__.py.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 import stripe
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS, MICRODOLLARS_PER_CENT
 from trusted_router.routes.helpers import json_body
+from trusted_router.services.x402_billing import X402_PAYMENT_METHOD, credit_x402_payment_intent
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
+
+log = logging.getLogger(__name__)
 
 
 def _grant_trial_credit_on_card_attach(workspace_id: str) -> int:
@@ -157,6 +161,33 @@ def register(router: APIRouter) -> None:
         if event_type == "payment_intent.succeeded":
             obj = event.get("data", {}).get("object", {})
             metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                try:
+                    result = credit_x402_payment_intent(
+                        obj,
+                        expected_workspace_id=None,
+                        settings=settings,
+                    )
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    log.error(
+                        "x402.orphan_payment_intent",
+                        extra={
+                            "event_id": event_id,
+                            "payment_intent_id": obj.get("id"),
+                            "workspace_id": metadata.get("workspace_id"),
+                        },
+                    )
+                    return {
+                        "data": {
+                            "event_id": event_id,
+                            "x402": True,
+                            "orphan": True,
+                            "credited": False,
+                        }
+                    }
+                return {"data": {"event_id": event_id, "x402": True, **result}}
             workspace_id = metadata.get("workspace_id")
             amount_microdollars_raw = metadata.get("amount_microdollars")
             if (
@@ -195,7 +226,26 @@ def register(router: APIRouter) -> None:
                             "event_id": event_id,
                             "trial_credit_granted_microdollars": 0,
                         }
+                }
+
+        if event_type in {
+            "payment_intent.processing",
+            "payment_intent.requires_action",
+            "payment_intent.canceled",
+            "payment_intent.payment_failed",
+        }:
+            obj = event.get("data", {}).get("object", {})
+            metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                return {
+                    "data": {
+                        "event_id": event_id,
+                        "x402": True,
+                        "status": obj.get("status") or event_type.removeprefix("payment_intent."),
+                        "payment_intent_id": obj.get("id"),
+                        "credited": False,
                     }
+                }
 
         if event_type == "payment_intent.payment_failed":
             obj = event.get("data", {}).get("object", {})
@@ -206,5 +256,26 @@ def register(router: APIRouter) -> None:
                 code = last_error.get("code") or "unknown"
                 STORE.record_auto_refill_outcome(workspace_id, status=f"failed:{code}")
                 return {"data": {"event_id": event_id, "auto_refill_failed": True, "code": code}}
+
+        if event_type in {"charge.refunded", "charge.refund.updated"}:
+            obj = event.get("data", {}).get("object", {})
+            metadata = obj.get("metadata") or {}
+            if metadata.get("payment_method") == X402_PAYMENT_METHOD:
+                log.warning(
+                    "x402.refund_requires_manual_review",
+                    extra={
+                        "event_id": event_id,
+                        "payment_intent_id": obj.get("payment_intent"),
+                        "refund_id": obj.get("id"),
+                    },
+                )
+                return {
+                    "data": {
+                        "event_id": event_id,
+                        "x402": True,
+                        "refund_requires_manual_review": True,
+                        "credited": False,
+                    }
+                }
 
         return {"data": {"ignored": True, "event_id": event_id}}

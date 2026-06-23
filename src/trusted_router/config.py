@@ -127,6 +127,17 @@ class Settings(BaseSettings):
     ses_configuration_set: str | None = "trustedrouter-default"
 
     stablecoin_checkout_enabled: bool = True
+    x402_enabled: bool = False
+    x402_allow_mock_payments: bool = False
+    x402_network: str = "base"
+    x402_network_id: str = "eip155:8453"
+    x402_stripe_api_version: str = "2026-03-04.preview"
+    x402_max_fund_dollars: str = "500"
+    x402_rate_limit_window_seconds: int = 60
+    x402_rate_limit_key_per_window: int = 10
+    x402_rate_limit_workspace_per_window: int = 30
+    x402_settle_rate_limit_per_window: int = 30
+    x402_settle_workspace_per_window: int = 120
     multi_region_enabled: bool = True
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
@@ -210,7 +221,19 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
-        if self.environment.lower() != "production":
+        environment = self.environment.lower()
+        if self.x402_allow_mock_payments and environment not in {"local", "test"}:
+            raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
+        if (
+            self.x402_enabled
+            and environment not in {"local", "test"}
+            and (not self.stripe_secret_key or not self.stripe_webhook_secret)
+        ):
+            raise ValueError(
+                "TR_X402_ENABLED requires TR_STRIPE_SECRET_KEY and "
+                "TR_STRIPE_WEBHOOK_SECRET outside local/test"
+            )
+        if environment != "production":
             return self
         missing = []
         if not self.internal_gateway_token:

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from trusted_router.money import (
     MAX_CHECKOUT_DOLLARS,
+    MICRODOLLARS_PER_CENT,
     MICRODOLLARS_PER_DOLLAR,
     dollars_to_microdollars,
 )
@@ -54,6 +55,26 @@ class CheckoutRequest(_Lenient):
         if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
             raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
         return Decimal(str(value))
+
+
+class X402FundingRequest(_Strict):
+    amount: Decimal | str | int = Decimal("10.00")
+
+    @field_validator("amount")
+    @classmethod
+    def amount_in_range(cls, value: Decimal | str | int) -> Decimal:
+        microdollars = dollars_to_microdollars(value)
+        if microdollars < MICRODOLLARS_PER_DOLLAR:
+            raise ValueError("amount must be at least 1")
+        if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
+            raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
+            raise ValueError("amount must be exactly representable in cents")
+        return Decimal(str(value))
+
+
+class X402SettleRequest(_Strict):
+    payment_intent_id: str = Field(pattern=r"^pi_[A-Za-z0-9_:-]{1,253}$")
 
 
 def _validate_dollars(value: Decimal | str | int | float | None) -> Decimal | None:
