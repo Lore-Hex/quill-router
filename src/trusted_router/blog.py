@@ -136,8 +136,86 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <text x="1188" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
 </figure>
 <p><strong>But you cannot strip the panel.</strong> That would be a mistake — and we have the experiment to prove it. When we actually built a three-member panel, dropping the two "free" role-players, the score fell <strong>3.4 points</strong> — nearly as much as removing the single most important model. The drop looks marginal in an unpaired view, but the panels are 0.80-correlated per task, so the right test is paired: per-task, the three-member panel loses <strong>−3.4 ± 0.95</strong> against the full committee (t = −3.6; a 20,000-sample bootstrap 95% CI of [−5.3, −1.6] that excludes zero). Each member is individually droppable; the panel is not. Removing one is free because the others cover the gap — remove two and the gaps open. The breadth is doing work that no single leave-one-out can see. Call it a <em>redundancy floor</em>.</p>
-<p><strong>And the deepest surprise: the most valuable panelist is not the smartest model.</strong> <span class="mono">DeepSeek V4 Pro</span> is mid-pack as a solo researcher (59.9 on DRACO), and the strongest open solo, <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> at 63.0, is not even on this committee. Yet DeepSeek and M3 carry it while stronger models sit on the bench. Fusion does not reward raw capability — it rewards <em>uncorrelated error</em>. A model earns its seat by failing in different places than the rest, so that where one hallucinates a date or misses a source, the others do not, and the synthesizer keeps what survives cross-examination. We are now measuring the per-task error structure directly — grading each panelist's report on every task and correlating the residuals — and will publish the matrix; the prediction is simple and testable: DeepSeek's errors are the least correlated with the rest, which is exactly why dropping it hurts the most.</p>
-<p>Three findings, one shape: a fusion panel's value lives in its <em>diversity</em>, and diversity is invisible to every single-component test. The fuser is flat until the panel is varied; each member looks free until you remove enough of them; the workhorses are the diverse models, not the strong ones. None of it shows up if you only ever measure one thing at a time.</p>
+<p><strong>And the deepest surprise: the most valuable panelist is not the smartest model.</strong> <span class="mono">DeepSeek V4 Pro</span> is mid-pack as a solo researcher (59.9 on DRACO), and the strongest open solo, <a href="https://openai.com"><span class="mono">GPT-5.5</span></a> at 63.0, is not even on this committee. Yet DeepSeek and M3 carry it while stronger models sit on the bench. Fusion does not reward raw capability — it rewards <em>uncorrelated error</em>. A model earns its seat by failing in different places than the rest, so that where one hallucinates a date or misses a source, the others do not, and the synthesizer keeps what survives cross-examination. So we measured it directly — grading every panelist's report on all 100 tasks and correlating the per-task scores. We expected a standout: one model whose errors are conspicuously independent of the rest. There isn't one.</p>
+<p><strong>Every pair of these very different models — open and closed lineages, five different labs — correlates between 0.47 and 0.71, mean 0.56</strong>, and each model's <em>average</em> correlation with the others spans just 0.55 to 0.58. That 0.03 spread is inside the noise. DeepSeek is nominally the least-correlated (0.550), but it is tied with everyone; the clean prediction — that one model's errors are the most independent and that is why it is load-bearing — is simply false.</p>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 748" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1180" height="748" fill="#ffffff"/>
+<text x="60" y="58" font-size="37" font-weight="700" fill="#111827">The panel has no diversity hero</text>
+<text x="60" y="90" font-size="18" fill="#6b7280">Per-task DRACO score correlation between open-committee members · 100 tasks · gemini + Sonnet chunk-of-3 grades</text>
+<text x="355" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">M3</text>
+<text x="441" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">Kimi</text>
+<text x="527" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">DeepSeek</text>
+<text x="613" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">Gemma</text>
+<text x="699" y="184" font-size="16" font-weight="600" text-anchor="middle" fill="#374151">GLM</text>
+<text x="296" y="245" font-size="17" font-weight="600" text-anchor="end" fill="#111827">MiniMax-M3</text>
+<rect x="312" y="196" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="245" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="398" y="196" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="484" y="196" width="86" height="86" rx="3" fill="#d8e9e2" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.47</text>
+<rect x="570" y="196" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="656" y="196" width="86" height="86" rx="3" fill="#47907d" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="245" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.65</text>
+<text x="296" y="331" font-size="17" font-weight="600" text-anchor="end" fill="#111827">Kimi K2.6</text>
+<rect x="312" y="282" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="398" y="282" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="331" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="484" y="282" width="86" height="86" rx="3" fill="#17725b" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.71</text>
+<rect x="570" y="282" width="86" height="86" rx="3" fill="#c8dfd7" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.49</text>
+<rect x="656" y="282" width="86" height="86" rx="3" fill="#d0e4dd" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="331" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.48</text>
+<text x="296" y="417" font-size="17" font-weight="600" text-anchor="end" fill="#111827">DeepSeek V4</text>
+<rect x="312" y="368" width="86" height="86" rx="3" fill="#d8e9e2" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.47</text>
+<rect x="398" y="368" width="86" height="86" rx="3" fill="#17725b" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.71</text>
+<rect x="484" y="368" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="417" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="570" y="368" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="656" y="368" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="417" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<text x="296" y="503" font-size="17" font-weight="600" text-anchor="end" fill="#111827">Gemma-4</text>
+<rect x="312" y="454" width="86" height="86" rx="3" fill="#90bcb0" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.56</text>
+<rect x="398" y="454" width="86" height="86" rx="3" fill="#c8dfd7" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.49</text>
+<rect x="484" y="454" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="570" y="454" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="503" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<rect x="656" y="454" width="86" height="86" rx="3" fill="#3f8b77" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="503" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.66</text>
+<text x="296" y="589" font-size="17" font-weight="600" text-anchor="end" fill="#111827">GLM-5.2</text>
+<rect x="312" y="540" width="86" height="86" rx="3" fill="#47907d" stroke="#ffffff" stroke-width="3"/>
+<text x="355" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.65</text>
+<rect x="398" y="540" width="86" height="86" rx="3" fill="#d0e4dd" stroke="#ffffff" stroke-width="3"/>
+<text x="441" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.48</text>
+<rect x="484" y="540" width="86" height="86" rx="3" fill="#b8d5cc" stroke="#ffffff" stroke-width="3"/>
+<text x="527" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#0f3d30">0.51</text>
+<rect x="570" y="540" width="86" height="86" rx="3" fill="#3f8b77" stroke="#ffffff" stroke-width="3"/>
+<text x="613" y="589" font-size="20" font-weight="600" text-anchor="middle" fill="#ffffff">0.66</text>
+<rect x="656" y="540" width="86" height="86" rx="3" fill="#f1f3f2" stroke="#ffffff" stroke-width="3"/>
+<text x="699" y="589" font-size="17" text-anchor="middle" fill="#c2c8c5">—</text>
+<text x="810" y="184" font-size="15" font-weight="600" text-anchor="middle" fill="#6b7280">avg</text>
+<text x="810" y="245" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.559</text>
+<text x="810" y="331" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.561</text>
+<text x="810" y="417" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.550</text>
+<text x="810" y="503" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.556</text>
+<text x="810" y="589" font-size="19" font-weight="700" text-anchor="middle" fill="#0f6e56">0.576</text>
+<line x1="770" y1="200" x2="770" y2="622" stroke="#d7dbd9" stroke-width="2"/>
+<line x1="60" y1="652" x2="1120" y2="652" stroke="#eceae4"/>
+<text x="60" y="678" font-size="19" fill="#111827"><tspan font-weight="700" fill="#0f6e56">Every pair sits at 0.47–0.71 (mean 0.56).</tspan> Each model's average correlation with the rest spans just <tspan font-weight="700">0.55–0.58</tspan> —</text>
+<text x="60" y="706" font-size="19" fill="#374151">a 0.03 spread, inside the noise. No model is the orthogonal outlier; the diversity that fuels fusion is real but <tspan font-style="italic">diffuse</tspan>.</text>
+<text x="1120" y="740" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg></figure>
+<p>The honest picture is subtler and, we think, more useful: <strong>diversity is real but diffuse.</strong> Roughly half of each pair's score variance is shared and half is independent — fusion lives on that independent half — but no single model owns it. That is exactly why leave-one-out finds almost nothing (drop any one model and the others still cover its blind spots) while dropping two opens real gaps: the useful disagreement is spread thin across the whole panel, not banked in a hero. What sets the workhorses, M3 and DeepSeek, apart is not extra independence — it is that they pair that shared diversity with enough competence to put a correct answer on the table, where the weaker members supply uncorrelated error but rarely the right answer to keep.</p>
+<p>Three findings, one shape: a fusion panel's value lives in its <em>diversity</em>, and diversity is invisible to every single-component test. The fuser is flat until the panel is varied; each member looks free until you remove enough of them; the diversity that does the work is spread across the whole panel, not banked in any one model. None of it shows up if you only ever measure one thing at a time.</p>
 <p>This is the research we do at <a href="https://trustedrouter.com">TrustedRouter</a> — open code, open results, reproducible end to end. The harness, the exact panel, and the DRACO tasks are all <a href="https://github.com/Lore-Hex/TrustedRouter-Fusion-Draco">public</a>. If you have a PhD and want to work on what actually makes an ensemble of models think, <a href="/careers">apply</a>.</p>
 """,
     ),
