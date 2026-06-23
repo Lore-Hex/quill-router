@@ -437,16 +437,20 @@ def test_read_only_bypasses_rate_limit_writes() -> None:
 
 
 def test_rate_limit_returns_stable_openrouter_style_error() -> None:
+    STORE.rate_limit_store.reset()
     limited_app = create_app(
         Settings(
             environment="test",
+            read_only=False,
+            rate_limit_enabled=True,
             rate_limit_ip_per_window=1,
             rate_limit_window_seconds=60,
         )
     )
     limited_client = TestClient(limited_app)
-    assert limited_client.get("/v1/models").status_code == 200
-    second = limited_client.get("/v1/models")
+    headers = {"x-forwarded-for": "203.0.113.9"}
+    assert limited_client.get("/v1/models", headers=headers).status_code == 200
+    second = limited_client.get("/v1/models", headers=headers)
     assert second.status_code == 429
     assert second.json()["error"]["type"] == "rate_limited"
     assert second.headers["retry-after"]
