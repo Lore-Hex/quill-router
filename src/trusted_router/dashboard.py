@@ -846,6 +846,7 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
     resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
     return _env().get_template(page.template).render(
         api_base_url=settings.api_base_url,
+        control_plane_api_base_url=f"https://{settings.trusted_domain}/v1",
         site_url=resolved_site_url,
         title=f"{page.title} | TrustedRouter",
         heading=page.title,

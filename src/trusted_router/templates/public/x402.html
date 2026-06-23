@@ -6,7 +6,7 @@
     <div class="panel-head"><h2>x402 stablecoin funding</h2><span class="pill">API-key required</span></div>
     <div class="panel-body">
       <p>x402 is a funding rail for prepaid credits. It does not run inside the enclave and it does not carry prompts. Agents use a normal TrustedRouter API key, add credits with stablecoin when needed, then retry the same attested API call.</p>
-      <pre><code>curl {{ api_base_url }}/billing/x402/fund \
+      <pre><code>curl {{ control_plane_api_base_url }}/billing/x402/fund \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"amount":"10.00"}'</code></pre>
@@ -18,7 +18,7 @@
     <div class="panel">
       <div class="panel-head"><h2>Settle after payment</h2><span class="pill good">idempotent</span></div>
       <div class="panel-body">
-        <pre><code>curl {{ api_base_url }}/billing/x402/settle \
+        <pre><code>curl {{ control_plane_api_base_url }}/billing/x402/settle \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"payment_intent_id":"pi_..."}'</code></pre>
@@ -43,9 +43,9 @@
     <div class="panel-head"><h2>Agent retry loop</h2><span class="pill">recommended</span></div>
     <div class="panel-body">
       <pre><code>1. Call /v1/chat/completions or /v1/responses.
-2. If TrustedRouter returns insufficient credits, call /v1/billing/x402/fund.
+2. If TrustedRouter returns insufficient credits, call {{ control_plane_api_base_url }}/billing/x402/fund.
 3. Pay using the payment-required header.
-4. Poll /v1/billing/x402/settle with backoff: 5s, 10s, 20s, 30s, then every 60s.
+4. Poll {{ control_plane_api_base_url }}/billing/x402/settle with backoff: 5s, 10s, 20s, 30s, then every 60s.
 5. Retry the original attested inference call after credits land.</code></pre>
     </div>
   </div>
