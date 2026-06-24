@@ -225,10 +225,25 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 @pytest.mark.parametrize(
     ("provider", "model_ids"),
     [
-        ("parasail", ("qwen/qwen3-235b-a22b-2507", "z-ai/glm-5")),
+        (
+            "gmi",
+            ("google/gemma-4-26b-a4b-it", "google/gemma-4-31b-it"),
+        ),
+        (
+            "parasail",
+            (
+                "deepseek/deepseek-v3.2",
+                "moonshotai/kimi-k2.5",
+                "qwen/qwen3-235b-a22b-2507",
+                "stepfun/step-3.5-flash",
+                "z-ai/glm-4.7",
+                "z-ai/glm-5",
+            ),
+        ),
         (
             "novita",
             (
+                "deepseek/deepseek-prover-v2-671b",
                 "meta-llama/llama-3-8b-instruct",
                 "qwen/qwen2.5-vl-72b-instruct",
                 "qwen/qwen3-4b-fp8",

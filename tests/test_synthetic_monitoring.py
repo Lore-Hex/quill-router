@@ -1556,10 +1556,18 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     # reachable — coverage is endpoint-driven, not the prepaid_available flag.
     assert "openai" in pool
     assert "novita" in pool
+    assert "google/gemma-4-26b-a4b-it" not in pool.get("gmi", [])
+    assert "google/gemma-4-31b-it" not in pool.get("gmi", [])
     assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
     assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
+    assert "deepseek/deepseek-v3.2" not in pool.get("parasail", [])
+    assert "moonshotai/kimi-k2.5" not in pool.get("parasail", [])
     assert "qwen/qwen3-235b-a22b-2507" not in pool.get("parasail", [])
+    assert "stepfun/step-3.5-flash" not in pool.get("parasail", [])
+    assert "z-ai/glm-4.7" not in pool.get("parasail", [])
     assert "z-ai/glm-5" not in pool.get("parasail", [])
+    assert "z-ai/glm-5.1" in pool.get("parasail", [])
+    assert "deepseek/deepseek-prover-v2-671b" not in pool.get("novita", [])
     assert "meta-llama/llama-3-8b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen2.5-vl-72b-instruct" not in pool.get("novita", [])
     assert "qwen/qwen3-4b-fp8" not in pool.get("novita", [])

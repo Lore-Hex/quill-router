@@ -1821,7 +1821,18 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 #              gmi/lightning), which work. gemini was ranked first for these, so
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
-    "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
+    "gmi": frozenset(
+        {
+            "anthropic/claude-opus-4.7",
+            "openai/gpt-5.5",
+            # 2026-06-24: GMI returns HTTP 200 with an empty assistant message
+            # for these Gemma 4 routes when pinned through the live gateway.
+            # Treat as unserved for prepaid routing until GMI returns usable
+            # text; leave customer BYOK routes visible.
+            "google/gemma-4-26b-a4b-it",
+            "google/gemma-4-31b-it",
+        }
+    ),
     "openai": frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
@@ -1838,7 +1849,19 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     # returns 403 "deployment ... doesn't exist or isn't accessible" for these
     # routes on our operator key (direct API probe 2026-06-05). Keep BYOK
     # visible for customer accounts, but do not route prepaid traffic here.
-    "parasail": frozenset({"qwen/qwen3-235b-a22b-2507", "z-ai/glm-5"}),
+    "parasail": frozenset(
+        {
+            "qwen/qwen3-235b-a22b-2507",
+            "z-ai/glm-5",
+            # 2026-06-24: live gateway probes pinned to Parasail return
+            # deterministic provider 403 "Forbidden" HTML for these routes
+            # on the operator key. These are config/unserved, not downtime.
+            "deepseek/deepseek-v3.2",
+            "moonshotai/kimi-k2.5",
+            "stepfun/step-3.5-flash",
+            "z-ai/glm-4.7",
+        }
+    ),
     # novita — Novita's /models currently lists these ids, but chat returns
     # MODEL_NOT_AVAILABLE / SERVICE_NOT_AVAILABLE for the exact routes below
     # on our operator key (direct API probes 2026-06-05/06). Other Novita
@@ -1860,6 +1883,8 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             "qwen/qwen2.5-7b-instruct",
             "qwen/qwen3-30b-a3b-fp8",
             "qwen/qwen3-32b-fp8",
+            # 2026-06-24: explicit MODEL_NOT_AVAILABLE from Novita.
+            "deepseek/deepseek-prover-v2-671b",
             # 2026-06-06 batch 3: dropped after a SERIALIZED re-test (cooldown +
             # 25s gaps, so not our own rate-limit). sao10k/xiaomimimo return a
             # fast explicit NOT_AVAILABLE; the rest queue with no first byte then
