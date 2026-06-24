@@ -33,7 +33,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k2.7-code" in MODELS
     assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" not in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code@kimi/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code@novita/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code@novita/byok" in MODEL_ENDPOINTS
@@ -47,7 +47,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("mistralai/mistral-small-2603", "mistral"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("moonshotai/kimi-k2.6", "kimi"),
-        ("moonshotai/kimi-k2.7-code", "kimi"),
         ("moonshotai/kimi-k2.7-code", "novita"),
         ("z-ai/glm-5.2", "zai"),
         ("z-ai/glm-5.2", "gmi"),
@@ -229,6 +228,7 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
             "gmi",
             ("google/gemma-4-26b-a4b-it", "google/gemma-4-31b-it"),
         ),
+        ("kimi", ("moonshotai/kimi-k2.7-code",)),
         (
             "parasail",
             (
@@ -440,7 +440,6 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
     ("model_id", "provider"),
     [
         ("moonshotai/kimi-k2.6", "kimi"),
-        ("moonshotai/kimi-k2.7-code", "kimi"),
         ("openai/gpt-4.1-mini", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),

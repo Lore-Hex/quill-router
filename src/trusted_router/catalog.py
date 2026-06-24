@@ -1821,6 +1821,14 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 #              gmi/lightning), which work. gemini was ranked first for these, so
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
+    "kimi": frozenset(
+        {
+            # 2026-06-24: first-party Moonshot returns
+            # "Not found the model ... or Permission denied" for K2.7 Code on
+            # the operator key. Keep Novita/BYOK K2.7 routes visible.
+            "moonshotai/kimi-k2.7-code",
+        }
+    ),
     "gmi": frozenset(
         {
             "anthropic/claude-opus-4.7",
