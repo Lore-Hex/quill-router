@@ -1,0 +1,120 @@
+{
+  "_about": "Provider-native supplement for Baseten Model APIs. Verified against https://inference.baseten.co/v1/models on 2026-06-24.",
+  "provider": "baseten",
+  "source": "https://inference.baseten.co/v1/models",
+  "generated_at": "2026-06-24T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 11,
+  "models": [
+    {
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "display_name": "GPT OSS 120B",
+      "context_length": 128072,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 500000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "zai-org/GLM-4.7",
+      "display_name": "GLM 4.7",
+      "context_length": 200000,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 120000
+    },
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "moonshotai/Kimi-K2.5",
+      "display_name": "Kimi K2.5",
+      "context_length": 262000,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 120000
+    },
+    {
+      "id": "z-ai/glm-5",
+      "upstream_id": "zai-org/GLM-5",
+      "display_name": "GLM 5",
+      "context_length": 202800,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 3150000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "id": "nvidia/nemotron-120b-a12b",
+      "upstream_id": "nvidia/Nemotron-120B-A12B",
+      "display_name": "Nemotron 120B A12B",
+      "context_length": 202800,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 750000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "zai-org/GLM-5.1",
+      "display_name": "GLM 5.1",
+      "context_length": 202800,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 1300000,
+      "output_token_price_per_m": 4300000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "moonshotai/Kimi-K2.6",
+      "display_name": "Kimi K2.6",
+      "context_length": 262000,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
+      "display_name": "DeepSeek V4 Pro",
+      "context_length": 131000,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 1740000,
+      "output_token_price_per_m": 3480000,
+      "cached_input_token_price_per_m": 145000
+    },
+    {
+      "id": "nvidia/nvidia-nemotron-3-ultra-550b-a55b",
+      "upstream_id": "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
+      "display_name": "NVIDIA Nemotron 3 Ultra 550B A55B",
+      "context_length": 202800,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 120000
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2",
+      "display_name": "GLM 5.2",
+      "context_length": 262144,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "moonshotai/Kimi-K2.7-Code",
+      "display_name": "Kimi K2.7 Code",
+      "context_length": 262000,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    }
+  ]
+}

@@ -11,6 +11,8 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "DEEPINFRA_API_KEY": "trustedrouter-deepinfra-api-key",
         "FIREWORKS_API_KEY": "trustedrouter-fireworks-api-key",
         "NOVITA_API_KEY": "trustedrouter-novita-api-key",
+        "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
+        "WAFER_API_KEY": "trustedrouter-wafer-api-key",
     }
     for env_name, secret_name in expected.items():
         assert f'add_secret_env_if_exists "{env_name}" "{secret_name}"' in rollout

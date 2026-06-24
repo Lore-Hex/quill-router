@@ -12,6 +12,7 @@ Usage:
 
 Reads TR_API_KEY from env. If not set, prints a no-op message.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,28 +27,30 @@ import httpx
 # (provider_slug, model_id) — picks one canonical-routed model per
 # provider that should always be available on the keyed credential.
 PROBES: list[tuple[str, str]] = [
-    ("anthropic",   "anthropic/claude-haiku-4.5"),
+    ("anthropic", "anthropic/claude-haiku-4.5"),
     # gpt-5.4-mini was deprecated by OpenAI upstream sometime in 2026-05
     # (returns 400 globally now). 4.1-mini is the current low-end probe
     # — same OpenAI auth path, same TTFB envelope, still routable.
-    ("openai",      "openai/gpt-4.1-mini"),
-    ("gemini",      "google/gemini-2.5-flash"),
-    ("cerebras",    "openai/gpt-oss-120b"),
-    ("deepseek",    "deepseek/deepseek-v4-flash"),
-    ("mistral",     "mistralai/mistral-small-2603"),
-    ("kimi",        "moonshotai/kimi-k2.6"),
-    ("zai",         "z-ai/glm-4.6"),
-    ("together",    "moonshotai/kimi-k2.6"),
-    ("fireworks",   "openai/gpt-oss-120b"),
-    ("grok",        "x-ai/grok-4.20"),
+    ("openai", "openai/gpt-4.1-mini"),
+    ("gemini", "google/gemini-2.5-flash"),
+    ("cerebras", "openai/gpt-oss-120b"),
+    ("deepseek", "deepseek/deepseek-v4-flash"),
+    ("mistral", "mistralai/mistral-small-2603"),
+    ("kimi", "moonshotai/kimi-k2.6"),
+    ("zai", "z-ai/glm-4.6"),
+    ("together", "moonshotai/kimi-k2.6"),
+    ("fireworks", "openai/gpt-oss-120b"),
+    ("grok", "x-ai/grok-4.20"),
     # Probe the provider-native Qwen route, not only a shared DeepSeek route:
     # this catches Novita-specific catalog/pricing drift and proves the
     # supplemental Novita manifest is routable through the gateway.
-    ("novita",      "qwen/qwen3-235b-a22b-instruct-2507"),
-    ("phala",       "qwen/qwen3.5-27b"),
+    ("novita", "qwen/qwen3-235b-a22b-instruct-2507"),
+    ("phala", "qwen/qwen3.5-27b"),
     ("siliconflow", "deepseek/deepseek-v4-flash"),
-    ("tinfoil",     "moonshotai/kimi-k2.6"),
-    ("venice",      "z-ai/glm-4.6"),
+    ("tinfoil", "moonshotai/kimi-k2.6"),
+    ("venice", "z-ai/glm-4.6"),
+    ("baseten", "z-ai/glm-5.2"),
+    ("wafer", "z-ai/glm-5.2"),
 ]
 
 # Per-region enclave URLs the smoke targets. We deliberately use the
@@ -82,12 +85,12 @@ PROBES: list[tuple[str, str]] = [
 #     monitor's separate /health probe via Cloud Run direct URLs
 #     covers the control-plane health for them.
 REGIONS = {
-    "us-central1":        "https://api.trustedrouter.com",
-    "europe-west4":       "https://api-europe-west4.quillrouter.com",
-    "us-east4":           "https://api-us-east4.quillrouter.com",
+    "us-central1": "https://api.trustedrouter.com",
+    "europe-west4": "https://api-europe-west4.quillrouter.com",
+    "us-east4": "https://api-us-east4.quillrouter.com",
     # Aliases preserved for backward-compat with operator muscle memory.
-    "us":                 "https://api.trustedrouter.com",
-    "europe":             "https://api-europe-west4.quillrouter.com",
+    "us": "https://api.trustedrouter.com",
+    "europe": "https://api-europe-west4.quillrouter.com",
 }
 
 # Regions that have a regional enclave MIG. The smoke iterates these
@@ -183,13 +186,17 @@ def probe_one(api_key: str, region_name: str, base_url: str, provider: str, mode
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--regions", nargs="+", default=list(ENCLAVE_REGIONS),
+        "--regions",
+        nargs="+",
+        default=list(ENCLAVE_REGIONS),
         help="Regions to probe. Default: all enclave-capable regions "
-             "(us-central1, europe-west4, us-east4). Pass legacy "
-             "aliases ('us', 'europe') if you want the old behavior."
+        "(us-central1, europe-west4, us-east4). Pass legacy "
+        "aliases ('us', 'europe') if you want the old behavior.",
     )
     parser.add_argument(
-        "--workers", type=int, default=4,
+        "--workers",
+        type=int,
+        default=4,
         help="parallel requests across (provider × region) pairs",
     )
     args = parser.parse_args(argv)
@@ -224,14 +231,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # Print a table.
     print()
-    print(f"{'REGION':<8} {'PROVIDER':<12} {'MODEL':<35} {'STATUS':<7} {'TTFB':>9} {'TOTAL':>9}  ERROR")
+    print(
+        f"{'REGION':<8} {'PROVIDER':<12} {'MODEL':<35} {'STATUS':<7} {'TTFB':>9} {'TOTAL':>9}  ERROR"
+    )
     print("-" * 110)
     for r in results:
         ttfb = f"{r.ttfb_ms:.0f}ms" if r.ttfb_ms is not None else "—"
         total = f"{r.total_ms:.0f}ms"
         err = r.error[:30] if r.error else ""
         status = "OK" if r.status == 200 else f"{r.status}"
-        print(f"{r.region:<8} {r.provider:<12} {r.model:<35} {status:<7} {ttfb:>9} {total:>9}  {err}")
+        print(
+            f"{r.region:<8} {r.provider:<12} {r.model:<35} {status:<7} {ttfb:>9} {total:>9}  {err}"
+        )
 
     # Per-region p50/p95/median.
     by_region: dict[str, list[float]] = {}
@@ -247,9 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         p50 = ttfbs[len(ttfbs) // 2]
         p95 = ttfbs[int(len(ttfbs) * 0.95)]
         worst = ttfbs[-1]
-        print(
-            f"  {region}: n={len(ttfbs)}  p50={p50:.0f}ms  p95={p95:.0f}ms  worst={worst:.0f}ms"
-        )
+        print(f"  {region}: n={len(ttfbs)}  p50={p50:.0f}ms  p95={p95:.0f}ms  worst={worst:.0f}ms")
 
     # Failure summary.
     fails = [r for r in results if r.status != 200]

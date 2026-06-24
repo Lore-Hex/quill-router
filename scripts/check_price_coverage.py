@@ -13,6 +13,7 @@ actually re-reads each run. This reports the gaps:
 Run in refresh-prices.yml as a non-failing visibility step (writes to the
 Actions run summary). Pass --strict to fail CI on any gap.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -76,9 +77,52 @@ def _fireworks_model_id(native_id: str) -> str | None:
     return _FIREWORKS_MODEL_IDS.get(value, value)
 
 
+_BASETEN_MODEL_IDS = {
+    "openai/gpt-oss-120b": "openai/gpt-oss-120b",
+    "zai-org/GLM-4.7": "z-ai/glm-4.7",
+    "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
+    "zai-org/GLM-5": "z-ai/glm-5",
+    "nvidia/Nemotron-120B-A12B": "nvidia/nemotron-120b-a12b",
+    "zai-org/GLM-5.1": "z-ai/glm-5.1",
+    "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": ("nvidia/nvidia-nemotron-3-ultra-550b-a55b"),
+    "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
+}
+
+
+def _baseten_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _BASETEN_MODEL_IDS.get(value, _identity_model_id(value))
+
+
+_WAFER_MODEL_IDS = {
+    "GLM-5.1": "z-ai/glm-5.1",
+    "GLM-5.2": "z-ai/glm-5.2",
+    "Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
+    "Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
+    "Qwen3.6-35B-A3B": "qwen/qwen3.6-35b-a3b",
+    "qwen3.6-max-preview": "qwen/qwen3.6-max-preview",
+    "qwen3.7-max": "qwen/qwen3.7-max",
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "MiniMax-M3": "minimax/minimax-m3",
+}
+
+
+def _wafer_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _WAFER_MODEL_IDS.get(value)
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
-    tuple[str, str, tuple[str, ...], Callable[[str], str | None]],
-    ...
+    tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
     (
         "cerebras",
@@ -122,12 +166,21 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("FRIENDLI_API_KEY",),
         _identity_model_id,
     ),
+    (
+        "baseten",
+        "https://inference.baseten.co/v1/models",
+        ("BASETEN_API_KEY",),
+        _baseten_model_id,
+    ),
+    (
+        "wafer",
+        "https://pass.wafer.ai/v1/models",
+        ("WAFER_API_KEY",),
+        _wafer_model_id,
+    ),
 )
 
-_GLM_DISCOVERABLE_PROVIDER_APIS: tuple[
-    tuple[str, str, tuple[str, ...]],
-    ...
-] = (
+_GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "deepinfra",
         "https://api.deepinfra.com/v1/openai/models",
@@ -178,6 +231,16 @@ _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[
         "https://api.friendli.ai/serverless/v1/models",
         ("FRIENDLI_API_KEY",),
     ),
+    (
+        "baseten",
+        "https://inference.baseten.co/v1/models",
+        ("BASETEN_API_KEY",),
+    ),
+    (
+        "wafer",
+        "https://pass.wafer.ai/v1/models",
+        ("WAFER_API_KEY",),
+    ),
 )
 
 
@@ -185,9 +248,7 @@ def _scraper_slugs() -> set[str]:
     if not PROVIDERS_DIR.is_dir():
         return set()
     return {
-        p.stem
-        for p in PROVIDERS_DIR.glob("*.py")
-        if p.stem not in {"__init__", "base", "_base"}
+        p.stem for p in PROVIDERS_DIR.glob("*.py") if p.stem not in {"__init__", "base", "_base"}
     }
 
 
@@ -367,9 +428,7 @@ def _model_discovery_audit(
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
-            warnings.append(
-                f"{slug}: model discovery fetch failed ({type(exc).__name__}: {exc})"
-            )
+            warnings.append(f"{slug}: model discovery fetch failed ({type(exc).__name__}: {exc})")
             continue
         discovered_ids: set[str] = set()
         for row in _json_model_rows(payload):
@@ -391,9 +450,7 @@ def _model_discovery_audit(
                 f"— refresh provider_models/{slug}.json or add a provider-direct price source"
             )
         elif discovered_ids:
-            info.append(
-                f"{slug}: model discovery matched catalog ({len(discovered_ids)} id(s)) ✓"
-            )
+            info.append(f"{slug}: model discovery matched catalog ({len(discovered_ids)} id(s)) ✓")
         else:
             warnings.append(f"{slug}: model discovery returned no model ids")
 

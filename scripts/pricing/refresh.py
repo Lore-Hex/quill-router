@@ -30,6 +30,7 @@ Exit codes:
    1 — too many providers failed and had no committed snapshot fallback;
        no snapshot written
 """
+
 from __future__ import annotations
 
 import argparse
@@ -89,6 +90,8 @@ PROVIDER_SLUGS = [
     "gmi",
     "deepinfra",
     "friendli",
+    "baseten",
+    "wafer",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails
@@ -188,7 +191,7 @@ def _micro_per_m_to_dollars_per_token(micro_per_m: int) -> str:
 
 
 def _index_provider_prices(
-    results: dict[str, ProviderPricingResult]
+    results: dict[str, ProviderPricingResult],
 ) -> dict[str, dict[str, ModelPrice]]:
     """Flatten {slug: ProviderPricingResult} into
     {model_id: {slug: price, slug2: price2, ...}}. A single model can be
@@ -375,8 +378,7 @@ def _cross_check(
                 rel_diff = abs(p - o) / denom
                 if rel_diff > CROSS_CHECK_DISAGREE_THRESHOLD:
                     notes.append(
-                        f"{model_id} [{dim}]: provider({slug})={p} vs OR={o} "
-                        f"(diff {rel_diff:.1%})"
+                        f"{model_id} [{dim}]: provider({slug})={p} vs OR={o} (diff {rel_diff:.1%})"
                     )
     return notes
 
@@ -438,11 +440,7 @@ def _cross_check_ids(
             )
         if only_provider:
             sample = sorted(only_provider)[:5]
-            extra = (
-                f" (+{len(only_provider) - 5} more)"
-                if len(only_provider) > 5
-                else ""
-            )
+            extra = f" (+{len(only_provider) - 5} more)" if len(only_provider) > 5 else ""
             notes.append(
                 f"{slug}: parser found {len(only_provider)} model id(s) OR "
                 f"does not list: {sample}{extra}"
@@ -479,9 +477,7 @@ def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
     headline = price.tiers[0]
     block: dict[str, Any] = {
         "prompt": _micro_per_m_to_dollars_per_token(headline.prompt_micro_per_m),
-        "completion": _micro_per_m_to_dollars_per_token(
-            headline.completion_micro_per_m
-        ),
+        "completion": _micro_per_m_to_dollars_per_token(headline.completion_micro_per_m),
     }
     if headline.prompt_cached_micro_per_m is not None:
         # Field name `input_cache_read` matches OR's snapshot convention
@@ -510,9 +506,7 @@ def _price_to_pricing_block(price: ModelPrice) -> dict[str, Any]:
         block["completion_tiers"] = [
             {
                 "max_prompt_tokens": t.max_prompt_tokens,
-                "completion": _micro_per_m_to_dollars_per_token(
-                    t.completion_micro_per_m
-                ),
+                "completion": _micro_per_m_to_dollars_per_token(t.completion_micro_per_m),
             }
             for t in price.tiers
         ]
@@ -568,17 +562,13 @@ def _merge_snapshot(
         # (see _is_unpriced) — and because the headline is the *cheapest*
         # tier, a single spurious $0 would otherwise win `min()` and zero
         # the model, freezing the whole refresh via the spike watchdog.
-        priced_by_slug = {
-            slug: price for slug, price in by_slug.items() if not _is_unpriced(price)
-        }
+        priced_by_slug = {slug: price for slug, price in by_slug.items() if not _is_unpriced(price)}
         new_pricing = dict(new_model.get("pricing") or {})
         if priced_by_slug:
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
             # /v1/models top-level pricing should show).
-            cheapest = min(
-                priced_by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m
-            )
+            cheapest = min(priced_by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m)
             new_pricing.update(_price_to_pricing_block(cheapest))
             new_model["pricing"] = new_pricing
             # Tag pricing_source as self-healed if ANY of the slugs that
@@ -606,9 +596,7 @@ def _merge_snapshot(
             # below would then delete a model we actually serve.
             or_endpoints: list[dict[str, Any]] = []
             for ep in new_model.get("endpoints") or []:
-                if not isinstance(ep, dict) or not isinstance(
-                    ep.get("tr_provider_slug"), str
-                ):
+                if not isinstance(ep, dict) or not isinstance(ep.get("tr_provider_slug"), str):
                     continue
                 or_ep = dict(ep)
                 or_ep["pricing_source"] = "openrouter_fallback"
@@ -636,9 +624,7 @@ def _merge_snapshot(
             new_ep_pricing.update(_price_to_pricing_block(ep_price))
             new_ep["pricing"] = new_ep_pricing
             new_ep["pricing_source"] = (
-                "self_healed_provider"
-                if ep_slug in healed_slugs
-                else "provider_direct"
+                "self_healed_provider" if ep_slug in healed_slugs else "provider_direct"
             )
             # If this provider's config module exports an
             # UPSTREAM_ID_MAP, override the endpoint's model_id with
@@ -672,13 +658,9 @@ def _merge_snapshot(
                 "context_length": int(new_model.get("context_length") or 0),
                 "pricing": _price_to_pricing_block(missing_price),
                 "pricing_source": (
-                    "self_healed_provider"
-                    if missing_slug in healed_slugs
-                    else "provider_direct"
+                    "self_healed_provider" if missing_slug in healed_slugs else "provider_direct"
                 ),
-                "supported_parameters": list(
-                    new_model.get("supported_parameters") or []
-                ),
+                "supported_parameters": list(new_model.get("supported_parameters") or []),
                 "quantization": "unknown",
             }
             new_endpoints.append(synth_ep)
@@ -727,9 +709,7 @@ def _summary_lines(
             err = next((e for s, e in failures if s == slug), "unknown")
             lines.append(f"  {slug}: FAILED ({err})")
             continue
-        lines.append(
-            f"  {slug}: {len(result.prices)} models via {result.source}"
-        )
+        lines.append(f"  {slug}: {len(result.prices)} models via {result.source}")
         for note in result.notes[:3]:
             lines.append(f"    note: {note}")
         if len(result.notes) > 3:

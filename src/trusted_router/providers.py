@@ -56,6 +56,11 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "voyage": (("VOYAGE_API_KEY",), "https://api.voyageai.com/v1"),
     # Xiaomi MiMo — OpenAI-compatible chat (MiMo-V2 / V2.5).
     "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
+    # Baseten Model APIs — OpenAI-compatible chat completions.
+    "baseten": (("BASETEN_API_KEY",), "https://inference.baseten.co/v1"),
+    # Wafer serverless API — OpenAI-compatible chat completions with
+    # request-scoped ZDR when `Wafer-ZDR: required` is present.
+    "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
 }
 
 __all__ = [
@@ -86,6 +91,7 @@ class ProviderClient:
                     request,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
+                    extra_headers=self._provider_extra_headers(model.provider),
                 )
             if model.provider == "anthropic":
                 return await self._anthropic_chat(model, request)
@@ -130,9 +136,12 @@ class ProviderClient:
                     state,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
+                    extra_headers=self._provider_extra_headers(model.provider),
                 )
             if model.provider == "anthropic":
-                return self._anthropic_messages_stream(model, request, state, output_format="openai")
+                return self._anthropic_messages_stream(
+                    model, request, state, output_format="openai"
+                )
             if model.provider == "gemini":
                 return self._gemini_chat_stream(model, request, state)
             if model.provider == "vertex" and is_vertex_openai_model(model):
@@ -204,11 +213,18 @@ class ProviderClient:
         env_keys: tuple[str, ...] | None = None,
         auth_token: str | None = None,
         base_url: str,
+        extra_headers: dict[str, str] | None = None,
     ) -> ProviderResult:
         api_key = auth_token or self._secret_any(env_keys)
         if not api_key:
             raise RuntimeError(f"{_credential_label(env_keys, model.provider)} is not configured")
-        return await openai_compatible_chat(model, request, api_key=api_key, base_url=base_url)
+        return await openai_compatible_chat(
+            model,
+            request,
+            api_key=api_key,
+            base_url=base_url,
+            extra_headers=extra_headers,
+        )
 
     async def _anthropic_chat(self, model: Model, request: dict[str, Any]) -> ProviderResult:
         api_key = self._secret("ANTHROPIC_API_KEY")
@@ -225,11 +241,19 @@ class ProviderClient:
         env_keys: tuple[str, ...],
         auth_token: str | None = None,
         base_url: str,
+        extra_headers: dict[str, str] | None = None,
     ) -> AsyncIterator[bytes]:
         api_key = auth_token or self._secret_any(env_keys)
         if not api_key:
             raise RuntimeError(f"{_credential_label(env_keys, model.provider)} is not configured")
-        return openai_compatible_chat_stream(model, request, state, api_key=api_key, base_url=base_url)
+        return openai_compatible_chat_stream(
+            model,
+            request,
+            state,
+            api_key=api_key,
+            base_url=base_url,
+            extra_headers=extra_headers,
+        )
 
     def _anthropic_messages_stream(
         self,
@@ -242,7 +266,9 @@ class ProviderClient:
         api_key = self._secret("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
-        return anthropic_messages_stream(model, request, state, api_key=api_key, output_format=output_format)
+        return anthropic_messages_stream(
+            model, request, state, api_key=api_key, output_format=output_format
+        )
 
     async def _synthetic_chat_stream(
         self,
@@ -299,7 +325,11 @@ class ProviderClient:
         )
         yield anthropic_sse(
             "content_block_start",
-            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
         )
         for token in chunk_text(result.text):
             yield anthropic_sse(
@@ -365,6 +395,12 @@ class ProviderClient:
             base_url=base_url,
         )
 
+    @staticmethod
+    def _provider_extra_headers(provider: str) -> dict[str, str]:
+        if provider == "wafer":
+            return {"Wafer-ZDR": "required"}
+        return {}
+
     def _secret(self, name: str | None) -> str | None:
         if name is None:
             return None
@@ -421,7 +457,11 @@ class ProviderClient:
         if base_url:
             return token, base_url.rstrip("/")
 
-        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
+        host = (
+            "aiplatform.googleapis.com"
+            if location == "global"
+            else f"{location}-aiplatform.googleapis.com"
+        )
         return (
             token,
             f"https://{host}/v1beta1/projects/{project_id}/locations/{location}/endpoints/openapi",

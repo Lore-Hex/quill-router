@@ -112,6 +112,12 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     # up as soon as the hourly snapshot refresh runs.
     "Friendli": "friendli",
     "FriendliAI": "friendli",
+    # Baseten and Wafer — OpenAI-compatible provider-direct endpoints. TR
+    # carries provider-native manifests, but OpenRouter rows should merge if
+    # the endpoint catalog starts listing them.
+    "Baseten": "baseten",
+    "Wafer": "wafer",
+    "Wafer AI": "wafer",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

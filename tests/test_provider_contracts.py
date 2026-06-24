@@ -29,7 +29,8 @@ def test_token_estimators_have_minimums_and_handle_content_parts() -> None:
 @pytest.mark.asyncio
 async def test_stream_openai_chunks_are_valid_sse_json_and_reconstruct_text() -> None:
     chunks = [
-        item async for item in stream_openai_chunks(
+        item
+        async for item in stream_openai_chunks(
             request_id="req_1",
             model_id="openai/gpt-5.4-nano",
             text="hello trusted router",
@@ -43,15 +44,16 @@ async def test_stream_openai_chunks_are_valid_sse_json_and_reconstruct_text() ->
     payloads = [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
     assert payloads[0]["choices"][0]["delta"]["role"] == "assistant"
     reconstructed = "".join(
-        payload["choices"][0]["delta"].get("content", "")
-        for payload in payloads
+        payload["choices"][0]["delta"].get("content", "") for payload in payloads
     )
     assert reconstructed == "hello trusted router"
     assert payloads[-1]["choices"][0]["finish_reason"] == "stop"
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tmp_path, monkeypatch) -> None:
+async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("OPENAI_API_KEY=openai-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -105,7 +107,9 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(tm
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_adapter_forwards_provider_specific_controls(tmp_path, monkeypatch) -> None:
+async def test_openai_compatible_adapter_forwards_provider_specific_controls(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("XIAOMI_API_KEY=xiaomi-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -213,6 +217,19 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(tmp
             "https://api.fireworks.ai/inference/v1/chat/completions",
             "accounts/fireworks/models/gpt-oss-120b",
         ),
+        (
+            Model(
+                id="z-ai/glm-5.2",
+                name="GLM 5.2 on Baseten",
+                provider="baseten",
+                context_length=262144,
+                upstream_id="zai-org/GLM-5.2",
+            ),
+            "BASETEN_API_KEY",
+            "baseten-value",
+            "https://inference.baseten.co/v1/chat/completions",
+            "zai-org/GLM-5.2",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -245,7 +262,9 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
                 200,
                 json={
                     "id": "chatcmpl_provider",
-                    "choices": [{"message": {"content": "provider hello"}, "finish_reason": "stop"}],
+                    "choices": [
+                        {"message": {"content": "provider hello"}, "finish_reason": "stop"}
+                    ],
                     "usage": {"prompt_tokens": 4, "completion_tokens": 2},
                 },
             )
@@ -275,6 +294,57 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
     ]
 
 
+@pytest.mark.asyncio
+async def test_wafer_live_adapter_requires_zdr_header(tmp_path, monkeypatch) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("WAFER_API_KEY=wafer-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_wafer",
+                    "choices": [{"message": {"content": "wafer hello"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+    model = Model(
+        id="z-ai/glm-5.2",
+        name="GLM 5.2 on Wafer",
+        provider="wafer",
+        context_length=1_048_576,
+        upstream_id="GLM-5.2",
+    )
+
+    result = await client.chat(
+        model,
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert result.text == "wafer hello"
+    assert calls[0]["url"] == "https://pass.wafer.ai/v1/chat/completions"
+    assert calls[0]["headers"] == {
+        "authorization": "Bearer wafer-value",
+        "Wafer-ZDR": "required",
+    }
+    assert calls[0]["json"]["model"] == "GLM-5.2"
+
+
 def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     endpoints = endpoints_for_model("openai/gpt-oss-120b")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
@@ -283,10 +353,9 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     assert {endpoint.upstream_id for endpoint in fireworks} == {
         "accounts/fireworks/models/gpt-oss-120b"
     }
-    assert {
-        endpoint.prompt_price_microdollars_per_million_tokens
-        for endpoint in fireworks
-    } == {165_000}
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        165_000
+    }
 
 
 @pytest.mark.asyncio
@@ -338,7 +407,9 @@ async def test_kimi_prefers_kimi_api_key_but_accepts_moonshot_alias(tmp_path, mo
     "vertex models are added back to the catalog."
 )
 @pytest.mark.asyncio
-async def test_vertex_platform_uses_gcp_identity_not_provider_api_key(tmp_path, monkeypatch) -> None:
+async def test_vertex_platform_uses_gcp_identity_not_provider_api_key(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -399,7 +470,9 @@ async def test_vertex_platform_uses_gcp_identity_not_provider_api_key(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp_path, monkeypatch) -> None:
+async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("OPENAI_API_KEY=openai-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -439,7 +512,9 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp
         async def post(self, *_args: Any, **_kwargs: Any):
             raise AssertionError("streaming must not call the non-streaming post adapter")
 
-        def stream(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+        def stream(
+            self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any
+        ):
             calls.append(
                 {
                     "method": method,
@@ -486,7 +561,9 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(tmp
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_stream_forwards_provider_specific_controls(tmp_path, monkeypatch) -> None:
+async def test_openai_compatible_stream_forwards_provider_specific_controls(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("XIAOMI_API_KEY=xiaomi-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -518,7 +595,9 @@ async def test_openai_compatible_stream_forwards_provider_specific_controls(tmp_
         async def __aexit__(self, *_exc: object) -> None:
             return None
 
-        def stream(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+        def stream(
+            self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any
+        ):
             calls.append(
                 {
                     "method": method,
@@ -660,7 +739,9 @@ async def test_openai_compatible_live_adapter_maps_provider_errors(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_anthropic_live_adapter_splits_system_prompt_and_uses_native_usage(tmp_path, monkeypatch) -> None:
+async def test_anthropic_live_adapter_splits_system_prompt_and_uses_native_usage(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("ANTHROPIC_API_KEY=anthropic-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -717,7 +798,9 @@ async def test_anthropic_live_adapter_splits_system_prompt_and_uses_native_usage
 
 
 @pytest.mark.asyncio
-async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(tmp_path, monkeypatch) -> None:
+async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("ANTHROPIC_API_KEY=anthropic-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []
@@ -766,7 +849,9 @@ async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(
         async def post(self, *_args: Any, **_kwargs: Any):
             raise AssertionError("streaming must not call the non-streaming Anthropic adapter")
 
-        def stream(self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+        def stream(
+            self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any
+        ):
             calls.append(
                 {
                     "method": method,
@@ -822,7 +907,9 @@ async def test_anthropic_chat_stream_uses_native_stream_and_emits_openai_chunks(
 
 
 @pytest.mark.asyncio
-async def test_anthropic_messages_stream_passes_native_sse_and_records_usage(tmp_path, monkeypatch) -> None:
+async def test_anthropic_messages_stream_passes_native_sse_and_records_usage(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("ANTHROPIC_API_KEY=anthropic-value\n", encoding="utf-8")
 
@@ -871,7 +958,10 @@ async def test_anthropic_messages_stream_passes_native_sse_and_records_usage(tmp
     state = client.new_stream_state(model, {"messages": [{"role": "user", "content": "hello"}]})
 
     chunks = [
-        chunk async for chunk in client.stream_messages(model, {"messages": [{"role": "user", "content": "hello"}]}, state)
+        chunk
+        async for chunk in client.stream_messages(
+            model, {"messages": [{"role": "user", "content": "hello"}]}, state
+        )
     ]
     body = b"".join(chunks)
 
@@ -953,7 +1043,9 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(tmp_path, monkeypatch) -> None:
+async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(
+    tmp_path, monkeypatch
+) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("GEMINI_API_KEY=gemini-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []

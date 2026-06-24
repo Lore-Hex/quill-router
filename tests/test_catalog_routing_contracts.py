@@ -547,6 +547,8 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     venice = MODEL_ENDPOINTS["z-ai/glm-5.2@venice/prepaid"]
     parasail = MODEL_ENDPOINTS["z-ai/glm-5.2@parasail/prepaid"]
     friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
+    baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
+    wafer = MODEL_ENDPOINTS["z-ai/glm-5.2@wafer/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
@@ -564,6 +566,8 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert venice.upstream_id == "zai-org-glm-5-2"
     assert parasail.upstream_id == "parasail-glm-52"
     assert friendli.upstream_id == "zai-org/GLM-5.2"
+    assert baseten.upstream_id == "zai-org/GLM-5.2"
+    assert wafer.upstream_id == "GLM-5.2"
     assert prepaid.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert prepaid.completion_price_microdollars_per_million_tokens == 4_840_000
     assert gmi.prompt_price_microdollars_per_million_tokens == 1_078_000
@@ -576,3 +580,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert novita.completion_price_microdollars_per_million_tokens == 4_840_000
     assert friendli.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert friendli.completion_price_microdollars_per_million_tokens == 4_840_000
+    assert baseten.prompt_price_microdollars_per_million_tokens == 1_540_000
+    assert baseten.completion_price_microdollars_per_million_tokens == 4_840_000
+    assert wafer.prompt_price_microdollars_per_million_tokens == 1_320_000
+    assert wafer.completion_price_microdollars_per_million_tokens == 4_510_000

@@ -46,10 +46,10 @@ class Provider:
 # considers providers whose posture clears that bar. The tiers are nested:
 # every confidential provider is also zero-retention; every zero-retention
 # provider is also no-store.
-PRIVACY_TIER_STANDARD = 0   # no tracked posture (would store content)
-PRIVACY_TIER_NO_STORE = 1   # does not store request/response content
+PRIVACY_TIER_STANDARD = 0  # no tracked posture (would store content)
+PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
 PRIVACY_TIER_ZERO_RETENTION = 2  # contractual / policy zero data retention
-PRIVACY_TIER_CONFIDENTIAL = 3    # confidential compute + provider-side e2ee
+PRIVACY_TIER_CONFIDENTIAL = 3  # confidential compute + provider-side e2ee
 
 # Friendly names a client can pass as provider.min_privacy. All map to a
 # minimum tier rank above. "standard"/"any" is the default (no filter).
@@ -253,7 +253,9 @@ _DEFAULT_CACHE_READ_MULTIPLIER = Decimal("1")
 _DEFAULT_CACHE_WRITE_MULTIPLIER = Decimal("1.25")
 
 
-def cache_token_prices_microdollars(provider: str, prompt_price_microdollars: int) -> tuple[int, int]:
+def cache_token_prices_microdollars(
+    provider: str, prompt_price_microdollars: int
+) -> tuple[int, int]:
     """(cache-read, cache-write) customer price in microdollars per million
     tokens for one endpoint's prompt price."""
     prompt = Decimal(prompt_price_microdollars)
@@ -427,8 +429,7 @@ PROVIDERS: dict[str, Provider] = {
             "learning models and algorithms."
         ),
         provider_policy_url=(
-            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
-            "?locale=en_US"
+            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US"
         ),
     ),
     "mistral": Provider(
@@ -647,6 +648,37 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://friendli.ai/terms",
     ),
+    # Baseten — OpenAI-compatible Model APIs at inference.baseten.co/v1.
+    # Public catalog + pricing is exposed from /v1/models; prompt/output
+    # prices are dollars per token and are converted to integer microdollars
+    # by scripts/pricing/providers/baseten.py.
+    "baseten": Provider(
+        slug="baseten",
+        name="Baseten",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Baseten's inference and "
+            "security documentation are linked for users who need to review API "
+            "data handling."
+        ),
+        provider_policy_url="https://docs.baseten.co/inference/overview",
+    ),
+    # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer
+    # supports request-scoped ZDR with `Wafer-ZDR: required` on models whose
+    # /v1/models rows advertise `zdr_supported=true`; the gateway sends that
+    # header on Wafer routes. The provider itself is not marked globally ZDR
+    # because several Wafer models explicitly report zdr_supported=false.
+    "wafer": Provider(
+        slug="wafer",
+        name="Wafer",
+        supports_prepaid=True,
+        provider_policy=(
+            "Wafer supports request-scoped ZDR via Wafer-ZDR: required on "
+            "supported models; model-level support differs, so TrustedRouter "
+            "keeps provider-level claims conservative."
+        ),
+        provider_policy_url="https://docs.wafer.ai/serverless/api-reference",
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -800,6 +832,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "gmi",
         "deepinfra",
         "friendli",
+        "baseten",
+        "wafer",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
@@ -1375,9 +1409,7 @@ def _provider_manifest_price_tiers(
             PriceTier(
                 max_prompt_tokens=threshold,
                 prompt_price_microdollars_per_million_tokens=_customer_price(prompt_cost),
-                completion_price_microdollars_per_million_tokens=_customer_price(
-                    completion_cost
-                ),
+                completion_price_microdollars_per_million_tokens=_customer_price(completion_cost),
                 prompt_cached_price_microdollars_per_million_tokens=cached_price,
             )
         )
@@ -1425,6 +1457,8 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "venice",
         "parasail",
         "friendli",
+        "baseten",
+        "wafer",
         "zai",
         "tinfoil",
         "xiaomi",
@@ -1790,9 +1824,7 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "gmi": frozenset({"anthropic/claude-opus-4.7", "openai/gpt-5.5"}),
     "openai": frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"}),
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
-    "nebius": frozenset(
-        {"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}
-    ),
+    "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
     "together": frozenset(
         {
@@ -1898,11 +1930,7 @@ def _filter_unserved_provider_endpoints(
             return False
         return True
 
-    return {
-        endpoint_id: endpoint
-        for endpoint_id, endpoint in endpoints.items()
-        if _keep(endpoint)
-    }
+    return {endpoint_id: endpoint for endpoint_id, endpoint in endpoints.items() if _keep(endpoint)}
 
 
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(MODEL_ENDPOINTS)
@@ -2236,9 +2264,7 @@ def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int
         providers.add(model.provider)
         for endpoint in endpoints:
             providers.add(endpoint.provider)
-    tiers = [
-        provider_privacy_tier(PROVIDERS[p]) for p in providers if p in PROVIDERS
-    ]
+    tiers = [provider_privacy_tier(PROVIDERS[p]) for p in providers if p in PROVIDERS]
     return max(tiers) if tiers else PRIVACY_TIER_STANDARD
 
 
@@ -2317,9 +2343,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # one). Lets the picker / SEO pages show "this model can run
         # confidential" without re-deriving from raw posture flags.
         "privacy_tier": _model_max_privacy_tier(model, endpoints),
-        "privacy_tier_label": PRIVACY_TIER_LABELS[
-            _model_max_privacy_tier(model, endpoints)
-        ],
+        "privacy_tier_label": PRIVACY_TIER_LABELS[_model_max_privacy_tier(model, endpoints)],
         "prompt_price_microdollars_per_million_tokens": prompt_min,
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
@@ -2416,4 +2440,6 @@ def providers_for_display() -> tuple[Provider, ...]:
     """Provider transparency should lead with privacy-forward upstreams."""
     pinned = [PROVIDERS[slug] for slug in _PROVIDER_DISPLAY_ORDER if slug in PROVIDERS]
     pinned_slugs = {provider.slug for provider in pinned}
-    return tuple(pinned + [provider for provider in PROVIDERS.values() if provider.slug not in pinned_slugs])
+    return tuple(
+        pinned + [provider for provider in PROVIDERS.values() if provider.slug not in pinned_slugs]
+    )

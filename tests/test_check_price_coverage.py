@@ -1,4 +1,5 @@
 """Tests for scripts/check_price_coverage.py (price-source coverage audit)."""
+
 from __future__ import annotations
 
 import datetime as dt
@@ -22,6 +23,10 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "deepseek/deepseek-v4-flash"}]}
     if "api.friendli.ai" in url:
         return {"data": [{"id": "meta-llama-3.3-70b-instruct"}]}
+    if "inference.baseten.co" in url:
+        return {"data": [{"id": "zai-org/GLM-5.2"}]}
+    if "pass.wafer.ai" in url:
+        return {"data": [{"id": "GLM-5.2"}]}
     return {"data": []}
 
 
@@ -133,18 +138,15 @@ def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path
     )
 
     assert any(
-        "deepinfra: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
-        in warning
+        "deepinfra: live GLM current model API lists unpublished model(s) z-ai/glm-5.2" in warning
         for warning in warnings
     )
     assert any(
-        "fireworks: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
-        in warning
+        "fireworks: live GLM current model API lists unpublished model(s) z-ai/glm-5.2" in warning
         for warning in warnings
     )
     assert any(
-        "novita: live GLM current model API lists unpublished model(s) z-ai/glm-5.2"
-        in warning
+        "novita: live GLM current model API lists unpublished model(s) z-ai/glm-5.2" in warning
         for warning in warnings
     )
 
@@ -158,6 +160,8 @@ def test_provider_glm_discovery_keeps_legacy_variants_visibility_only(
     def fake_fetch_json(url: str, _env_names: tuple[str, ...]) -> dict:
         if "novita.ai" in url:
             return {"data": [{"id": "zai-org/glm-4.7-h"}]}
+        if "inference.baseten.co" in url or "pass.wafer.ai" in url:
+            return {"data": []}
         return _known_provider_model_payload(url, _env_names)
 
     warnings, _info = check_price_coverage._model_discovery_audit(
@@ -167,8 +171,7 @@ def test_provider_glm_discovery_keeps_legacy_variants_visibility_only(
     )
 
     assert any(
-        "novita: live GLM variant model API lists unpublished model(s) z-ai/glm-4.7-h"
-        in warning
+        "novita: live GLM variant model API lists unpublished model(s) z-ai/glm-4.7-h" in warning
         for warning in warnings
     )
     assert not any("current model API" in warning for warning in warnings)
@@ -199,7 +202,10 @@ def test_strict_model_discovery_fails_only_discovery_warnings(
 ) -> None:
     def fake_run_audit(*args, **kwargs):  # noqa: ANN001, ANN202
         return (
-            ["cohere: NO price source", "zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"],
+            [
+                "cohere: NO price source",
+                "zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3",
+            ],
             ["openai: live scraper ✓"],
             ["zai: Coding Plan docs mention unpublished model(s) z-ai/glm-5.3"],
         )
@@ -221,9 +227,7 @@ def test_strict_model_discovery_allows_visibility_only_price_warnings(
     monkeypatch.setattr(check_price_coverage, "_run_audit", fake_run_audit)
 
     assert (
-        check_price_coverage.main(
-            ["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"]
-        )
+        check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
         == 0
     )
 
@@ -244,8 +248,6 @@ def test_strict_model_discovery_does_not_fail_provider_api_visibility_warning(
     )
 
     assert (
-        check_price_coverage.main(
-            ["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"]
-        )
+        check_price_coverage.main(["--strict-model-discovery", "--now", "2026-06-14T00:00:00Z"])
         == 0
     )

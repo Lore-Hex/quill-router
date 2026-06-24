@@ -88,6 +88,8 @@ ensure_secret_from_env_file "TINFOIL_API_KEY" "trustedrouter-tinfoil-api-key"
 ensure_secret_from_env_file "VENICE_API_KEY" "trustedrouter-venice-api-key"
 ensure_secret_from_env_file "NEBIUS_API_KEY" "trustedrouter-nebius-api-key" "NEBIUS_TOKEN_FACTORY_API_KEY"
 ensure_secret_from_env_file "MINIMAX_API_KEY" "trustedrouter-minimax-api-key" "MINIMAX_TOKEN_PLAN_API_KEY"
+ensure_secret_from_env_file "BASETEN_API_KEY" "trustedrouter-baseten-api-key"
+ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
 

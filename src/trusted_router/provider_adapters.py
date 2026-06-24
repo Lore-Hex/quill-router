@@ -54,6 +54,7 @@ async def openai_compatible_chat(
     *,
     api_key: str,
     base_url: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> ProviderResult:
     started = time.monotonic()
     payload = {
@@ -66,9 +67,11 @@ async def openai_compatible_chat(
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
+        headers = {"authorization": f"Bearer {api_key}"}
+        headers.update(extra_headers or {})
         resp = await client.post(
             f"{base_url}/chat/completions",
-            headers={"authorization": f"Bearer {api_key}"},
+            headers=headers,
             json=payload,
         )
     if resp.status_code >= 400:
@@ -80,7 +83,9 @@ async def openai_compatible_chat(
     text = str(message.get("content") or "")
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("prompt_tokens") or estimate_tokens_from_messages(messages(request))),
+        input_tokens=int(
+            usage.get("prompt_tokens") or estimate_tokens_from_messages(messages(request))
+        ),
         output_tokens=int(usage.get("completion_tokens") or estimate_tokens_from_text(text)),
         finish_reason=str(choice.get("finish_reason") or "stop"),
         provider_name=PROVIDERS[model.provider].name,
@@ -97,6 +102,7 @@ async def openai_compatible_chat_stream(
     *,
     api_key: str,
     base_url: str,
+    extra_headers: dict[str, str] | None = None,
 ) -> AsyncIterator[bytes]:
     payload = {
         "model": upstream_model_id(model),
@@ -109,14 +115,18 @@ async def openai_compatible_chat_stream(
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
     async with httpx.AsyncClient(timeout=120) as client:
+        headers = {"authorization": f"Bearer {api_key}"}
+        headers.update(extra_headers or {})
         async with client.stream(
             "POST",
             f"{base_url}/chat/completions",
-            headers={"authorization": f"Bearer {api_key}"},
+            headers=headers,
             json=payload,
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError(model.provider, resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    model.provider, resp.status_code, await safe_stream_error_message(resp)
+                )
             async for line in resp.aiter_lines():
                 if not line:
                     continue
@@ -300,11 +310,15 @@ async def anthropic_chat(
     if resp.status_code >= 400:
         raise ProviderError("anthropic", resp.status_code, safe_error_message(resp))
     data = resp.json()
-    text = "".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
+    text = "".join(
+        part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"
+    )
     usage = data.get("usage") or {}
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("input_tokens") or estimate_tokens_from_messages(messages(request))),
+        input_tokens=int(
+            usage.get("input_tokens") or estimate_tokens_from_messages(messages(request))
+        ),
         output_tokens=int(usage.get("output_tokens") or estimate_tokens_from_text(text)),
         finish_reason=str(data.get("stop_reason") or "stop"),
         provider_name="Anthropic",
@@ -334,7 +348,9 @@ async def anthropic_messages_stream(
             json=payload,
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError("anthropic", resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    "anthropic", resp.status_code, await safe_stream_error_message(resp)
+                )
             event_name = ""
             async for line in resp.aiter_lines():
                 if not line:
@@ -419,12 +435,14 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
         raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
     data = resp.json()
     candidate = (data.get("candidates") or [{}])[0]
-    parts = ((candidate.get("content") or {}).get("parts") or [])
+    parts = (candidate.get("content") or {}).get("parts") or []
     text = _gemini_parts_to_openai_content(parts)
     usage = data.get("usageMetadata") or {}
     return ProviderResult(
         text=text,
-        input_tokens=int(usage.get("promptTokenCount") or estimate_tokens_from_messages(messages(request))),
+        input_tokens=int(
+            usage.get("promptTokenCount") or estimate_tokens_from_messages(messages(request))
+        ),
         output_tokens=int(usage.get("candidatesTokenCount") or estimate_tokens_from_text(text)),
         finish_reason=str(candidate.get("finishReason") or "stop").lower(),
         provider_name="Gemini",
@@ -455,7 +473,9 @@ def _gemini_parts_to_openai_content(parts: list[Any]) -> str:
         # Gemini's REST API has historically returned both spellings.
         inline = part.get("inline_data") or part.get("inlineData")
         if isinstance(inline, dict):
-            mime_type = inline.get("mime_type") or inline.get("mimeType") or "application/octet-stream"
+            mime_type = (
+                inline.get("mime_type") or inline.get("mimeType") or "application/octet-stream"
+            )
             body = inline.get("data")
             if isinstance(body, str) and body:
                 chunks.append(f"data:{mime_type};base64,{body}")
@@ -480,7 +500,9 @@ async def gemini_chat_stream(
             json=gemini_payload(request),
         ) as resp:
             if resp.status_code >= 400:
-                raise ProviderError("gemini", resp.status_code, await safe_stream_error_message(resp))
+                raise ProviderError(
+                    "gemini", resp.status_code, await safe_stream_error_message(resp)
+                )
             async for line in resp.aiter_lines():
                 if not line:
                     continue
