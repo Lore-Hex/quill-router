@@ -63,6 +63,22 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
 }
 
+WAFER_ZDR_NATIVE_MODELS = frozenset(
+    {
+        "GLM-5.1",
+        "GLM-5.2",
+        "Kimi-K2.6",
+        "Qwen3.5-397B-A17B",
+        "Qwen3.6-35B-A3B",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    }
+)
+
+
+def _wafer_model_supports_zdr(model_id: str) -> bool:
+    return model_id in WAFER_ZDR_NATIVE_MODELS
+
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",
     "ProviderClient",
@@ -91,7 +107,7 @@ class ProviderClient:
                     request,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
-                    extra_headers=self._provider_extra_headers(model.provider),
+                    extra_headers=self._provider_extra_headers(model),
                 )
             if model.provider == "anthropic":
                 return await self._anthropic_chat(model, request)
@@ -136,7 +152,7 @@ class ProviderClient:
                     state,
                     env_keys=env_keys,
                     base_url=self._provider_base_url(model.provider, base_url),
-                    extra_headers=self._provider_extra_headers(model.provider),
+                    extra_headers=self._provider_extra_headers(model),
                 )
             if model.provider == "anthropic":
                 return self._anthropic_messages_stream(
@@ -396,8 +412,8 @@ class ProviderClient:
         )
 
     @staticmethod
-    def _provider_extra_headers(provider: str) -> dict[str, str]:
-        if provider == "wafer":
+    def _provider_extra_headers(model: Model) -> dict[str, str]:
+        if model.provider == "wafer" and _wafer_model_supports_zdr(model.upstream_id or model.id):
             return {"Wafer-ZDR": "required"}
         return {}
 

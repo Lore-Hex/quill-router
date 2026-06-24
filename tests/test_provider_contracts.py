@@ -345,6 +345,56 @@ async def test_wafer_live_adapter_requires_zdr_header(tmp_path, monkeypatch) -> 
     assert calls[0]["json"]["model"] == "GLM-5.2"
 
 
+@pytest.mark.asyncio
+async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("WAFER_API_KEY=wafer-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_wafer_kimi",
+                    "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+    model = Model(
+        id="moonshotai/kimi-k2.7-code",
+        name="Kimi K2.7 Code on Wafer",
+        provider="wafer",
+        context_length=262_144,
+        upstream_id="Kimi-K2.7-Code",
+    )
+
+    result = await client.chat(
+        model,
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert result.text == "pong"
+    assert calls[0]["url"] == "https://pass.wafer.ai/v1/chat/completions"
+    assert calls[0]["headers"] == {"authorization": "Bearer wafer-value"}
+    assert calls[0]["json"]["model"] == "Kimi-K2.7-Code"
+
+
 def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     endpoints = endpoints_for_model("openai/gpt-oss-120b")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
