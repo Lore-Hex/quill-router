@@ -325,6 +325,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/synth": PublicPage(
         template="public/fusion.html",
+        og_card="synth.png",
         title="TrustedRouter Synth",
         description=(
             "Run a panel of models inside the attested gateway, then use judge and final "
@@ -333,6 +334,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
     ),
     "docs/fusion": PublicPage(
         template="public/fusion.html",
+        og_card="synth.png",
         title="TrustedRouter Synth",
         description=(
             "Run a panel of models inside the attested gateway, then use judge and final "
@@ -1197,6 +1199,8 @@ def public_fusion_html(settings: Settings) -> str:
         description=(
             "Try trustedrouter/synth with a model panel, fallback judges, and a final synthesizer."
         ),
+        og_image=_og_image_url(settings, "synth.png"),
+        og_image_alt="TrustedRouter Synth compares a model panel and returns one answer",
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),

@@ -251,6 +251,155 @@ def choose_og_image_svg(_settings: Settings) -> str:
 """
 
 
+def synth_og_image_svg(_settings: Settings) -> str:
+    """Social card for /synth: panel inputs flowing through judge and
+    synthesizer. Kept as deterministic SVG so preview text stays crisp."""
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter Synth">
+  <title>TrustedRouter Synth</title>
+  <desc>Compare a model panel, stream raw thinking, and return one answer through the attested gateway.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07131f"/>
+      <stop offset="50%" stop-color="#102236"/>
+      <stop offset="100%" stop-color="#132f45"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="73%" cy="18%" r="66%">
+      <stop offset="0%" stop-color="#19a06d" stop-opacity="0.34"/>
+      <stop offset="52%" stop-color="#2c6ecb" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="88%" cy="80%" r="52%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M 44 0 L 0 0 0 44" fill="none" stroke="#dff5ef" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2c6ecb"/>
+      <stop offset="100%" stop-color="#19a06d"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2c6ecb"/>
+      <stop offset="100%" stop-color="#19a06d"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#101c2f"/>
+      <stop offset="100%" stop-color="#0a1322"/>
+    </linearGradient>
+    <linearGradient id="answer" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fbff"/>
+      <stop offset="100%" stop-color="#eafff4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#020b14" flood-opacity="0.32"/>
+    </filter>
+    <filter id="softglow" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#69d6a4"/>
+    </marker>
+  </defs>
+
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#bg)"/>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#glowA)"/>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#glowB)"/>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="url(#grid)"/>
+  <rect x="0" y="0" width="{OG_IMAGE_WIDTH}" height="6" fill="url(#accent)"/>
+
+  <g transform="translate(80 72)" font-family="{_SANS}">
+    <rect width="56" height="56" rx="12" fill="url(#mark)" filter="url(#shadow)"/>
+    <text x="28" y="38" font-size="22" font-weight="800" fill="#ffffff" text-anchor="middle">TR</text>
+    <text x="74" y="36" font-size="22" font-weight="700" fill="#cfe1f1">TrustedRouter</text>
+  </g>
+
+  <g font-family="{_SANS}">
+    <text x="80" y="205" font-size="21" font-weight="800" fill="#7be0b1" letter-spacing="3">TRUSTEDROUTER SYNTH</text>
+    <text x="80" y="286" font-size="64" font-weight="850" fill="#ffffff">Compare a panel.</text>
+    <text x="80" y="360" font-size="64" font-weight="850" fill="#ffffff">Return one answer.</text>
+    <text x="82" y="418" font-size="22" font-weight="650" fill="#cfe1f1">Panel · judge · synthesizer · fallbacks inside the attested gateway.</text>
+  </g>
+
+  <g transform="translate(80 488)" font-family="{_SANS}" font-size="17" font-weight="760">
+    <g>
+      <rect x="0" y="-25" width="150" height="42" rx="21" fill="#0e2a1d" stroke="#1f6447"/>
+      <text x="75" y="3" text-anchor="middle" fill="#8df0bf">raw thinking</text>
+    </g>
+    <g transform="translate(164 0)">
+      <rect x="0" y="-25" width="160" height="42" rx="21" fill="#0d1f33" stroke="#315f91"/>
+      <text x="80" y="3" text-anchor="middle" fill="#d6e8f7">non-refusals</text>
+    </g>
+    <g transform="translate(338 0)">
+      <rect x="0" y="-25" width="154" height="42" rx="21" fill="#0d1f33" stroke="#315f91"/>
+      <text x="77" y="3" text-anchor="middle" fill="#d6e8f7">model fallback</text>
+    </g>
+  </g>
+
+  <g transform="translate(80 572)" font-family="{_SANS}">
+    <text x="0" y="0" font-size="19" font-weight="800" fill="#ffffff">trustedrouter.com<tspan fill="#7be0b1">/synth</tspan></text>
+    <text x="260" y="0" font-size="18" font-weight="740" fill="#9fb6cf">OpenAI compatible · end-to-end encrypted router</text>
+  </g>
+
+  <!-- Synthesis graph -->
+  <g transform="translate(610 86)" font-family="{_SANS}">
+    <g opacity="0.82" fill="none" stroke="#69d6a4" stroke-width="2.4" marker-end="url(#arrow)">
+      <path d="M64 96 C132 96 142 146 184 158"/>
+      <path d="M64 178 C126 178 144 168 184 168"/>
+      <path d="M64 260 C132 260 144 194 184 180"/>
+      <path d="M286 168 C318 168 326 226 342 238"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <g>
+        <rect x="0" y="50" width="170" height="64" rx="16" fill="url(#card)" stroke="#2b405f"/>
+        <circle cx="28" cy="82" r="14" fill="#2c6ecb"/>
+        <text x="28" y="87" font-size="12" font-weight="850" fill="#ffffff" text-anchor="middle">M3</text>
+        <text x="52" y="79" font-size="15" font-weight="800" fill="#f7fbff">MiniMax M3</text>
+        <text x="52" y="99" font-size="11" font-weight="700" fill="#8fb1cd">panel answer</text>
+      </g>
+      <g>
+        <rect x="0" y="132" width="170" height="64" rx="16" fill="url(#card)" stroke="#2b405f"/>
+        <circle cx="28" cy="164" r="14" fill="#19a06d"/>
+        <text x="28" y="169" font-size="11" font-weight="850" fill="#ffffff" text-anchor="middle">K2</text>
+        <text x="52" y="161" font-size="15" font-weight="800" fill="#f7fbff">Kimi K2.7</text>
+        <text x="52" y="181" font-size="11" font-weight="700" fill="#8fb1cd">judge fallback</text>
+      </g>
+      <g>
+        <rect x="0" y="214" width="170" height="64" rx="16" fill="url(#card)" stroke="#2b405f"/>
+        <circle cx="28" cy="246" r="14" fill="#8b5cf6"/>
+        <text x="28" y="251" font-size="11" font-weight="850" fill="#ffffff" text-anchor="middle">G5</text>
+        <text x="52" y="243" font-size="15" font-weight="800" fill="#f7fbff">GLM 5.2</text>
+        <text x="52" y="263" font-size="11" font-weight="700" fill="#8fb1cd">synthesizer</text>
+      </g>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="198" y="112" width="120" height="112" rx="22" fill="#0d1f33" stroke="#4778ad"/>
+      <text x="258" y="152" text-anchor="middle" font-size="18" font-weight="850" fill="#ffffff">Judge</text>
+      <text x="258" y="178" text-anchor="middle" font-size="12" font-weight="750" fill="#9cc1df">filters refusals</text>
+      <circle cx="258" cy="205" r="7" fill="#69d6a4" filter="url(#softglow)"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="350" y="168" width="238" height="198" rx="26" fill="url(#answer)" stroke="#ffffff" stroke-opacity="0.7"/>
+      <text x="378" y="214" font-size="17" font-weight="850" fill="#102236">One final answer</text>
+      <text x="378" y="244" font-size="13" font-weight="750" fill="#5e788a">selected evidence</text>
+      <g transform="translate(378 282)" stroke="#15304b" stroke-opacity="0.22" stroke-width="8" stroke-linecap="round">
+        <path d="M0 0 H174"/>
+        <path d="M0 30 H142"/>
+        <path d="M0 60 H188"/>
+      </g>
+      <g transform="translate(378 334)" font-family="{_MONO}" font-size="13" font-weight="800" fill="#0f7d55">
+        <text x="0" y="0">data: {{ thinking }}</text>
+      </g>
+    </g>
+  </g>
+</svg>
+"""
+
+
 if __name__ == "__main__":
     # Regenerate the social cards from their SVG sources:
     #   uv run python -m trusted_router.og \
@@ -260,5 +409,10 @@ if __name__ == "__main__":
     import sys
 
     which = sys.argv[1] if len(sys.argv) > 1 else "default"
-    svg = choose_og_image_svg(Settings()) if which == "choose" else og_image_svg(Settings())
+    if which == "choose":
+        svg = choose_og_image_svg(Settings())
+    elif which == "synth":
+        svg = synth_og_image_svg(Settings())
+    else:
+        svg = og_image_svg(Settings())
     sys.stdout.write(svg)

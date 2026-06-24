@@ -135,6 +135,8 @@ def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClien
     assert "/internal/chat/issue-browser-key" in response.text
     assert "/static/fusion.css" in response.text
     assert "/static/fusion.js" in response.text
+    assert "/static/og/synth.png" in response.text
+    assert "TrustedRouter Synth compares a model panel and returns one answer" in response.text
     assert "synthesize_non_refusals" in response.text
     assert 'data-action="toggle-fusion-detail-layout"' in response.text
     assert "moonshotai/kimi-k2.7-code" in response.text
@@ -157,6 +159,7 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "final_models" in response.text
     assert "fallback_final_models" in response.text
     assert "synthesize_non_refusals" in response.text
+    assert "/static/og/synth.png" in response.text
     assert "judges with Kimi K2.7 Code" in response.text
     assert "synthesizes with GLM 5.2" in response.text
     assert "moonshotai/kimi-k2.7-code" in response.text
