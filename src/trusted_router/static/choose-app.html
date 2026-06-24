@@ -87,6 +87,9 @@ svg.tri{width:100%;height:auto;display:block;touch-action:none;cursor:crosshair;
 .tip .bar b{color:var(--ink);font-family:var(--mono);text-align:right;font-size:10px}
 .tip .meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .tag{font-size:10px;padding:2px 7px;border-radius:999px;background:#15203542;border:1px solid var(--line2);color:var(--muted)}
+.aiiq{display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:4px 8px;border-radius:8px;border:1px solid rgba(34,211,238,.35);background:rgba(34,211,238,.09);color:#b9f4ff;text-decoration:none;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap;transition-property:border-color,background,color;transition-duration:.14s}
+.aiiq span{color:var(--muted);font-size:10px;font-weight:700}
+.aiiq:hover{border-color:var(--t2);background:rgba(34,211,238,.14);color:#ecfeff}
 .tip .tierbadge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px}
 
 /* ---------- controls ---------- */
@@ -285,7 +288,7 @@ footer a:hover{color:var(--ink)}
   <footer>
     <div>
       <div>© TrustedRouter — one OpenAI-shaped client, every provider, <a href="https://trust.trustedrouter.com" target="_blank" rel="noopener">verifiable&nbsp;trust</a>.</div>
-      <div class="disc">Intelligence &amp; speed ratings are editorial estimates for relative comparison. Prices, context windows and privacy tiers are pulled from the live <span style="font-family:var(--mono)">/v1/models</span> catalog. Model versions shown reflect the current TrustedRouter panel.</div>
+      <div class="disc">Intelligence &amp; speed axes are editorial estimates for relative comparison. AI IQ badges link to independent public AI IQ profiles where available. Prices, context windows and privacy tiers are pulled from the live <span style="font-family:var(--mono)">/v1/models</span> catalog.</div>
     </div>
     <div style="text-align:right;display:flex;flex-direction:column;gap:4px">
       <a href="https://trustedrouter.com" target="_blank" rel="noopener">trustedrouter.com →</a>
@@ -304,6 +307,7 @@ const TIER = {0:{k:'Open',full:'Open',c:'var(--t0)',bg:'#1b2740',fg:'#aebfd9'},
               2:{k:'ZDR',full:'Zero Data Retention',c:'var(--t2)',bg:'#0c2c33',fg:'#7fe5f5'},
               3:{k:'TEE',full:'End to End Encrypted (TEE: Trusted Execution Environment)',c:'var(--t3)',bg:'#0d2a18',fg:'#7ee6a3'}};
 const PROVIDER_LOOKUP = new Map();
+const AI_IQ_LOOKUP = new Map();
 
 const MODELS = [
  {id:'openai/gpt-5.5-pro',           n:'GPT-5.5 Pro',         intel:100, spd:22, pin:33,   pout:198,   ctx:1050000, tier:2, tags:['reasoning','math','research'], blurb:'Maximum-effort reasoning. Slow and costly — reserved for the hardest problems.'},
@@ -346,7 +350,7 @@ const MODELS = [
 const ROUTES = {
  auto:  {id:'trustedrouter/auto',  n:'auto',  tier:2, pin:0.143, pout:0.308, desc:'Picks the best provider per request, fails over automatically. Zero Data Retention.'},
  cheap: {id:'trustedrouter/cheap', n:'cheap', tier:3, pin:0.01,  pout:0.01,  desc:'Cheapest capable model, confidential compute + E2EE. ~$0.01 / Mtok.'},
- fusion:{id:'trustedrouter/fusion',n:'fusion',tier:0, pin:0,     pout:0,     desc:'Fuses several open models into one answer — aims to beat any single frontier model.'},
+ synth:{id:'trustedrouter/synth',n:'synth',tier:0, pin:0,     pout:0,     desc:'Synthesizes several open models into one answer — aims to beat any single frontier model.'},
  zdr:   {id:'trustedrouter/zdr',   n:'zdr',   tier:3, pin:0.04,  pout:0.11,  desc:'Pool restricted to Zero Data Retention + confidential providers only.'},
  e2e:   {id:'trustedrouter/e2e',   n:'e2e',   tier:3, pin:0.04,  pout:0.11,  desc:'End-to-end encrypted provider pool for prompts that need a TEE route.'},
  free:  {id:'trustedrouter/free',  n:'free',  tier:0, pin:0.01,  pout:0.01,  desc:'Free tier for prototyping.'},
@@ -615,7 +619,7 @@ function renderResults(qual){
     div.innerHTML=`
       <div class="rank">${i===0?'★':'#'+(i+1)}</div>
       <div>
-        <div class="nm">${m.n}${why?`<span class="why">${why}</span>`:''}${overkill?`<span class="why" style="color:#9fb6d6;background:#1a2740;border-color:#2c3e5c">overkill — but cheap-leaning</span>`:''}</div>
+        <div class="nm">${m.n}${aiIqBadge(m)}${why?`<span class="why">${why}</span>`:''}${overkill?`<span class="why" style="color:#9fb6d6;background:#1a2740;border-color:#2c3e5c">overkill — but cheap-leaning</span>`:''}</div>
         <div class="sub">${m.id}</div>
         <div class="tags">${m.tags.slice(0,4).map(x=>`<span class="tag">${x}</span>`).join('')}</div>
         ${providerStrip(m)}
@@ -642,6 +646,11 @@ function providerStrip(m){
   const more=providers.length-visible.length;
   return `<div class="provider-strip" aria-label="${esc(m.n)} providers"><span class="provider-label">Providers</span>${visible.map(p=>`<span class="provider-chip">${esc(p)}</span>`).join('')}${more>0?`<span class="provider-chip more">+${more}</span>`:''}</div>`;
 }
+function aiIqBadge(m){
+  const row=AI_IQ_LOOKUP.get(m.id);
+  if(!row||!row.iq||!row.url) return '';
+  return `<a class="aiiq" href="${esc(row.url)}" target="_blank" rel="noopener" title="AI IQ public profile for ${esc(m.n)}">IQ ${esc(row.iq)}${row.rank?` <span>#${esc(row.rank)}</span>`:''}</a>`;
+}
 function esc(s){
   return String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
@@ -659,14 +668,14 @@ function pickRoute(){
   const p=state.pref;
   if(state.priv>=3 && p.c>=0.5) return ROUTES.cheap;
   if(state.priv>=3) return ROUTES.e2e;
-  if(p.s>=0.45 && state.intel==='frontier') return ROUTES.fusion;
+  if(p.s>=0.45 && state.intel==='frontier') return ROUTES.synth;
   if(p.c>=0.5) return ROUTES.cheap;
   return ROUTES.auto;
 }
 function renderPitch(qual){
   const primary=pickRoute();
   const second = primary.id===ROUTES.auto.id
-    ? ROUTES.fusion
+    ? ROUTES.synth
     : (state.priv>=3 && primary.id!==ROUTES.cheap.id ? ROUTES.cheap : ROUTES.auto);
   const t1=TIER[primary.tier], t2=TIER[second.tier];
   const noFit = !qual || !qual.length;
@@ -829,6 +838,7 @@ function showTip(g,e){
   tip.innerHTML=`
     <h4>${m.n} <span class="tierbadge" style="background:${t.bg};color:${t.fg};margin-left:auto">${t.k}</span></h4>
     <div class="prov">${m.id}</div>
+    ${aiIqBadge(m)}
     <div style="font-size:11.5px;color:#c4d2ea;margin:-2px 0 4px">${m.blurb}</div>
     <div class="bars">
       ${bar('Smart',v.s,'var(--smart)',m.intel)}
@@ -878,6 +888,14 @@ fetch('/v1/models',{headers:{accept:'application/json'}}).then(r=>r.ok?r.json():
       providers.push(name);
     }
     if(providers.length) PROVIDER_LOOKUP.set(row.id,providers);
+  }
+  render();
+}).catch(()=>{});
+
+fetch('/ai-iq/models.json',{headers:{accept:'application/json'}}).then(r=>r.ok?r.json():null).then(d=>{
+  const rows=d&&d.models&&typeof d.models==='object'?d.models:{};
+  for(const [id,row] of Object.entries(rows)){
+    if(row&&row.iq&&row.url) AI_IQ_LOOKUP.set(id,row);
   }
   render();
 }).catch(()=>{});

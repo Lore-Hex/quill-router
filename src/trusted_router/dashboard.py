@@ -18,6 +18,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
 from trusted_router.catalog import (
@@ -86,6 +87,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/legal/hipaa-readiness",
     "/legal/subprocessors",
     "/chat",
+    "/synth",
     "/fusion",
     "/compare/openrouter",
     "/compare/vercel-ai-gateway",
@@ -111,6 +113,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/blog",
     "/docs/agent-setup",
     "/docs/evals",
+    "/docs/synth",
     "/docs/fusion",
     "/docs/migrate-from-openrouter",
     "/docs/llms.txt",
@@ -281,7 +284,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "Do I have to pick one model?",
                 "No. trustedrouter/auto picks the best fit per request, trustedrouter/cheap "
-                "takes the cheapest capable route in a TEE, and trustedrouter/fusion combines "
+                "takes the cheapest capable route in a TEE, and trustedrouter/synth combines "
                 "open models to beat any single frontier model — all through one OpenAI-shaped API.",
             ),
         ),
@@ -319,9 +322,17 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         title="TrustedRouter Evals Guide",
         description="Run model, provider, privacy, latency, and cost evals through one OpenAI compatible API.",
     ),
+    "docs/synth": PublicPage(
+        template="public/fusion.html",
+        title="TrustedRouter Synth",
+        description=(
+            "Run a panel of models inside the attested gateway, then use judge and final "
+            "fallbacks to return one OpenAI-compatible answer."
+        ),
+    ),
     "docs/fusion": PublicPage(
         template="public/fusion.html",
-        title="TrustedRouter Fusion",
+        title="TrustedRouter Synth",
         description=(
             "Run a panel of models inside the attested gateway, then use judge and final "
             "fallbacks to return one OpenAI-compatible answer."
@@ -877,7 +888,7 @@ def public_blog_index_html(settings: Settings) -> str:
         title="Blog | TrustedRouter",
         heading="TrustedRouter blog",
         description=(
-            "Engineering notes on attested AI routing, Fusion evals, provider privacy, "
+            "Engineering notes on attested AI routing, Synth evals, provider privacy, "
             "and open source model routing."
         ),
         posts=_blog_index_posts(settings),
@@ -1032,7 +1043,8 @@ def subprocessors_json(settings: Settings) -> str:
 
 
 def public_models_html(settings: Settings) -> str:
-    models = [_model_view(model) for model in MODELS.values()]
+    test_mode = settings.environment == "test"
+    models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
     item_list_rows: list[dict[str, object]] = []
     for model in models:
         if not model.get("detail_href"):
@@ -1064,6 +1076,7 @@ def public_models_html(settings: Settings) -> str:
 
 
 def public_benchmarks_html(settings: Settings) -> str:
+    test_mode = settings.environment == "test"
     return _env().get_template("public/seo_index.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/benchmarks",
@@ -1073,7 +1086,7 @@ def public_benchmarks_html(settings: Settings) -> str:
             "Model benchmark entry points, route measurements, and independent sources."
         ),
         page_kind="benchmarks",
-        models=_seo_model_rows(),
+        models=_seo_model_rows(test_mode=test_mode),
         providers=[_provider_view(provider) for provider in providers_for_display()],
         benchmark_links=list(_BENCHMARK_INDEX_LINKS),
         google_enabled=settings.google_oauth_enabled,
@@ -1119,6 +1132,7 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
 
 
 def public_rankings_html(settings: Settings) -> str:
+    test_mode = settings.environment == "test"
     return _env().get_template("public/seo_index.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/rankings",
@@ -1128,7 +1142,7 @@ def public_rankings_html(settings: Settings) -> str:
             "Rank models by route count, provider diversity, price, and policy posture."
         ),
         page_kind="rankings",
-        models=_seo_model_rows(),
+        models=_seo_model_rows(test_mode=test_mode),
         providers=[_provider_view(provider) for provider in providers_for_display()],
         benchmark_links=list(_BENCHMARK_INDEX_LINKS),
         google_enabled=settings.google_oauth_enabled,
@@ -1176,11 +1190,11 @@ def public_chat_html(settings: Settings) -> str:
 def public_fusion_html(settings: Settings) -> str:
     return _env().get_template("public/fusion_playground.html").render(
         api_base_url="/chat-proxy/v1",
-        site_url=f"https://{settings.trusted_domain}/fusion",
-        title="Fusion | TrustedRouter",
-        heading="Fusion",
+        site_url=f"https://{settings.trusted_domain}/synth",
+        title="Synth | TrustedRouter",
+        heading="Synth",
         description=(
-            "Try trustedrouter/fusion with a model panel, fallback judges, and a final synthesizer."
+            "Try trustedrouter/synth with a model panel, fallback judges, and a final synthesizer."
         ),
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
@@ -1222,7 +1236,8 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
     provider = PROVIDERS.get(provider_slug)
     if provider is None:
         return None
-    served_models = _provider_model_rows(provider_slug)
+    test_mode = settings.environment == "test"
+    served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
     return _env().get_template("public/provider_detail.html").render(
         api_base_url=settings.api_base_url,
         site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
@@ -1278,7 +1293,13 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
         description=(
             f"Measured TTFT, TTFB, throughput, uptime, and sampled model routes for {provider.name}."
         ),
-        provider=_provider_detail_view(provider, served_models=_provider_model_rows(provider_slug)),
+        provider=_provider_detail_view(
+            provider,
+            served_models=_provider_model_rows(
+                provider_slug,
+                test_mode=settings.environment == "test",
+            ),
+        ),
         measured=measured,
         json_ld_blob=_json_ld_graph(
             _breadcrumb_node(
@@ -1313,6 +1334,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     model = MODELS.get(model_id)
     if model is None or model.id in META_MODEL_IDS:
         return None
+    test_mode = settings.environment == "test"
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
     return _env().get_template("public/model_detail.html").render(
         api_base_url=settings.api_base_url,
@@ -1320,7 +1342,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         title=f"{model.name} | TrustedRouter",
         heading=model.name,
         description=f"All providers serving {model.name} via TrustedRouter.",
-        model=_model_detail_view(model),
+        model=_model_detail_view(model, test_mode=test_mode),
         # Service/Offer JSON-LD. The page sells API access to a hosted
         # routing service, not a retail product with customer ratings.
         # Avoid Product schema so Search Console doesn't expect review
@@ -1343,6 +1365,7 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
         or left.id == right.id
     ):
         return None
+    test_mode = settings.environment == "test"
     site_path = f"/compare/models/{left.id}/vs/{right.id}"
     return _env().get_template("public/model_compare.html").render(
         api_base_url=settings.api_base_url,
@@ -1353,8 +1376,8 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
             f"Compare {left.name} and {right.name} by providers, context, price, "
             "and TrustedRouter route support."
         ),
-        left=_model_detail_view(left),
-        right=_model_detail_view(right),
+        left=_model_detail_view(left, test_mode=test_mode),
+        right=_model_detail_view(right, test_mode=test_mode),
         comparison=_comparison_view(left, right),
         json_ld_blob=_json_ld_graph(
             _breadcrumb_node(
@@ -1376,6 +1399,7 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     model = MODELS.get(model_id)
     if model is None or model.id in META_MODEL_IDS or section not in MODEL_SEO_SECTIONS:
         return None
+    test_mode = settings.environment == "test"
     base_model_url = f"https://{settings.trusted_domain}/models/{model_id}"
     section_path = f"/models/{model_id}/{section}"
     section_url = f"https://{settings.trusted_domain}{section_path}"
@@ -1389,10 +1413,10 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
         title=f"{model.name} {label} | TrustedRouter",
         heading=f"{model.name} {label}",
         description=_model_section_description(model, section),
-        model=_model_detail_view(model, active_section=section),
+        model=_model_detail_view(model, active_section=section, test_mode=test_mode),
         section=section,
         section_label=label,
-        benchmark_links=_benchmark_links(model),
+        benchmark_links=_benchmark_links(model, test_mode=test_mode),
         benchmark_scores=scores_for_model(model.id),
         measured=measured,
         json_ld_blob=_model_section_json_ld(
@@ -1559,7 +1583,7 @@ def llms_txt(settings: Settings) -> str:
         f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
-        f"- Fusion guide: https://{domain}/docs/fusion",
+        f"- Synth guide: https://{domain}/docs/synth",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         "",
@@ -1570,7 +1594,7 @@ def llms_txt(settings: Settings) -> str:
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
-        "- Fusion: use model trustedrouter/fusion with tool type trustedrouter:fusion",
+        "- Synth: use model trustedrouter/synth with tool type trustedrouter:synth",
         "",
         "## Catalog",
         f"- Public model pages: {model_count}",
@@ -1579,7 +1603,7 @@ def llms_txt(settings: Settings) -> str:
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
             "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
-            "trustedrouter/free. trustedrouter/fusion runs panel, judge, and final "
+            "trustedrouter/free. trustedrouter/synth runs panel, judge, and final "
             "synthesis calls inside the attested gateway."
         ),
         "",
@@ -1599,7 +1623,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "",
             f"- Agent setup: https://{domain}/docs/agent-setup",
             f"- Evals guide: https://{domain}/docs/evals",
-            f"- Fusion guide: https://{domain}/docs/fusion",
+            f"- Synth guide: https://{domain}/docs/synth",
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
             f"- Security: https://{domain}/security",
@@ -1618,8 +1642,8 @@ def docs_llms_txt(settings: Settings) -> str:
                 "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
             ),
             (
-                "For multi-model synthesis, call model trustedrouter/fusion with a "
-                "trustedrouter:fusion tool and analysis_models, judge_models, "
+                "For multi-model synthesis, call model trustedrouter/synth with a "
+                "trustedrouter:synth tool and analysis_models, judge_models, "
                 "final_models, or fallback_final_models."
             ),
             "",
@@ -1648,7 +1672,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Status: https://status.trustedrouter.com/",
         f"- Agent setup: https://{domain}/docs/agent-setup",
         f"- Evals guide: https://{domain}/docs/evals",
-        f"- Fusion guide: https://{domain}/docs/fusion",
+        f"- Synth guide: https://{domain}/docs/synth",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
@@ -1662,17 +1686,17 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/eu: EU-focused provider selection.",
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",
-        "- trustedrouter/fusion: attested multi-model panel, selectable judge, and final synthesis.",
+        "- trustedrouter/synth: attested multi-model panel, selectable judge, and final synthesis.",
         "",
-        "## Fusion",
+        "## Synth",
         "- Endpoint shape: POST /v1/chat/completions.",
-        "- Model: trustedrouter/fusion.",
-        "- Tool type: trustedrouter:fusion.",
+        "- Model: trustedrouter/synth.",
+        "- Tool type: trustedrouter:synth.",
         "- Common parameters: preset, analysis_models, selection_strategy, judge_models, fallback_judges, final_models, fallback_final_models, max_completion_tokens.",
         "- Strategies: synthesize, synthesize_non_refusals, first_success, first_non_refusal.",
         "- Limits: analysis_models, judge_models, and final_models each accept 1-8 model IDs.",
         "- Privacy: panel, judge, and final calls run inside the attested gateway. TrustedRouter stores billing and route metadata, not prompt/output content by default.",
-        f"- Full guide: https://{domain}/docs/fusion",
+        f"- Full guide: https://{domain}/docs/synth",
         "",
         "## Models",
     ]
@@ -1705,9 +1729,10 @@ def docs_llms_full_txt(settings: Settings) -> str:
     return "\n".join(lines)
 
 
-def _model_view(model: Model) -> dict[str, object]:
+def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     endpoints = endpoints_for_model(model.id) if model.id not in META_MODEL_IDS else []
+    ai_iq = ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
     if model.id in META_MODEL_IDS:
         candidates = meta_candidate_models(model.id)
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
@@ -1742,6 +1767,7 @@ def _model_view(model: Model) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "providers": providers,
         "provider_count": len(providers),
+        "ai_iq": ai_iq,
         "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks" if model.id not in META_MODEL_IDS else None
@@ -1823,9 +1849,15 @@ def _policy_label(value: bool | None) -> str:
     return "not claimed"
 
 
-def _model_detail_view(model: Model, *, active_section: str | None = None) -> dict[str, object]:
+def _model_detail_view(
+    model: Model,
+    *,
+    active_section: str | None = None,
+    test_mode: bool = False,
+) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     endpoints = endpoints_for_model(model.id)
+    ai_iq = ai_iq_for_model(model.id, test_mode=test_mode)
     endpoint_views: list[dict[str, object]] = []
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
@@ -1871,6 +1903,7 @@ def _model_detail_view(model: Model, *, active_section: str | None = None) -> di
         "endpoint_count": len(endpoint_views),
         "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),
         "section_links": _model_section_links(model.id, active_section=active_section),
+        "ai_iq": ai_iq,
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
@@ -1990,9 +2023,22 @@ def _sample_count(row: Mapping[str, object]) -> int:
     return 0
 
 
-def _benchmark_links(model: Model) -> list[dict[str, str]]:
+def _benchmark_links(model: Model, *, test_mode: bool = False) -> list[dict[str, str]]:
     provider_links = list(_PROVIDER_MODEL_INFO_LINKS.get(model.provider, ()))
     model_links = list(_MODEL_SPECIFIC_BENCHMARK_LINKS.get(model.id, ()))
+    ai_iq = ai_iq_for_model(model.id, test_mode=test_mode)
+    ai_iq_links: list[dict[str, str]] = []
+    if ai_iq and ai_iq.get("url"):
+        label = "AI IQ profile"
+        if ai_iq.get("iq"):
+            label = f"AI IQ profile · IQ {ai_iq['iq']}"
+        ai_iq_links.append(
+            {
+                "label": label,
+                "href": str(ai_iq["url"]),
+                "kind": "Independent model IQ score",
+            }
+        )
     return [
         {
             "label": "TrustedRouter performance page",
@@ -2004,6 +2050,7 @@ def _benchmark_links(model: Model) -> list[dict[str, str]]:
             "href": f"/models/{model.id}/uptime",
             "kind": "TrustedRouter measurement",
         },
+        *ai_iq_links,
         *model_links,
         *provider_links,
         *_BENCHMARK_INDEX_LINKS,
@@ -2029,8 +2076,8 @@ def _model_comparison_pairs() -> list[tuple[Model, Model]]:
     return list(combinations(candidates, 2))[:MODEL_COMPARE_URL_LIMIT]
 
 
-def _seo_model_rows() -> list[dict[str, object]]:
-    return [_model_view(model) for model in _public_models_for_seo()]
+def _seo_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
+    return [_model_view(model, test_mode=test_mode) for model in _public_models_for_seo()]
 
 
 def _comparison_view(left: Model, right: Model) -> dict[str, object]:
@@ -2127,7 +2174,7 @@ def _privacy_summary(model: Model) -> str:
     return "provider posture varies"
 
 
-def _provider_model_rows(provider_slug: str) -> list[dict[str, object]]:
+def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for model in _public_models_for_seo():
         endpoints = [endpoint for endpoint in endpoints_for_model(model.id) if endpoint.provider == provider_slug]
@@ -2149,6 +2196,7 @@ def _provider_model_rows(provider_slug: str) -> list[dict[str, object]]:
                     endpoints,
                     "completion_price_microdollars_per_million_tokens",
                 ),
+                "ai_iq": ai_iq_for_model(model.id, test_mode=test_mode),
                 "prepaid": any(not endpoint.is_byok for endpoint in endpoints),
                 "byok": any(endpoint.is_byok for endpoint in endpoints),
             }

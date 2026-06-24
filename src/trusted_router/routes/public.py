@@ -14,9 +14,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from starlette.types import Scope
 
+from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
 from trusted_router.benchmark_samples import public_benchmark_samples
-from trusted_router.catalog import provider_to_openrouter_shape, providers_for_display
+from trusted_router.catalog import (
+    META_MODEL_IDS,
+    MODELS,
+    provider_to_openrouter_shape,
+    providers_for_display,
+)
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
@@ -187,9 +193,13 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def evals() -> str:
         return public_page_html(settings, "docs/evals")
 
+    @public_html_route("/docs/synth")
+    async def synth_docs() -> str:
+        return public_page_html(settings, "docs/synth")
+
     @public_html_route("/docs/fusion")
     async def fusion_docs() -> str:
-        return public_page_html(settings, "docs/fusion")
+        return public_page_html(settings, "docs/synth")
 
     @public_html_route("/docs/x402")
     async def x402_docs() -> str:
@@ -267,6 +277,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/choose")
     async def choose() -> str:
         return public_page_html(settings, "choose")
+
+    @app.get("/ai-iq/models.json")
+    async def ai_iq_models() -> JSONResponse:
+        payload = ai_iq_catalog_payload(
+            (model_id for model_id in MODELS if model_id not in META_MODEL_IDS),
+            test_mode=settings.environment == "test",
+        )
+        return JSONResponse(
+            payload,
+            headers={"cache-control": "public, max-age=3600, stale-while-revalidate=86400"},
+        )
 
     @public_html_route("/docs")
     async def docs_hub() -> str:
@@ -571,6 +592,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/chat")
     async def chat() -> str:
         return public_chat_html(settings)
+
+    @public_html_route("/synth")
+    async def synth() -> str:
+        return public_fusion_html(settings)
 
     @public_html_route("/fusion")
     async def fusion() -> str:

@@ -15,6 +15,16 @@
     <table>
       <tbody>
         <tr><th>Publisher</th><td>{{ model.provider }} ({{ model.publisher_slug }})</td></tr>
+        <tr><th>AI IQ</th><td>
+          {% if model.ai_iq %}
+          <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
+            <strong>IQ {{ model.ai_iq.iq }}</strong>
+            <span>#{{ model.ai_iq.rank }} on AI IQ</span>
+          </a>
+          {% else %}
+          <span class="muted-copy">No AI IQ profile matched yet.</span>
+          {% endif %}
+        </td></tr>
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
         <tr><th>Providers</th><td>
           <div class="provider-chip-list">

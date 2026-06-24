@@ -14,6 +14,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
+    SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
     auto_candidate_models,
     endpoints_for_model,
@@ -305,6 +306,7 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert ZDR_MODEL_ID in MODELS
     assert E2E_MODEL_ID in MODELS
     assert EU_MODEL_ID in MODELS
+    assert SYNTH_MODEL_ID in MODELS
     assert FUSION_MODEL_ID in MODELS
 
     zdr = meta_candidate_models(ZDR_MODEL_ID)
@@ -331,17 +333,19 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert eu_shape["trustedrouter"]["auto_candidates"]
 
 
-def test_fusion_alias_is_cataloged_but_not_silent_auto_route() -> None:
-    model = MODELS[FUSION_MODEL_ID]
+def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
+    model = MODELS[SYNTH_MODEL_ID]
     shape = model_to_openrouter_shape(model)
 
-    assert model.name == "TrustedRouter Fusion"
+    assert model.name == "TrustedRouter Synth"
     assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert meta_candidate_models(SYNTH_MODEL_ID) == []
     assert meta_candidate_models(FUSION_MODEL_ID) == []
-    with pytest.raises(Exception) as exc:
-        chat_route_candidates({"model": FUSION_MODEL_ID}, Settings(environment="test"))
-    assert getattr(exc.value, "status_code", None) == 501
-    assert "attested gateway" in str(exc.value)
+    for model_id in (SYNTH_MODEL_ID, FUSION_MODEL_ID):
+        with pytest.raises(Exception) as exc:
+            chat_route_candidates({"model": model_id}, Settings(environment="test"))
+        assert getattr(exc.value, "status_code", None) == 501
+        assert "attested gateway" in str(exc.value)
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

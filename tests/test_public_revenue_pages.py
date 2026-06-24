@@ -15,10 +15,12 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/vercel-ai-gateway": "Use Vercel where it fits.",
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
+        "/docs/synth": "Run a panel of models inside the attested gateway.",
         "/docs/fusion": "Run a panel of models inside the attested gateway.",
+        "/synth": "Compare a panel. Return one answer.",
         "/fusion": "Compare a panel. Return one answer.",
         "/blog": "TrustedRouter blog",
-        "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Fusion beats Fable and Frontier",
+        "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
         "/security": "TrustedRouter does not store prompt or output content by default.",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
@@ -63,7 +65,9 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/vercel-ai-gateway",
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
+        "/docs/synth",
         "/docs/fusion",
+        "/synth",
         "/fusion",
         "/blog",
         "/blog/fusion-evals-open-source",
@@ -91,7 +95,7 @@ def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     assert "Tinfoil first" not in response.text
     assert "providers such as" not in response.text
     assert "trustedrouter/e2e" in response.text
-    assert "trustedrouter/fusion" in response.text
+    assert "trustedrouter/synth" in response.text
     # Must unfurl with the tailored triangle social card (the PNG is checked
     # into static/og/, so _og_image_url resolves it rather than the default).
     assert 'property="og:title"' in response.text
@@ -113,17 +117,19 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     assert "E2E pool includes Tinfoil" not in response.text
     assert "provider route choices shown on each model card" in response.text
     assert "PROVIDER_LOOKUP" in response.text
+    assert "AI_IQ_LOOKUP" in response.text
     assert "/v1/models" in response.text
+    assert "/ai-iq/models.json" in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
     assert "priv: 0," in response.text
 
 
-def test_fusion_playground_is_public_and_uses_browser_key_proxy(client: TestClient) -> None:
-    response = client.get("/fusion")
+def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClient) -> None:
+    response = client.get("/synth")
 
     assert response.status_code == 200
-    assert "trustedrouter/fusion" in response.text
+    assert "trustedrouter/synth" in response.text
     assert "Compare a panel. Return one answer." in response.text
     assert "/chat-proxy/v1" in response.text
     assert "/internal/chat/issue-browser-key" in response.text
@@ -132,16 +138,18 @@ def test_fusion_playground_is_public_and_uses_browser_key_proxy(client: TestClie
     assert "synthesize_non_refusals" in response.text
     assert "moonshotai/kimi-k2.7-code" in response.text
     assert "z-ai/glm-5.2" in response.text
+    assert client.head("/synth").status_code == 200
+    assert client.get("/synth/", follow_redirects=False).status_code == 200
     assert client.head("/fusion").status_code == 200
     assert client.get("/fusion/", follow_redirects=False).status_code == 200
 
 
-def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
-    response = client.get("/docs/fusion")
+def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
+    response = client.get("/docs/synth")
 
     assert response.status_code == 200
-    assert "trustedrouter/fusion" in response.text
-    assert "trustedrouter:fusion" in response.text
+    assert "trustedrouter/synth" in response.text
+    assert "trustedrouter:synth" in response.text
     assert "analysis_models" in response.text
     assert "judge_models" in response.text
     assert "fallback_judges" in response.text
@@ -158,6 +166,7 @@ def test_fusion_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "Final fallback can switch before the first byte" in response.text
     assert "TrustedRouter stores billing and route metadata, not prompt/output content by default." in response.text
     assert "OpenAI compatible API" in response.text
+    assert client.get("/docs/fusion").status_code == 200
 
 
 def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:
@@ -176,6 +185,8 @@ def test_public_models_page_does_not_require_api_key(client: TestClient) -> None
     assert '<span class="pill" title="kimi">Kimi</span>' in response.text
     assert '<span class="pill" title="parasail">Parasail</span>' in response.text
     assert '<span class="pill" title="tinfoil">Tinfoil</span>' in response.text
+    assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
+    assert "IQ 116" in response.text
 
 
 def test_public_model_detail_lists_distinct_serving_providers(client: TestClient) -> None:
@@ -184,6 +195,8 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
     assert response.status_code == 200
     assert "Providers serving this model" in response.text
     assert "Endpoints</th>" in response.text
+    assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
+    assert "IQ 116" in response.text
     for provider in ["kimi", "parasail", "phala", "together", "tinfoil", "novita"]:
         assert f'title="{provider}"' in response.text
 

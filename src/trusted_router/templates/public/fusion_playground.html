@@ -9,9 +9,9 @@
 <link rel="stylesheet" href="/static/fusion.css?v={{ static_version|default('local') }}">
 
 <section class="fusion-shell" data-fusion-shell>
-  <aside class="fusion-sidebar" aria-label="Fusion runs">
+  <aside class="fusion-sidebar" aria-label="Synth runs">
     <div class="fusion-sidebar-head">
-      <button class="btn primary fusion-new" type="button" data-action="new-fusion">New Fusion</button>
+      <button class="btn primary fusion-new" type="button" data-action="new-fusion">New Synth</button>
       <span class="fusion-muted">Local history only. Prompts are not saved server-side.</span>
     </div>
     <div class="fusion-run-list" data-run-list>
@@ -22,11 +22,11 @@
   <main class="fusion-main">
     <header class="fusion-header">
       <div>
-        <span class="fusion-kicker">OpenAI compatible API · trustedrouter/fusion</span>
+        <span class="fusion-kicker">OpenAI compatible API · trustedrouter/synth</span>
         <h1>Compare a panel. Return one answer.</h1>
       </div>
       <div class="fusion-header-actions">
-        <a class="btn" href="/docs/fusion">Docs</a>
+        <a class="btn" href="/docs/synth">Docs</a>
         <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
       </div>
     </header>
@@ -71,11 +71,11 @@
           <span class="fusion-option-pill">judge + final fallbacks</span>
         </div>
 
-        <button class="btn primary fusion-run" type="submit" data-fusion-run>Run Fusion</button>
+        <button class="btn primary fusion-run" type="submit" data-fusion-run>Run Synth</button>
         <p class="fusion-error" data-fusion-error hidden></p>
       </form>
 
-      <section class="fusion-output" aria-label="Fusion output">
+      <section class="fusion-output" aria-label="Synth output">
         <div class="fusion-output-head">
           <div>
             <span class="fusion-kicker">Result</span>
@@ -83,7 +83,7 @@
           </div>
           <button class="btn" type="button" data-action="copy-code">Copy API call</button>
         </div>
-        <pre class="fusion-answer" data-fusion-answer>Sign in, enter a prompt, then run Fusion.</pre>
+        <pre class="fusion-answer" data-fusion-answer>Sign in, enter a prompt, then run Synth.</pre>
         <div class="fusion-meta" data-fusion-meta></div>
         <details class="fusion-code">
           <summary>API request</summary>

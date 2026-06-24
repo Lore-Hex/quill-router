@@ -75,6 +75,7 @@
       <thead>
         <tr>
           <th>Model</th>
+          <th>AI IQ</th>
           <th>Context</th>
           <th>Endpoints</th>
           <th>Prompt</th>
@@ -92,6 +93,13 @@
               <a href="{{ model.detail_href }}/performance">performance</a>
               <a href="{{ model.detail_href }}/api">api</a>
             </div>
+          </td>
+          <td>
+            {% if model.ai_iq %}
+            <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ model.ai_iq.iq }}</strong><span>#{{ model.ai_iq.rank }}</span></a>
+            {% else %}
+            <span class="muted-copy">—</span>
+            {% endif %}
           </td>
           <td>{{ model.context_length }}</td>
           <td>{{ model.endpoint_count }}</td>

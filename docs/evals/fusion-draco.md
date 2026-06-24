@@ -1,16 +1,16 @@
-# TrustedRouter Fusion DRACO Reproduction
+# TrustedRouter Synth DRACO Reproduction
 
-TrustedRouter's Fusion work is developed in the open. This document is the
-committed runbook for reproducing the OpenRouter-style Fusion experiment and the
+TrustedRouter's Synth work is developed in the open. This document is the
+committed runbook for reproducing the multi-model Synth experiment and the
 summary of the first completed live run.
 
 ## Source Context
 
-OpenRouter's June 2026 Fusion announcement reported that budget model panels can
+Prior public multi-model panel work reported that budget model panels can
 beat individual frontier models on DRACO-style deep research tasks. The relevant
 public sources are:
 
-- OpenRouter Fusion announcement:
+- Public panel announcement:
   https://openrouter.ai/blog/announcements/fusion-beats-frontier/
 - DRACO dataset:
   https://huggingface.co/datasets/perplexity-ai/draco
@@ -95,7 +95,7 @@ Published metrics deduplicate by task id and use the latest successful row.
 
 ## Exact-Reproduction Requirements
 
-Before publishing a Fusion comparison, the harness must first reproduce the raw
+Before publishing a Synth comparison, the harness must first reproduce the raw
 solo numbers from OpenRouter's post within reasonable noise:
 
 - `google/gemini-3-flash-preview`: OpenRouter reports `43.1`
@@ -181,7 +181,8 @@ The default excluded domains are:
 
 ## API Status
 
-`trustedrouter/fusion` is cataloged as the public alias for this work. The live
+`trustedrouter/synth` is cataloged as the public alias for this work. The legacy
+`trustedrouter/fusion` alias remains available for existing callers. The live
 API executes inside the attested gateway by running panel calls, a selectable
 judge call, and a final synthesis call against concrete TrustedRouter models.
 Control-plane routing still fails closed so it cannot silently degrade to

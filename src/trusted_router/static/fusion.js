@@ -66,7 +66,7 @@
     const resp = await fetch(ISSUE_KEY_PATH, { method: "POST", credentials: "same-origin" });
     if (resp.status === 302 || resp.status === 401) {
       openSigninModal();
-      throw new Error("Sign in to run Fusion.");
+      throw new Error("Sign in to run Synth.");
     }
     if (!resp.ok) throw new Error("Could not issue a browser API key.");
     const json = await resp.json();
@@ -78,7 +78,7 @@
   }
 
   function clearKeyCookie() {
-    for (const path of ["/", "/chat", "/fusion"]) {
+    for (const path of ["/", "/chat", "/fusion", "/synth"]) {
       document.cookie = `${KEY_COOKIE}=; path=${path}; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
     }
   }
@@ -97,11 +97,11 @@
     const finals = splitModels(els.finals.value);
     const maxTokens = Math.max(64, Math.min(4096, Number(els.maxTokens.value || 900)));
     return {
-      model: "trustedrouter/fusion",
+      model: "trustedrouter/synth",
       messages: [{ role: "user", content: els.prompt.value.trim() }],
       max_tokens: maxTokens,
       tools: [{
-        type: "trustedrouter:fusion",
+        type: "trustedrouter:synth",
         parameters: {
           preset: els.preset.value || "quality",
           selection_strategy: "synthesize_non_refusals",
@@ -132,7 +132,7 @@
   function formatMeta(json, startedAt) {
     const ms = Math.max(0, Math.round(performance.now() - startedAt));
     const usage = json?.usage || {};
-    const route = json?.trustedrouter?.provider || json?.provider || "fusion";
+    const route = json?.trustedrouter?.provider || json?.provider || "synth";
     const total = usage.total_tokens || 0;
     return `${ms} ms · ${total ? `${total} tokens · ` : ""}${route}`;
   }
@@ -154,7 +154,7 @@
       return postFusion(fresh, request);
     }
     if (!resp.ok) {
-      const msg = json?.error?.message || text || `Fusion failed with ${resp.status}`;
+      const msg = json?.error?.message || text || `Synth failed with ${resp.status}`;
       throw new Error(msg);
     }
     return json;
@@ -181,7 +181,7 @@
       const key = await ensureBrowserKey(false);
       const json = await postFusion(key, request);
       const output = completionText(json);
-      if (!output) throw new Error("Fusion returned an empty response.");
+      if (!output) throw new Error("Synth returned an empty response.");
       els.answer.textContent = output;
       els.answer.classList.remove("loading");
       els.title.textContent = "Completed";
@@ -190,8 +190,8 @@
     } catch (err) {
       els.answer.classList.remove("loading");
       els.title.textContent = "Error";
-      els.answer.textContent = "Fusion did not complete.";
-      setError(err?.message || "Fusion failed.");
+      els.answer.textContent = "Synth did not complete.";
+      setError(err?.message || "Synth failed.");
     }
   }
 
@@ -245,7 +245,7 @@
 
   function resetForm() {
     els.prompt.value = "";
-    els.answer.textContent = "Sign in, enter a prompt, then run Fusion.";
+    els.answer.textContent = "Sign in, enter a prompt, then run Synth.";
     els.title.textContent = "Ready";
     els.meta.textContent = "";
     setError("");

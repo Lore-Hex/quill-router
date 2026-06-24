@@ -37,6 +37,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
@@ -74,8 +75,8 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "TrustedRouter" in response.text
         assert "api.trustedrouter.com/v1" in response.text
         assert "trustedrouter/eu" in response.text
-        assert "trustedrouter/fusion" in response.text
-        assert "https://trustedrouter.com/docs/fusion" in response.text
+        assert "trustedrouter/synth" in response.text
+        assert "https://trustedrouter.com/docs/synth" in response.text
         assert "https://trustedrouter.com/blog" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text
@@ -120,11 +121,11 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     blog_types = {item["@type"] for item in blog_payload["@graph"]}
     assert {"BreadcrumbList", "BlogPosting"}.issubset(blog_types)
     assert "DRACO" in blog.text
-    assert "TrustedRouter-Fusion-Draco on GitHub" in blog.text
+    assert "TrustedRouter Synth Draco on GitHub" in blog.text
 
     removed_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert removed_blog.status_code == 404
-    assert "Chasing Mythos-level Fusion" not in removed_blog.text
+    assert "Chasing Mythos-level Synth" not in removed_blog.text
 
 
 def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
@@ -132,7 +133,7 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert response.status_code == 200
     assert 'class="blog-thumb"' in response.text
     assert 'src="https://trustedrouter.com/static/og/blog/fusion-is-two-jobs.png"' in response.text
-    assert 'alt="Fusion is two jobs, and no model wins both visual summary"' in response.text
+    assert 'alt="Synth is two jobs, and no model wins both visual summary"' in response.text
     assert 'href="/blog/fusion-is-two-jobs"' in response.text
     assert response.text.count('class="blog-thumb"') >= 10
 
@@ -279,6 +280,8 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     assert response.status_code == 200
     assert "<title>MiniMax Models | TrustedRouter</title>" in response.text
     assert "MiniMax M3" in response.text
+    assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
+    assert "IQ 109" in response.text
     assert "/models/minimax/minimax-m3/benchmarks" in response.text
     assert "Policy source" in response.text
 
@@ -293,6 +296,8 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
         assert f"MiniMax M3 {expected_label}" in response.text
         assert "openrouter.ai" not in response.text.lower()
         assert '<nav class="section-tabs"' in response.text
+        assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
+        assert "IQ 109" in response.text
         # benchmarks is indexable once a model has cited benchmark scores —
         # minimax-m3 now ships TrustedRouter SimpleQA/GSM8K/Aider rows.
         if section in {"providers", "pricing", "benchmarks"}:
@@ -311,6 +316,7 @@ def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
     benchmarks = client.get("/models/minimax/minimax-m3/benchmarks")
     assert "MiniMax M3 model page" in benchmarks.text
     assert "LMArena leaderboard" in benchmarks.text
+    assert "AI IQ profile" in benchmarks.text
 
     api = client.get("/models/minimax/minimax-m3/api")
     assert 'model="minimax/minimax-m3"' in api.text
@@ -325,6 +331,8 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "Compare routes" in response.text
     assert "Practical read" in response.text
     assert "cheapest route" in response.text
+    assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
+    assert "IQ 116" in response.text
     assert "/models/moonshotai/kimi-k2.6/pricing" in response.text
     assert "/models/z-ai/glm-5.1/providers" in response.text
     assert "openrouter.ai" not in response.text.lower()
@@ -337,6 +345,7 @@ def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -
         assert "/models/minimax/minimax-m3/benchmarks" in response.text
         assert "/models/minimax/minimax-m3/performance" in response.text
         assert "/providers/minimax" in response.text
+        assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
         assert "openrouter.ai" not in response.text.lower()
 
 
@@ -359,7 +368,7 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
     assert "static/og/blog/fusion-evals-open-source.png" in json.dumps(_json_ld(sota.text))
     assert client.get("/static/og/blog/fusion-evals-open-source.png").status_code == 200
     # the card alt is the post title, not the generic brand alt
-    assert 'property="og:image:alt" content="New SOTA: TrustedRouter Fusion beats Fable and Frontier"' in sota.text
+    assert 'property="og:image:alt" content="New SOTA: TrustedRouter Synth beats Fable and Frontier"' in sota.text
 
     # The diagram sweep gave every post an OG diagram, so each post now uses its
     # OWN rasterized card (the imageless -> default brand-card path is covered by

@@ -30,6 +30,19 @@
     <span>Publisher</span><span>{{ left.provider }}</span><span>{{ right.provider }}</span>
   </div>
   <div class="matrix-row">
+    <span>AI IQ</span>
+    <span>
+      {% if left.ai_iq %}
+      <a class="ai-iq-link" href="{{ left.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ left.ai_iq.iq }}</strong><span>#{{ left.ai_iq.rank }}</span></a>
+      {% else %}—{% endif %}
+    </span>
+    <span>
+      {% if right.ai_iq %}
+      <a class="ai-iq-link" href="{{ right.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ right.ai_iq.iq }}</strong><span>#{{ right.ai_iq.rank }}</span></a>
+      {% else %}—{% endif %}
+    </span>
+  </div>
+  <div class="matrix-row">
     <span>Context</span><span>{{ left.context_length }} tokens</span><span>{{ right.context_length }} tokens</span>
   </div>
   <div class="matrix-row">

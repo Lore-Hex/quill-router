@@ -21,6 +21,7 @@
         <tr>
           <th>Model</th>
           <th>Publisher</th>
+          <th>AI IQ</th>
           <th>Providers</th>
           <th>Prompt</th>
           <th>Completion</th>
@@ -32,6 +33,13 @@
         <tr>
           <td><a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a><br>{{ model.name }}</td>
           <td>{{ model.provider }}</td>
+          <td>
+            {% if model.ai_iq %}
+            <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener"><strong>IQ {{ model.ai_iq.iq }}</strong><span>#{{ model.ai_iq.rank }}</span></a>
+            {% else %}
+            <span class="muted-copy">—</span>
+            {% endif %}
+          </td>
           <td>{{ model.provider_count }}</td>
           <td>{{ model.prompt_price }}</td>
           <td>{{ model.completion_price }}</td>

@@ -1,11 +1,11 @@
 {% extends "public/_base.html" %}
 {% block body %}
 
-<section class="marketing-split" aria-label="Fusion quickstart">
+<section class="marketing-split" aria-label="Synth quickstart">
   <div class="marketing-copy">
     <h2>Run a panel of models inside the attested gateway.</h2>
     <p>
-      <code>trustedrouter/fusion</code> fans one request across several models,
+      <code>trustedrouter/synth</code> fans one request across several models,
       asks a judge model to evaluate the panel, and returns one OpenAI-compatible
       chat completion. Use it for hard prompts, evals, and prompts where one
       provider's refusal or error should not decide the whole result.
@@ -23,17 +23,17 @@
     </div>
   </div>
   <div class="copy-terminal">
-    <div class="code-head"><span>Fusion</span><span>curl</span></div>
+    <div class="code-head"><span>Synth</span><span>curl</span></div>
     <pre><code>curl {{ api_base_url }}/chat/completions \
   -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "trustedrouter/fusion",
+    "model": "trustedrouter/synth",
     "messages": [
       {"role": "user", "content": "Compare the best options and answer plainly."}
     ],
     "tools": [{
-      "type": "trustedrouter:fusion",
+      "type": "trustedrouter:synth",
       "parameters": {
         "preset": "quality",
         "max_completion_tokens": 800
@@ -114,31 +114,35 @@
   <h2 class="section-center">SDK examples</h2>
   <div class="marketing-grid two">
     <div class="copy-terminal">
-      <div class="code-head"><span>Python</span><span>trusted-router-py</span></div>
+      <div class="code-head"><span>Python</span><span>OpenAI SDK</span></div>
       <pre><code>import os
 
-from trustedrouter import TrustedRouter
+from openai import OpenAI
 
-client = TrustedRouter(api_key=os.environ["TRUSTEDROUTER_API_KEY"])
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="https://api.trustedrouter.com/v1",
+)
 
-result = client.fusion(
+result = client.chat.completions.create(
+    model="trustedrouter/synth",
     messages=[{"role": "user", "content": "Give the best answer."}],
-    preset="quality",
 )
 
 print(result.choices[0].message.content)</code></pre>
     </div>
     <div class="copy-terminal">
-      <div class="code-head"><span>TypeScript</span><span>@lore-hex/trusted-router</span></div>
-      <pre><code>import { TrustedRouter } from "@lore-hex/trusted-router";
+      <div class="code-head"><span>TypeScript</span><span>OpenAI SDK</span></div>
+      <pre><code>import OpenAI from "openai";
 
-const client = new TrustedRouter({
-  apiKey: process.env.TRUSTEDROUTER_API_KEY
+const client = new OpenAI({
+  apiKey: process.env.TRUSTEDROUTER_API_KEY,
+  baseURL: "https://api.trustedrouter.com/v1"
 });
 
-const result = await client.fusion({
+const result = await client.chat.completions.create({
+  model: "trustedrouter/synth",
   messages: [{ role: "user", content: "Give the best answer." }],
-  preset: "quality"
 });
 
 console.log(result.choices[0].message.content);</code></pre>
@@ -152,7 +156,7 @@ console.log(result.choices[0].message.content);</code></pre>
     <div class="marketing-card">
       <h3>Cost</h3>
       <p>
-        Fusion is multiple model calls. Budget it as panel calls plus judge
+        Synth is multiple model calls. Budget it as panel calls plus judge
         attempts plus final attempts. Use <code>preset="budget"</code> and
         <code>max_completion_tokens</code> for cheaper eval loops.
       </p>
@@ -179,7 +183,7 @@ console.log(result.choices[0].message.content);</code></pre>
 <section class="cta-band">
   <div>
     <h2>Need an agent to wire it in?</h2>
-    <p>Use the agent setup guide and ask the agent to call <code>trustedrouter/fusion</code> only for hard prompts or evals.</p>
+    <p>Use the agent setup guide and ask the agent to call <code>trustedrouter/synth</code> only for hard prompts or evals.</p>
   </div>
   <div class="sdk-links">
     <a class="pill" href="/docs/agent-setup">Agent setup</a>

@@ -12,6 +12,16 @@
       <a href="{{ link.href }}" class="{% if link.active %}active{% endif %}">{{ link.label }}</a>
       {% endfor %}
     </nav>
+    {% if model.ai_iq %}
+    <div class="ai-iq-callout">
+      <div>
+        <span class="card-label">AI IQ</span>
+        <strong>IQ {{ model.ai_iq.iq }}</strong>
+        <span>#{{ model.ai_iq.rank }} public AI IQ rank for {{ model.ai_iq.name }}</span>
+      </div>
+      <a href="{{ model.ai_iq.url }}" rel="nofollow noopener">View AI IQ profile</a>
+    </div>
+    {% endif %}
 
     {% if section == "benchmarks" %}
     {% if benchmark_scores %}

@@ -24,6 +24,7 @@
         <tr>
           <th>Model</th>
           <th>Publisher</th>
+          <th>AI IQ</th>
           <th>Context</th>
           <th>Providers</th>
           <th>Provider policy</th>
@@ -47,6 +48,16 @@
             {% endif %}
           </td>
           <td>{{ model.provider }}</td>
+          <td>
+            {% if model.ai_iq %}
+            <a class="ai-iq-link" href="{{ model.ai_iq.url }}" rel="nofollow noopener">
+              <strong>IQ {{ model.ai_iq.iq }}</strong>
+              <span>#{{ model.ai_iq.rank }}</span>
+            </a>
+            {% else %}
+            <span class="muted-copy">—</span>
+            {% endif %}
+          </td>
           <td>{{ model.context_length }}</td>
           <td>
             <div class="provider-chip-list" aria-label="{{ model.provider_count }} provider{{ '' if model.provider_count == 1 else 's' }}">

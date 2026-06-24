@@ -10,11 +10,14 @@ from trusted_router.catalog import (
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
+    FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
     PROVIDERS,
+    SYNTH_CODE_MODEL_ID,
+    SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
@@ -361,10 +364,15 @@ def _requested_model_ids(
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
         stripped = resolve_model_alias(stripped)
-        if stripped == FUSION_MODEL_ID:
+        if stripped in {
+            SYNTH_MODEL_ID,
+            SYNTH_CODE_MODEL_ID,
+            FUSION_MODEL_ID,
+            FUSION_CODE_MODEL_ID,
+        }:
             raise api_error(
                 501,
-                "trustedrouter/fusion executes only inside the attested gateway; control-plane routing must not silently degrade to a single model",
+                "trustedrouter/synth executes only inside the attested gateway; control-plane routing must not silently degrade to a single model",
                 ErrorType.ENDPOINT_NOT_SUPPORTED,
             )
         if ovr:
