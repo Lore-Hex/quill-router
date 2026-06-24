@@ -473,6 +473,8 @@ Both vendors should return identical answers for every record;
 each vendor's apex NS should list all 6 NS (4 Google + 2 Cloudflare).
 Public resolvers should all agree on every name.
 
+---
+
 **Fix**:
 
 The fast one-shot path that brings Cloud DNS into sync with
@@ -502,6 +504,43 @@ vendors stay in sync atomically.
   first place; Terraform pin prevents recurrence)
 - Setting different TTLs across vendors (cache lifetime divergence
   multiplies resolver-state randomness)
+
+---
+
+## Search Console / Bing Webmaster Tools
+
+TrustedRouter should be verified in both Google Search Console and Bing
+Webmaster Tools at the domain level.
+
+Canonical crawl assets:
+
+- `https://trustedrouter.com/robots.txt`
+- `https://trustedrouter.com/sitemap.xml`
+- `https://trustedrouter.com/llms.txt`
+- `https://trustedrouter.com/docs/llms.txt`
+- `https://trustedrouter.com/docs/llms-full.txt`
+
+Submit only the sitemap index, not every child sitemap:
+
+```text
+https://trustedrouter.com/sitemap.xml
+```
+
+If domain verification fails, diagnose DNS vendor drift before changing
+application code. Google and Bing should both see the same TXT records
+from Cloud DNS and Cloudflare if both are authoritative. If Bing offers
+an HTML meta verification value instead of DNS, prefer DNS. Only add a
+meta tag to the public templates as a temporary fallback, and remove it
+after DNS verification works.
+
+After deploys that add SEO pages:
+
+1. Fetch `/robots.txt`, `/sitemap.xml`, and `/llms.txt`.
+2. Submit changed URLs for recrawl in Bing and Google.
+3. Check `/docs/llms-full.txt` still lists model/provider pages and does
+   not contain secrets.
+4. Follow `docs/marketing/llm-seo-opportunities.md` for Ahrefs exports
+   and new page prioritization.
 
 ---
 

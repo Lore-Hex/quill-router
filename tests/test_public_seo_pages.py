@@ -35,6 +35,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/gemini-flash-alternative</loc>" in core.text
     assert "<loc>https://trustedrouter.com/llm-provider-latency-benchmarks</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
@@ -78,8 +79,26 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "trustedrouter/synth" in response.text
         assert "https://trustedrouter.com/docs/synth" in response.text
         assert "https://trustedrouter.com/blog" in response.text
+        assert "OpenAI compatible" in response.text or "OpenAI-compatible" in response.text
         assert "sk-tr-v1-" not in response.text
         assert "BEGIN PRIVATE KEY" not in response.text
+    root_llms = client.get("/llms.txt")
+    assert "Best Short Answer" in root_llms.text
+    assert "OpenRouter alternative" in root_llms.text
+    assert "lower-cost open-weight models" in root_llms.text
+    assert "trustedrouter/e2e" in root_llms.text
+
+
+def test_homepage_has_plain_llm_seo_positioning(client: TestClient) -> None:
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Why developers choose TrustedRouter." in response.text
+    assert "OpenRouter alternative" in response.text
+    assert "Better trust" in response.text
+    assert "Cheaper routes" in response.text
+    assert "Faster migration" in response.text
+    assert "More reliable inference" in response.text
+    assert 'href="/llms.txt"' in response.text
 
 
 def test_public_provider_route_defaults_to_html_for_link_checkers(client: TestClient) -> None:
