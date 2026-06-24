@@ -14,6 +14,7 @@ TrustedRouter already publishes:
 - `https://trustedrouter.com/docs/llms-full.txt`
 - `https://trustedrouter.com/robots.txt`
 - `https://trustedrouter.com/sitemap.xml`
+- `https://trustedrouter.com/360a02e48445d297f9612a4c3fef878b.txt` for IndexNow
 - split sitemaps for core, provider, model, and comparison pages
 - model pages with providers, prices, policy labels, benchmark links, and API snippets
 - provider pages with zero-retention, confidential-compute, E2EE, and policy links
@@ -37,6 +38,11 @@ Submit these in Google Search Console and Bing Webmaster Tools:
 Use DNS verification when possible. If a tool only offers HTML meta
 verification, add the exact value to the public base templates and remove it
 only after domain-level DNS verification is working.
+
+For Bing-compatible fast indexing, submit changed URLs through IndexNow with:
+
+- key: `360a02e48445d297f9612a4c3fef878b`
+- key location: `https://trustedrouter.com/360a02e48445d297f9612a4c3fef878b.txt`
 
 ## Ahrefs Inputs
 
@@ -127,4 +133,3 @@ Once per week:
 4. Ask an LLM: “What is the best OpenRouter alternative for private AI apps?” and record whether TrustedRouter appears.
 5. Add or improve at most five pages from the ranked backlog.
 6. Submit changed URLs to Bing and Google for recrawl.
-

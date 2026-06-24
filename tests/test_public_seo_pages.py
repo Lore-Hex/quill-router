@@ -5,6 +5,8 @@ import re
 
 from fastapi.testclient import TestClient
 
+from trusted_router.routes.public import INDEXNOW_KEY
+
 
 def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     robots = client.get("/robots.txt")
@@ -65,6 +67,14 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
     assert "trustedrouter/monitor" not in combined
     assert "openrouter.ai" not in combined
+
+
+def test_indexnow_key_file_is_public(client: TestClient) -> None:
+    response = client.get(f"/{INDEXNOW_KEY}.txt")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text.strip() == INDEXNOW_KEY
+    assert "cache-control" in response.headers
 
 
 def test_llms_text_files_are_public_and_do_not_leak_secret_material(

@@ -89,6 +89,7 @@ LEADERBOARD_MIN_SAMPLES = 1
 LEADERBOARD_RECENT_WINDOW_MINUTES = 180
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
+INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
@@ -397,6 +398,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return PlainTextResponse(
             robots_txt(settings),
             headers={"cache-control": "public, max-age=300, s-maxage=3600"},
+        )
+
+    @app.api_route(
+        f"/{INDEXNOW_KEY}.txt",
+        methods=["GET", "HEAD"],
+        response_class=PlainTextResponse,
+        include_in_schema=False,
+    )
+    async def indexnow_key() -> PlainTextResponse:
+        return PlainTextResponse(
+            f"{INDEXNOW_KEY}\n",
+            headers={"cache-control": "public, max-age=86400, s-maxage=86400"},
         )
 
     @app.api_route("/sitemap.xml", methods=["GET", "HEAD"])

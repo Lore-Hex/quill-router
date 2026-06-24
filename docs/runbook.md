@@ -519,11 +519,20 @@ Canonical crawl assets:
 - `https://trustedrouter.com/llms.txt`
 - `https://trustedrouter.com/docs/llms.txt`
 - `https://trustedrouter.com/docs/llms-full.txt`
+- `https://trustedrouter.com/360a02e48445d297f9612a4c3fef878b.txt`
 
 Submit only the sitemap index, not every child sitemap:
 
 ```text
 https://trustedrouter.com/sitemap.xml
+```
+
+Bing-compatible fast indexing uses IndexNow:
+
+```text
+key: 360a02e48445d297f9612a4c3fef878b
+keyLocation: https://trustedrouter.com/360a02e48445d297f9612a4c3fef878b.txt
+endpoint: https://api.indexnow.org/indexnow
 ```
 
 If domain verification fails, diagnose DNS vendor drift before changing
