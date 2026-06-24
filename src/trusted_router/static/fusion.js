@@ -8,6 +8,7 @@
   const KEY_COOKIE = CONFIG.keyCookieName || "tr_chat_key";
   const KEY_STORAGE = "tr_chat_key";
   const HISTORY_KEY = "tr_fusion_runs_v1";
+  const DETAIL_LAYOUT_KEY = "tr_fusion_detail_layout_v1";
 
   const DEFAULT_PANEL = configList("defaultPanel");
   const BUDGET_PANEL = configList("budgetPanel");
@@ -33,6 +34,7 @@
   let pickerEl = null;
   let pickerTargetSet = "panel";
   let pickerQuery = "";
+  let detailLayout = "stacked";
 
   const els = {
     form: document.querySelector("[data-fusion-form]"),
@@ -48,6 +50,7 @@
     runList: document.querySelector("[data-run-list]"),
     newRun: document.querySelector("[data-action='new-fusion']"),
     copyCode: document.querySelector("[data-action='copy-code']"),
+    detailLayoutToggle: document.querySelector("[data-action='toggle-fusion-detail-layout']"),
     presetHelp: document.querySelector("[data-fusion-preset-help]"),
     modelCards: Object.fromEntries(MODEL_SET_KEYS.map((key) => [key, document.querySelector(`[data-fusion-model-cards="${key}"]`)])),
   };
@@ -519,11 +522,23 @@
   }
 
   function completionText(json) {
-    return json?.choices?.[0]?.message?.content || "";
+    const direct = json?.choices?.[0]?.message?.content || "";
+    if (String(direct).trim()) return direct;
+    return finalVisibleAnswer(synthDetails(json));
   }
 
   function synthDetails(json) {
     return json?.trustedrouter?.synth || null;
+  }
+
+  function finalVisibleAnswer(details) {
+    const attempts = Array.isArray(details?.final_attempts) ? details.final_attempts : [];
+    for (let idx = attempts.length - 1; idx >= 0; idx -= 1) {
+      const visible = attempts[idx]?.visible_answer || attempts[idx]?.raw_output || "";
+      if (String(visible).trim()) return visible;
+    }
+    const fallback = details?.final?.visible_answer || details?.final?.raw_output || "";
+    return String(fallback).trim() ? fallback : "";
   }
 
   function formatMeta(json, startedAt) {
@@ -532,6 +547,34 @@
     const route = json?.trustedrouter?.provider || json?.provider || "synth";
     const total = usage.total_tokens || 0;
     return `${ms} ms · ${total ? `${total} tokens · ` : ""}${route}`;
+  }
+
+  function loadDetailLayout() {
+    try {
+      const saved = localStorage.getItem(DETAIL_LAYOUT_KEY);
+      if (saved === "side-by-side" || saved === "stacked") return saved;
+    } catch (_) {}
+    return "stacked";
+  }
+
+  function saveDetailLayout() {
+    try { localStorage.setItem(DETAIL_LAYOUT_KEY, detailLayout); } catch (_) {}
+  }
+
+  function applyDetailLayout() {
+    if (!els.details) return;
+    const sideBySide = detailLayout === "side-by-side";
+    els.details.classList.toggle("is-side-by-side", sideBySide);
+    if (els.detailLayoutToggle) {
+      els.detailLayoutToggle.setAttribute("aria-pressed", sideBySide ? "true" : "false");
+      els.detailLayoutToggle.textContent = sideBySide ? "Stacked" : "Side-by-side";
+    }
+  }
+
+  function toggleDetailLayout() {
+    detailLayout = detailLayout === "side-by-side" ? "stacked" : "side-by-side";
+    saveDetailLayout();
+    applyDetailLayout();
   }
 
   async function postFusion(key, request) {
@@ -775,29 +818,48 @@
     els.title.textContent = "Running";
     els.meta.textContent = "";
     const startedAt = performance.now();
+    let latestDetails = null;
+    let latestOutput = "";
     try {
       const key = await ensureBrowserKey(false);
       const json = await postFusionStream(key, request, {
         output: (text) => {
+          latestOutput = text || latestOutput;
           els.answer.textContent = text || "Streaming final synthesis...";
           els.answer.classList.remove("loading");
         },
-        details: renderDetails,
+        details: (details) => {
+          latestDetails = details || latestDetails;
+          renderDetails(details);
+        },
       });
-      const output = completionText(json);
-      if (!output) throw new Error("Synth returned an empty response.");
+      const details = synthDetails(json) || latestDetails;
+      const output = completionText(json) || latestOutput;
       els.answer.textContent = output;
-      renderDetails(synthDetails(json));
+      renderDetails(details);
       els.answer.classList.remove("loading");
-      els.title.textContent = "Completed";
       els.meta.textContent = formatMeta(json, startedAt);
+      if (!String(output).trim()) {
+        els.title.textContent = "Needs review";
+        els.answer.textContent = "No visible final answer returned. Raw panel, judge, and synthesizer traces are preserved below.";
+        setError("Synth returned an empty final answer. The stream traces were kept so you can inspect which stage failed.");
+        return;
+      }
+      els.title.textContent = "Completed";
       saveRun({ prompt: request.messages[0].content, output, created_at: new Date().toISOString() });
     } catch (err) {
       els.answer.classList.remove("loading");
       els.title.textContent = "Error";
-      els.answer.textContent = "Synth did not complete.";
-      renderDetails(null);
-      setError(err?.message || "Synth failed.");
+      if (latestOutput) {
+        els.answer.textContent = latestOutput;
+      } else {
+        els.answer.textContent = "Synth did not complete. Partial traces are preserved below if the gateway returned any.";
+      }
+      if (latestDetails) {
+        latestDetails.note = [latestDetails.note, `Synth error: ${err?.message || "unknown error"}`].filter(Boolean).join(" ");
+        renderDetails(latestDetails);
+      }
+      setError(`Synth did not complete: ${err?.message || "Synth failed."}`);
     }
   }
 
@@ -870,27 +932,29 @@
       els.details.innerHTML = "";
       return;
     }
+    const viewState = captureDetailViewState();
     const panel = Array.isArray(details.panel) ? details.panel : [];
     const judge = details.judge || null;
     const finalAttempts = Array.isArray(details.final_attempts) ? details.final_attempts : [];
     const pieces = [];
-    pieces.push('<details open><summary>Panel raw thinking and output</summary><div class="fusion-detail-list">');
+    pieces.push('<details open data-detail-section="panel"><summary>Panel raw thinking and output</summary><div class="fusion-detail-list">');
     if (!panel.length) {
       pieces.push('<p class="fusion-muted">No panel details returned.</p>');
     }
     panel.forEach((item, idx) => {
-      pieces.push(renderDetailCard(item, `Panel ${idx + 1}`));
+      pieces.push(renderDetailCard(item, `Panel ${idx + 1}`, `panel-${idx}`));
     });
     pieces.push("</div></details>");
     if (judge) {
-      pieces.push('<details open><summary>Judge raw thinking and output</summary>');
-      pieces.push(renderDetailCard(judge, "Judge"));
+      pieces.push('<details open data-detail-section="judge"><summary>Judge raw thinking and output</summary><div class="fusion-detail-list">');
+      pieces.push(renderDetailCard(judge, "Judge", "judge-0"));
+      pieces.push("</div>");
       pieces.push("</details>");
     }
     if (finalAttempts.length) {
-      pieces.push('<details open><summary>Final synthesizer raw thinking and output</summary><div class="fusion-detail-list">');
+      pieces.push('<details open data-detail-section="final"><summary>Final synthesizer raw thinking and output</summary><div class="fusion-detail-list">');
       finalAttempts.forEach((item, idx) => {
-        pieces.push(renderDetailCard(item, `Final ${idx + 1}`));
+        pieces.push(renderDetailCard(item, `Final ${idx + 1}`, `final-${idx}`));
       });
       pieces.push("</div></details>");
     }
@@ -899,9 +963,11 @@
     }
     els.details.innerHTML = pieces.join("");
     els.details.hidden = false;
+    applyDetailLayout();
+    restoreDetailViewState(viewState);
   }
 
-  function renderDetailCard(item, label) {
+  function renderDetailCard(item, label, cardKey) {
     const model = item?.model || "unknown model";
     const finish = item?.finish_reason ? ` · ${escapeHtml(item.finish_reason)}` : "";
     const usage = item?.input_tokens || item?.output_tokens
@@ -911,24 +977,79 @@
     const raw = item?.raw_output || "";
     const thinking = Array.isArray(item?.thinking) ? item.thinking : [];
     const sections = [
-      `<div class="fusion-detail-section"><span>Visible answer</span><pre>${escapeHtml(visible || "No visible answer returned.")}</pre></div>`,
+      renderDetailSection(cardKey, "visible", "Visible answer", visible || "No visible answer returned."),
     ];
     if (item?.error) {
-      sections.push(`<div class="fusion-detail-section"><span>Error</span><pre>${escapeHtml(item.error)}</pre></div>`);
+      sections.push(renderDetailSection(cardKey, "error", "Error", item.error));
     }
     thinking.forEach((block, idx) => {
       const suffix = block?.signature ? ` · signature ${block.signature}` : "";
-      sections.push(`<div class="fusion-detail-section"><span>Raw thinking ${idx + 1}${escapeHtml(suffix)}</span><pre>${escapeHtml(block?.text || "")}</pre></div>`);
+      sections.push(renderDetailSection(cardKey, `thinking-${idx}`, `Raw thinking ${idx + 1}${suffix}`, block?.text || ""));
     });
     if (raw) {
-      sections.push(`<div class="fusion-detail-section"><span>Raw provider output</span><pre>${escapeHtml(raw)}</pre></div>`);
+      sections.push(renderDetailSection(cardKey, "raw", "Raw provider output", raw));
     }
     return [
-      '<article class="fusion-detail-card">',
+      `<article class="fusion-detail-card" data-detail-card="${escapeHtml(cardKey)}">`,
       `<div class="fusion-detail-card-head"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(model)}${finish}${usage}</span></div>`,
+      '<div class="fusion-detail-card-body">',
       sections.join(""),
+      "</div>",
       "</article>",
     ].join("");
+  }
+
+  function renderDetailSection(cardKey, sectionKey, label, value) {
+    const scrollKey = `${cardKey}:${sectionKey}`;
+    return [
+      '<div class="fusion-detail-section">',
+      `<span>${escapeHtml(label)}</span>`,
+      `<pre data-scroll-key="${escapeHtml(scrollKey)}">${escapeHtml(value)}</pre>`,
+      "</div>",
+    ].join("");
+  }
+
+  function captureDetailViewState() {
+    if (!els.details || els.details.hidden) return null;
+    const state = {
+      windowY: window.scrollY,
+      detailsScrollTop: els.details.scrollTop,
+      openSections: {},
+      scrollTops: {},
+    };
+    els.details.querySelectorAll("[data-detail-section]").forEach((node) => {
+      state.openSections[node.dataset.detailSection] = node.open;
+    });
+    els.details.querySelectorAll("[data-scroll-key]").forEach((node) => {
+      state.scrollTops[node.dataset.scrollKey] = node.scrollTop;
+    });
+    return state;
+  }
+
+  function restoreDetailViewState(state) {
+    if (!state || !els.details) return;
+    Object.entries(state.openSections || {}).forEach(([key, open]) => {
+      const node = els.details.querySelector(`[data-detail-section="${cssEscape(key)}"]`);
+      if (node) node.open = open;
+    });
+    els.details.scrollTop = state.detailsScrollTop || 0;
+    Object.entries(state.scrollTops || {}).forEach(([key, top]) => {
+      const node = els.details.querySelector(`[data-scroll-key="${cssEscape(key)}"]`);
+      if (node) node.scrollTop = top;
+    });
+    window.requestAnimationFrame(() => {
+      els.details.scrollTop = state.detailsScrollTop || 0;
+      Object.entries(state.scrollTops || {}).forEach(([key, top]) => {
+        const node = els.details.querySelector(`[data-scroll-key="${cssEscape(key)}"]`);
+        if (node) node.scrollTop = top;
+      });
+      if (Math.abs(window.scrollY - state.windowY) > 4) window.scrollTo(0, state.windowY);
+    });
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, "\\$&");
   }
 
   function loadHistory() {
@@ -994,6 +1115,8 @@
   }
 
   function init() {
+    detailLayout = loadDetailLayout();
+    applyDetailLayout();
     applyPreset(els.preset.value || "budget");
     renderAllModelSets();
     renderHistory(loadHistory());
@@ -1004,6 +1127,7 @@
       renderCode();
       try { await navigator.clipboard.writeText(els.code.textContent); } catch (_) {}
     });
+    els.detailLayoutToggle?.addEventListener("click", toggleDetailLayout);
     els.preset.addEventListener("change", () => {
       applyPreset(els.preset.value || "budget");
       renderCode();

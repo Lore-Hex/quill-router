@@ -136,6 +136,7 @@ def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClien
     assert "/static/fusion.css" in response.text
     assert "/static/fusion.js" in response.text
     assert "synthesize_non_refusals" in response.text
+    assert 'data-action="toggle-fusion-detail-layout"' in response.text
     assert "moonshotai/kimi-k2.7-code" in response.text
     assert "z-ai/glm-5.2" in response.text
     assert client.head("/synth").status_code == 200

@@ -129,6 +129,7 @@ def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestCl
     assert "trustedrouter/synth" in body
     assert "raw thinking when returned" in body
     assert "data-fusion-details" in body
+    assert 'data-action="toggle-fusion-detail-layout"' in body
     assert '<option value="budget" selected>Budget panel</option>' in body
     assert '<option value="frontier">Frontier panel</option>' in body
     assert "Panel models" in body
