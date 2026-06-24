@@ -51,7 +51,7 @@
           </label>
           <label class="fusion-field">
             Max tokens
-            <input data-fusion-max-tokens type="number" min="64" max="4096" step="1" value="900">
+            <input data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048">
           </label>
         </div>
 
@@ -65,7 +65,7 @@
 
         <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="judges">
           <div class="fusion-model-set-head">
-            <span>Judge and fallback</span>
+            <span>Judge and fallback judge</span>
             <button class="fusion-model-reset" type="button" data-fusion-model-reset="judges">Reset</button>
           </div>
           <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="judges"></div>
@@ -73,7 +73,7 @@
 
         <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="finals">
           <div class="fusion-model-set-head">
-            <span>Synthesizer and fallback</span>
+            <span>Synthesizer and fallback synthesizer</span>
             <button class="fusion-model-reset" type="button" data-fusion-model-reset="finals">Reset</button>
           </div>
           <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="finals"></div>
@@ -136,7 +136,7 @@
       "google/gemini-3.1-pro",
       "moonshotai/kimi-k2.6"
     ],
-    defaultJudges: ["moonshotai/kimi-k2.7-code", "minimax/minimax-m3"],
+    defaultJudges: ["moonshotai/kimi-k2.6", "minimax/minimax-m3"],
     defaultFinals: ["z-ai/glm-5.2", "minimax/minimax-m3"],
     suggestedModels: [
       "minimax/minimax-m3",

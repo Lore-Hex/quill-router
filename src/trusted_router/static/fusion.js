@@ -147,7 +147,7 @@
     const panel = splitModels(modelSets.panel);
     const judges = splitModels(modelSets.judges);
     const finals = splitModels(modelSets.finals);
-    const maxTokens = Math.max(64, Math.min(4096, Number(els.maxTokens.value || 900)));
+    const maxTokens = Math.max(64, Math.min(8192, Number(els.maxTokens.value || 2048)));
     return {
       model: "trustedrouter/synth",
       stream: true,

@@ -13,7 +13,7 @@
     <ul class="check-list">
       <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
       <li>Judge and final models can each have up to 8 fallbacks.</li>
-      <li>Default quality mode judges with Kimi K2.7 Code, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
+      <li>Default quality mode judges with Kimi K2.6, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
       <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
       <li>TrustedRouter stores billing and route metadata, not prompt/output content by default.</li>
     </ul>
@@ -62,7 +62,7 @@
         The judge sees the panel outputs and produces an internal assessment.
         <code>judge_models</code>, <code>fallback_judges</code>, and
         <code>judges</code> are aliases for the same ordered fallback list. If
-        omitted, Kimi K2.7 Code is the first judge and MiniMax M3 is the fallback.
+        omitted, Kimi K2.6 is the first judge and MiniMax M3 is the fallback judge.
       </p>
     </div>
     <div class="marketing-card">
@@ -71,7 +71,7 @@
         The final model writes the visible answer. <code>final_models</code>,
         <code>fallback_final_models</code>, <code>synthesis_models</code>, and
         <code>synthesizer_models</code> are aliases for that ordered fallback list.
-        If omitted, GLM 5.2 is the first final synthesizer and MiniMax M3 is the fallback.
+        If omitted, GLM 5.2 is the first final synthesizer and MiniMax M3 is the fallback synthesizer.
       </p>
     </div>
   </div>
@@ -88,7 +88,7 @@
           <tr><td><code>analysis_models</code></td><td>Panel model IDs. Must contain 1 to 8 models.</td></tr>
           <tr><td><code>model</code></td><td>Legacy shorthand for the judge/final model when specific fallback lists are not supplied.</td></tr>
           <tr><td><code>selection_strategy</code></td><td><code>synthesize</code>, <code>synthesize_non_refusals</code>, <code>first_success</code>, or <code>first_non_refusal</code>. The default is <code>synthesize_non_refusals</code>.</td></tr>
-          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>. Defaults to Kimi K2.7 Code, then MiniMax M3.</td></tr>
+          <tr><td><code>judge_models</code></td><td>Ordered judge fallback list. Also accepts <code>fallback_judges</code> or <code>judges</code>. Defaults to Kimi K2.6, then MiniMax M3.</td></tr>
           <tr><td><code>final_models</code></td><td>Ordered final-answer fallback list. Also accepts <code>fallback_final_models</code>, <code>synthesis_models</code>, or <code>synthesizer_models</code>. Defaults to GLM 5.2, then MiniMax M3.</td></tr>
           <tr><td><code>max_completion_tokens</code></td><td>Caps each internal panel, judge, and final completion.</td></tr>
           <tr><td><code>max_tool_calls</code></td><td>Reserved compatibility field, accepted from 1 to 16.</td></tr>

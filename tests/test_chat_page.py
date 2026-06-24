@@ -140,4 +140,7 @@ def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestCl
     assert "openai/gpt-5.5" in body
     assert "anthropic/claude-opus-4.8" in body
     assert "moonshotai/kimi-k2.6" in body
-    assert 'data-fusion-max-tokens type="number" min="64" max="4096" step="1" value="900"' in body
+    assert "Judge and fallback judge" in body
+    assert "Synthesizer and fallback synthesizer" in body
+    assert "defaultJudges: [\"moonshotai/kimi-k2.6\", \"minimax/minimax-m3\"]" in body
+    assert 'data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048"' in body
