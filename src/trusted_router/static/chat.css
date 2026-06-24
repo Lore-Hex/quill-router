@@ -155,7 +155,9 @@
 .chat-main {
     display: flex;
     flex-direction: column;
+    min-height: 0;
     min-width: 0;
+    overflow: hidden;
     background: var(--chat-bg);
 }
 
@@ -319,6 +321,7 @@
 
 .chat-thread {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 24px 16px 16px;
     display: flex;

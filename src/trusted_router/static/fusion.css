@@ -116,7 +116,6 @@
 
 .fusion-kicker {
   color: var(--fusion-accent);
-  text-transform: uppercase;
   letter-spacing: .1em;
   font-size: 11px;
   font-weight: 800;
@@ -188,6 +187,13 @@
   font-weight: 700;
 }
 
+.fusion-help {
+  color: var(--fusion-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 .fusion-field input,
 .fusion-field select,
 .fusion-field textarea {
@@ -200,9 +206,6 @@
   font: 13px/1.45 var(--fusion-font);
 }
 
-.fusion-field textarea[data-fusion-panel],
-.fusion-field input[data-fusion-judges],
-.fusion-field input[data-fusion-finals],
 .fusion-code code {
   font-family: var(--fusion-mono);
 }
@@ -213,6 +216,39 @@
   outline: none;
   border-color: #456087;
   box-shadow: 0 0 0 3px rgba(69, 96, 135, .35);
+}
+
+.fusion-model-set {
+  display: grid;
+  gap: 8px;
+}
+
+.fusion-model-set-head {
+  align-items: center;
+  color: var(--fusion-muted);
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  justify-content: space-between;
+}
+
+.fusion-model-reset {
+  background: transparent;
+  border: 0;
+  color: var(--fusion-blue);
+  cursor: pointer;
+  font: 700 11px/1 var(--fusion-font);
+  padding: 4px 0;
+}
+
+.fusion-model-cards {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  display: flex;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0;
 }
 
 .fusion-options {
@@ -238,6 +274,91 @@
   white-space: pre-wrap;
   font: 14px/1.65 var(--fusion-font);
   overflow: auto;
+}
+
+.fusion-details {
+  border-top: 1px solid var(--fusion-border);
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px 16px;
+}
+
+.fusion-details details {
+  border: 1px solid var(--fusion-border);
+  border-radius: var(--fusion-radius);
+  background: rgba(7, 11, 20, .55);
+  margin-bottom: 10px;
+}
+
+.fusion-details summary {
+  cursor: pointer;
+  color: var(--fusion-ink);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.fusion-detail-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.fusion-detail-card {
+  border: 1px solid var(--fusion-border);
+  border-radius: var(--fusion-radius);
+  background: #080d16;
+  overflow: hidden;
+}
+
+.fusion-detail-card-head {
+  align-items: center;
+  border-bottom: 1px solid var(--fusion-border);
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.fusion-detail-card-head strong {
+  font-size: 12px;
+}
+
+.fusion-detail-card-head span,
+.fusion-detail-note {
+  color: var(--fusion-muted);
+  font-size: 11px;
+}
+
+.fusion-detail-section {
+  border-top: 1px solid var(--fusion-border);
+}
+
+.fusion-detail-card-head + .fusion-detail-section {
+  border-top: 0;
+}
+
+.fusion-detail-section > span {
+  color: var(--fusion-muted);
+  display: block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  padding: 8px 10px 0;
+}
+
+.fusion-detail-card pre {
+  color: var(--fusion-ink);
+  font: 12px/1.55 var(--fusion-font);
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
+.fusion-detail-note {
+  margin: 8px 2px 0;
 }
 
 .fusion-answer.loading {

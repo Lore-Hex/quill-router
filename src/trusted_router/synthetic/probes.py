@@ -652,6 +652,7 @@ def _sse_line_has_content(line: str) -> bool:
             delta.get("content")
             or delta.get("reasoning_content")
             or delta.get("reasoning")
+            or delta.get("thinking")
             or delta.get("text")
             or delta.get("output_text")
         ):
@@ -661,6 +662,7 @@ def _sse_line_has_content(line: str) -> bool:
             message.get("content")
             or message.get("reasoning_content")
             or message.get("reasoning")
+            or message.get("thinking")
             or message.get("text")
         ):
             return True

@@ -60,6 +60,15 @@
       </div>
       <div class="chat-header-actions">
         <button class="btn chat-header-btn" type="button" data-action="toggle-system-prompt" title="System prompt">Sys</button>
+        <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="clear-chat" title="Clear current chat" aria-label="Clear current chat">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 4 H13" />
+            <path d="M6 4 V3 H10 V4" />
+            <path d="M5 6 L5.5 13 H10.5 L11 6" />
+            <path d="M7 7.5 V11.5" />
+            <path d="M9 7.5 V11.5" />
+          </svg>
+        </button>
         <button class="btn chat-header-btn chat-header-btn-icon" type="button" data-action="enter-voice-mode" title="Voice mode" aria-label="Voice mode">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="6" y="2" width="4" height="8" rx="2" />
@@ -171,5 +180,6 @@
    constraints. Optional — if it fails to load, share falls back to
    raw base64 which is bigger but still works for small chats. #}
 <script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+<script src="/static/model_catalog.js?v={{ static_version|default('local') }}" defer></script>
 <script src="/static/chat.js?v={{ static_version|default('local') }}" defer></script>
 {% endblock %}

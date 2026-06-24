@@ -1604,12 +1604,17 @@ def test_sse_line_has_content_detects_visible_deltas() -> None:
     assert _sse_line_has_content('data: {"choices":[{"delta":{"content":"PONG"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"delta":{"reasoning_content":"x"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"delta":{"reasoning":"x"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"delta":{"thinking":"x"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"delta":{"text":"x"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"message":{"content":"PONG"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"message":{"reasoning":"PONG"}}]}')
+    assert _sse_line_has_content('data: {"choices":[{"message":{"thinking":"PONG"}}]}')
     assert _sse_line_has_content('data: {"choices":[{"text":"PONG"}]}')
     # role-only opener, [DONE], and non-data lines are NOT first content.
     assert not _sse_line_has_content('data: {"choices":[{"delta":{"role":"assistant"}}]}')
+    assert not _sse_line_has_content(
+        'data: {"choices":[],"trustedrouter":{"synth":{"event":"panel.thinking_delta","text":"x"}}}'
+    )
     assert not _sse_line_has_content("data: [DONE]")
     assert not _sse_line_has_content(": keep-alive")
 
@@ -1693,6 +1698,41 @@ async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
     assert sample.ttfb_milliseconds is not None
     assert sample.first_token_milliseconds is not None
     assert sample.elapsed_milliseconds is not None
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_counts_reasoning_as_token_flow() -> None:
+    body = (
+        b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+        b'data: {"choices":[{"delta":{"thinking":"checking PONG"}}]}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(
+            200,
+            headers={
+                "x-trustedrouter-provider": "zai",
+                "x-trustedrouter-served-model": "z-ai/glm-5.2",
+            },
+            content=body,
+        )
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="zai",
+            model="z-ai/glm-5.2",
+        )
+
+    assert sample.status == "success"
+    assert sample.first_token_milliseconds is not None
+    assert sample.error_type is None
 
 
 @pytest.mark.asyncio

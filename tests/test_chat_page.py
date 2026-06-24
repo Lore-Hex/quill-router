@@ -44,6 +44,7 @@ def test_chat_page_renders_without_auth() -> None:
     assert "data-chat-thread" in body
     assert "data-chat-input" in body
     assert "data-chat-send" in body
+    assert 'data-action="clear-chat"' in body
 
     # The marketing chrome's sign-in modal trigger is reachable
     # (this is what the Send-button gate fall back to when signed-out)
@@ -56,6 +57,7 @@ def test_chat_page_renders_without_auth() -> None:
     assert "tr_chat_key" in body  # keyCookieName
 
     # Static assets are referenced
+    assert "/static/model_catalog.js" in body
     assert "/static/chat.js" in body
     assert "/static/chat.css" in body
 
@@ -117,3 +119,24 @@ def test_chat_page_render_does_not_require_models_list() -> None:
     # `<option>` or `<li data-model-id>` elements; assert this stays
     # minimal.)
     assert resp.text.count("data-model-id") == 0
+
+
+def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestClient) -> None:
+    resp = client.get("/synth")
+    assert resp.status_code == 200
+    body = resp.text
+
+    assert "trustedrouter/synth" in body
+    assert "raw thinking when returned" in body
+    assert "data-fusion-details" in body
+    assert '<option value="budget" selected>Budget panel</option>' in body
+    assert '<option value="frontier">Frontier panel</option>' in body
+    assert "Panel models" in body
+    assert 'data-fusion-model-cards="panel"' in body
+    assert "/static/model_catalog.js" in body
+    assert "data-fusion-panel" not in body
+    assert "deepseek/deepseek-v4-flash" in body
+    assert "openai/gpt-5.5" in body
+    assert "anthropic/claude-opus-4.8" in body
+    assert "moonshotai/kimi-k2.6" in body
+    assert 'data-fusion-max-tokens type="number" min="64" max="4096" step="1" value="900"' in body

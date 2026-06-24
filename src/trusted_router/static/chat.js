@@ -346,14 +346,18 @@
         if (MODELS_LOADING || MODELS.length > 0) return;
         MODELS_LOADING = true;
         try {
-            const resp = await fetch(CATALOG_BASE + "/models");
-            if (!resp.ok) throw new Error("models fetch " + resp.status);
-            const json = await resp.json();
-            const data = Array.isArray(json.data) ? json.data : [];
-            // Each model has top-level id + an OpenRouter-shaped
-            // pricing block; TR also surfaces a `trustedrouter`
-            // extension with provider-specific context.
-            MODELS = data.map((m) => normalizeModel(m));
+            if (window.TrustedRouterModelCatalog) {
+                MODELS = await window.TrustedRouterModelCatalog.loadModels(CATALOG_BASE);
+            } else {
+                const resp = await fetch(CATALOG_BASE + "/models");
+                if (!resp.ok) throw new Error("models fetch " + resp.status);
+                const json = await resp.json();
+                const data = Array.isArray(json.data) ? json.data : [];
+                // Each model has top-level id + an OpenRouter-shaped
+                // pricing block; TR also surfaces a `trustedrouter`
+                // extension with provider-specific context.
+                MODELS = data.map((m) => normalizeModel(m));
+            }
             renderModelPicker();
         } catch (e) {
             console.warn("chat: model catalog load failed:", e);
@@ -363,6 +367,9 @@
     }
 
     function normalizeModel(raw) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.normalizeModel(raw);
+        }
         const pricing = raw.pricing || {};
         const ext = raw.trustedrouter || {};
         // Pricing in OpenAI shape is dollars per token; convert to
@@ -408,6 +415,9 @@
     // won't match it. Picky over generous so we don't promise
     // capabilities a model doesn't have.
     function inferCapabilities(id) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.inferCapabilities(id);
+        }
         const i = (id || "").toLowerCase();
         const caps = [];
         // Vision-capable families (image input via /chat/completions
@@ -496,6 +506,33 @@
         renderModelsBar();
         renderThread();
         renderSystemPrompt();
+    }
+
+    function clearCurrentChat() {
+        const chat = ensureActiveChat();
+        if (!chat.messages.length && !(chat._pending_attachments || []).length) {
+            showToast("Current chat is already empty");
+            return;
+        }
+        confirmModal({
+            title: "Clear current chat?",
+            message: "Messages and pending attachments in this chat will be removed. Model settings stay the same.",
+            confirmText: "Clear chat",
+            danger: true,
+        }).then((ok) => {
+            if (!ok) return;
+            chat.messages = [];
+            chat._pending_attachments = [];
+            chat.title = "New chat";
+            chat.updated_at = isoNow();
+            saveState();
+            renderSidebar();
+            renderModelsBar();
+            renderThread();
+            renderAttachmentTray();
+            updateInputEstimate();
+            showToast("Chat cleared");
+        });
     }
 
     function setActiveChat(chatId) {
@@ -2141,6 +2178,9 @@
     // of "openai/gpt-5.4-nano", etc. Falls back to the whole id when
     // there's no "/" (some catalog entries use unqualified ids).
     function providerFromModelId(id) {
+        if (window.TrustedRouterModelCatalog) {
+            return window.TrustedRouterModelCatalog.providerFromModelId(id);
+        }
         if (!id || typeof id !== "string") return "";
         const slash = id.indexOf("/");
         return slash > 0 ? id.slice(0, slash) : id;
@@ -2650,6 +2690,9 @@
                             (delta &&
                             typeof delta.reasoning_content === "string"
                                 ? delta.reasoning_content
+                                : "") ||
+                            (delta && typeof delta.thinking === "string"
+                                ? delta.thinking
                                 : "");
                         if (reasoningText) {
                             respSlot.reasoning =
@@ -4123,6 +4166,10 @@
             if (toggle) {
                 const panel = document.querySelector("[data-chat-system-prompt]");
                 if (panel) panel.hidden = !panel.hidden;
+                return;
+            }
+            if (target.closest('[data-action="clear-chat"]')) {
+                clearCurrentChat();
                 return;
             }
             const hamburger = target.closest('[data-action="toggle-sidebar"]');
