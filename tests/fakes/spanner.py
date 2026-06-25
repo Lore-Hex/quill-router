@@ -13,6 +13,41 @@ class _ParamTypes:
     TIMESTAMP = "TIMESTAMP"
 
 
+# Real Spanner column DEFAULTs for the typed counter tables (every counter is
+# NOT NULL DEFAULT(0) in the DDL). The fake fills these on INSERT so a
+# subset-column insert_or_update — which is what the ownership-split mirror does
+# now, writing only the JSON-owned columns — still yields a complete row whose
+# typed-DML-owned counters start at 0.
+_TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
+    "tr_credit_balance": {"total_credits": 0, "total_usage": 0, "reserved": 0},
+    "tr_key_limit": {
+        "limit_micro": None,
+        "usage": 0,
+        "byok_usage": 0,
+        "reserved": 0,
+        "include_byok": True,
+    },
+}
+
+
+def _apply_upsert_typed(
+    typed: dict, versions: dict, table: str, columns: Any, value_tuple: tuple, version: int
+) -> None:
+    """Model real Spanner insert_or_update on a typed counter table: on INSERT
+    fill the NOT NULL DEFAULT columns the write omitted; on UPDATE touch ONLY
+    the supplied columns and leave the rest intact. Shared by the transaction
+    and batch commit paths so the ownership-split mirror behaves identically
+    through either writer (a partial mirror must never clobber typed counters)."""
+    pk = (value_tuple[0], value_tuple[1])
+    incoming = dict(zip(columns, value_tuple, strict=True))
+    table_rows = typed.setdefault(table, {})
+    existing = table_rows.get(pk)
+    row = dict(existing) if existing is not None else dict(_TYPED_DEFAULTS.get(table, {}))
+    row.update(incoming)
+    table_rows[pk] = row
+    versions[(table, pk)] = version
+
+
 @dataclass
 class _KeySet:
     keys: list[tuple]
@@ -129,11 +164,9 @@ class FakeSpannerDatabase:
                     self.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    pk = (value_tuple[0], value_tuple[1])
-                    self.typed.setdefault(table, {})[pk] = dict(
-                        zip(columns, value_tuple, strict=True)
+                    _apply_upsert_typed(
+                        self.typed, self.typed_versions, table, columns, value_tuple, new_version
                     )
-                    self.typed_versions[(table, pk)] = new_version
                 elif op[0] == "update_typed":  # conditional-DML write
                     _, table, pk, record = op
                     self.typed.setdefault(table, {})[pk] = record
@@ -410,11 +443,9 @@ class _FakeBatch:
                     self.db.rows.pop((kind, entity_id), None)
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
-                    pk = (value_tuple[0], value_tuple[1])
-                    self.db.typed.setdefault(table, {})[pk] = dict(
-                        zip(columns, value_tuple, strict=True)
+                    _apply_upsert_typed(
+                        self.db.typed, self.db.typed_versions, table, columns, value_tuple, new_version
                     )
-                    self.db.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.db.typed.get(table, {}).pop(pk, None)

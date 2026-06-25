@@ -268,9 +268,12 @@ def test_release_key_settles_usage_and_byok() -> None:
 
 def test_reserve_key_include_byok_true_counts_byok_usage() -> None:
     """With include_byok=true, prior BYOK usage consumes the cap headroom."""
-    store, _db, _ = make_fake_store()
+    store, db, _ = make_fake_store()
     key = _make_key(store, "ws_ib", limit=1_000_000, include_byok=True)
-    store.api_keys.add_usage(key.hash, 400_000, is_byok=True)  # byok_usage=400k
+    # BYOK usage is typed-DML-owned; the legacy JSON add_usage no longer
+    # propagates into the typed row after the ownership split, so seed the typed
+    # byok_usage directly (this is what reserve_key reads for the cap math).
+    db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["byok_usage"] = 400_000
     pt = store._param_types
     # available = 1_000_000 - 0 - 400_000 - 0 = 600_000
     assert store._database.run_in_transaction(

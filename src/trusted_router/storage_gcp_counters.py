@@ -28,23 +28,27 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 # Long tail lives entirely on shard 0; sharding a whale is a data change later.
 UNSHARDED = 0
 
+# OWNERSHIP SPLIT (2026-06-25 incident). The JSON->typed mirror writes ONLY the
+# columns JSON owns. `total_credits` is set by credit events (top-ups / grants /
+# refunds-as-credit, all via credit_workspace_once). `reserved` + `total_usage`
+# are owned by the typed authorize/finalize DML, so the mirror must NOT write
+# them — a full-row mirror clobbers an in-flight typed hold and the next finalize
+# fails "release row-count != 1". Columns dropped from the mirror keep their
+# NOT NULL DEFAULT(0), so a first-write insert still lands reserved/total_usage=0.
 CREDIT_BALANCE_COLUMNS = (
     "workspace_id",
     "shard",
     "total_credits",
-    "total_usage",
-    "reserved",
     "source_updated_at",
     "updated_at",
 )
 
+# Same split for keys: JSON owns config (limit_micro, include_byok); the typed
+# DML owns usage / byok_usage / reserved. Mirror config only.
 KEY_LIMIT_COLUMNS = (
     "key_hash",
     "shard",
     "limit_micro",
-    "usage",
-    "byok_usage",
-    "reserved",
     "include_byok",
     "source_updated_at",
     "updated_at",
@@ -59,28 +63,27 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
 
 
 def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> tuple:
-    """Exact post-write mirror of a `credit` row into tr_credit_balance."""
+    """Mirror the JSON-owned `total_credits` of a `credit` row into
+    tr_credit_balance. reserved + total_usage are typed-DML-owned and are
+    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS)."""
     return (
         workspace_id,
         UNSHARDED,
         int(_field(value, "total_credits_microdollars", 0)),
-        int(_field(value, "total_usage_microdollars", 0)),
-        int(_field(value, "reserved_microdollars", 0)),
         commit_ts,  # source_updated_at — the JSON row's updated_at, same commit
         commit_ts,  # this mirror's updated_at
     )
 
 
 def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:
-    """Exact post-write mirror of an `api_key` row into tr_key_limit."""
+    """Mirror the JSON-owned config (limit_micro, include_byok) of an `api_key`
+    row into tr_key_limit. usage / byok_usage / reserved are typed-DML-owned and
+    are deliberately NOT mirrored (see KEY_LIMIT_COLUMNS)."""
     limit = _field(value, "limit_microdollars", None)
     return (
         key_hash,
         UNSHARDED,
         None if limit is None else int(limit),
-        int(_field(value, "usage_microdollars", 0)),
-        int(_field(value, "byok_usage_microdollars", 0)),
-        int(_field(value, "reserved_microdollars", 0)),
         bool(_field(value, "include_byok_in_limit", True)),
         commit_ts,
         commit_ts,
@@ -141,18 +144,16 @@ def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module:
 
 # (json body field, typed column, default-when-the-json-field-is-absent).
 # Defaults MUST match the model + the mirror writer so legacy JSON rows that
-# omit a field don't read as false drift: int counters -> 0, an uncapped key's
-# limit -> None, include_byok -> True.
+# omit a field don't read as false drift.
+# OWNERSHIP SPLIT (2026-06-25): only the JSON-owned columns are comparable. The
+# typed DML owns reserved/total_usage (credit) and usage/byok_usage/reserved
+# (key); JSON is intentionally stale for those after typed enforcement, so they
+# are NOT drift-checked (and the mirror/backfill no longer write them).
 CREDIT_DRIFT_FIELDS = (
     ("total_credits_microdollars", "total_credits", 0),
-    ("total_usage_microdollars", "total_usage", 0),
-    ("reserved_microdollars", "reserved", 0),
 )
 KEY_DRIFT_FIELDS = (
     ("limit_microdollars", "limit_micro", None),
-    ("usage_microdollars", "usage", 0),
-    ("byok_usage_microdollars", "byok_usage", 0),
-    ("reserved_microdollars", "reserved", 0),
     ("include_byok_in_limit", "include_byok", True),
 )
 

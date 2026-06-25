@@ -1,9 +1,14 @@
-"""Step 1 of the billing typed-column migration: exact-mirror dual-write.
+"""Billing typed-column migration: the JSON->typed mirror and its OWNERSHIP SPLIT.
 
-Verifies that every JSON `credit` / `api_key` write also lands an exact mirror
-row on the typed tables (tr_credit_balance / tr_key_limit) in the SAME
-transaction, so the typed row can never tear from the authoritative JSON row.
-Enforcement is unchanged in Step 1 — this only proves the mirror tracks truth.
+The mirror propagates only the columns JSON owns — total_credits (credit) and
+limit_micro / include_byok (key config). reserved + total_usage (credit) and
+usage / byok_usage / reserved (key) are owned by the typed authorize/finalize
+DML; the mirror must NOT write them or it clobbers an in-flight typed hold (the
+2026-06-25 "typed finalize failed: release row-count != 1" incident).
+
+These tests prove total_credits/config still track JSON, that a JSON write can
+never clobber a typed-DML-owned hold, and that the drift comparator only flags
+JSON-owned columns.
 
 See docs/design/billing-typed-counters.md.
 """
@@ -13,7 +18,12 @@ from __future__ import annotations
 import json
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, GatewayAuthorization
+from trusted_router.storage import CreditAccount
+from trusted_router.storage_gcp_counter_dml import (
+    release_credit,
+    reserve_credit,
+    reserve_key,
+)
 from trusted_router.storage_gcp_counter_reconcile import backfill, compare
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_TABLE,
@@ -39,125 +49,113 @@ def _typed_key(db, key_hash: str) -> dict:
     return db.typed[KEY_LIMIT_TABLE][(key_hash, 0)]
 
 
-def assert_credit_mirror_matches(db, workspace_id: str) -> None:
-    """The typed credit row must equal the authoritative JSON counters (drift 0)."""
+def assert_credit_total_mirrored(db, workspace_id: str) -> None:
+    """The mirror propagates ONLY the JSON-owned total_credits. reserved +
+    total_usage are typed-DML-owned and are deliberately NOT sourced from JSON."""
     j = _json_credit(db, workspace_id)
     t = _typed_credit(db, workspace_id)
     assert t["total_credits"] == j["total_credits_microdollars"], (j, t)
-    assert t["total_usage"] == j["total_usage_microdollars"], (j, t)
-    assert t["reserved"] == j["reserved_microdollars"], (j, t)
     assert t["shard"] == 0
 
 
-def assert_key_mirror_matches(db, key_hash: str) -> None:
+def assert_key_config_mirrored(db, key_hash: str) -> None:
+    """The mirror propagates ONLY the JSON-owned config (limit_micro,
+    include_byok). usage / byok_usage / reserved are typed-DML-owned."""
     j = _json_key(db, key_hash)
     t = _typed_key(db, key_hash)
     assert t["limit_micro"] == j["limit_microdollars"], (j, t)
-    assert t["usage"] == j["usage_microdollars"], (j, t)
-    assert t["byok_usage"] == j["byok_usage_microdollars"], (j, t)
-    assert t["reserved"] == j["reserved_microdollars"], (j, t)
     assert t["include_byok"] == j["include_byok_in_limit"], (j, t)
     assert t["shard"] == 0
 
 
-def test_credit_seed_and_reserve_mirror_tracks_json() -> None:
+def test_credit_total_credits_is_mirrored() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_mirror"
     store._write_entity(
         "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
     )
-    assert_credit_mirror_matches(db, ws)
+    assert_credit_total_mirrored(db, ws)
+    assert _typed_credit(db, ws)["total_credits"] == 1_000_000
+    # A later credit event (top-up) re-mirrors the new total_credits.
+    store.credit_workspace_once(ws, 500_000, "evt_topup")
+    assert _typed_credit(db, ws)["total_credits"] == 1_500_000
 
+
+def test_json_credit_reserve_does_not_propagate_to_typed_reserved() -> None:
+    """A legacy JSON-path reserve updates JSON.reserved, but the mirror does NOT
+    carry it into the typed-DML-owned tr_credit_balance.reserved."""
+    store, db, _ = make_fake_store()
+    ws = "ws_legacy_reserve"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
     store.reserve(ws, "key_1", 250_000)
     assert _json_credit(db, ws)["reserved_microdollars"] == 250_000
-    assert_credit_mirror_matches(db, ws)
-    assert _typed_credit(db, ws)["reserved"] == 250_000
+    # total_credits still mirrored; reserved stays at the typed default (0).
+    assert_credit_total_mirrored(db, ws)
+    assert _typed_credit(db, ws)["reserved"] == 0
 
 
-def test_credit_settle_mirror_tracks_json() -> None:
+def test_json_credit_write_does_not_clobber_typed_hold() -> None:
+    """THE 2026-06-25 incident reproduction. A typed-DML hold sits in
+    tr_credit_balance.reserved; a JSON credit write (top-up) fires the mirror.
+    Before the ownership split the mirror overwrote reserved with the stale JSON
+    value (0), so the next typed finalize failed 'release row-count != 1'. Now
+    the hold is untouched and the release succeeds."""
     store, db, _ = make_fake_store()
-    ws = "ws_settle_mirror"
+    ws = "ws_clobber"
     store._write_entity(
-        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=2_000_000)
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
     )
-    reservation = store.reserve(ws, "key_1", 500_000)
-    assert_credit_mirror_matches(db, ws)
+    pt = store._param_types
+    # take a typed hold via the conditional-DML path
+    assert store._database.run_in_transaction(lambda t: reserve_credit(t, pt, ws, 300_000))
+    assert _typed_credit(db, ws)["reserved"] == 300_000
 
-    store.settle(reservation.id, 480_000)
-    j = _json_credit(db, ws)
-    assert j["reserved_microdollars"] == 0
-    assert j["total_usage_microdollars"] == 480_000
-    assert_credit_mirror_matches(db, ws)
+    # a JSON credit top-up (mirror fires) must NOT clobber the in-flight hold
+    store.credit_workspace_once(ws, 500_000, "evt_topup")
+    assert _typed_credit(db, ws)["total_credits"] == 1_500_000  # credit applied
+    assert _typed_credit(db, ws)["reserved"] == 300_000  # hold preserved
+
+    # the typed release still finds its hold: row-count == 1, NOT the incident's 0
+    assert store._database.run_in_transaction(
+        lambda t: release_credit(t, pt, ws, 300_000, 290_000)
+    ) == 1
+    assert _typed_credit(db, ws)["reserved"] == 0
+    assert _typed_credit(db, ws)["total_usage"] == 290_000
 
 
-def test_api_key_create_update_and_limit_mirror_tracks_json() -> None:
+def test_api_key_config_is_mirrored_usage_is_not() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_key_mirror"
     _raw, key = store.api_keys.create(
         workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=1_000_000
     )
-    assert_key_mirror_matches(db, key.hash)
-
-    store.reserve_key_limit(key.hash, 400_000, usage_type="Credits")
-    assert _json_key(db, key.hash)["reserved_microdollars"] == 400_000
-    assert_key_mirror_matches(db, key.hash)
-
+    assert_key_config_mirrored(db, key.hash)
+    # A legacy JSON usage write updates JSON but not the typed-owned usage.
     store.api_keys.add_usage(key.hash, 120_000, is_byok=False)
     assert _json_key(db, key.hash)["usage_microdollars"] == 120_000
-    assert_key_mirror_matches(db, key.hash)
+    assert_key_config_mirrored(db, key.hash)
+    assert _typed_key(db, key.hash)["usage"] == 0
 
 
-def test_finalize_mirrors_both_credit_and_key() -> None:
+def test_json_key_write_does_not_clobber_typed_key_hold() -> None:
+    """Key-side analogue of the incident: a typed key hold must survive a JSON
+    api_key write (here a usage write, which also fires the mirror)."""
     store, db, _ = make_fake_store()
-    ws = "ws_finalize_mirror"
-    store._write_entity(
-        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=5_000_000)
-    )
+    ws = "ws_key_clobber"
     _raw, key = store.api_keys.create(
-        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=5_000_000
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=2_000_000
     )
-    store.reserve_key_limit(key.hash, 1_000_000, usage_type="Credits")
-    reservation = store.reserve(ws, key.hash, 1_000_000)
-    auth = GatewayAuthorization(
-        id="gwa_m",
-        workspace_id=ws,
-        key_hash=key.hash,
-        model_id="openai/gpt-5.4-nano",
-        provider="openai",
-        usage_type="Credits",
-        estimated_microdollars=1_000_000,
-        credit_reservation_id=reservation.id,
+    pt = store._param_types
+    store._database.run_in_transaction(
+        lambda t: reserve_key(t, pt, key.hash, 600_000, is_byok=False)
     )
-    store._write_entity("gateway_authorization", auth.id, auth)
-
-    from trusted_router.storage import Generation
-
-    generation = Generation(
-        id="gen_m",
-        request_id="req_m",
-        workspace_id=ws,
-        key_hash=key.hash,
-        model="openai/gpt-5.4-nano",
-        provider_name="OpenAI",
-        app="typed-mirror-test",
-        tokens_prompt=100,
-        tokens_completion=50,
-        total_cost_microdollars=900_000,
-        usage_type="Credits",
-        speed_tokens_per_second=10.0,
-        finish_reason="stop",
-        status="success",
-        streamed=False,
-    )
-    ok = store.finalize_gateway_authorization(
-        auth.id, success=True, actual_microdollars=900_000,
-        selected_usage_type="Credits", generation=generation,
-    )
-    assert ok is True
-    assert _json_credit(db, ws)["reserved_microdollars"] == 0
-    assert _json_credit(db, ws)["total_usage_microdollars"] == 900_000
-    assert_credit_mirror_matches(db, ws)
-    assert_key_mirror_matches(db, key.hash)
+    assert _typed_key(db, key.hash)["reserved"] == 600_000
+    # a JSON api_key write fires the mirror; the typed hold must be untouched
+    store.api_keys.add_usage(key.hash, 100_000, is_byok=False)
+    assert _typed_key(db, key.hash)["reserved"] == 600_000  # hold preserved
+    assert _typed_key(db, key.hash)["limit_micro"] == 2_000_000  # config still mirrored
 
 
 def test_api_key_delete_removes_typed_mirror_row() -> None:
@@ -199,7 +197,7 @@ def test_uncapped_key_mirrors_null_limit() -> None:
         workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=None
     )
     assert _typed_key(db, key.hash)["limit_micro"] is None
-    assert_key_mirror_matches(db, key.hash)
+    assert_key_config_mirrored(db, key.hash)
 
 
 # ── Step 2: backfill + drift comparator ─────────────────────────────────────
@@ -212,10 +210,14 @@ def test_credit_drift_pure() -> None:
     }
     match = {"total_credits": 1_000_000, "total_usage": 200_000, "reserved": 50_000}
     assert credit_drift(body, match) == {}
-    assert credit_drift(body, None)  # missing mirror = drift on all fields
-    bad = dict(match, reserved=49_999)
-    drift = credit_drift(body, bad)
-    assert drift == {"reserved": (50_000, 49_999)}
+    assert credit_drift(body, None)  # missing mirror = drift on the owned field
+    # reserved + total_usage are typed-owned now: a mismatch there is NOT drift.
+    assert credit_drift(body, dict(match, reserved=49_999)) == {}
+    assert credit_drift(body, dict(match, total_usage=199_999)) == {}
+    # but a JSON-owned total_credits mismatch IS drift.
+    assert credit_drift(body, dict(match, total_credits=999_999)) == {
+        "total_credits": (1_000_000, 999_999)
+    }
 
 
 def test_key_drift_pure_handles_null_limit_and_bool() -> None:
@@ -229,6 +231,8 @@ def test_key_drift_pure_handles_null_limit_and_bool() -> None:
     typed = {"limit_micro": None, "usage": 10, "byok_usage": 0, "reserved": 0, "include_byok": True}
     assert key_drift(body, typed) == {}
     assert "include_byok" in key_drift(body, dict(typed, include_byok=False))
+    # typed-owned usage mismatch is NOT drift.
+    assert key_drift(body, dict(typed, usage=999)) == {}
 
 
 def test_compare_clean_after_mirror() -> None:
@@ -249,15 +253,21 @@ def test_compare_clean_after_mirror() -> None:
     assert report.key_rows == 1
 
 
-def test_compare_detects_corrupted_typed_row() -> None:
+def test_compare_ignores_typed_owned_columns_flags_json_owned() -> None:
+    """The comparator only audits JSON-owned columns. Corrupting the typed-owned
+    reserved is expected divergence (typed owns it); corrupting the JSON-owned
+    total_credits is real drift."""
     store, db, _ = make_fake_store()
     ws = "ws_corrupt"
     store._write_entity(
         "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
     )
     assert compare(store).clean
-    # Corrupt the typed mirror out from under the JSON authority.
+    # Typed-owned reserved diverging is NOT drift.
     db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] = 999_999
+    assert compare(store).clean
+    # JSON-owned total_credits diverging IS drift.
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_credits"] = 12_345
     report = compare(store)
     assert not report.clean
     assert report.credit_drift == 1
