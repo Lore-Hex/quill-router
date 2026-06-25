@@ -557,3 +557,102 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
     res.keys = result["keys"]
     res.credit = {"total_usage": result["total_usage"], "reserved": result["reserved"]}
     return res
+
+
+# ── Repair: clobbered typed `reserved` ──────────────────────────────────────
+# The 2026-06-25 incident's accumulated damage: before the ownership split the
+# mirror overwrote typed `reserved` with the stale JSON value, so already-typed
+# workspaces have `reserved` frozen far from the truth (auditor flags them). Fix:
+# set credit + each key `reserved` = SUM of that scope's OPEN typed holds. We do
+# NOT touch total_usage — it is monotonic and verified ledger-consistent
+# (JSON baseline + Σ settled actuals) for active workspaces; the lone usage-damaged
+# case (ea7dd3d8) is handled separately. Fail-closed: requires billing_paused so
+# the open-hold set is stable while we write.
+
+
+@dataclass
+class RepairResult:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)
+    applied: bool = False
+    credit_reserved_before: int | None = None
+    credit_reserved_after: int | None = None
+    keys_repaired: int = 0
+
+
+def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False) -> RepairResult:
+    """Set typed `reserved` = SUM(open typed holds) for an already-typed PAUSED
+    workspace (credit + every key). Read-only when apply=False (reports the before/
+    after). Fail-closed: refuses unless billing_paused."""
+    pt = store._param_types
+    res = RepairResult(workspace_id=workspace_id, ready=False)
+    open_credit_sql = (
+        "SELECT COALESCE(SUM(credit_reserved_micro),0) FROM tr_reservation "
+        "WHERE workspace_id=@ws AND settled=false"
+    )
+    open_key_sql = (
+        "SELECT COALESCE(SUM(key_reserved_micro),0) FROM tr_reservation "
+        "WHERE key_hash=@kh AND settled=false"
+    )
+
+    workspace = store.get_workspace(workspace_id)
+    key_hashes = [
+        b["hash"] for b in store._list_entities("api_key", cls=dict)
+        if b.get("workspace_id") == workspace_id
+    ]
+    with store._database.snapshot() as snap:
+        cb = list(snap.execute_sql(
+            "SELECT reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0",
+            params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        open_credit = list(snap.execute_sql(
+            open_credit_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause it before repair")
+    if not cb:
+        res.reasons.append("no typed credit row")
+    res.ready = not res.reasons
+    if cb:
+        res.credit_reserved_before = int(cb[0][0])
+        res.credit_reserved_after = int(open_credit)
+    if not res.ready or not apply:
+        return res
+
+    cts = store._spanner.COMMIT_TIMESTAMP
+
+    def _txn(transaction: Any) -> dict | None:
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
+        oc = list(transaction.execute_sql(
+            open_credit_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        transaction.insert_or_update(
+            table="tr_credit_balance",
+            columns=("workspace_id", "shard", "reserved", "updated_at"),
+            values=[(workspace_id, 0, int(oc), cts)],
+        )
+        n = 0
+        for kh in key_hashes:
+            ok = list(transaction.execute_sql(
+                open_key_sql, params={"kh": kh}, param_types={"kh": pt.STRING},
+            ))[0][0]
+            transaction.insert_or_update(
+                table="tr_key_limit",
+                columns=("key_hash", "shard", "reserved", "updated_at"),
+                values=[(kh, 0, int(ok), cts)],
+            )
+            n += 1
+        return {"keys": n}
+
+    result = store._run_in_transaction(_txn)
+    if result is None:
+        res.ready = False
+        res.reasons.append("aborted: not paused")
+        return res
+    res.applied = True
+    res.keys_repaired = result["keys"]
+    return res

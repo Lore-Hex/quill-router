@@ -52,6 +52,7 @@ from trusted_router.storage_gcp_counter_reconcile import (
     audit_typed_invariants,
     backsync_typed_to_json,
     reconcile_for_flip,
+    repair_typed_reserved,
 )
 
 
@@ -59,10 +60,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    for name in ("pause", "unpause", "status", "reconcile", "rollback"):
+    for name in ("pause", "unpause", "status", "reconcile", "rollback", "repair"):
         p = sub.add_parser(name)
         p.add_argument("workspaces", nargs="+")
-        if name in ("pause", "unpause", "reconcile", "rollback"):
+        if name in ("pause", "unpause", "reconcile", "rollback", "repair"):
             p.add_argument("--apply", action="store_true", help="actually mutate (else dry-run)")
         if name == "pause":
             p.add_argument("--reason", default="typed-billing ramp")
@@ -114,6 +115,16 @@ def main() -> int:
                 print(f"{ws}: BACKSYNCED credit={bs.credit} keys={bs.keys}")
             else:
                 print(f"{ws}: ready (dry-run; pass --apply to backsync)")
+
+        elif args.cmd == "repair":
+            rp = repair_typed_reserved(store, ws, apply=args.apply)
+            if not rp.ready:
+                print(f"{ws}: NOT repair-ready — {rp.reasons}")
+                rc = 1
+            elif rp.applied:
+                print(f"{ws}: REPAIRED credit reserved {rp.credit_reserved_before}->{rp.credit_reserved_after}, keys={rp.keys_repaired}")
+            else:
+                print(f"{ws}: would set credit reserved {rp.credit_reserved_before}->{rp.credit_reserved_after} (dry-run; pass --apply)")
 
     return rc
 
