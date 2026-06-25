@@ -96,6 +96,31 @@ def test_repair_aborts_on_nonzero_shard_holds() -> None:
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 1234  # untouched
 
 
+def test_repair_aborts_on_nonzero_key_shard_holds() -> None:
+    """codex round-2 P3: a key hold on a nonzero key_shard (workspace shard 0) would
+    be silently omitted from the key reserved SUM and written low — must ABORT."""
+    store, db, _ = make_fake_store()
+    ws = "ws_key_sharded"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws, "shard": 0, "total_credits": 1_000_000, "total_usage": 0, "reserved": 7_000,
+    }
+    _raw, key = store.api_keys.create(
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=1_000_000
+    )
+    db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] = 700  # clobbered key reserved
+    # a key hold on a NONZERO key_shard (ws_shard=0) — the ws-level guard misses it.
+    db.reservations["rk1"] = {
+        "reservation_id": "rk1", "workspace_id": ws, "key_hash": key.hash,
+        "key_reserved_micro": 400, "ws_shard": 0, "key_shard": 1, "settled": False,
+    }
+
+    result = repair_typed_reserved(store, ws, apply=True)
+    assert not result.applied  # aborted in-txn (no write)
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 7_000  # untouched
+    assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 700  # untouched
+
+
 def test_repair_zero_holds_zeroes_reserved() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_zero"

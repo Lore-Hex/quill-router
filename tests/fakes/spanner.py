@@ -491,7 +491,13 @@ def _execute_sql(
                     break
         return out
     # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
-    # contains the generic workspace-count substring below.)
+    # contains the generic count substrings below.)
+    if "key_shard!=0" in sql:
+        kh = params["kh"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("key_hash") == kh and not rec.get("settled") and rec.get("key_shard", 0) != 0
+        )]]
     if "ws_shard!=0" in sql:
         ws = params["ws"]
         return [[sum(

@@ -599,6 +599,10 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
     )
     credit_row_sql = "SELECT reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
     key_row_sql = "SELECT reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
+    nonzero_key_shard_sql = (
+        "SELECT COUNT(*) FROM tr_reservation "
+        "WHERE key_hash=@kh AND settled=false AND key_shard!=0"
+    )
     nonzero_shard_sql = (
         "SELECT COUNT(*) FROM tr_reservation "
         "WHERE workspace_id=@ws AND settled=false AND ws_shard!=0"
@@ -659,6 +663,10 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
                 key_row_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
             )):
                 return None  # typed key row missing — abort, never create a partial row
+            if int(list(transaction.execute_sql(
+                nonzero_key_shard_sql, params={"kh": kh}, param_types={"kh": pt.STRING},
+            ))[0][0]) != 0:
+                return None  # key hold on a nonzero shard — would write reserved low; abort
             ok = list(transaction.execute_sql(
                 open_key_sql, params={"kh": kh}, param_types={"kh": pt.STRING},
             ))[0][0]
