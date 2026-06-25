@@ -28,17 +28,34 @@ os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations
 
 from trusted_router.config import Settings
 from trusted_router.storage import create_store
-from trusted_router.storage_gcp_counter_reconcile import backfill, compare
+from trusted_router.storage_gcp_counter_reconcile import (
+    audit_typed_invariants,
+    backfill,
+    compare,
+)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backfill", action="store_true", help="write missing/stale typed rows")
     parser.add_argument("--dry-run", action="store_true", help="with --backfill, count only")
-    parser.add_argument("--compare", action="store_true", help="report drift (default)")
+    parser.add_argument("--compare", action="store_true", help="report JSON-vs-typed drift (default)")
+    parser.add_argument(
+        "--audit", action="store_true",
+        help="typed-side invariant check: reserved == SUM(open typed holds), reserved >= 0",
+    )
     args = parser.parse_args()
 
     store = create_store(Settings())
+
+    # Typed-side invariant audit (the leak tripwire compare() can't provide). Run
+    # on a schedule + before each ramp batch. Exits 1 on any violation.
+    if args.audit:
+        inv = audit_typed_invariants(store)
+        print(inv.summary())
+        for scope, detail in inv.samples.items():
+            print(f"  VIOLATION {scope}: {detail}")
+        return 0 if inv.clean else 1
 
     if args.backfill:
         counts = backfill(store, dry_run=args.dry_run)

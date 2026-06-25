@@ -338,3 +338,96 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
     res.keys_seeded = seeded.pop("keys")
     res.credit_seeded = seeded
     return res
+
+
+# ── Standing typed-side invariant auditor ───────────────────────────────────
+# compare() audits JSON-vs-typed and was correctly NARROWED to JSON-owned columns
+# after the ownership split — so it can no longer see a typed `reserved` leak (the
+# exact incident class). This auditor is the typed-side tripwire that replaces it:
+# for every typed counter row, `reserved` MUST equal the sum of that scope's OPEN
+# typed-origin holds (tr_reservation, settled=false), and MUST be >= 0. A drift
+# means a hold leaked or a release double-applied. Run it on a schedule + before
+# each ramp batch; wire an alert on the "release row-count != 1" log line as the
+# live signal between audits.
+
+# Shard-aware (the typed counter PK is (scope, shard); reservations carry the
+# per-scope shard), COALESCE so an empty SUM reads 0.
+_OPEN_CREDIT_HOLDS = (
+    "SELECT workspace_id, ws_shard, COALESCE(SUM(credit_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false GROUP BY workspace_id, ws_shard"
+)
+_OPEN_KEY_HOLDS = (
+    "SELECT key_hash, key_shard, COALESCE(SUM(key_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false GROUP BY key_hash, key_shard"
+)
+
+
+@dataclass
+class InvariantReport:
+    credit_rows: int = 0
+    key_rows: int = 0
+    credit_violations: int = 0  # reserved != open-hold sum, or reserved < 0
+    key_violations: int = 0
+    samples: dict[str, dict] = field(default_factory=dict)
+
+    @property
+    def clean(self) -> bool:
+        return self.credit_violations == 0 and self.key_violations == 0
+
+    def summary(self) -> str:
+        return (
+            f"credit: {self.credit_violations}/{self.credit_rows} | "
+            f"key: {self.key_violations}/{self.key_rows} | "
+            f"{'CLEAN' if self.clean else 'VIOLATIONS'}"
+        )
+
+
+def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantReport:
+    """Assert, in one consistent snapshot, that every typed `reserved` equals the
+    sum of that (scope, shard)'s OPEN typed-origin holds and is non-negative.
+    Checks BOTH directions: a typed row whose reserved != its open holds, AND an
+    open hold group with no typed row (that leak is invisible if you only iterate
+    typed rows). Read-only."""
+    report = InvariantReport()
+
+    with store._database.snapshot(multi_use=True) as snap:
+        typed_credit = {
+            (r[0], r[1]): int(r[2]) for r in snap.execute_sql(
+                "SELECT workspace_id, shard, reserved FROM tr_credit_balance"
+            )
+        }
+        typed_key = {
+            (r[0], r[1]): int(r[2]) for r in snap.execute_sql(
+                "SELECT key_hash, shard, reserved FROM tr_key_limit"
+            )
+        }
+        credit_holds = {
+            (r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_CREDIT_HOLDS)
+        }
+        key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
+
+    def _sample(key: str, value: dict) -> None:
+        if len(report.samples) < max_samples:
+            report.samples[key] = value
+
+    def _check(typed: dict, holds: dict, kind: str) -> tuple[int, int]:
+        violations = 0
+        # forward: every typed row's reserved must equal its open holds, and >= 0.
+        for scope, reserved in typed.items():
+            expected = holds.get(scope, 0)
+            if reserved != expected or reserved < 0:
+                violations += 1
+                _sample(f"{kind}:{scope[0]}:{scope[1]}",
+                        {"typed_reserved": reserved, "open_holds": expected})
+        # reverse: an open hold group with NO typed row is a leak the forward pass
+        # cannot see (typed row deleted/never created while holds are outstanding).
+        for scope, held in holds.items():
+            if held > 0 and scope not in typed:
+                violations += 1
+                _sample(f"{kind}-orphan-hold:{scope[0]}:{scope[1]}",
+                        {"typed_reserved": None, "open_holds": held})
+        return len(typed), violations
+
+    report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
+    report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
+    return report
