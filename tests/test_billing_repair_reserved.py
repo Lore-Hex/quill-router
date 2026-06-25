@@ -60,6 +60,42 @@ def test_repair_refuses_unpaused() -> None:
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 99_000  # untouched
 
 
+def test_repair_aborts_if_a_typed_key_row_is_missing() -> None:
+    """codex P1: a key whose typed row is missing (deleted mid-repair) must ABORT
+    with ZERO writes — never create a partial, uncapped tr_key_limit row."""
+    store, db, _ = make_fake_store()
+    ws = "ws_missing_key"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws, "shard": 0, "total_credits": 1_000_000, "total_usage": 0, "reserved": 5_000,
+    }
+    _raw, key = store.api_keys.create(
+        workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=1_000_000
+    )
+    del db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]  # typed key row gone
+
+    result = repair_typed_reserved(store, ws, apply=True)
+    assert not result.ready and not result.applied
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 5_000  # credit NOT touched (no partial write)
+    assert (key.hash, 0) not in db.typed[KEY_LIMIT_TABLE]  # no partial row created
+
+
+def test_repair_aborts_on_nonzero_shard_holds() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_sharded"
+    _paused_ws(store, ws)
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws, "shard": 0, "total_credits": 1_000_000, "total_usage": 0, "reserved": 1234,
+    }
+    db.reservations["r1"] = {"reservation_id": "r1", "workspace_id": ws, "credit_reserved_micro": 500, "ws_shard": 1, "settled": False}
+
+    result = repair_typed_reserved(store, ws, apply=True)
+    assert not result.ready
+    assert any("nonzero shard" in r for r in result.reasons), result.reasons
+    assert not result.applied
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["reserved"] == 1234  # untouched
+
+
 def test_repair_zero_holds_zeroes_reserved() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_zero"

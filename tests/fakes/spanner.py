@@ -490,6 +490,14 @@ def _execute_sql(
                 if len(out) >= limit:
                     break
         return out
+    # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
+    # contains the generic workspace-count substring below.)
+    if "ws_shard!=0" in sql:
+        ws = params["ws"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) != 0
+        )]]
     # Rollback backsync: how many OPEN typed holds remain for this workspace?
     # (checked BEFORE the generic count below, which this query string contains.)
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false" in sql:
@@ -508,13 +516,13 @@ def _execute_sql(
         ws = params["ws"]
         return [[sum(
             rec.get("credit_reserved_micro") or 0 for rec in db.reservations.values()
-            if rec.get("workspace_id") == ws and not rec.get("settled")
+            if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) == 0
         )]]
     if "SUM(key_reserved_micro)" in sql and "key_hash=@kh" in sql:
         kh = params["kh"]
         return [[sum(
             rec.get("key_reserved_micro") or 0 for rec in db.reservations.values()
-            if rec.get("key_hash") == kh and not rec.get("settled")
+            if rec.get("key_hash") == kh and not rec.get("settled") and rec.get("key_shard", 0) == 0
         )]]
     # Invariant auditor: open typed-origin holds summed by (scope, shard).
     if "SUM(credit_reserved_micro)" in sql:
