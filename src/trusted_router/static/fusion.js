@@ -39,6 +39,7 @@
   const els = {
     form: document.querySelector("[data-fusion-form]"),
     prompt: document.querySelector("[data-fusion-prompt]"),
+    synthesisPrompt: document.querySelector("[data-fusion-synthesis-prompt]"),
     preset: document.querySelector("[data-fusion-preset]"),
     maxTokens: document.querySelector("[data-fusion-max-tokens]"),
     answer: document.querySelector("[data-fusion-answer]"),
@@ -148,6 +149,18 @@
     const judges = splitModels(modelSets.judges);
     const finals = splitModels(modelSets.finals);
     const maxTokens = Math.max(64, Math.min(8192, Number(els.maxTokens.value || 2048)));
+    const parameters = {
+      preset: els.preset.value || "budget",
+      selection_strategy: "synthesize_non_refusals",
+      analysis_models: panel.length ? panel : presetPanel(els.preset.value || "budget"),
+      judge_models: judges.length ? judges : DEFAULT_JUDGES,
+      final_models: finals.length ? finals : DEFAULT_FINALS,
+      max_completion_tokens: maxTokens,
+    };
+    const synthesisPrompt = String(els.synthesisPrompt?.value || "").trim();
+    if (synthesisPrompt) {
+      parameters.synthesis_prompt = synthesisPrompt;
+    }
     return {
       model: "trustedrouter/synth",
       stream: true,
@@ -156,14 +169,7 @@
       max_tokens: maxTokens,
       tools: [{
         type: "trustedrouter:synth",
-        parameters: {
-          preset: els.preset.value || "budget",
-          selection_strategy: "synthesize_non_refusals",
-          analysis_models: panel.length ? panel : presetPanel(els.preset.value || "budget"),
-          judge_models: judges.length ? judges : DEFAULT_JUDGES,
-          final_models: finals.length ? finals : DEFAULT_FINALS,
-          max_completion_tokens: maxTokens,
-        },
+        parameters,
       }],
     };
   }
@@ -850,7 +856,12 @@
         return;
       }
       els.title.textContent = "Completed";
-      saveRun({ prompt: request.messages[0].content, output, created_at: new Date().toISOString() });
+      saveRun({
+        prompt: request.messages[0].content,
+        synthesis_prompt: request.tools?.[0]?.parameters?.synthesis_prompt || "",
+        output,
+        created_at: new Date().toISOString(),
+      });
     } catch (err) {
       els.answer.classList.remove("loading");
       els.title.textContent = "Error";
@@ -1085,6 +1096,7 @@
       button.innerHTML = `<strong>${escapeHtml(run.prompt)}</strong><span>${new Date(run.created_at).toLocaleString()}</span>`;
       button.addEventListener("click", () => {
         els.prompt.value = run.prompt;
+        if (els.synthesisPrompt) els.synthesisPrompt.value = run.synthesis_prompt || "";
         els.answer.textContent = run.output;
         els.title.textContent = "Loaded";
         els.meta.textContent = "Loaded from local history";
@@ -1106,6 +1118,7 @@
 
   function resetForm() {
     els.prompt.value = "";
+    if (els.synthesisPrompt) els.synthesisPrompt.value = "";
     els.answer.textContent = "Sign in, enter a prompt, then run Synth.";
     els.title.textContent = "Ready";
     els.meta.textContent = "";
@@ -1136,7 +1149,8 @@
       applyPreset(els.preset.value || "budget");
       renderCode();
     });
-    for (const input of [els.prompt, els.maxTokens]) {
+    for (const input of [els.prompt, els.synthesisPrompt, els.maxTokens]) {
+      if (!input) continue;
       input.addEventListener("input", renderCode);
       input.addEventListener("change", renderCode);
     }
