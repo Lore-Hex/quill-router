@@ -134,11 +134,20 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
 
 
 def backfill(store: Any, *, dry_run: bool = False) -> dict[str, int]:
-    """Mirror the typed row for every JSON credit/api_key row. Idempotent.
+    """Mirror the JSON-owned columns of the typed row for every JSON credit/
+    api_key row. Idempotent; safe to run repeatedly.
 
-    Each row is re-read and mirrored inside one transaction so it commits a
-    json-consistent typed row atomically (no stale-read clobber). Safe to run
-    repeatedly; run until ``compare`` is clean.
+    OWNERSHIP SPLIT (2026-06-25 incident) — READ BEFORE USING AS A FLIP GATE:
+    this delegates to ``mirror_write``, which now writes ONLY JSON-owned columns
+    (total_credits; key limit_micro/include_byok). It therefore does NOT seed the
+    typed-DML-owned reserved / total_usage / usage / byok_usage, and a clean
+    ``compare`` (which now audits only those JSON-owned columns) does NOT mean a
+    workspace is safe to flip to typed enforcement. Flipping requires a SEPARATE
+    ledger-derived reconciliation that computes reserved from open holds (legacy +
+    typed) and seeds total_usage, atomic with the gate flip — otherwise the typed
+    reserve gate over-admits by the sum of open/historical holds (silent
+    overspend). Do NOT "fix" this by re-adding reserved/usage to the mirror: that
+    full-row copy WAS the clobber.
     """
     counts = {"credit": 0, "api_key": 0}
     spanner_module = store._spanner
