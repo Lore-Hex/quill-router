@@ -201,6 +201,71 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     assert account.stripe_payment_method_id is None
 
 
+def test_setup_intent_grants_no_trial_credit_by_default(
+    user_headers: dict[str, str], client
+) -> None:
+    """New policy (2026-06-25): attaching a valid card saves the payment method
+    but grants NO free credit — signup_trial_credit_microdollars defaults to 0."""
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    # Undo the conftest auto-credit so a grant *would* fire if it were enabled.
+    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.stripe_events.discard(f"trial:{workspace_id}")
+    event = {
+        "id": "evt_setup_intent_no_trial",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_no_trial",
+                "payment_method": "pm_no_trial",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["setup_saved"] is True
+    assert body["trial_credit_granted_microdollars"] == 0
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.total_credits_microdollars == 0
+    assert account.stripe_payment_method_id == "pm_no_trial"
+
+
+def test_setup_intent_grants_configured_trial_credit_when_enabled(
+    user_headers: dict[str, str], client, monkeypatch
+) -> None:
+    """Setting signup_trial_credit_microdollars > 0 re-enables the grant."""
+    monkeypatch.setattr(
+        client.app.state.settings, "signup_trial_credit_microdollars", 5_000_000
+    )
+    workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
+    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.stripe_events.discard(f"trial:{workspace_id}")
+    event = {
+        "id": "evt_setup_intent_enabled_trial",
+        "type": "setup_intent.succeeded",
+        "data": {
+            "object": {
+                "customer": "cus_enabled_trial",
+                "payment_method": "pm_enabled_trial",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
+    }
+
+    resp = client.post("/v1/internal/stripe/webhook", json=event)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()["data"]
+    assert body["trial_credit_granted_microdollars"] == 5_000_000
+    account = STORE.get_credit_account(workspace_id)
+    assert account is not None
+    assert account.total_credits_microdollars == 5_000_000
+
+
 def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_crediting(
     user_headers: dict[str, str], client
 ) -> None:
