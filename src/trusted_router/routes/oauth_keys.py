@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
 from trusted_router.config import Settings
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.routes.helpers import json_body
 from trusted_router.serialization import key_shape
@@ -75,6 +75,8 @@ def register_oauth_key_routes(router: APIRouter) -> None:
         if code is None:
             raise api_error(403, "Invalid or expired authorization code", ErrorType.FORBIDDEN)
         _verify_pkce(code, body)
+        # Quiesce: a pre-pause OAuth code must not mint a key during pause.
+        assert_workspace_billing_active(STORE.get_workspace(code.workspace_id))
         raw_key, key = STORE.create_api_key(
             workspace_id=code.workspace_id,
             name=code.key_label,

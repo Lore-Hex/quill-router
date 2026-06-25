@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from trusted_router.auth import InferencePrincipal, ManagementPrincipal, Principal
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
 from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest, model_to_dict
 from trusted_router.serialization import key_shape
@@ -34,12 +34,8 @@ def register_key_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
-        if getattr(principal.workspace, "billing_paused", False):
-            # Quiesce: no new keys while paused, so the workspace's key set is
-            # stable through a flip (the reconcile captures keys at assess time).
-            raise api_error(
-                503, "Workspace billing is paused", ErrorType.SERVICE_UNAVAILABLE
-            )
+        # Quiesce: no new keys while paused, so the key set is stable through a flip.
+        assert_workspace_billing_active(principal.workspace)
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,

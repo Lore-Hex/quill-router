@@ -41,6 +41,7 @@ from typing import Any
 from fastapi import APIRouter, Response
 
 from trusted_router.auth import SettingsDep
+from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.routes.console._shared import ConsoleDep
 from trusted_router.storage import STORE
 
@@ -87,6 +88,7 @@ def register(router: APIRouter) -> None:
             timespec="seconds"
         ).replace("+00:00", "Z")
 
+        assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
         raw_key, api_key = STORE.create_api_key(
             workspace_id=ctx.workspace.id,
             name=name,

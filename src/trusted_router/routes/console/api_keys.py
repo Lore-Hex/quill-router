@@ -10,6 +10,7 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
+from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.storage import STORE, ApiKey
@@ -46,6 +47,7 @@ def register(app: FastAPI) -> None:
                 return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
             if limit_microdollars < 0:
                 return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
+        assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
         raw, _ = STORE.create_api_key(
             workspace_id=ctx.workspace.id,
             name=name,
