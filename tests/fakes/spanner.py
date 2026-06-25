@@ -494,6 +494,23 @@ def _execute_sql(
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
         ws = params["ws"]
         return [[sum(1 for rec in db.reservations.values() if rec.get("workspace_id") == ws)]]
+    # Invariant auditor: open typed-origin holds summed by scope.
+    if "SUM(credit_reserved_micro) FROM tr_reservation WHERE settled=false" in sql:
+        sums: dict[Any, int] = {}
+        for rec in db.reservations.values():
+            if not rec.get("settled") and rec.get("workspace_id") is not None:
+                sums[rec["workspace_id"]] = sums.get(rec["workspace_id"], 0) + (
+                    rec.get("credit_reserved_micro") or 0
+                )
+        return [[scope, total] for scope, total in sums.items()]
+    if "SUM(key_reserved_micro) FROM tr_reservation WHERE settled=false" in sql:
+        ksums: dict[Any, int] = {}
+        for rec in db.reservations.values():
+            if not rec.get("settled") and rec.get("key_hash") is not None:
+                ksums[rec["key_hash"]] = ksums.get(rec["key_hash"], 0) + (
+                    rec.get("key_reserved_micro") or 0
+                )
+        return [[scope, total] for scope, total in ksums.items()]
     # tr_reservation reads (idempotency replay + by-id for settle/reaper).
     if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
         scope = params["scope"]
