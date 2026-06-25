@@ -7,10 +7,10 @@
     <div class="signup-reveal">
       <div class="signup-reveal-head">Your TrustedRouter API key</div>
       <div class="secret-row"><code>{{ revealed_key }}</code></div>
-      <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span> · Trial <span class="mono">{{ trial_credit }}</span></div>
+      <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span></div>
     </div>
     {% if trial_credit_microdollars == 0 %}
-    <p class="microcopy">Trial credit unlocks once you add a valid card on the <a href="/console/credits">Credits</a> page. No charge. Stripe just verifies the card.</p>
+    <p class="microcopy">Add a card on the <a href="/console/credits">Credits</a> page to start routing — prepaid, you pay only for what you use. No charge to add it; Stripe just verifies the card.</p>
     {% endif %}
     <p>Use this key in the OpenAI SDK by setting <code>base_url={{ api_base_url }}</code>.</p>
     {% else %}
