@@ -30,7 +30,7 @@ from trusted_router.catalog import (
     endpoint_for_id,
 )
 from trusted_router.config import Settings
-from trusted_router.errors import api_error
+from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
@@ -71,6 +71,7 @@ def register(router: APIRouter) -> None:
         workspace = STORE.get_workspace(api_key.workspace_id)
         if workspace is None:
             raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        assert_workspace_billing_active(workspace)
         return {
             "data": {
                 "workspace_id": workspace.id,
@@ -92,6 +93,7 @@ def register(router: APIRouter) -> None:
         workspace = STORE.get_workspace(api_key.workspace_id)
         if workspace is None:
             raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        assert_workspace_billing_active(workspace)
         body_dict = body.model_dump(exclude_none=True)
         _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
         requested_model_id = body.model

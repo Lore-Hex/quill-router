@@ -75,6 +75,8 @@ class Store(Protocol):
         *,
         name: str | None = ...,
         deleted: bool | None = ...,
+        billing_paused: bool | None = ...,
+        billing_pause_reason: str | None = ...,
     ) -> Workspace | None: ...
     def add_members(
         self, workspace_id: str, emails: list[str], role: str = ...
