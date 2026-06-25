@@ -116,15 +116,16 @@ ENV_VARS=(
   # (TR_TYPED_BILLING_WORKSPACE_DENYLIST) ALWAYS wins → per-workspace emergency
   # kill switch (revert one workspace to legacy without a code change).
   #
-  # 2026-06-25: UNIVERSAL DEFAULT. "*" = every existing AND new workspace runs
-  # the typed path, retiring the legacy read-modify-write counters that caused
-  # the per-tenant Spanner deadlock. Gated on a clean fleet pre-flight sweep —
-  # all 51 credit workspaces + 89 active keys have funded, JSON-consistent typed
-  # rows (0 missing, drift only on the two already-migrated). Prior ramp:
-  # 45819281 (synthetic, ~250K reservations) + 063e9fb9 (first real), both
-  # clean, 0 Deadlock/Aborted since cutover. Roll back via the denylist, not by
-  # editing this line under load.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=*"
+  # 2026-06-25: REVERTED from the universal "*" default back to the validated
+  # cohort. The "*" flip exposed a latent bug — the one-way JSON->typed exact
+  # mirror (storage_gcp_counters.credit_balance_mirror_row) writes `reserved`,
+  # but for a typed workspace `tr_credit_balance.reserved` is owned by the typed
+  # authorize/finalize DML. Any JSON credit-entity write on a typed workspace
+  # (top-up, grant, refund, or a legacy settle straddling the flip) clobbered
+  # the in-flight typed hold -> release_credit row-count 0 -> "typed finalize
+  # failed: release row-count != 1". DO NOT set this to "*" again until the
+  # mirror is fixed to stop writing reserved/total_usage (typed owns them).
+  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
