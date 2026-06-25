@@ -29,6 +29,7 @@ from trusted_router.storage_gcp_counters import (
     key_drift,
     mirror_write,
 )
+from trusted_router.storage_models import ApiKey, CreditAccount
 
 _CREDIT_TYPED_SCAN = (
     "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
@@ -431,3 +432,101 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
     report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
     report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
     return report
+
+
+# ── Rollback: typed → JSON backsync ─────────────────────────────────────────
+# The INVERSE of reconcile_for_flip. Denylisting a workspace back to legacy is NOT
+# rollback-correct on its own: once typed usage exists, the JSON counters are
+# stale-low, so the legacy path would over-admit. Before rolling back, copy the
+# typed-DML-owned gross counters back into JSON so the legacy path is authoritative
+# and correct. Fail-closed: the workspace must have NO open typed holds (pause +
+# drain first); writing JSON re-fires the ownership-split mirror, which only writes
+# total_credits/config, so it does NOT re-clobber the typed counters mid-backsync.
+
+
+@dataclass
+class BacksyncResult:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)
+    applied: bool = False
+    credit: dict | None = None
+    keys: int = 0
+
+
+def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False) -> BacksyncResult:
+    """Copy the typed gross counters back into JSON for a drained workspace so a
+    rollback to legacy is correct. Fail-closed: refuses unless there are NO open
+    typed holds (settled=false). With apply=True it re-checks no-open-holds inside
+    one transaction and writes JSON credit total_usage/reserved + key
+    usage/byok_usage/reserved from the typed values. Read-only when apply=False."""
+    pt = store._param_types
+    res = BacksyncResult(workspace_id=workspace_id, ready=False)
+    open_holds_sql = (
+        "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false"
+    )
+
+    keys = [b for b in store._list_entities("api_key", cls=dict) if b.get("workspace_id") == workspace_id]
+    with store._database.snapshot() as snap:
+        open_holds = list(snap.execute_sql(
+            open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        credit_rows = list(snap.execute_sql(
+            "SELECT total_usage, reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0",
+            params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        typed_keys: dict[str, tuple] = {}
+        for k in keys:
+            kr = list(snap.execute_sql(
+                "SELECT usage, byok_usage, reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0",
+                params={"pk": k["hash"]}, param_types={"pk": pt.STRING},
+            ))
+            if kr:
+                typed_keys[k["hash"]] = (int(kr[0][0]), int(kr[0][1]), int(kr[0][2]))
+
+    if int(open_holds) != 0:
+        res.reasons.append(f"{open_holds} open typed holds — pause + drain before rollback backsync")
+    if not credit_rows:
+        res.reasons.append("no typed credit row to backsync")
+    res.ready = not res.reasons
+    if credit_rows:
+        res.credit = {"total_usage": int(credit_rows[0][0]), "reserved": int(credit_rows[0][1])}
+    if not res.ready or not apply:
+        return res
+
+    typed_total_usage = int(credit_rows[0][0])
+    typed_reserved = int(credit_rows[0][1])
+
+    def _txn(transaction: Any) -> dict | None:
+        oh = list(transaction.execute_sql(
+            open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        if int(oh) != 0:
+            return None  # a hold appeared mid-backsync — abort, no writes issued
+        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+        if credit is None:
+            return None
+        credit.total_usage_microdollars = typed_total_usage
+        credit.reserved_microdollars = typed_reserved
+        store._write_entity_tx(transaction, "credit", workspace_id, credit)
+        n = 0
+        for k in keys:
+            typed = typed_keys.get(k["hash"])
+            if typed is None:
+                continue
+            key_obj = store._read_entity_tx(transaction, "api_key", k["hash"], ApiKey)
+            if key_obj is None:
+                continue
+            key_obj.usage_microdollars, key_obj.byok_usage_microdollars, key_obj.reserved_microdollars = typed
+            store._write_entity_tx(transaction, "api_key", k["hash"], key_obj)
+            n += 1
+        return {"keys": n}
+
+    result = store._run_in_transaction(_txn)
+    if result is None:
+        res.ready = False
+        res.reasons.append("aborted: a hold appeared during backsync (re-drain and retry)")
+        return res
+    res.applied = True
+    res.keys = result["keys"]
+    return res

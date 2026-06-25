@@ -490,6 +490,14 @@ def _execute_sql(
                 if len(out) >= limit:
                     break
         return out
+    # Rollback backsync: how many OPEN typed holds remain for this workspace?
+    # (checked BEFORE the generic count below, which this query string contains.)
+    if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false" in sql:
+        ws = params["ws"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("workspace_id") == ws and not rec.get("settled")
+        )]]
     # Flip-reconcile: does this workspace have ANY typed reservation history?
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
         ws = params["ws"]
