@@ -55,7 +55,23 @@ def test_auditor_flags_reserved_leak() -> None:
     report = audit_typed_invariants(store)
     assert not report.clean
     assert report.credit_violations == 1
-    assert report.samples[f"credit:{ws}"] == {"typed_reserved": 500_000, "open_holds": 100_000}
+    assert report.samples[f"credit:{ws}:0"] == {"typed_reserved": 500_000, "open_holds": 100_000}
+
+
+def test_auditor_flags_open_hold_with_no_typed_row() -> None:
+    """The dangerous false-negative codex caught: an open hold whose typed row was
+    deleted or never created. Iterating only typed rows would miss it; the reverse
+    direction catches it."""
+    store, db, _ = make_fake_store()
+    ws = "ws_orphan_hold"
+    _resv(db, "r1", ws=ws, credit=120_000)  # open hold, but NO tr_credit_balance row
+
+    report = audit_typed_invariants(store)
+    assert not report.clean
+    assert report.credit_violations == 1
+    assert report.samples[f"credit-orphan-hold:{ws}:0"] == {
+        "typed_reserved": None, "open_holds": 120_000
+    }
 
 
 def test_auditor_flags_negative_reserved() -> None:
@@ -80,4 +96,4 @@ def test_auditor_key_invariant() -> None:
     report = audit_typed_invariants(store)
     assert not report.clean
     assert report.key_violations == 1
-    assert f"api_key:{kh}" in report.samples
+    assert f"api_key:{kh}:0" in report.samples

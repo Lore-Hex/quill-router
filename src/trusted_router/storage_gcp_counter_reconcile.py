@@ -350,13 +350,15 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
 # each ramp batch; wire an alert on the "release row-count != 1" log line as the
 # live signal between audits.
 
+# Shard-aware (the typed counter PK is (scope, shard); reservations carry the
+# per-scope shard), COALESCE so an empty SUM reads 0.
 _OPEN_CREDIT_HOLDS = (
-    "SELECT workspace_id, SUM(credit_reserved_micro) FROM tr_reservation "
-    "WHERE settled=false GROUP BY workspace_id"
+    "SELECT workspace_id, ws_shard, COALESCE(SUM(credit_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false GROUP BY workspace_id, ws_shard"
 )
 _OPEN_KEY_HOLDS = (
-    "SELECT key_hash, SUM(key_reserved_micro) FROM tr_reservation "
-    "WHERE settled=false GROUP BY key_hash"
+    "SELECT key_hash, key_shard, COALESCE(SUM(key_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false GROUP BY key_hash, key_shard"
 )
 
 
@@ -382,41 +384,50 @@ class InvariantReport:
 
 def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantReport:
     """Assert, in one consistent snapshot, that every typed `reserved` equals the
-    sum of that scope's OPEN typed-origin holds and is non-negative. Read-only."""
+    sum of that (scope, shard)'s OPEN typed-origin holds and is non-negative.
+    Checks BOTH directions: a typed row whose reserved != its open holds, AND an
+    open hold group with no typed row (that leak is invisible if you only iterate
+    typed rows). Read-only."""
     report = InvariantReport()
 
     with store._database.snapshot(multi_use=True) as snap:
         typed_credit = {
-            r[0]: int(r[1]) for r in snap.execute_sql(
-                "SELECT workspace_id, reserved FROM tr_credit_balance"
+            (r[0], r[1]): int(r[2]) for r in snap.execute_sql(
+                "SELECT workspace_id, shard, reserved FROM tr_credit_balance"
             )
         }
         typed_key = {
-            r[0]: int(r[1]) for r in snap.execute_sql(
-                "SELECT key_hash, reserved FROM tr_key_limit"
+            (r[0], r[1]): int(r[2]) for r in snap.execute_sql(
+                "SELECT key_hash, shard, reserved FROM tr_key_limit"
             )
         }
         credit_holds = {
-            r[0]: int(r[1] or 0) for r in snap.execute_sql(_OPEN_CREDIT_HOLDS)
+            (r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_CREDIT_HOLDS)
         }
-        key_holds = {r[0]: int(r[1] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
+        key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
 
     def _sample(key: str, value: dict) -> None:
         if len(report.samples) < max_samples:
             report.samples[key] = value
 
-    report.credit_rows = len(typed_credit)
-    for ws_id, reserved in typed_credit.items():
-        expected = credit_holds.get(ws_id, 0)
-        if reserved != expected or reserved < 0:
-            report.credit_violations += 1
-            _sample(f"credit:{ws_id}", {"typed_reserved": reserved, "open_holds": expected})
+    def _check(typed: dict, holds: dict, kind: str) -> tuple[int, int]:
+        violations = 0
+        # forward: every typed row's reserved must equal its open holds, and >= 0.
+        for scope, reserved in typed.items():
+            expected = holds.get(scope, 0)
+            if reserved != expected or reserved < 0:
+                violations += 1
+                _sample(f"{kind}:{scope[0]}:{scope[1]}",
+                        {"typed_reserved": reserved, "open_holds": expected})
+        # reverse: an open hold group with NO typed row is a leak the forward pass
+        # cannot see (typed row deleted/never created while holds are outstanding).
+        for scope, held in holds.items():
+            if held > 0 and scope not in typed:
+                violations += 1
+                _sample(f"{kind}-orphan-hold:{scope[0]}:{scope[1]}",
+                        {"typed_reserved": None, "open_holds": held})
+        return len(typed), violations
 
-    report.key_rows = len(typed_key)
-    for key_hash, reserved in typed_key.items():
-        expected = key_holds.get(key_hash, 0)
-        if reserved != expected or reserved < 0:
-            report.key_violations += 1
-            _sample(f"api_key:{key_hash}", {"typed_reserved": reserved, "open_holds": expected})
-
+    report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
+    report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
     return report
