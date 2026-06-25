@@ -29,7 +29,7 @@ from trusted_router.storage_gcp_counters import (
     key_drift,
     mirror_write,
 )
-from trusted_router.storage_models import ApiKey, CreditAccount
+from trusted_router.storage_models import ApiKey, CreditAccount, Workspace
 
 _CREDIT_TYPED_SCAN = (
     "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
@@ -248,6 +248,10 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
         return res
     keys = [b for b in store._list_entities("api_key", cls=dict) if b.get("workspace_id") == workspace_id]
 
+    workspace = store.get_workspace(workspace_id)
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause (quiesce) it before flipping")
+
     with store._database.snapshot() as snap:
         typed_history = list(snap.execute_sql(
             "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws",
@@ -277,6 +281,11 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
         # EVERY predicate has passed — read + re-check all rows first, then write
         # all of them. Otherwise a hold on a later key would partial-seed the
         # earlier ones.
+        # Hard precondition: the workspace MUST be billing-paused (quiesced) so no
+        # new work races the seed. Re-checked in-txn, not just trusted from assess.
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
         # Defense-in-depth: re-check no typed history INSIDE the txn — a ws that
         # got a typed reservation concurrently is already typed; never JSON-seed it.
         hist = list(transaction.execute_sql(
@@ -456,36 +465,39 @@ class BacksyncResult:
 
 def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False) -> BacksyncResult:
     """Copy the typed gross counters back into JSON for a drained workspace so a
-    rollback to legacy is correct. Fail-closed: refuses unless there are NO open
-    typed holds (settled=false). With apply=True it re-checks no-open-holds inside
-    one transaction and writes JSON credit total_usage/reserved + key
-    usage/byok_usage/reserved from the typed values. Read-only when apply=False."""
+    rollback to legacy is correct. Fail-closed: refuses unless the workspace is
+    billing-PAUSED and has NO open typed holds (settled=false). With apply=True
+    it re-reads everything INSIDE one transaction (the paused gate, the open-hold
+    count, the FRESH typed credit + key counters) — because typed usage can still
+    advance via an in-flight settle between an outer snapshot and the txn — builds
+    a COMPLETE plan (failing if any active JSON key has no typed row, rather than
+    silently skipping it), and only then writes JSON credit total_usage/reserved +
+    key usage/byok_usage/reserved. Read-only when apply=False."""
     pt = store._param_types
     res = BacksyncResult(workspace_id=workspace_id, ready=False)
     open_holds_sql = (
         "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false"
     )
+    credit_sql = "SELECT total_usage, reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+    key_sql = "SELECT usage, byok_usage, reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
 
-    keys = [b for b in store._list_entities("api_key", cls=dict) if b.get("workspace_id") == workspace_id]
+    key_hashes = [
+        b["hash"] for b in store._list_entities("api_key", cls=dict)
+        if b.get("workspace_id") == workspace_id
+    ]
+    workspace = store.get_workspace(workspace_id)
     with store._database.snapshot() as snap:
         open_holds = list(snap.execute_sql(
             open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]
         credit_rows = list(snap.execute_sql(
-            "SELECT total_usage, reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0",
-            params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+            credit_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
-        typed_keys: dict[str, tuple] = {}
-        for k in keys:
-            kr = list(snap.execute_sql(
-                "SELECT usage, byok_usage, reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0",
-                params={"pk": k["hash"]}, param_types={"pk": pt.STRING},
-            ))
-            if kr:
-                typed_keys[k["hash"]] = (int(kr[0][0]), int(kr[0][1]), int(kr[0][2]))
 
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause (quiesce) it before rollback")
     if int(open_holds) != 0:
-        res.reasons.append(f"{open_holds} open typed holds — pause + drain before rollback backsync")
+        res.reasons.append(f"{open_holds} open typed holds — drain before rollback backsync")
     if not credit_rows:
         res.reasons.append("no typed credit row to backsync")
     res.ready = not res.reasons
@@ -494,39 +506,54 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
     if not res.ready or not apply:
         return res
 
-    typed_total_usage = int(credit_rows[0][0])
-    typed_reserved = int(credit_rows[0][1])
-
     def _txn(transaction: Any) -> dict | None:
+        # Re-read ALL preconditions + values INSIDE the txn (no stale outer reads).
+        # Issue ZERO mutations until the complete plan is validated.
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
         oh = list(transaction.execute_sql(
             open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]
         if int(oh) != 0:
-            return None  # a hold appeared mid-backsync — abort, no writes issued
-        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if credit is None:
             return None
+        tc = list(transaction.execute_sql(
+            credit_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+        if not tc or credit is None:
+            return None
+        plan: list[tuple] = []
+        for kh in key_hashes:
+            key_obj = store._read_entity_tx(transaction, "api_key", kh, ApiKey)
+            if key_obj is None:
+                continue  # key deleted since assess (pause blocks creation, not deletion)
+            kt = list(transaction.execute_sql(
+                key_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
+            ))
+            if not kt:
+                return None  # active JSON key with NO typed row — unsafe to backsync, abort
+            plan.append((key_obj, int(kt[0][0]), int(kt[0][1]), int(kt[0][2])))
+        # All checks passed — write credit + every key (no mutation was issued above).
+        typed_total_usage, typed_reserved = int(tc[0][0]), int(tc[0][1])
         credit.total_usage_microdollars = typed_total_usage
         credit.reserved_microdollars = typed_reserved
         store._write_entity_tx(transaction, "credit", workspace_id, credit)
-        n = 0
-        for k in keys:
-            typed = typed_keys.get(k["hash"])
-            if typed is None:
-                continue
-            key_obj = store._read_entity_tx(transaction, "api_key", k["hash"], ApiKey)
-            if key_obj is None:
-                continue
-            key_obj.usage_microdollars, key_obj.byok_usage_microdollars, key_obj.reserved_microdollars = typed
-            store._write_entity_tx(transaction, "api_key", k["hash"], key_obj)
-            n += 1
-        return {"keys": n}
+        for key_obj, usage, byok, reserved in plan:
+            key_obj.usage_microdollars = usage
+            key_obj.byok_usage_microdollars = byok
+            key_obj.reserved_microdollars = reserved
+            store._write_entity_tx(transaction, "api_key", key_obj.hash, key_obj)
+        return {"total_usage": typed_total_usage, "reserved": typed_reserved, "keys": len(plan)}
 
     result = store._run_in_transaction(_txn)
     if result is None:
         res.ready = False
-        res.reasons.append("aborted: a hold appeared during backsync (re-drain and retry)")
+        res.reasons.append(
+            "aborted: not paused / a hold appeared / an active key lacked a typed row (re-drain and retry)"
+        )
         return res
     res.applied = True
     res.keys = result["keys"]
+    res.credit = {"total_usage": result["total_usage"], "reserved": result["reserved"]}
     return res
