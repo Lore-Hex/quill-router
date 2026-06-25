@@ -490,6 +490,10 @@ def _execute_sql(
                 if len(out) >= limit:
                     break
         return out
+    # Flip-reconcile: does this workspace have ANY typed reservation history?
+    if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
+        ws = params["ws"]
+        return [[sum(1 for rec in db.reservations.values() if rec.get("workspace_id") == ws)]]
     # tr_reservation reads (idempotency replay + by-id for settle/reaper).
     if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
         scope = params["scope"]
