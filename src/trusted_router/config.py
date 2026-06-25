@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     typed_billing_workspace_ids: str = ""
     typed_billing_workspace_denylist: str = ""
 
+    # Free "trial" credit granted to a new workspace the first time a valid
+    # payment card is attached (routes/internal/webhook.py). Default 0 = NO free
+    # credit for new users (policy as of 2026-06-25); a card attach saves the
+    # method but grants nothing. Set to e.g. 10_000_000 ($10) to re-enable.
+    signup_trial_credit_microdollars: int = 0
+
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
     sentry_local_enabled: bool = False
