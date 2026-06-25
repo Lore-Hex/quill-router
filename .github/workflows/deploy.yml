@@ -334,15 +334,15 @@ jobs:
           exit 1
 
       - name: Deploy cold regions (no canary, parallel, scale-to-zero)
-        # Stage 3.5 cold regions: asia-northeast1, asia-southeast1,
-        # southamerica-east1. min-instances=0 means ~$0/mo idle plus
-        # a ~5-10s cold-start tax on the first request from those
-        # geographies. No canary because (a) they're lowest-volume by
-        # construction and (b) the warm regions already validated the
-        # image. rollout.sh handles min-instances=0 automatically when
-        # a region is in TR_REGIONS but not TR_WARM_REGIONS.
+        # Stage 3.5 cold region: southamerica-east1. min-instances=0
+        # means ~$0/mo idle plus a ~5-10s cold-start tax on the first
+        # request from that geography. No canary because (a) it's
+        # lowest-volume by construction and (b) the warm regions already
+        # validated the image. rollout.sh handles min-instances=0
+        # automatically when a region is in TR_CONTROL_PLANE_REGIONS
+        # but not TR_WARM_REGIONS.
         env:
-          TR_DEPLOY_TARGET_REGIONS: asia-northeast1,asia-southeast1,southamerica-east1
+          TR_DEPLOY_TARGET_REGIONS: southamerica-east1
         run: bash scripts/deploy/rollout.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
@@ -374,11 +374,10 @@ jobs:
       # was functionally clean. Same anti-pattern fixed in
       # quill-cloud-proxy commit 7b735e8.
       #
-      # Cold regions (asia-northeast1, asia-southeast1,
-      # southamerica-east1) deploy in parallel after all warm-region
-      # canaries pass. They have no per-region canary by design —
-      # warm regions already validated the image, and cold regions
-      # are lowest-volume by construction.
+      # Cold region southamerica-east1 deploys after all warm-region
+      # canaries pass. It has no per-region canary by design — warm
+      # regions already validated the image, and the cold region is
+      # lowest-volume by construction.
 
       - name: Smoke test prod
         run: |

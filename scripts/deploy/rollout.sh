@@ -166,12 +166,9 @@ prune_failed_revisions() {
 
 is_warm_region() {
   # Returns 0 if $1 is in TR_WARM_REGIONS, 1 otherwise. Cold regions
-  # (in TR_REGIONS but not TR_WARM_REGIONS) deploy with --min-instances=0
-  # so they don't pay for always-on capacity at idle. Stage 3.5 of the
-  # multi-region expansion plan added asia-northeast1, asia-southeast1,
-  # and southamerica-east1 this way — they appear on the homepage map
-  # and serve local users with a ~5-10s cold-start tax on the first
-  # request, but ~$0/mo when idle.
+  # (not in TR_WARM_REGIONS) deploy with --min-instances=0 so they don't
+  # pay for always-on capacity at idle. They serve local users with a
+  # ~5-10s cold-start tax on the first request, but ~$0/mo when idle.
   local r="$1"
   case ",${TR_WARM_REGIONS}," in
     *",${r},"*) return 0 ;;
@@ -233,7 +230,7 @@ deploy_one_region() {
 
 # Fan deploys out in parallel across every TR_REGIONS entry. Each
 # region's gcloud invocation runs in its own subshell so a slow image
-# pull in Tokyo doesn't block Frankfurt. Cloud Run scales to zero in
+# pull in one cold region doesn't block the warm regions. Cloud Run scales to zero in
 # unused regions so the bill stays the same as a single-region deploy
 # at idle.
 log_dir="$(mktemp -d "${TMPDIR:-/tmp}/tr-deploy-XXXXXX")"

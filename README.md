@@ -289,11 +289,11 @@ The goal is to support OpenRouter-class scale:
 - Global routing overhead competitive with edge-deployed routers.
 
 The current production deployment does **not** meet that target yet. It runs
-the control plane in 10 GCP regions behind a global LB with per-region
-Serverless NEGs, and a single live prompt gateway until additional attested
-regional pools are deployed. Capacity scales horizontally as more attested
-pools come online; correctness, trust, billing, and SDK compatibility are
-in steady-state.
+the control plane in four GCP regions behind a global LB with per-region
+Serverless NEGs, with three live attested API regions until additional
+attested regional pools are deployed. Capacity scales horizontally as more
+attested pools come online; correctness, trust, billing, and SDK compatibility
+are in steady-state.
 
 Request volume depends heavily on average generation size. At 1 trillion
 tokens/day:

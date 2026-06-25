@@ -20,13 +20,13 @@ TR_PRIMARY_REGION="${TR_PRIMARY_REGION:-us-central1}"
 # Cloud Run control-plane regions behind trustedrouter.com. This is broader
 # than TR_REGIONS because cold control-plane regions can serve cached public
 # pages without advertising non-existent regional attested gateway hostnames.
-TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,asia-northeast1,asia-southeast1,southamerica-east1}"
+TR_CONTROL_PLANE_REGIONS="${TR_CONTROL_PLANE_REGIONS:-us-central1,us-east4,europe-west4,southamerica-east1}"
 # Comma-separated subset of TR_REGIONS that should run with min_scale=1
 # (always-on warm capacity). Anything in TR_REGIONS but NOT in
 # TR_WARM_REGIONS gets min_scale=0 (scale-to-zero — ~$0/mo idle, cold-
 # start tax on first request). Defaults to the regions where we run an
-# attested enclave MIG; the APAC + LATAM additions stay cold so they
-# show on the homepage map without paying for always-on Cloud Run.
+# attested enclave MIG; the LATAM addition stays cold so it can show on
+# the homepage map without paying for always-on Cloud Run.
 TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"
 # Cloud Run memory limit. 2Gi as of 2026-05-10.
 #
