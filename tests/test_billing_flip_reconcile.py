@@ -11,7 +11,7 @@ See docs/design/billing-typed-counters.md.
 from __future__ import annotations
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount
+from trusted_router.storage import CreditAccount, Workspace
 from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 
@@ -24,10 +24,15 @@ def _typed_key(db, key_hash: str) -> dict:
     return db.typed[KEY_LIMIT_TABLE][(key_hash, 0)]
 
 
-def _seed_drained_workspace(store, ws: str, *, total_credits: int, total_usage: int):
-    """A never-typed workspace with lifetime usage but no open holds (drained).
-    After the ownership split the mirror carries only total_credits, so the typed
-    row's total_usage is intentionally stale (0) until reconcile_for_flip seeds it."""
+def _seed_drained_workspace(store, ws: str, *, total_credits: int, total_usage: int, paused: bool = True):
+    """A never-typed workspace with lifetime usage but no open holds (drained), and
+    billing-PAUSED (reconcile/flip require the quiesce). After the ownership split
+    the mirror carries only total_credits, so the typed row's total_usage is
+    intentionally stale (0) until reconcile_for_flip seeds it."""
+    store._write_entity(
+        "workspace", ws,
+        Workspace(id=ws, name="t", owner_user_id="u", billing_paused=paused),
+    )
     store._write_entity(
         "credit", ws,
         CreditAccount(
@@ -142,4 +147,14 @@ def test_reconcile_refuses_no_account() -> None:
     result = reconcile_for_flip(store, "ws_missing", apply=True)
     assert not result.ready
     assert any("no credit account" in r for r in result.reasons), result.reasons
+    assert not result.applied
+
+
+def test_reconcile_refuses_unpaused_workspace() -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_live"
+    _seed_drained_workspace(store, ws, total_credits=1_000_000, total_usage=0, paused=False)
+    result = reconcile_for_flip(store, ws, apply=True)
+    assert not result.ready
+    assert any("not billing-paused" in r for r in result.reasons), result.reasons
     assert not result.applied
