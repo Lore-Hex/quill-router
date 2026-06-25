@@ -132,3 +132,34 @@ test("local trust page links the public source repositories and release files", 
   await expect(page.getByRole("link", { name: "gcp-release.json" }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "image-digest-gcp.txt" })).toBeVisible();
 });
+
+test("synth local demo streams raw thinking and completes", async ({ page }) => {
+  await page.goto("/synth?demo=1");
+
+  await page.locator("[data-fusion-prompt]").fill("Compare two router designs.");
+  await page.getByRole("button", { name: "Run Synth" }).click();
+
+  await expect(page.locator("[data-result-title]")).toContainText("Completed");
+  await expect(page.locator("[data-fusion-answer]")).toContainText("Demo Synth answer.");
+  await expect(page.locator("[data-fusion-details]")).toBeVisible();
+  await expect(page.locator("[data-fusion-details]")).toContainText("Panel raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Judge raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Final synthesizer raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Demo raw thinking from");
+});
+
+test("synth preserves streamed thinking when final visible answer is empty", async ({ page }) => {
+  await page.goto("/synth?demo=1&demo_empty=1");
+
+  await page.locator("[data-fusion-prompt]").fill("Run a regression that returns no final visible content.");
+  await page.getByRole("button", { name: "Run Synth" }).click();
+
+  await expect(page.locator("[data-result-title]")).toContainText("Needs review");
+  await expect(page.locator("[data-fusion-error]")).toContainText("Synth returned an empty final answer.");
+  await expect(page.locator("[data-fusion-answer]")).toContainText("Raw panel, judge, and synthesizer traces are preserved below.");
+  await expect(page.locator("[data-fusion-details]")).toBeVisible();
+  await expect(page.locator("[data-fusion-details]")).toContainText("Panel raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Judge raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Final synthesizer raw thinking and output");
+  await expect(page.locator("[data-fusion-details]")).toContainText("Final synthesizer demo thinking.");
+});

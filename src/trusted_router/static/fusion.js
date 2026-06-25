@@ -766,11 +766,14 @@
     callbacks?.details?.(details);
     await sleep(80);
     const finalModel = (modelSets.finals || [])[0] || "z-ai/glm-5.2";
+    const forceEmpty = new URLSearchParams(window.location.search).get("demo_empty") === "1";
     let output = "";
-    for (const part of ["Demo Synth answer. ", "The panel streamed raw thinking, ", "then the synthesizer returned this answer."]) {
-      await sleep(90);
-      output += part;
-      callbacks?.output?.(output);
+    if (!forceEmpty) {
+      for (const part of ["Demo Synth answer. ", "The panel streamed raw thinking, ", "then the synthesizer returned this answer."]) {
+        await sleep(90);
+        output += part;
+        callbacks?.output?.(output);
+      }
     }
     applySynthStreamEvent(details, {
       event: "final.done",
@@ -817,6 +820,7 @@
     els.answer.classList.add("loading");
     els.title.textContent = "Running";
     els.meta.textContent = "";
+    renderDetails(null);
     const startedAt = performance.now();
     let latestDetails = null;
     let latestOutput = "";
