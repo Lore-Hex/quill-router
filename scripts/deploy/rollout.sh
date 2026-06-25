@@ -109,18 +109,22 @@ ENV_VARS=(
   # typed tables before the enforcement cohort flag. The typed tables already
   # exist (migrate_typed_counters.sh). Remove to revert the dual-write.
   "TR_TYPED_COUNTER_MIRROR=1"
-  # Billing typed-counter migration cutover, step 5 — ENFORCEMENT cohort. Each
-  # listed workspace's gateway authorize/settle flows go through the typed
-  # conditional-DML path (the deadlock fix). Settle/refund route by reservation
-  # ORIGIN, so straddling requests stay matched. First cohort = the internal
-  # synthetic-monitor workspace (highest-concurrency, validated continuously by
-  # prod-smoke gateway_authorize_settle). DDL applied, mirror live, drift
-  # comparator CLEAN before this. Empty = no enforcement; add to a denylist env
-  # to kill-switch a workspace. Ramp by appending more workspace IDs.
-  # Ramp 1 (2026-06-21): +063e9fb9 — the most active REAL workspace (live
-  # in-flight reservations, funded), pre-flight comparator CLEAN + available>0.
-  # First real (non-synthetic, real-model CREDITS) traffic on the typed path.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb"
+  # Billing typed-counter migration cutover — ENFORCEMENT. A workspace's gateway
+  # authorize/settle goes through the typed conditional-DML path (the deadlock
+  # fix) when this gate passes. Settle/refund route by reservation ORIGIN, so
+  # straddling requests stay matched. The denylist env
+  # (TR_TYPED_BILLING_WORKSPACE_DENYLIST) ALWAYS wins → per-workspace emergency
+  # kill switch (revert one workspace to legacy without a code change).
+  #
+  # 2026-06-25: UNIVERSAL DEFAULT. "*" = every existing AND new workspace runs
+  # the typed path, retiring the legacy read-modify-write counters that caused
+  # the per-tenant Spanner deadlock. Gated on a clean fleet pre-flight sweep —
+  # all 51 credit workspaces + 89 active keys have funded, JSON-consistent typed
+  # rows (0 missing, drift only on the two already-migrated). Prior ramp:
+  # 45819281 (synthetic, ~250K reservations) + 063e9fb9 (first real), both
+  # clean, 0 Deadlock/Aborted since cutover. Roll back via the denylist, not by
+  # editing this line under load.
+  "TR_TYPED_BILLING_WORKSPACE_IDS=*"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
