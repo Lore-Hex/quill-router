@@ -613,7 +613,7 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         b["hash"] for b in store._list_entities("api_key", cls=dict)
         if b.get("workspace_id") == workspace_id
     ]
-    with store._database.snapshot() as snap:
+    with store._database.snapshot(multi_use=True) as snap:  # 3 reads below — must be multi-use
         cb = list(snap.execute_sql(
             credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
