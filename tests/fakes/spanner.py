@@ -542,10 +542,12 @@ def _execute_sql(
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:
             cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
-            recs = db.typed.get(typed_table, {}).values()
+            recs = list(db.typed.get(typed_table, {}).values())
             if "@pk" in sql and "pk" in params:
                 pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
                 recs = [r for r in recs if r.get(pk_col) == params["pk"]]
+                if "shard=0" in sql.replace(" ", ""):
+                    recs = [r for r in recs if r.get("shard", 0) == 0]
             return [[rec.get(c) for c in cols] for rec in recs]
     if "AND id=@id" in sql:
         entity_id = params["id"]
