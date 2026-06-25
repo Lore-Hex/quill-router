@@ -29,6 +29,7 @@ from trusted_router.services.x402_billing import (
     x402_payment_required_response_body,
 )
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import typed_aware_credit_account
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -36,8 +37,10 @@ log = logging.getLogger(__name__)
 
 def register_billing_routes(router: APIRouter) -> None:
     @router.get("/credits")
-    async def credits(principal: ManagementPrincipal) -> dict[str, dict[str, Any]]:
-        account = STORE.get_credit_account(principal.workspace.id)
+    async def credits(
+        principal: ManagementPrincipal, settings: SettingsDep
+    ) -> dict[str, dict[str, Any]]:
+        account = typed_aware_credit_account(STORE, principal.workspace.id, settings=settings)
         if account is None:
             raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
         available_microdollars = (
