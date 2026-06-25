@@ -116,15 +116,19 @@ ENV_VARS=(
   # (TR_TYPED_BILLING_WORKSPACE_DENYLIST) ALWAYS wins → per-workspace emergency
   # kill switch (revert one workspace to legacy without a code change).
   #
-  # 2026-06-25: UNIVERSAL DEFAULT. "*" = every existing AND new workspace runs
-  # the typed path, retiring the legacy read-modify-write counters that caused
-  # the per-tenant Spanner deadlock. Gated on a clean fleet pre-flight sweep —
-  # all 51 credit workspaces + 89 active keys have funded, JSON-consistent typed
-  # rows (0 missing, drift only on the two already-migrated). Prior ramp:
-  # 45819281 (synthetic, ~250K reservations) + 063e9fb9 (first real), both
-  # clean, 0 Deadlock/Aborted since cutover. Roll back via the denylist, not by
-  # editing this line under load.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=*"
+  # 2026-06-25: REVERTED from the universal "*" default back to the validated
+  # cohort. The "*" flip exposed a latent bug — the one-way JSON->typed exact
+  # mirror copied reserved/total_usage, which the typed DML owns; any JSON write
+  # on a typed workspace clobbered the in-flight hold -> "typed finalize failed:
+  # release row-count != 1". The mirror itself is fixed by the ownership-split PR
+  # (#79: mirror only JSON-owned columns). BUT THE MIRROR FIX ALONE DOES NOT MAKE
+  # "*" SAFE. After the split, backfill() no longer seeds typed reserved/usage,
+  # so flipping a not-yet-typed workspace would leave typed.reserved blind to its
+  # open holds -> SILENT OVERSPEND (no row-count error). Re-enabling "*" requires
+  # the separate ledger-derived flip reconciliation + fail-closed seed
+  # verification (the "Step 6" safe-cutover effort). DO NOT set this to "*" until
+  # that lands and you have re-validated, no matter how green CI looks.
+  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
