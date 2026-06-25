@@ -557,3 +557,139 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
     res.keys = result["keys"]
     res.credit = {"total_usage": result["total_usage"], "reserved": result["reserved"]}
     return res
+
+
+# ── Repair: clobbered typed `reserved` ──────────────────────────────────────
+# The 2026-06-25 incident's accumulated damage: before the ownership split the
+# mirror overwrote typed `reserved` with the stale JSON value, so already-typed
+# workspaces have `reserved` frozen far from the truth (auditor flags them). Fix:
+# set credit + each key `reserved` = SUM of that scope's OPEN typed holds. We do
+# NOT touch total_usage — it is monotonic and verified ledger-consistent
+# (JSON baseline + Σ settled actuals) for active workspaces; the lone usage-damaged
+# case (ea7dd3d8) is handled separately. Fail-closed: requires billing_paused so
+# the open-hold set is stable while we write.
+
+
+@dataclass
+class RepairResult:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)
+    applied: bool = False
+    credit_reserved_before: int | None = None
+    credit_reserved_after: int | None = None
+    keys_repaired: int = 0
+
+
+def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False) -> RepairResult:
+    """Set typed `reserved` = SUM(open typed holds) for an already-typed PAUSED
+    workspace (credit + every key). Read-only when apply=False (reports the before/
+    after). Fail-closed: refuses unless billing_paused."""
+    pt = store._param_types
+    res = RepairResult(workspace_id=workspace_id, ready=False)
+    # SHARD-0 ONLY (prod has no other shards). Everything is filtered to shard 0;
+    # a sharded workspace is refused (no shard-0 typed row, or a key row missing).
+    open_credit_sql = (
+        "SELECT COALESCE(SUM(credit_reserved_micro),0) FROM tr_reservation "
+        "WHERE workspace_id=@ws AND ws_shard=0 AND settled=false"
+    )
+    open_key_sql = (
+        "SELECT COALESCE(SUM(key_reserved_micro),0) FROM tr_reservation "
+        "WHERE key_hash=@kh AND key_shard=0 AND settled=false"
+    )
+    credit_row_sql = "SELECT reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+    key_row_sql = "SELECT reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
+    nonzero_key_shard_sql = (
+        "SELECT COUNT(*) FROM tr_reservation "
+        "WHERE key_hash=@kh AND settled=false AND key_shard!=0"
+    )
+    nonzero_shard_sql = (
+        "SELECT COUNT(*) FROM tr_reservation "
+        "WHERE workspace_id=@ws AND settled=false AND ws_shard!=0"
+    )
+
+    workspace = store.get_workspace(workspace_id)
+    key_hashes = [
+        b["hash"] for b in store._list_entities("api_key", cls=dict)
+        if b.get("workspace_id") == workspace_id
+    ]
+    with store._database.snapshot(multi_use=True) as snap:  # 3 reads below — must be multi-use
+        cb = list(snap.execute_sql(
+            credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        ))
+        open_credit = list(snap.execute_sql(
+            open_credit_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        nonzero_shard = list(snap.execute_sql(
+            nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause it before repair")
+    if not cb:
+        res.reasons.append("no typed credit row")
+    if int(nonzero_shard) != 0:
+        res.reasons.append(f"{nonzero_shard} open holds on a nonzero shard — sharded ws not handled")
+    res.ready = not res.reasons
+    if cb:
+        res.credit_reserved_before = int(cb[0][0])
+        res.credit_reserved_after = int(open_credit)
+    if not res.ready or not apply:
+        return res
+
+    cts = store._spanner.COMMIT_TIMESTAMP
+
+    def _txn(transaction: Any) -> dict | None:
+        # Re-read everything INSIDE the txn and validate the COMPLETE plan before
+        # any write. A missing typed row (a key deleted mid-repair, or never
+        # created) must ABORT — never be re-created as a partial (uncapped) row.
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
+        if int(list(transaction.execute_sql(
+            nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]) != 0:
+            return None
+        if not list(transaction.execute_sql(
+            credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        )):
+            return None  # no shard-0 credit row — abort
+        oc = list(transaction.execute_sql(
+            open_credit_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        plan: list[tuple[str, int]] = []
+        for kh in key_hashes:
+            if not list(transaction.execute_sql(
+                key_row_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
+            )):
+                return None  # typed key row missing — abort, never create a partial row
+            if int(list(transaction.execute_sql(
+                nonzero_key_shard_sql, params={"kh": kh}, param_types={"kh": pt.STRING},
+            ))[0][0]) != 0:
+                return None  # key hold on a nonzero shard — would write reserved low; abort
+            ok = list(transaction.execute_sql(
+                open_key_sql, params={"kh": kh}, param_types={"kh": pt.STRING},
+            ))[0][0]
+            plan.append((kh, int(ok)))
+        # all rows exist + validated — now write (insert_or_update UPDATES them).
+        transaction.insert_or_update(
+            table="tr_credit_balance",
+            columns=("workspace_id", "shard", "reserved", "updated_at"),
+            values=[(workspace_id, 0, int(oc), cts)],
+        )
+        for kh, ok in plan:
+            transaction.insert_or_update(
+                table="tr_key_limit",
+                columns=("key_hash", "shard", "reserved", "updated_at"),
+                values=[(kh, 0, ok, cts)],
+            )
+        return {"keys": len(plan)}
+
+    result = store._run_in_transaction(_txn)
+    if result is None:
+        res.ready = False
+        res.reasons.append("aborted: not paused / nonzero shard / a typed row was missing (key deleted?)")
+        return res
+    res.applied = True
+    res.keys_repaired = result["keys"]
+    return res
