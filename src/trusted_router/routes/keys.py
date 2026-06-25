@@ -73,6 +73,14 @@ def register_key_routes(router: APIRouter) -> None:
     @router.delete("/keys/{hash}")
     async def delete_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         _require_key_in_workspace(hash, principal)
+        # Deleting a key drops its typed tr_key_limit row; if a typed hold is
+        # still in flight, the settle's release would match 0 rows ("release
+        # row-count != 1") and strand the hold. Refuse until it drains (seconds).
+        if STORE.key_has_open_typed_hold(hash):
+            raise api_error(
+                503, "Key has in-flight requests; retry shortly",
+                ErrorType.SERVICE_UNAVAILABLE, headers={"Retry-After": "5"},
+            )
         if not STORE.delete_key(hash):
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
         return {"data": {"deleted": True, "hash": hash}}

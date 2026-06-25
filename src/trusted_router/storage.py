@@ -391,6 +391,10 @@ class InMemoryStore:
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 
+    def key_has_open_typed_hold(self, key_hash: str) -> bool:
+        # No typed Spanner tables in the in-memory store; nothing to strand.
+        return False
+
     def reserve_key_limit(
         self,
         key_hash: str,

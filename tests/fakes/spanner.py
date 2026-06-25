@@ -498,6 +498,13 @@ def _execute_sql(
             1 for rec in db.reservations.values()
             if rec.get("workspace_id") == ws and not rec.get("settled")
         )]]
+    # Key-delete guard: open typed holds for one key.
+    if "COUNT(*) FROM tr_reservation WHERE key_hash=@kh AND settled = false" in sql:
+        kh = params["kh"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("key_hash") == kh and not rec.get("settled")
+        )]]
     # Flip-reconcile: does this workspace have ANY typed reservation history?
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
         ws = params["ws"]

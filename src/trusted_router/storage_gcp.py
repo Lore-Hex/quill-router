@@ -578,6 +578,18 @@ class SpannerBigtableStore:
     def delete_key(self, key_hash: str) -> bool:
         return self.api_keys.delete(key_hash)
 
+    def key_has_open_typed_hold(self, key_hash: str) -> bool:
+        """True if the key has an OPEN typed reservation (settled=false). Deleting
+        such a key would drop its tr_key_limit row out from under an in-flight
+        settle -> 'release row-count != 1' + stranded hold. Caller refuses the
+        delete until it drains. Cheap read-only count; typed-tables-only."""
+        with self._database.snapshot() as snap:
+            rows = list(snap.execute_sql(
+                "SELECT COUNT(*) FROM tr_reservation WHERE key_hash=@kh AND settled = false",
+                params={"kh": key_hash}, param_types={"kh": self._param_types.STRING},
+            ))
+        return bool(rows and int(rows[0][0]) > 0)
+
     def update_key(self, key_hash: str, patch: dict[str, Any]) -> ApiKey | None:
         return self.api_keys.update(key_hash, patch)
 
