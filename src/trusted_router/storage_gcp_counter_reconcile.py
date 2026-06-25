@@ -174,3 +174,167 @@ def backfill(store: Any, *, dry_run: bool = False) -> dict[str, int]:
             counts[kind] += 1
 
     return counts
+
+
+# ── Step 6: ledger-derived flip reconciliation ──────────────────────────────
+# Seeds the typed-DML-owned counters for a workspace at the moment it is flipped
+# to typed enforcement. This is the FULL-ROW seed that backfill()/mirror_write no
+# longer do after the 2026-06-25 ownership split — and the ONLY sanctioned writer
+# of typed reserved/total_usage outside the typed authorize/finalize DML.
+#
+# Safe ONLY for a NEVER-TYPED, DRAINED workspace (fail-closed). A workspace with
+# prior typed-origin history (the cohort, or a rolled-back ws like the incident's
+# ea7dd3d8) already has typed gross counters that JSON does not reflect; blindly
+# seeding from JSON would lose typed-era usage, so this tool REFUSES it (needs a
+# ledger reconcile instead). The caller MUST first QUIESCE the workspace (disable
+# its keys) and DRAIN in-flight requests — incl. no-hold (uncapped / BYOK-excluded)
+# paths that settle usage without a reserved hold — before apply=True
+# (codex Step-6 design: enforced quiesce, not observed idle, is the safety).
+
+# Full typed-row column sets — the seed writes reserved/usage too (unlike the
+# narrowed mirror constants, which deliberately omit the typed-owned columns).
+_CREDIT_SEED_COLUMNS = (
+    "workspace_id", "shard", "total_credits", "total_usage", "reserved",
+    "source_updated_at", "updated_at",
+)
+_KEY_SEED_COLUMNS = (
+    "key_hash", "shard", "limit_micro", "usage", "byok_usage", "reserved",
+    "include_byok", "source_updated_at", "updated_at",
+)
+
+
+@dataclass
+class FlipReadiness:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)  # why NOT ready (empty == ready)
+    applied: bool = False
+    credit_seeded: dict | None = None
+    keys_seeded: int = 0
+
+
+def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) -> FlipReadiness:
+    """Assess (and optionally apply) the typed-counter SEED for flipping ONE
+    never-typed, drained workspace to typed enforcement.
+
+    Fail-closed: refuses unless the workspace has a credit account, has NO
+    tr_reservation history (never typed), and is fully drained (json credit
+    reserved == 0 and every json api_key reserved == 0). With apply=True it
+    re-reads the JSON rows INSIDE one Spanner transaction, re-checks the
+    reserved==0 predicates (a legacy hold racing the seed aborts it), and upserts
+    the full typed rows: total_credits/total_usage (credit) and
+    limit/usage/byok_usage/include_byok (key) from JSON, with reserved = 0 (the
+    workspace is drained and never-typed, so there are no open holds to carry).
+    Read-only when apply=False.
+
+    CAUTION — reserved==0 does NOT by itself prove drained: a no-hold (uncapped /
+    BYOK-excluded) request can be mid-flight with reserved==0 and settle usage
+    AFTER the seed, leaving typed usage stale-low. The caller MUST enforce quiesce
+    (disable the workspace's keys) and drain in-flight requests first; this
+    function only checks DB predicates. The key set is captured at assess time, so
+    quiesce must also prevent a new key appearing mid-flip. Run before the cohort
+    gate flip, never after.
+    """
+    pt = store._param_types
+    res = FlipReadiness(workspace_id=workspace_id, ready=False)
+
+    credit = next(
+        (b for b in store._list_entities("credit", cls=dict) if b.get("workspace_id") == workspace_id),
+        None,
+    )
+    if credit is None:
+        res.reasons.append("no credit account")
+        return res
+    keys = [b for b in store._list_entities("api_key", cls=dict) if b.get("workspace_id") == workspace_id]
+
+    with store._database.snapshot() as snap:
+        typed_history = list(snap.execute_sql(
+            "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws",
+            params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+    if int(typed_history) != 0:
+        res.reasons.append(
+            f"{typed_history} tr_reservation rows (typed history) — needs a ledger reconcile, not a JSON seed"
+        )
+    if int(credit.get("reserved_microdollars", 0)) != 0:
+        res.reasons.append(
+            f"credit.reserved={credit['reserved_microdollars']} (open legacy holds — quiesce + drain first)"
+        )
+    for k in keys:
+        if int(k.get("reserved_microdollars", 0)) != 0:
+            res.reasons.append(f"key {k['hash'][:12]} reserved={k['reserved_microdollars']} (drain first)")
+
+    res.ready = not res.reasons
+    if not res.ready or not apply:
+        return res
+
+    cts = store._spanner.COMMIT_TIMESTAMP
+
+    def _txn(transaction: Any) -> dict | None:
+        # Returning None from a run_in_transaction callback COMMITS the buffered
+        # mutations (only a RAISE aborts), so we must issue ZERO mutations until
+        # EVERY predicate has passed — read + re-check all rows first, then write
+        # all of them. Otherwise a hold on a later key would partial-seed the
+        # earlier ones.
+        # Defense-in-depth: re-check no typed history INSIDE the txn — a ws that
+        # got a typed reservation concurrently is already typed; never JSON-seed it.
+        hist = list(transaction.execute_sql(
+            "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws",
+            params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))
+        if hist and int(hist[0][0]) != 0:
+            return None
+        c = store._read_entity_tx(transaction, "credit", workspace_id, dict)
+        if c is None or int(c.get("reserved_microdollars", 0)) != 0:
+            return None  # account vanished or a legacy hold appeared mid-seed — no writes issued
+        fresh_keys = []
+        for k in keys:
+            kb = store._read_entity_tx(transaction, "api_key", k["hash"], dict)
+            if kb is None:
+                continue
+            if int(kb.get("reserved_microdollars", 0)) != 0:
+                return None  # a key hold appeared mid-seed — no writes issued yet
+            fresh_keys.append(kb)
+        # All predicates hold — now issue every upsert (no partial seed possible).
+        for kb in fresh_keys:
+            limit = kb.get("limit_microdollars")
+            transaction.insert_or_update(
+                table="tr_key_limit",
+                columns=_KEY_SEED_COLUMNS,
+                values=[(
+                    kb["hash"], 0,
+                    None if limit is None else int(limit),
+                    int(kb.get("usage_microdollars", 0)),
+                    int(kb.get("byok_usage_microdollars", 0)),
+                    0,
+                    bool(kb.get("include_byok_in_limit", True)),
+                    cts, cts,
+                )],
+            )
+        transaction.insert_or_update(
+            table="tr_credit_balance",
+            columns=_CREDIT_SEED_COLUMNS,
+            values=[(
+                workspace_id, 0,
+                int(c.get("total_credits_microdollars", 0)),
+                int(c.get("total_usage_microdollars", 0)),
+                0,
+                cts, cts,
+            )],
+        )
+        return {
+            "total_credits": int(c.get("total_credits_microdollars", 0)),
+            "total_usage": int(c.get("total_usage_microdollars", 0)),
+            "reserved": 0,
+            "keys": len(fresh_keys),
+        }
+
+    seeded = store._run_in_transaction(_txn)
+    if seeded is None:
+        res.ready = False
+        res.reasons.append("aborted: a hold appeared during seed (re-drain and retry)")
+        return res
+    res.applied = True
+    res.keys_seeded = seeded.pop("keys")
+    res.credit_seeded = seeded
+    return res
