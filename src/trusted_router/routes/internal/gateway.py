@@ -71,6 +71,13 @@ def register(router: APIRouter) -> None:
         workspace = STORE.get_workspace(api_key.workspace_id)
         if workspace is None:
             raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        if getattr(workspace, "billing_paused", False):
+            # Operational quiesce (billing migration / kill switch): reject NEW work
+            # so in-flight holds drain. Settle of already-authorized requests is
+            # unaffected (it routes by reservation origin, not through here).
+            raise api_error(
+                503, "Workspace billing is paused", ErrorType.SERVICE_UNAVAILABLE
+            )
         return {
             "data": {
                 "workspace_id": workspace.id,
@@ -92,6 +99,13 @@ def register(router: APIRouter) -> None:
         workspace = STORE.get_workspace(api_key.workspace_id)
         if workspace is None:
             raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        if getattr(workspace, "billing_paused", False):
+            # Operational quiesce (billing migration / kill switch): reject NEW work
+            # so in-flight holds drain. Settle of already-authorized requests is
+            # unaffected (it routes by reservation origin, not through here).
+            raise api_error(
+                503, "Workspace billing is paused", ErrorType.SERVICE_UNAVAILABLE
+            )
         body_dict = body.model_dump(exclude_none=True)
         _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
         requested_model_id = body.model

@@ -34,6 +34,12 @@ def register_key_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
+        if getattr(principal.workspace, "billing_paused", False):
+            # Quiesce: no new keys while paused, so the workspace's key set is
+            # stable through a flip (the reconcile captures keys at assess time).
+            raise api_error(
+                503, "Workspace billing is paused", ErrorType.SERVICE_UNAVAILABLE
+            )
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,

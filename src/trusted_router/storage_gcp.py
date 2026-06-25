@@ -364,6 +364,8 @@ class SpannerBigtableStore:
         *,
         name: str | None = None,
         deleted: bool | None = None,
+        billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
     ) -> Workspace | None:
         def txn(transaction: Any) -> Workspace | None:
             workspace = self._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
@@ -373,6 +375,10 @@ class SpannerBigtableStore:
                 workspace.name = name
             if deleted is not None:
                 workspace.deleted = deleted
+            if billing_paused is not None:
+                workspace.billing_paused = billing_paused
+            if billing_pause_reason is not None:
+                workspace.billing_pause_reason = billing_pause_reason
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             return None if workspace.deleted else workspace
 

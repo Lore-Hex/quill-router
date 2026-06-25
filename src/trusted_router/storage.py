@@ -224,6 +224,8 @@ class InMemoryStore:
         *,
         name: str | None = None,
         deleted: bool | None = None,
+        billing_paused: bool | None = None,
+        billing_pause_reason: str | None = None,
     ) -> Workspace | None:
         with self._lock:
             workspace = self.workspaces.get(workspace_id)
@@ -233,6 +235,10 @@ class InMemoryStore:
                 workspace.name = name
             if deleted is not None:
                 workspace.deleted = deleted
+            if billing_paused is not None:
+                workspace.billing_paused = billing_paused
+            if billing_pause_reason is not None:
+                workspace.billing_pause_reason = billing_pause_reason
             return workspace
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:

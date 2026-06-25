@@ -65,6 +65,13 @@ class Workspace:
     created_at: str = field(default_factory=iso_now)
     deleted: bool = False
     content_storage_enabled: bool = False
+    # Operational QUIESCE for the typed-billing migration (and a general billing
+    # kill switch): when paused, the gateway rejects new authorizes/validates and
+    # key creation is blocked, so in-flight requests can drain to zero holds before
+    # a workspace is flipped to typed enforcement (codex Step-6 design). Settle of
+    # already-authorized requests is NOT blocked — only new work is.
+    billing_paused: bool = False
+    billing_pause_reason: str = ""
 
 
 @dataclass
