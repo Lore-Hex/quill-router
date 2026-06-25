@@ -29,12 +29,13 @@ from trusted_router.services.stripe_billing import (
     remove_saved_payment_method,
 )
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import typed_aware_credit_account
 
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
     async def console_credits(ctx: ConsoleDep, settings: SettingsDep) -> Response:
-        credit = STORE.get_credit_account(ctx.workspace.id)
+        credit = typed_aware_credit_account(STORE, ctx.workspace.id, settings=settings)
         # Pull the last 20 Stripe checkout sessions tagged with this
         # workspace_id from Stripe's Search API. Returns [] if Stripe is
         # unreachable / not configured / there are no payments yet — all

@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from trusted_router.config import Settings
 from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditAccount
+from trusted_router.typed_balance import typed_aware_credit_account
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,10 @@ def maybe_charge_after_settle(
     the decision. Never raises — Stripe / network failures are surfaced
     via `last_auto_refill_status` so retries are bounded by the next
     settle event."""
-    account = STORE.get_credit_account(workspace_id)
+    # Typed-aware: for a typed workspace the authoritative usage/reserved live in
+    # the typed table; reading stale JSON here would overstate available and the
+    # threshold would never trip → the card never charges (underbill).
+    account = typed_aware_credit_account(STORE, workspace_id, settings=settings)
     if account is None:
         return AutoRefillOutcome(fired=False, reason="no_account")
     if not account.auto_refill_enabled:
