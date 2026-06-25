@@ -46,8 +46,10 @@ def test_delete_key_refused_while_typed_hold_in_flight(monkeypatch) -> None:
     r = client.delete(f"/v1/keys/{key['hash']}", headers={"x-trustedrouter-user": email})
     assert r.status_code == 503, r.text
     assert r.headers.get("retry-after") == "5"
-    # key NOT deleted (still listed)
-    assert STORE.get_key_by_hash(key["hash"]) is not None
+    # NOT deleted, but disabled-first so no new hold can form before the retry.
+    key_obj = STORE.get_key_by_hash(key["hash"])
+    assert key_obj is not None
+    assert key_obj.disabled is True
 
 
 def test_delete_key_succeeds_when_no_hold() -> None:

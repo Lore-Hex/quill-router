@@ -73,9 +73,17 @@ def register_key_routes(router: APIRouter) -> None:
     @router.delete("/keys/{hash}")
     async def delete_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
         _require_key_in_workspace(hash, principal)
-        # Deleting a key drops its typed tr_key_limit row; if a typed hold is
-        # still in flight, the settle's release would match 0 rows ("release
-        # row-count != 1") and strand the hold. Refuse until it drains (seconds).
+        # Deleting a key drops its typed tr_key_limit row; if a typed hold is still
+        # in flight, the settle's release matches 0 rows ("release row-count != 1")
+        # and strands the hold. DISABLE FIRST — the gateway rejects authorizes for a
+        # disabled key (routes/internal/gateway.py), so once this commits NO new
+        # hold can form — then refuse the delete while any hold from just before the
+        # disable is still in flight (client retries after it drains, seconds). This
+        # closes the common race; the sub-ms residual (an authorize that loaded the
+        # enabled key microseconds before the disable) can only STRAND a hold, which
+        # the reaper reclaims and the invariant auditor + row-count alert catch. A
+        # fully atomic count+delete txn is the complete fix (tracked for whales).
+        STORE.update_key(hash, {"disabled": True})
         if STORE.key_has_open_typed_hold(hash):
             raise api_error(
                 503, "Key has in-flight requests; retry shortly",
