@@ -128,14 +128,22 @@ ENV_VARS=(
   # the separate ledger-derived flip reconciliation + fail-closed seed
   # verification (the "Step 6" safe-cutover effort).
   #
-  # 2026-06-26: Step 6 has LANDED and is prod-validated — ownership-split mirror
-  # (#79), reconcile_for_flip seed (#80), typed-aware reads (#81), workspace
-  # billing-pause (#82), invariant auditor (#83/#84), reserved-clobber repair
-  # (#86). The whole live cohort was repaired and the auditor is CLEAN. This is
-  # the CANARY batch: the 2 live-cohort workspaces + 5 seeded (reconcile_for_flip,
-  # paused, audit-clean) never-typed workspaces. Verify these engage typed +
-  # auditor stays clean + no "release row-count" errors before flipping to "*".
-  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb,34f42719-a8fb-4f52-8e15-01c55b13f552,88b5fe37-6df7-46ca-a24a-5eaf3ae015ad,a0650e9f-ce5b-41c6-8754-2b47bb342a81,ce4b7fd2-3907-4465-81fe-0d7a8a547d40,fd17a171-1359-4618-9078-12644656b6ae"
+  # 2026-06-26: Step 6 LANDED + prod-validated — ownership-split mirror (#79),
+  # reconcile_for_flip seed (#80), typed-aware reads (#81), workspace billing-pause
+  # (#82), invariant auditor (#83/#84), reserved-clobber repair (#86). The live
+  # cohort was repaired; the CANARY (cohort + 5 seeded never-typed) deployed,
+  # converged across all regions, and the auditor stayed CLEAN through
+  # pause→flip→unpause with the typed path healthy (synthetic reserving normally,
+  # bounded open holds, zero "release row-count" errors).
+  #
+  # UNIVERSAL FLIP: every remaining workspace was reconcile_for_flip-seeded while
+  # paused (typed total_usage=JSON, reserved=0; auditor CLEAN) before this "*" went
+  # in; they stay paused through the full cross-region rollout, then unpause. The
+  # latent bug that broke the FIRST "*" is fixed at the root (ownership-split mirror
+  # no longer clobbers typed-owned columns) and every workspace is seeded, so
+  # typed.reserved is never blind to its open holds. Denylist still wins for an
+  # emergency per-workspace revert.
+  "TR_TYPED_BILLING_WORKSPACE_IDS=*"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
