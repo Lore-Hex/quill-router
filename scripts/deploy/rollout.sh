@@ -126,9 +126,16 @@ ENV_VARS=(
   # so flipping a not-yet-typed workspace would leave typed.reserved blind to its
   # open holds -> SILENT OVERSPEND (no row-count error). Re-enabling "*" requires
   # the separate ledger-derived flip reconciliation + fail-closed seed
-  # verification (the "Step 6" safe-cutover effort). DO NOT set this to "*" until
-  # that lands and you have re-validated, no matter how green CI looks.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb"
+  # verification (the "Step 6" safe-cutover effort).
+  #
+  # 2026-06-26: Step 6 has LANDED and is prod-validated — ownership-split mirror
+  # (#79), reconcile_for_flip seed (#80), typed-aware reads (#81), workspace
+  # billing-pause (#82), invariant auditor (#83/#84), reserved-clobber repair
+  # (#86). The whole live cohort was repaired and the auditor is CLEAN. This is
+  # the CANARY batch: the 2 live-cohort workspaces + 5 seeded (reconcile_for_flip,
+  # paused, audit-clean) never-typed workspaces. Verify these engage typed +
+  # auditor stays clean + no "release row-count" errors before flipping to "*".
+  "TR_TYPED_BILLING_WORKSPACE_IDS=45819281-0ce9-4811-a0cd-c660ab3a116d,063e9fb9-880b-41f6-a122-b141e52ed4bb,34f42719-a8fb-4f52-8e15-01c55b13f552,88b5fe37-6df7-46ca-a24a-5eaf3ae015ad,a0650e9f-ce5b-41c6-8754-2b47bb342a81,ce4b7fd2-3907-4465-81fe-0d7a8a547d40,fd17a171-1359-4618-9078-12644656b6ae"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
