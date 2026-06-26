@@ -693,3 +693,102 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
     res.applied = True
     res.keys_repaired = result["keys"]
     return res
+
+
+# ── Reconcile typed credit total_usage from the ledger ──────────────────────
+# Residual usage drift after the universal flip: an ever-typed leftover (typed
+# usage frozen-stale from the incident window) or a new workspace that straddled
+# legacy+typed during the cross-region rollout has typed total_usage that omits
+# part of its real usage. The correct all-time usage = JSON baseline (legacy-era)
+# + Σ typed-era settled-Credits actuals (the ledger). Set it for a billing-PAUSED
+# workspace. Does NOT touch reserved (repair_typed_reserved) or keys.
+
+
+@dataclass
+class UsageReconcileResult:
+    workspace_id: str
+    ready: bool
+    reasons: list[str] = field(default_factory=list)
+    applied: bool = False
+    usage_before: int | None = None
+    usage_after: int | None = None
+
+
+def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool = False) -> UsageReconcileResult:
+    """Set typed credit total_usage = JSON.total_usage + SUM(settled Credits
+    actual_micro) for a billing-PAUSED workspace (shard 0). Read-only when
+    apply=False. Fail-closed: refuses unless billing_paused; aborts if the typed
+    row is missing or any settled Credits actual is on a nonzero shard. Leaves
+    reserved + keys untouched."""
+    pt = store._param_types
+    res = UsageReconcileResult(workspace_id=workspace_id, ready=False)
+    ledger_sql = (
+        "SELECT COALESCE(SUM(actual_micro),0) FROM tr_reservation "
+        "WHERE workspace_id=@ws AND ws_shard=0 AND settled=true AND settled_usage_type='Credits'"
+    )
+    nonzero_shard_sql = (
+        "SELECT COUNT(*) FROM tr_reservation "
+        "WHERE workspace_id=@ws AND settled=true AND settled_usage_type='Credits' AND ws_shard!=0"
+    )
+    credit_row_sql = "SELECT total_usage FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+
+    workspace = store.get_workspace(workspace_id)
+    cred = store.get_credit_account(workspace_id)
+    with store._database.snapshot(multi_use=True) as snap:
+        cb = list(snap.execute_sql(credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING}))
+        ledger = list(snap.execute_sql(ledger_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING}))[0][0]
+        nz = list(snap.execute_sql(nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING}))[0][0]
+
+    if workspace is None or not getattr(workspace, "billing_paused", False):
+        res.reasons.append("workspace not billing-paused — pause it before reconcile")
+    if cred is None:
+        res.reasons.append("no JSON credit account")
+    if not cb:
+        res.reasons.append("no typed credit row")
+    if int(nz) != 0:
+        res.reasons.append(f"{nz} settled Credits actuals on a nonzero shard — sharded ws not handled")
+    res.ready = not res.reasons
+    if cb and cred is not None:
+        res.usage_before = int(cb[0][0])
+        res.usage_after = int(cred.total_usage_microdollars) + int(ledger)
+    if not res.ready or not apply:
+        return res
+
+    cts = store._spanner.COMMIT_TIMESTAMP
+
+    def _txn(transaction: Any) -> dict | None:
+        # Re-read everything in-txn; abort (zero writes) if paused-state, the JSON
+        # account, or the typed row is gone, or a nonzero-shard actual appears.
+        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
+        if ws is None or not ws.billing_paused:
+            return None
+        c = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+        if c is None:
+            return None
+        if int(list(transaction.execute_sql(
+            nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]) != 0:
+            return None
+        if not list(transaction.execute_sql(
+            credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
+        )):
+            return None  # typed row missing — abort, never create
+        led = list(transaction.execute_sql(
+            ledger_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]
+        target = int(c.total_usage_microdollars) + int(led)
+        transaction.insert_or_update(
+            table="tr_credit_balance",
+            columns=("workspace_id", "shard", "total_usage", "updated_at"),
+            values=[(workspace_id, 0, target, cts)],
+        )
+        return {"target": target}
+
+    result = store._run_in_transaction(_txn)
+    if result is None:
+        res.ready = False
+        res.reasons.append("aborted: not paused / no JSON account / typed row missing / nonzero shard")
+        return res
+    res.applied = True
+    res.usage_after = int(result["target"])
+    return res

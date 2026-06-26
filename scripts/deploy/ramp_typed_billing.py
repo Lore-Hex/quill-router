@@ -52,6 +52,7 @@ from trusted_router.storage_gcp_counter_reconcile import (
     audit_typed_invariants,
     backsync_typed_to_json,
     reconcile_for_flip,
+    reconcile_typed_credit_usage,
     repair_typed_reserved,
 )
 
@@ -60,10 +61,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    for name in ("pause", "unpause", "status", "reconcile", "rollback", "repair"):
+    for name in ("pause", "unpause", "status", "reconcile", "rollback", "repair", "usage"):
         p = sub.add_parser(name)
         p.add_argument("workspaces", nargs="+")
-        if name in ("pause", "unpause", "reconcile", "rollback", "repair"):
+        if name in ("pause", "unpause", "reconcile", "rollback", "repair", "usage"):
             p.add_argument("--apply", action="store_true", help="actually mutate (else dry-run)")
         if name == "pause":
             p.add_argument("--reason", default="typed-billing ramp")
@@ -125,6 +126,17 @@ def main() -> int:
                 print(f"{ws}: REPAIRED credit reserved {rp.credit_reserved_before}->{rp.credit_reserved_after}, keys={rp.keys_repaired}")
             else:
                 print(f"{ws}: would set credit reserved {rp.credit_reserved_before}->{rp.credit_reserved_after} (dry-run; pass --apply)")
+
+        elif args.cmd == "usage":
+            ur = reconcile_typed_credit_usage(store, ws, apply=args.apply)
+            if not ur.ready:
+                print(f"{ws}: NOT usage-reconcile-ready — {ur.reasons}")
+                rc = 1
+            elif ur.applied:
+                print(f"{ws}: USAGE RECONCILED total_usage {ur.usage_before}->{ur.usage_after}")
+            else:
+                drift = (ur.usage_after or 0) - (ur.usage_before or 0)
+                print(f"{ws}: would set total_usage {ur.usage_before}->{ur.usage_after} (drift {drift:+d}; dry-run; pass --apply)")
 
     return rc
 
