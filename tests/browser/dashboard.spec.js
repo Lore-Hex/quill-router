@@ -136,6 +136,9 @@ test("local trust page links the public source repositories and release files", 
 test("synth local demo streams raw thinking and completes", async ({ page }) => {
   await page.goto("/synth?demo=1");
 
+  await expect(page.locator("[data-fusion-synthesis-prompt]")).toBeHidden();
+  await page.getByText("Advanced settings").click();
+  await expect(page.locator("[data-fusion-synthesis-prompt]")).toBeVisible();
   await page.locator("[data-fusion-prompt]").fill("Compare two router designs.");
   await page.locator("[data-fusion-synthesis-prompt]").fill("Return a crisp recommendation.");
   await expect(page.locator("[data-fusion-code]")).toContainText('"synthesis_prompt": "Return a crisp recommendation."');

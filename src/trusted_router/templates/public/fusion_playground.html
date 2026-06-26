@@ -39,27 +39,6 @@
           <textarea data-fusion-prompt rows="8" placeholder="Ask a hard question where multiple model opinions help."></textarea>
         </label>
 
-        <label class="fusion-field fusion-field-wide">
-          Synthesis instructions
-          <textarea data-fusion-synthesis-prompt rows="3" maxlength="4000" placeholder="Optional final-answer instructions."></textarea>
-        </label>
-
-        <div class="fusion-row">
-          <label class="fusion-field">
-            Preset
-            <select data-fusion-preset>
-              <option value="budget" selected>Iris 1.0 &mdash; budget</option>
-              <option value="quality">Prometheus 1.0 &mdash; quality</option>
-              <option value="frontier">Zeus 1.0 &mdash; frontier</option>
-            </select>
-            <span class="fusion-help" data-fusion-preset-help></span>
-          </label>
-          <label class="fusion-field">
-            Max tokens
-            <input data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048">
-          </label>
-        </div>
-
         <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="panel">
           <div class="fusion-model-set-head">
             <span>Panel models</span>
@@ -68,27 +47,56 @@
           <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="panel"></div>
         </div>
 
-        <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="judges">
-          <div class="fusion-model-set-head">
-            <span>Judge and fallback judge</span>
-            <button class="fusion-model-reset" type="button" data-fusion-model-reset="judges">Reset</button>
-          </div>
-          <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="judges"></div>
-        </div>
+        <details class="fusion-advanced">
+          <summary>
+            <span>Advanced settings</span>
+            <small>Prompts, fallbacks, tokens</small>
+          </summary>
+          <div class="fusion-advanced-body">
+            <label class="fusion-field fusion-field-wide">
+              Synthesis instructions
+              <textarea data-fusion-synthesis-prompt rows="3" maxlength="4000" placeholder="Optional final-answer instructions."></textarea>
+            </label>
 
-        <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="finals">
-          <div class="fusion-model-set-head">
-            <span>Synthesizer and fallback synthesizer</span>
-            <button class="fusion-model-reset" type="button" data-fusion-model-reset="finals">Reset</button>
-          </div>
-          <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="finals"></div>
-        </div>
+            <div class="fusion-row">
+              <label class="fusion-field">
+                Preset
+                <select data-fusion-preset>
+                  <option value="budget" selected>Iris 1.0 &mdash; budget</option>
+                  <option value="quality">Prometheus 1.0 &mdash; quality</option>
+                  <option value="frontier">Zeus 1.0 &mdash; frontier</option>
+                </select>
+                <span class="fusion-help" data-fusion-preset-help></span>
+              </label>
+              <label class="fusion-field">
+                Max tokens
+                <input data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048">
+              </label>
+            </div>
 
-        <div class="fusion-options">
-          <span class="fusion-option-pill">synthesize_non_refusals</span>
-          <span class="fusion-option-pill">raw thinking when returned</span>
-          <span class="fusion-option-pill">judge + final fallbacks</span>
-        </div>
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="judges">
+              <div class="fusion-model-set-head">
+                <span>Judge and fallback judge</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="judges">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="judges"></div>
+            </div>
+
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="finals">
+              <div class="fusion-model-set-head">
+                <span>Synthesizer and fallback synthesizer</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="finals">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="finals"></div>
+            </div>
+
+            <div class="fusion-options">
+              <span class="fusion-option-pill">synthesize_non_refusals</span>
+              <span class="fusion-option-pill">raw thinking when returned</span>
+              <span class="fusion-option-pill">judge + final fallbacks</span>
+            </div>
+          </div>
+        </details>
 
         <button class="btn primary fusion-run" type="submit" data-fusion-run>Run Synth</button>
         <p class="fusion-error" data-fusion-error hidden></p>

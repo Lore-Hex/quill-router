@@ -186,6 +186,61 @@
   gap: 10px;
 }
 
+.fusion-advanced {
+  border: 1px solid rgba(39, 50, 68, .72);
+  border-radius: var(--fusion-radius);
+  background: rgba(11, 18, 32, .56);
+}
+
+.fusion-advanced summary {
+  align-items: center;
+  color: var(--fusion-ink);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  list-style: none;
+  min-height: 40px;
+  padding: 10px 11px;
+  user-select: none;
+}
+
+.fusion-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.fusion-advanced summary::after {
+  color: var(--fusion-muted);
+  content: "+";
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  transition: transform .16s ease, opacity .16s ease;
+}
+
+.fusion-advanced[open] summary::after {
+  content: "−";
+}
+
+.fusion-advanced summary span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fusion-advanced summary small {
+  color: var(--fusion-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+}
+
+.fusion-advanced-body {
+  border-top: 1px solid rgba(39, 50, 68, .72);
+  display: grid;
+  gap: 13px;
+  padding: 13px;
+}
+
 .fusion-field {
   display: grid;
   gap: 7px;

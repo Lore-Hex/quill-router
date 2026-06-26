@@ -130,6 +130,8 @@ def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestCl
     assert "raw thinking when returned" in body
     assert "data-fusion-details" in body
     assert "data-fusion-synthesis-prompt" in body
+    assert '<details class="fusion-advanced">' in body
+    assert "Advanced settings" in body
     assert "Synthesis instructions" in body
     assert 'data-action="toggle-fusion-detail-layout"' in body
     assert '<option value="budget" selected>Iris 1.0 &mdash; budget</option>' in body
