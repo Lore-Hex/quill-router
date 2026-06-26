@@ -37,7 +37,6 @@ def test_usage_reconcile_sets_typed_usage_to_json_plus_ledger() -> None:
     db.reservations["r1"] = {"reservation_id": "r1", "workspace_id": ws, "settled": True, "settled_usage_type": "Credits", "actual_micro": 3_000, "ws_shard": 0}
     db.reservations["r2"] = {"reservation_id": "r2", "workspace_id": ws, "settled": True, "settled_usage_type": "Credits", "actual_micro": 2_000, "ws_shard": 0}
     db.reservations["r3"] = {"reservation_id": "r3", "workspace_id": ws, "settled": True, "settled_usage_type": "BYOK", "actual_micro": 9_999, "ws_shard": 0}
-    db.reservations["r4"] = {"reservation_id": "r4", "workspace_id": ws, "settled": False, "credit_reserved_micro": 1_000, "ws_shard": 0}
 
     a = reconcile_typed_credit_usage(store, ws, apply=False)
     assert a.ready and not a.applied
@@ -60,6 +59,20 @@ def test_usage_reconcile_refuses_unpaused() -> None:
     r = reconcile_typed_credit_usage(store, ws, apply=True)
     assert not r.ready and not r.applied
     assert any("not billing-paused" in x for x in r.reasons), r.reasons
+    assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 5_000
+
+
+def test_usage_reconcile_aborts_on_open_holds() -> None:
+    """codex drain guard: an open typed hold means the ledger isn't stable — abort."""
+    store, db, _ = make_fake_store()
+    ws = "ws_undrained"
+    _paused_ws(store, ws, json_usage=10_000)
+    _typed(db, ws, total_usage=5_000)
+    db.reservations["r1"] = {"reservation_id": "r1", "workspace_id": ws, "settled": True, "settled_usage_type": "Credits", "actual_micro": 5_000, "ws_shard": 0}
+    db.reservations["open"] = {"reservation_id": "open", "workspace_id": ws, "settled": False, "credit_reserved_micro": 1_000, "ws_shard": 0}
+    r = reconcile_typed_credit_usage(store, ws, apply=True)
+    assert not r.ready and not r.applied
+    assert any("open typed holds" in x for x in r.reasons), r.reasons
     assert db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_usage"] == 5_000
 
 

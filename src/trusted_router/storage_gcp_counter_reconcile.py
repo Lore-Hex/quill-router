@@ -716,10 +716,20 @@ class UsageReconcileResult:
 
 def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool = False) -> UsageReconcileResult:
     """Set typed credit total_usage = JSON.total_usage + SUM(settled Credits
-    actual_micro) for a billing-PAUSED workspace (shard 0). Read-only when
-    apply=False. Fail-closed: refuses unless billing_paused; aborts if the typed
-    row is missing or any settled Credits actual is on a nonzero shard. Leaves
-    reserved + keys untouched."""
+    actual_micro) for a billing-PAUSED, DRAINED workspace (shard 0). Read-only
+    when apply=False. Fail-closed: refuses unless billing_paused AND there are NO
+    open typed holds (a hold settling after the write would book onto the new
+    baseline, which is fine, but draining first makes the ledger stable and the
+    op idempotent); aborts if the typed row is missing or any Credits actual is on
+    a nonzero shard. Leaves reserved + keys untouched.
+
+    Deliberately does NOT check JSON reserved_microdollars: under universal typed
+    enforcement the JSON reserved counter is legacy/irrelevant (often a stale,
+    leaked value) and gating on it would wrongly block correct reconciles. The
+    invariant we need is JSON total_usage stability — guaranteed because a typed-
+    enforced, paused workspace takes no new legacy bills. WARNING: must NOT be run
+    after backsync_typed_to_json (which copies typed usage back into JSON → JSON is
+    no longer the legacy baseline → JSON+ledger would double-count)."""
     pt = store._param_types
     res = UsageReconcileResult(workspace_id=workspace_id, ready=False)
     ledger_sql = (
@@ -731,6 +741,9 @@ def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool =
         "WHERE workspace_id=@ws AND settled=true AND settled_usage_type='Credits' AND ws_shard!=0"
     )
     credit_row_sql = "SELECT total_usage FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
+    # Drain guard: no open typed holds (any shard). This also subsumes the "open
+    # nonzero-shard reservation" gap — zero open holds means none on any shard.
+    open_holds_sql = "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false"
 
     workspace = store.get_workspace(workspace_id)
     cred = store.get_credit_account(workspace_id)
@@ -738,6 +751,7 @@ def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool =
         cb = list(snap.execute_sql(credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING}))
         ledger = list(snap.execute_sql(ledger_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING}))[0][0]
         nz = list(snap.execute_sql(nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING}))[0][0]
+        open_holds = list(snap.execute_sql(open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING}))[0][0]
 
     if workspace is None or not getattr(workspace, "billing_paused", False):
         res.reasons.append("workspace not billing-paused — pause it before reconcile")
@@ -745,6 +759,8 @@ def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool =
         res.reasons.append("no JSON credit account")
     if not cb:
         res.reasons.append("no typed credit row")
+    if int(open_holds) != 0:
+        res.reasons.append(f"{open_holds} open typed holds — drain (or reap) first")
     if int(nz) != 0:
         res.reasons.append(f"{nz} settled Credits actuals on a nonzero shard — sharded ws not handled")
     res.ready = not res.reasons
@@ -765,6 +781,10 @@ def reconcile_typed_credit_usage(store: Any, workspace_id: str, *, apply: bool =
         c = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
         if c is None:
             return None
+        if int(list(transaction.execute_sql(
+            open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
+        ))[0][0]) != 0:
+            return None  # an open hold appeared — not drained, abort
         if int(list(transaction.execute_sql(
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]) != 0:
