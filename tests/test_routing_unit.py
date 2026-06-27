@@ -154,9 +154,7 @@ def test_chat_route_candidates_allow_fallbacks_false_returns_only_head() -> None
 
 
 def test_chat_route_candidates_sort_by_throughput_uses_rank_table() -> None:
-    """sort=throughput orders by the configured throughput-rank map.
-    Cerebras (rank 0) > vertex (1) > gemini (2) > deepseek (3) > kimi (4) >
-    mistral (5) > openai (6) > anthropic (7)."""
+    """sort=throughput orders by the configured throughput-rank map."""
     candidates = chat_route_candidates(
         {
             "models": [

@@ -90,16 +90,45 @@ _VARIANT_SUFFIXES: dict[str, tuple[str, str]] = {
 }
 
 
+# Throughput-first routing rank. Lower values are tried first for
+# `provider.sort = "throughput"` and `:nitro`.
+#
+# Generated from the public /leaderboard provider table on 2026-06-27 with:
+#   python scripts/update_provider_throughput_rank.py --write
+# The generator admits only providers with enough samples, >=95% measured uptime,
+# and positive p50 output tokens/second. Providers without reliable token/s data
+# keep conservative secondary ranks so they do not beat measured fast routes.
 _THROUGHPUT_RANK = {
-    "cerebras": 0,
-    "gemini": 1,
-    "together": 2,  # speculative-decoded inference, generally fast for OS models
-    "deepseek": 3,
-    "kimi": 4,
-    "zai": 5,
-    "mistral": 6,
-    "openai": 7,
-    "anthropic": 8,
+    "baseten": 0,
+    "deepseek": 1,
+    "fireworks": 2,
+    "kimi": 3,
+    "siliconflow": 4,
+    "deepinfra": 5,
+    "minimax": 6,
+    "crusoe": 7,
+    # Current leaderboard rows do not expose enough usable token/s for these
+    # providers. Keep strong prior ordering below the measured set until the
+    # synthetic probes emit stable longer completions for every provider.
+    "cerebras": 20,
+    "mistral": 21,
+    "openai": 22,
+    "gemini": 23,
+    "together": 24,
+    "zai": 25,
+    "anthropic": 26,
+    "tinfoil": 27,
+    "venice": 28,
+    "grok": 29,
+    "lightning": 30,
+    "nebius": 31,
+    "friendli": 32,
+    "novita": 33,
+    "phala": 34,
+    "gmi": 35,
+    "parasail": 36,
+    "wafer": 37,
+    "xiaomi": 38,
     "trustedrouter": 99,
 }
 
