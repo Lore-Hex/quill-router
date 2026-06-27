@@ -8,7 +8,6 @@ dependencies = [
   "axiom-py>=0.9.0",
   "boto3>=1.35.0",
   "cryptography>=43.0.0",
-  "docling>=2.58.0",
   "email-validator>=2.0.0",
   "eth-account>=0.13.7",
   "fastapi>=0.115.0",
@@ -20,7 +19,6 @@ dependencies = [
   "pydantic-settings>=2.6.0",
   "python-multipart>=0.0.20",
   "sentry-sdk[fastapi]>=2.20.0",
-  "sec-parser>=0.58.0",
   "stripe>=11.0.0",
   "uvicorn[standard]>=0.32.0",
 ]
@@ -39,6 +37,10 @@ dev = [
   # Not used at runtime — catalog.py reads the committed JSON
   # snapshot — so it stays out of the deployed wheel.
   "beautifulsoup4>=4.12.0",
+  # Evals can optionally parse PDFs/SEC filings, but these packages pull
+  # a large ML/document stack (torch, triton, transformers, OCR). Keep
+  # them out of the production API image.
+  "docling>=2.58.0",
   "hypothesis>=6.152.4",
   "mypy>=1.13",
   "pytest>=8.3.0",
@@ -46,6 +48,7 @@ dev = [
   "pytest-cov>=7.1.0",
   "pytest-httpx>=0.36.2",
   "ruff>=0.8.0",
+  "sec-parser>=0.58.0",
 ]
 
 [tool.pytest.ini_options]

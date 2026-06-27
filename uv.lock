@@ -4402,7 +4402,6 @@ dependencies = [
     { name = "axiom-py" },
     { name = "boto3" },
     { name = "cryptography" },
-    { name = "docling" },
     { name = "email-validator" },
     { name = "eth-account" },
     { name = "fastapi" },
@@ -4413,7 +4412,6 @@ dependencies = [
     { name = "jinja2" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
-    { name = "sec-parser" },
     { name = "sentry-sdk", extra = ["fastapi"] },
     { name = "stripe" },
     { name = "uvicorn", extra = ["standard"] },
@@ -4422,6 +4420,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "beautifulsoup4" },
+    { name = "docling" },
     { name = "hypothesis" },
     { name = "mypy" },
     { name = "pytest" },
@@ -4429,6 +4428,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-httpx" },
     { name = "ruff" },
+    { name = "sec-parser" },
 ]
 
 [package.metadata]
@@ -4436,7 +4436,6 @@ requires-dist = [
     { name = "axiom-py", specifier = ">=0.9.0" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "cryptography", specifier = ">=43.0.0" },
-    { name = "docling", specifier = ">=2.58.0" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "eth-account", specifier = ">=0.13.7" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -4447,7 +4446,6 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.6.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "sec-parser", specifier = ">=0.58.0" },
     { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.20.0" },
     { name = "stripe", specifier = ">=11.0.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32.0" },
@@ -4456,6 +4454,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "docling", specifier = ">=2.58.0" },
     { name = "hypothesis", specifier = ">=6.152.4" },
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3.0" },
@@ -4463,6 +4462,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-httpx", specifier = ">=0.36.2" },
     { name = "ruff", specifier = ">=0.8.0" },
+    { name = "sec-parser", specifier = ">=0.58.0" },
 ]
 
 [[package]]
