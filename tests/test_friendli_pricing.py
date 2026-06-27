@@ -15,6 +15,13 @@ def test_friendli_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
                 },
             },
             {
+                "id": "zai-org/GLM-5",
+                "pricing": {
+                    "input": 1.0,
+                    "output": 3.2,
+                },
+            },
+            {
                 "id": "meta-llama-3.3-70b-instruct",
                 "pricing": {
                     "input": 0.6,
@@ -53,6 +60,7 @@ def test_friendli_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 260_000
+    assert "z-ai/glm-5" not in result.prices
     assert llama.prompt_micro_per_m == 600_000
     assert friendli.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
     assert (

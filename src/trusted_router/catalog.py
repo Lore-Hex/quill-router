@@ -1195,6 +1195,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "qwen/qwen3-vl-8b-thinking",
         }
     ),
+    # Friendli notified customers that GLM-5 serverless Model APIs stop being
+    # supported at 2026-07-03 00:00 UTC. Dedicated endpoints are unaffected, but
+    # TrustedRouter's Friendli route is the serverless API, so remove only this
+    # provider/model pair from routable candidates.
+    "friendli": frozenset({"z-ai/glm-5", "zai-org/GLM-5"}),
 }
 
 

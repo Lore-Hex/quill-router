@@ -158,6 +158,26 @@ def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
     assert "qwen/qwen3.6-35b-a3b@novita/byok" in MODEL_ENDPOINTS
 
 
+def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
+    deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["friendli"]
+    friendli_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "friendli"
+    ]
+
+    assert friendli_endpoints
+    for endpoint in friendli_endpoints:
+        assert endpoint.model_id not in deprecated
+        assert endpoint.upstream_id not in deprecated
+
+    assert "z-ai/glm-5@friendli/prepaid" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5@friendli/byok" not in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.2@friendli/prepaid" in MODEL_ENDPOINTS
+    assert "z-ai/glm-5.2@friendli/byok" in MODEL_ENDPOINTS
+    # Provider-scoped deprecation: other GLM-5 routes remain available if their
+    # providers still serve them.
+    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
+
+
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
     gemini_lite_preview = MODEL_ENDPOINTS[

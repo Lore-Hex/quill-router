@@ -71,23 +71,6 @@
       "status": 1
     },
     {
-      "id": "z-ai/glm-5",
-      "upstream_id": "zai-org/GLM-5",
-      "display_name": "Friendli GLM 5",
-      "title": "zai-org/GLM-5",
-      "context_length": 202752,
-      "max_output_tokens": 65536,
-      "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3200000,
-      "cached_input_token_price_per_m": 500000,
-      "model_type": "chat",
-      "features": ["reasoning", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
-      "status": 1
-    },
-    {
       "id": "minimax/minimax-m2.5",
       "upstream_id": "MiniMaxAI/MiniMax-M2.5",
       "display_name": "Friendli MiniMax M2.5",

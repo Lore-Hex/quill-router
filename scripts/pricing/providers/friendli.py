@@ -32,6 +32,12 @@ from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_ups
 
 SLUG = "friendli"
 URL = "https://api.friendli.ai/serverless/v1/models"
+DEPRECATED_NATIVE_IDS = {
+    # Friendli notified customers that GLM-5 serverless Model APIs stop being
+    # supported at 2026-07-03 00:00 UTC. Dedicated endpoints are unaffected, but
+    # TrustedRouter's Friendli route uses the serverless Model API.
+    "zai-org/GLM-5",
+}
 
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
@@ -87,6 +93,8 @@ def fetch() -> ProviderPricingResult:
             continue
         native_id = row.get("id")
         if not isinstance(native_id, str):
+            continue
+        if native_id in DEPRECATED_NATIVE_IDS:
             continue
         or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
