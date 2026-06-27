@@ -1156,6 +1156,29 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "qwen3-vl-30b",
         }
     ),
+    # Novita notified customers that these DeepSeek and Qwen model APIs retire
+    # on 2026-07-01 00:00 UTC. Replacement routes are deepseek-v4-flash,
+    # qwen3.6-27b, and qwen3.6-35b-a3b. This is provider-scoped: the same
+    # model ids on other providers remain routable if those providers still
+    # serve them.
+    "novita": frozenset(
+        {
+            "deepseek/deepseek-r1-distill-qwen-14b",
+            "deepseek/deepseek-r1-distill-qwen-32b",
+            "qwen/qwen3-14b",
+            "qwen/qwen3-30b-a3b",
+            "qwen/qwen3-30b-a3b-instruct-2507",
+            "qwen/qwen3-30b-a3b-thinking-2507",
+            "qwen/qwen3-32b",
+            "qwen/qwen3-8b",
+            "qwen/qwen3-next-80b-a3b-thinking",
+            "qwen/qwen3-vl-30b-a3b-thinking",
+            "qwen/qwen3-vl-32b-instruct",
+            "qwen/qwen3-vl-32b-thinking",
+            "qwen/qwen3-vl-8b-instruct",
+            "qwen/qwen3-vl-8b-thinking",
+        }
+    ),
 }
 
 
@@ -1900,8 +1923,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             # they only 502 + burn the SLO. (NB: nebius Qwen3.5-397B-A17B-fast,
             # also slow, is deliberately KEPT — a 397B model legitimately takes
             # >20s to first token and we want it available.)
-            "deepseek/deepseek-r1-distill-qwen-14b",
-            "deepseek/deepseek-r1-distill-qwen-32b",
             "qwen/qwen3-8b-fp8",
             "meta-llama/llama-3.2-3b-instruct",
             "gryphe/mythomax-l2-13b",

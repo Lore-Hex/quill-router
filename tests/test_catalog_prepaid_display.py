@@ -128,6 +128,36 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     assert "qwen/qwen3-vl-30b-a3b-instruct@phala/prepaid" in MODEL_ENDPOINTS
 
 
+def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
+    deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS["novita"]
+    novita_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "novita"
+    ]
+
+    assert novita_endpoints
+    for endpoint in novita_endpoints:
+        assert endpoint.model_id not in deprecated
+        assert endpoint.upstream_id not in deprecated
+
+    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/prepaid" not in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-r1-distill-qwen-14b@novita/byok" not in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/prepaid" not in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-r1-distill-qwen-32b@novita/byok" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-next-80b-a3b-thinking@novita/prepaid" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-next-80b-a3b-thinking@novita/byok" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/prepaid" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-thinking@novita/byok" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-8b-instruct@novita/prepaid" not in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-8b-instruct@novita/byok" not in MODEL_ENDPOINTS
+
+    assert "deepseek/deepseek-v4-flash@novita/prepaid" in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-v4-flash@novita/byok" in MODEL_ENDPOINTS
+    assert "qwen/qwen3.6-27b@novita/prepaid" in MODEL_ENDPOINTS
+    assert "qwen/qwen3.6-27b@novita/byok" in MODEL_ENDPOINTS
+    assert "qwen/qwen3.6-35b-a3b@novita/prepaid" in MODEL_ENDPOINTS
+    assert "qwen/qwen3.6-35b-a3b@novita/byok" in MODEL_ENDPOINTS
+
+
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
     gemini_lite_preview = MODEL_ENDPOINTS[
