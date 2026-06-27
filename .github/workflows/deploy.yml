@@ -40,6 +40,14 @@ on:
         description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
         default: false
+      deploy_cold_regions:
+        description: "Also deploy scale-to-zero cold regions"
+        type: boolean
+        default: false
+      deploy_synthetic_monitor:
+        description: "Force redeploy synthetic monitor jobs"
+        type: boolean
+        default: false
 
 # Only one deploy at a time. Two pushes within seconds of each other
 # serialize instead of racing to be the running revision.
@@ -53,16 +61,11 @@ permissions:
   actions: read     # for the CI-green gate (gh run list)
 
 jobs:
-  deploy:
+  gate-on-ci:
     runs-on: ubuntu-latest
     env:
-      PROJECT_ID: quill-cloud-proxy
-      REGION: us-central1
-      REPO: trusted-router
-      SERVICE: trusted-router
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Gate on CI green (same commit)
         # ci.yml and deploy.yml both trigger on push to main and used to
         # race: a bad merge could finish rolling out to every region while
@@ -71,8 +74,6 @@ jobs:
         # WITHOUT giving up the paths: filter above — a workflow_run
         # trigger would fire on docs-only pushes too. Polls the ci.yml run
         # for $GITHUB_SHA; refuses to deploy unless it concluded success.
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ "${{ inputs.hotfix }}" = "true" ]; then
@@ -111,10 +112,26 @@ jobs:
             sleep 20
           done
 
+  build-image:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.set-vars.outputs.sha }}
+      image: ${{ steps.set-vars.outputs.image }}
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      REPO: trusted-router
+      SERVICE: trusted-router
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Set image ref from commit SHA
+        id: set-vars
         run: |
           SHA="$(git rev-parse --short HEAD)"
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:${SHA}"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "SHA=${SHA}" >> "$GITHUB_ENV"
           echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
 
@@ -138,6 +155,7 @@ jobs:
             --tag "${IMAGE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
+            --machine-type=E2_HIGHCPU_8 \
             --async \
             --format='value(id)' \
             .)
@@ -153,6 +171,30 @@ jobs:
             esac
             sleep 5
           done
+
+  deploy:
+    needs: [gate-on-ci, build-image]
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: quill-cloud-proxy
+      REGION: us-central1
+      REPO: trusted-router
+      SERVICE: trusted-router
+      SHA: ${{ needs.build-image.outputs.sha }}
+      IMAGE: ${{ needs.build-image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Push secrets to Secret Manager
         # secrets.sh is idempotent — only uploads when the local key file
@@ -198,9 +240,45 @@ jobs:
             echo "  pre-deploy ${region}: ${rev:-<none>}"
           done
 
+      - name: Detect optional deploy surfaces
+        id: optional
+        run: |
+          set -euo pipefail
+          deploy_cold_regions="false"
+          deploy_synthetic_monitor="false"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.deploy_cold_regions }}" = "true" ]; then
+              deploy_cold_regions="true"
+            fi
+            if [ "${{ inputs.deploy_synthetic_monitor }}" = "true" ]; then
+              deploy_synthetic_monitor="true"
+            fi
+          fi
+
+          changed=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              git fetch --no-tags --depth=1 origin "$before" || true
+              changed="$(git diff --name-only "$before" "$GITHUB_SHA" 2>/dev/null || true)"
+            fi
+            if [ -z "$changed" ]; then
+              changed="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
+            fi
+            if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/synthetic/|scripts/deploy/synthetic\.sh|\.github/workflows/deploy\.yml)$'; then
+              deploy_synthetic_monitor="true"
+            fi
+          fi
+
+          echo "deploy_cold_regions=${deploy_cold_regions}" >> "$GITHUB_OUTPUT"
+          echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}" >> "$GITHUB_OUTPUT"
+          echo "deploy_cold_regions=${deploy_cold_regions}"
+          echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}"
+
       - name: Deploy us-central1 (no-traffic)
         env:
-          IMAGE_TAG: ${{ env.SHA }}
+          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           TR_DEPLOY_TARGET_REGIONS: us-central1
           TR_DEPLOY_NO_TRAFFIC: "1"
         run: bash scripts/deploy/rollout.sh
@@ -248,7 +326,7 @@ jobs:
 
       - name: Roll secondary warm regions in parallel (europe-west4 + us-east4)
         env:
-          IMAGE_TAG: ${{ env.SHA }}
+          IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
@@ -337,6 +415,7 @@ jobs:
           fi
 
       - name: Deploy cold regions (no canary, parallel, scale-to-zero)
+        if: ${{ steps.optional.outputs.deploy_cold_regions == 'true' }}
         # Stage 3.5 cold region: southamerica-east1. min-instances=0
         # means ~$0/mo idle plus a ~5-10s cold-start tax on the first
         # request from that geography. No canary because (a) it's
@@ -349,6 +428,7 @@ jobs:
         run: bash scripts/deploy/rollout.sh
 
       - name: Deploy synthetic monitor Cloud Run Job
+        if: ${{ steps.optional.outputs.deploy_synthetic_monitor == 'true' }}
         # Re-deploys the synthetic monitor Cloud Run Job + Cloud Scheduler
         # cron with the latest image. Without this step, probe code or
         # cron-config (TR_SYNTHETIC_RUNS_PER_INVOCATION, monitor pool
