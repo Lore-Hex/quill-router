@@ -162,10 +162,12 @@ jobs:
         continue-on-error: true   # secrets are managed locally; runner has none
 
       # Staged regional deploy. Deploy us-central1 first, gate on a
-      # 3-min single-region synthetic watch; only proceed to
-      # europe-west4 if us-central1 stays up. A bad change reaches at
-      # most one region. Final 10-min watch catches issues that
-      # surface after both regions are converged.
+      # 3-min single-region synthetic watch; only proceed to the
+      # secondary warm regions if us-central1 stays up. A bad change
+      # reaches at most one region before the secondaries start. Once
+      # the primary canary is green, europe-west4 and us-east4 roll in
+      # parallel with independent rollback. Final 10-min watch catches
+      # issues that surface after warm regions are converged.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -244,94 +246,95 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Deploy europe-west4 (no-traffic)
+      - name: Roll secondary warm regions in parallel (europe-west4 + us-east4)
         env:
           IMAGE_TAG: ${{ env.SHA }}
-          TR_DEPLOY_TARGET_REGIONS: europe-west4
-          TR_DEPLOY_NO_TRAFFIC: "1"
-        run: bash scripts/deploy/rollout.sh
-
-      - name: Resolve europe-west4 new revision
-        id: new_eu
-        run: |
-          rev=$(gcloud run services describe "${SERVICE}" \
-            --region=europe-west4 --project="${PROJECT_ID}" \
-            --format='value(status.latestCreatedRevisionName)')
-          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
-          echo "  new europe-west4 revision: ${rev}"
-
-      - name: Stage traffic 10/50/100 (europe-west4)
-        run: bash scripts/deploy/staged_traffic.sh europe-west4 "${{ steps.new_eu.outputs.revision }}" "${{ steps.prev.outputs.europe_west4_revision }}"
-
-      - name: Canary gate — watch europe-west4 only (3 min)
-        id: canary_eu
-        continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions europe-west4 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
-
-      - name: Rollback europe-west4 + abort (canary tripped)
-        if: ${{ steps.canary_eu.outcome == 'failure' && steps.canary_eu.outputs.rollback_regions != '' }}
-        env:
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PREV_EU}" ]; then
-            echo "no prior europe-west4 revision recorded; cannot rollback"
-            exit 1
-          fi
-          echo "europe-west4 canary failed; rolling traffic back to ${PREV_EU}"
-          gcloud run services update-traffic "${SERVICE}" \
-            --region=europe-west4 --project="${PROJECT_ID}" \
-            --to-revisions="${PREV_EU}=100" --quiet
-          echo "us-central1 keeps the new release; us-east4 has NOT received the bad image."
-          exit 1
-
-      - name: Deploy us-east4 (no-traffic)
-        env:
-          IMAGE_TAG: ${{ env.SHA }}
-          TR_DEPLOY_TARGET_REGIONS: us-east4
-          TR_DEPLOY_NO_TRAFFIC: "1"
-        run: bash scripts/deploy/rollout.sh
-
-      - name: Resolve us-east4 new revision
-        id: new_us_east4
-        run: |
-          rev=$(gcloud run services describe "${SERVICE}" \
-            --region=us-east4 --project="${PROJECT_ID}" \
-            --format='value(status.latestCreatedRevisionName)')
-          echo "revision=${rev}" >> "$GITHUB_OUTPUT"
-          echo "  new us-east4 revision: ${rev}"
-
-      - name: Stage traffic 10/50/100 (us-east4)
-        run: bash scripts/deploy/staged_traffic.sh us-east4 "${{ steps.new_us_east4.outputs.revision }}" "${{ steps.prev.outputs.us_east4_revision }}"
-
-      - name: Canary gate — watch us-east4 only (3 min)
-        # Single-region 3-min canary. us-east4 is a warm region
-        # (TR_WARM_REGIONS includes it) so it gets the same gating
-        # treatment as us-central1 + europe-west4. If the synthetic
-        # monitor hasn't been deployed for us-east4 yet, the watchdog
-        # will read 'unknown' and won't trigger a rollback — the
-        # staged_traffic.sh 10/50/100 step still ran its own
-        # synthetic checks between traffic stages.
-        id: canary_us_east4
-        continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-east4 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
-
-      - name: Rollback us-east4 + abort (canary tripped)
-        if: ${{ steps.canary_us_east4.outcome == 'failure' && steps.canary_us_east4.outputs.rollback_regions != '' }}
-        env:
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
+          WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
         run: |
           set -euo pipefail
-          if [ -z "${PREV_US_EAST4}" ]; then
-            echo "no prior us-east4 revision recorded; cannot rollback"
+
+          log_dir="$(mktemp -d)"
+          echo "secondary rollout logs: ${log_dir}"
+
+          previous_revision() {
+            case "$1" in
+              europe-west4) printf '%s\n' "${PREV_EU}" ;;
+              us-east4) printf '%s\n' "${PREV_US_EAST4}" ;;
+              *) return 1 ;;
+            esac
+          }
+
+          rollback_region() {
+            local region="$1"
+            local previous
+            previous="$(previous_revision "${region}")"
+            if [ -z "${previous}" ]; then
+              echo "no prior ${region} revision recorded; cannot rollback"
+              return 1
+            fi
+            echo "${region} canary failed; rolling traffic back to ${previous}"
+            gcloud run services update-traffic "${SERVICE}" \
+              --region="${region}" --project="${PROJECT_ID}" \
+              --to-revisions="${previous}=100" --quiet
+          }
+
+          deploy_secondary() {
+            local region="$1"
+            local previous
+            previous="$(previous_revision "${region}")"
+            echo "deploying ${region} no-traffic"
+            TR_DEPLOY_TARGET_REGIONS="${region}" \
+              TR_DEPLOY_NO_TRAFFIC="1" \
+              IMAGE_TAG="${IMAGE_TAG}" \
+              bash scripts/deploy/rollout.sh
+
+            local revision
+            revision="$(gcloud run services describe "${SERVICE}" \
+              --region="${region}" --project="${PROJECT_ID}" \
+              --format='value(status.latestCreatedRevisionName)')"
+            echo "new ${region} revision: ${revision}"
+
+            bash scripts/deploy/staged_traffic.sh "${region}" "${revision}" "${previous}"
+
+            if ! python3 scripts/deploy/watchdog.py \
+              --regions "${region}" \
+              --duration-min 3 \
+              --rollback-after 2 \
+              ${WD_EXTRA}; then
+              rollback_region "${region}"
+              return 1
+            fi
+          }
+
+          regions=(europe-west4 us-east4)
+          pids=()
+          for region in "${regions[@]}"; do
+            (
+              set -euo pipefail
+              deploy_secondary "${region}"
+            ) >"${log_dir}/${region}.log" 2>&1 &
+            pids+=("$!")
+          done
+
+          failed=0
+          for i in "${!regions[@]}"; do
+            region="${regions[$i]}"
+            pid="${pids[$i]}"
+            if ! wait "${pid}"; then
+              echo "::error::${region} rollout failed"
+              failed=1
+            fi
+            echo "::group::${region} rollout log"
+            cat "${log_dir}/${region}.log"
+            echo "::endgroup::"
+          done
+
+          if [ "${failed}" -ne 0 ]; then
+            echo "one or more secondary warm regions failed; us-central1 keeps the new release; cold regions have NOT received it."
             exit 1
           fi
-          echo "us-east4 canary failed; rolling traffic back to ${PREV_US_EAST4}"
-          gcloud run services update-traffic "${SERVICE}" \
-            --region=us-east4 --project="${PROJECT_ID}" \
-            --to-revisions="${PREV_US_EAST4}=100" --quiet
-          echo "us-central1 + europe-west4 keep the new release; cold regions have NOT received it."
-          exit 1
 
       - name: Deploy cold regions (no canary, parallel, scale-to-zero)
         # Stage 3.5 cold region: southamerica-east1. min-instances=0
@@ -364,8 +367,8 @@ jobs:
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1, then
-      # europe-west4, then us-east4, each with its own 3-min watchdog
-      # AFTER the staged_traffic 10/50/100 ramp). The prior cross-
+      # europe-west4 + us-east4 in parallel, each with its own 3-min
+      # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished
       # converging but the just-deployed region was still settling,
