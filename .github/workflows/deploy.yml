@@ -145,17 +145,45 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Build image via Cloud Build
+        # Use an explicit build config instead of `gcloud builds submit
+        # --tag`: the shorthand forces Docker `--no-cache`, which made
+        # every deploy reinstall Python dependencies from scratch. Pull
+        # a registry-backed cache image, build with --cache-from, then
+        # refresh the cache tag. The Dockerfile keeps dependency layers
+        # ahead of app-code COPY so ordinary source changes reuse them.
+        #
         # --async + poll instead of streaming logs. Streaming requires
         # project Viewer/Owner perms that we don't want to grant the
         # deploy SA (broader than needed). Async returns the build ID
         # which we then watch via `gcloud builds describe`.
         run: |
           set -euo pipefail
+          CACHE_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:buildcache"
+          cat > /tmp/cloudbuild-control-plane.yaml <<'EOF'
+          steps:
+            - name: gcr.io/cloud-builders/docker
+              entrypoint: bash
+              args:
+                - -c
+                - |
+                  set -euo pipefail
+                  docker pull "${_CACHE_IMAGE}" || true
+                  docker build \
+                    --network=cloudbuild \
+                    --cache-from "${_CACHE_IMAGE}" \
+                    --tag "${_IMAGE}" \
+                    --tag "${_CACHE_IMAGE}" \
+                    .
+                  docker push "${_IMAGE}"
+                  docker push "${_CACHE_IMAGE}"
+          options:
+            machineType: E2_HIGHCPU_8
+          EOF
           BUILD_ID=$(gcloud builds submit \
-            --tag "${IMAGE}" \
+            --config=/tmp/cloudbuild-control-plane.yaml \
+            --substitutions="_IMAGE=${IMAGE},_CACHE_IMAGE=${CACHE_IMAGE}" \
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
-            --machine-type=E2_HIGHCPU_8 \
             --async \
             --format='value(id)' \
             .)
