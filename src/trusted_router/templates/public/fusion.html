@@ -14,6 +14,9 @@
       <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
       <li>Judge and final models can each have up to 8 fallbacks.</li>
       <li>Default quality mode judges with Kimi K2.6, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
+      <li>Versioned presets are <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/prometheus-1.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
+      <li>Code-tuned presets are <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, and <code>trustedrouter/zeus-code-1.0</code>.</li>
+      <li>Unversioned aliases such as <code>trustedrouter/prometheus</code> track the latest preset.</li>
       <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
       <li>TrustedRouter stores billing and route metadata, not prompt/output content by default.</li>
     </ul>
@@ -55,14 +58,14 @@
     <div class="marketing-card">
       <span class="card-label">Budget</span>
       <h3>Iris 1.0</h3>
-      <p><code>trustedrouter/iris</code></p>
+      <p><code>trustedrouter/iris-1.0</code></p>
       <p>A small budget panel &mdash; the cheapest way into Synth. <strong>62.6</strong> on DRACO deep research,
         about <strong>$20</strong> to run all 100 tasks.</p>
     </div>
     <div class="marketing-card featured">
       <span class="card-label">Quality &middot; all open-weights</span>
       <h3>Prometheus 1.0</h3>
-      <p><code>trustedrouter/prometheus</code></p>
+      <p><code>trustedrouter/prometheus-1.0</code></p>
       <p>An all open-weights panel &mdash; MiniMax M3, Kimi K2.6, GLM 5.2, Gemma 4, DeepSeek V4 Pro.
         Near-frontier quality at open-model cost: <strong>69.2</strong> on DRACO, about <strong>$34</strong>/100 tasks &mdash;
         beating Fable 5 (65.3) at a seventh of the price.</p>
@@ -70,9 +73,34 @@
     <div class="marketing-card">
       <span class="card-label">Frontier</span>
       <h3>Zeus 1.0</h3>
-      <p><code>trustedrouter/zeus</code></p>
+      <p><code>trustedrouter/zeus-1.0</code></p>
       <p>The commercial frontier on the panel &mdash; the ceiling. <strong>73.4</strong> on DRACO, the state of the art,
         about <strong>$180</strong>/100 tasks.</p>
+    </div>
+  </div>
+</section>
+
+<section style="margin-top:48px" aria-label="Synth code presets">
+  <h2 class="section-center">Code-tuned presets</h2>
+  <p class="section-center" style="max-width:780px;margin:0 auto 26px;color:var(--muted)">
+    Add <code>-code</code> to use the same budget, open, or frontier panel tier with the synth-code prompt path.
+    The code variants use the code-tuned Kimi judge and code-specific panel and synthesis prompts.
+  </p>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Budget code</span>
+      <h3>Iris Code</h3>
+      <p><code>trustedrouter/iris-code-1.0</code></p>
+    </div>
+    <div class="marketing-card featured">
+      <span class="card-label">Open code</span>
+      <h3>Prometheus Code</h3>
+      <p><code>trustedrouter/prometheus-code-1.0</code></p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Frontier code</span>
+      <h3>Zeus Code</h3>
+      <p><code>trustedrouter/zeus-code-1.0</code></p>
     </div>
   </div>
 </section>

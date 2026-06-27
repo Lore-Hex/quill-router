@@ -41,7 +41,8 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
           <li><span class="mono">trustedrouter/eu</span>: EU-focused routing. Use with <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> for the EU regional gateway.</li>
           <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
           <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
-          <li><span class="mono">trustedrouter/synth</span>: panel, judge, and final synthesis inside the attested gateway for hard prompts.</li>
+          <li><span class="mono">trustedrouter/iris-1.0</span>, <span class="mono">trustedrouter/prometheus-1.0</span>, <span class="mono">trustedrouter/zeus-1.0</span>: versioned budget, open, and frontier Synth presets inside the attested gateway.</li>
+          <li><span class="mono">trustedrouter/iris-code-1.0</span>, <span class="mono">trustedrouter/prometheus-code-1.0</span>, <span class="mono">trustedrouter/zeus-code-1.0</span>: versioned code-tuned Synth presets for implementation-heavy agent turns.</li>
         </ul>
       </div>
     </div>
@@ -53,7 +54,8 @@ Use base_url "{{ api_base_url }}".
 Read the API key from TRUSTEDROUTER_API_KEY.
 Use trustedrouter/zdr by default unless the user asks for broad fallback.
 For Europe-focused workloads, use base_url "https://api-europe-west4.quillrouter.com/v1" and model trustedrouter/eu.
-Use trustedrouter/synth only for hard prompts, evals, or synthesis where multiple model calls are worth the cost.
+Use trustedrouter/prometheus-1.0 for hard prompts, evals, or synthesis where multiple model calls are worth the cost.
+Use trustedrouter/prometheus-code-1.0 for implementation-heavy agent turns.
 Run a PONG smoke test before editing app code.</code></pre>
       </div>
     </div>

@@ -828,8 +828,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         # separate key for the GPU-TEE-attested confidential-AI
         # tier, stored as PHALA_CONFIDENTIAL_API_KEY → Secret
         # Manager `trustedrouter-phala-confidential-api-key`. The
-        # enclave's QUILL_PHALA_SECRET default + AWS bootstrap_server
-        # now point at the confidential secret; model ids ship as
+        # enclave's QUILL_PHALA_SECRET default points at the confidential
+        # secret; model ids ship as
         # `phala/<bare>` (per docs.phala.com/phala-cloud/confidential-ai)
         # via phalaModelMap in byok.go. Verified working live with
         # phala/gpt-oss-120b and phala/deepseek-v3.2 returning 200.
@@ -871,10 +871,22 @@ ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 SYNTH_MODEL_ID = "trustedrouter/synth"
+IRIS_MODEL_ID = "trustedrouter/iris"
+PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
+ZEUS_MODEL_ID = "trustedrouter/zeus"
+IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
+PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
+ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
 # Code-tuned synth variant: same panel/synthesizers as synth, but judged by
 # kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
 # enclave, cmd/enclave/fusion.go).
 SYNTH_CODE_MODEL_ID = "trustedrouter/synth-code"
+IRIS_CODE_MODEL_ID = "trustedrouter/iris-code"
+PROMETHEUS_CODE_MODEL_ID = "trustedrouter/prometheus-code"
+ZEUS_CODE_MODEL_ID = "trustedrouter/zeus-code"
+IRIS_CODE_1_0_MODEL_ID = "trustedrouter/iris-code-1.0"
+PROMETHEUS_CODE_1_0_MODEL_ID = "trustedrouter/prometheus-code-1.0"
+ZEUS_CODE_1_0_MODEL_ID = "trustedrouter/zeus-code-1.0"
 FUSION_MODEL_ID = "trustedrouter/fusion"
 # Legacy compatibility aliases. Keep these working for existing customers.
 FUSION_CODE_MODEL_ID = "trustedrouter/fusion-code"
@@ -889,7 +901,19 @@ META_MODEL_IDS = frozenset(
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
         SYNTH_MODEL_ID,
+        IRIS_MODEL_ID,
+        PROMETHEUS_MODEL_ID,
+        ZEUS_MODEL_ID,
+        IRIS_1_0_MODEL_ID,
+        PROMETHEUS_1_0_MODEL_ID,
+        ZEUS_1_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
+        IRIS_CODE_MODEL_ID,
+        PROMETHEUS_CODE_MODEL_ID,
+        ZEUS_CODE_MODEL_ID,
+        IRIS_CODE_1_0_MODEL_ID,
+        PROMETHEUS_CODE_1_0_MODEL_ID,
+        ZEUS_CODE_1_0_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     }
@@ -935,6 +959,45 @@ DEFAULT_AUTO_MODEL_ORDER = [
     "mistralai/mistral-small-2603",
     "z-ai/glm-4.6",
 ]
+
+SYNTH_BUDGET_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_QUALITY_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.6",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_FRONTIER_MODEL_ORDER = (
+    "anthropic/claude-opus-4.8",
+    "openai/gpt-5.5",
+    "anthropic/claude-sonnet-4.6",
+    "google/gemini-3.1-pro-preview",
+    "moonshotai/kimi-k2.6",
+)
+SYNTH_CODE_BUDGET_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_CODE_QUALITY_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k2.7-code",
+    "z-ai/glm-5.2",
+    "google/gemma-4-31b-it",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_CODE_FRONTIER_MODEL_ORDER = (
+    "anthropic/claude-opus-4.8",
+    "openai/gpt-5.5",
+    "anthropic/claude-sonnet-4.6",
+    "google/gemini-3.1-pro-preview",
+    "moonshotai/kimi-k2.7-code",
+)
 
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
@@ -1029,9 +1092,117 @@ MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=True,
     ),
+    IRIS_MODEL_ID: Model(
+        id=IRIS_MODEL_ID,
+        name="TrustedRouter Iris",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PROMETHEUS_MODEL_ID: Model(
+        id=PROMETHEUS_MODEL_ID,
+        name="TrustedRouter Prometheus",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ZEUS_MODEL_ID: Model(
+        id=ZEUS_MODEL_ID,
+        name="TrustedRouter Zeus",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    IRIS_1_0_MODEL_ID: Model(
+        id=IRIS_1_0_MODEL_ID,
+        name="TrustedRouter Iris 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PROMETHEUS_1_0_MODEL_ID: Model(
+        id=PROMETHEUS_1_0_MODEL_ID,
+        name="TrustedRouter Prometheus 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ZEUS_1_0_MODEL_ID: Model(
+        id=ZEUS_1_0_MODEL_ID,
+        name="TrustedRouter Zeus 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
     SYNTH_CODE_MODEL_ID: Model(
         id=SYNTH_CODE_MODEL_ID,
         name="TrustedRouter Synth Code",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    IRIS_CODE_MODEL_ID: Model(
+        id=IRIS_CODE_MODEL_ID,
+        name="TrustedRouter Iris Code",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PROMETHEUS_CODE_MODEL_ID: Model(
+        id=PROMETHEUS_CODE_MODEL_ID,
+        name="TrustedRouter Prometheus Code",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ZEUS_CODE_MODEL_ID: Model(
+        id=ZEUS_CODE_MODEL_ID,
+        name="TrustedRouter Zeus Code",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    IRIS_CODE_1_0_MODEL_ID: Model(
+        id=IRIS_CODE_1_0_MODEL_ID,
+        name="TrustedRouter Iris Code 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PROMETHEUS_CODE_1_0_MODEL_ID: Model(
+        id=PROMETHEUS_CODE_1_0_MODEL_ID,
+        name="TrustedRouter Prometheus Code 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ZEUS_CODE_1_0_MODEL_ID: Model(
+        id=ZEUS_CODE_1_0_MODEL_ID,
+        name="TrustedRouter Zeus Code 1.0",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2244,6 +2415,10 @@ def e2e_candidate_models(limit: int = 12) -> list[Model]:
     )
 
 
+def _models_for_ids(model_ids: tuple[str, ...]) -> list[Model]:
+    return [MODELS[model_id] for model_id in model_ids if model_id in MODELS]
+
+
 def meta_candidate_models(model_id: str) -> list[Model]:
     if model_id == AUTO_MODEL_ID:
         return auto_candidate_models()
@@ -2263,11 +2438,26 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return monitor_candidate_models()
     if model_id in (
         SYNTH_MODEL_ID,
-        SYNTH_CODE_MODEL_ID,
+        PROMETHEUS_MODEL_ID,
+        PROMETHEUS_1_0_MODEL_ID,
         FUSION_MODEL_ID,
+    ):
+        return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
+    if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
+        return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
+    if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
+        return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
+    if model_id in (
+        SYNTH_CODE_MODEL_ID,
+        PROMETHEUS_CODE_MODEL_ID,
+        PROMETHEUS_CODE_1_0_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):
-        return []
+        return _models_for_ids(SYNTH_CODE_QUALITY_MODEL_ORDER)
+    if model_id in (IRIS_CODE_MODEL_ID, IRIS_CODE_1_0_MODEL_ID):
+        return _models_for_ids(SYNTH_CODE_BUDGET_MODEL_ORDER)
+    if model_id in (ZEUS_CODE_MODEL_ID, ZEUS_CODE_1_0_MODEL_ID):
+        return _models_for_ids(SYNTH_CODE_FRONTIER_MODEL_ORDER)
     return []
 
 
@@ -2288,7 +2478,19 @@ def _meta_route_kind(model_id: str) -> str:
         return "synthetic_monitor_pool"
     if model_id in (
         SYNTH_MODEL_ID,
+        IRIS_MODEL_ID,
+        PROMETHEUS_MODEL_ID,
+        ZEUS_MODEL_ID,
+        IRIS_1_0_MODEL_ID,
+        PROMETHEUS_1_0_MODEL_ID,
+        ZEUS_1_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
+        IRIS_CODE_MODEL_ID,
+        PROMETHEUS_CODE_MODEL_ID,
+        ZEUS_CODE_MODEL_ID,
+        IRIS_CODE_1_0_MODEL_ID,
+        PROMETHEUS_CODE_1_0_MODEL_ID,
+        ZEUS_CODE_1_0_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):

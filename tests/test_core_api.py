@@ -633,6 +633,18 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/eu",
         "trustedrouter/zdr",
         "trustedrouter/e2e",
+        "trustedrouter/iris",
+        "trustedrouter/prometheus",
+        "trustedrouter/zeus",
+        "trustedrouter/iris-1.0",
+        "trustedrouter/prometheus-1.0",
+        "trustedrouter/zeus-1.0",
+        "trustedrouter/iris-code",
+        "trustedrouter/prometheus-code",
+        "trustedrouter/zeus-code",
+        "trustedrouter/iris-code-1.0",
+        "trustedrouter/prometheus-code-1.0",
+        "trustedrouter/zeus-code-1.0",
     }.issubset(model_ids)
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
@@ -642,6 +654,28 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "xiaomi/mimo-v2-flash",
         "cerebras/zai-glm-4.7",
+    ]
+    iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
+    assert iris_meta["route_kind"] == "fusion_panel"
+    assert iris_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k2.6",
+        "deepseek/deepseek-v4-pro",
+    ]
+    prometheus_code_meta = models_by_id["trustedrouter/prometheus-code"]["trustedrouter"]
+    assert prometheus_code_meta["route_kind"] == "fusion_panel"
+    assert "moonshotai/kimi-k2.7-code" in prometheus_code_meta["auto_candidates"]
+    assert (
+        models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"]["auto_candidates"]
+        == prometheus_code_meta["auto_candidates"]
+    )
+    zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
+    assert zeus_meta["auto_candidates"][:2] == [
+        "anthropic/claude-opus-4.8",
+        "openai/gpt-5.5",
+    ]
+    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"] == zeus_meta[
+        "auto_candidates"
     ]
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't
@@ -782,8 +816,7 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
     monkeypatch,
 ) -> None:
     # A management caller can land on a control-plane node whose GCP SA can't
-    # encrypt with the byok-envelope KMS key (e.g. the AWS/cross-cloud SA is
-    # decrypt-only by design). That must return a clean 503 — never an
+    # encrypt with the byok-envelope KMS key. That must return a clean 503 — never an
     # unhandled 500 + KMS stack trace (prod 2026-06-08).
     from google.api_core import exceptions as gcp_exceptions
 
@@ -803,10 +836,9 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
 
 
 def test_byok_registration_refused_when_disabled_on_replica() -> None:
-    # Replica nodes (byok_registration_enabled=False, e.g. the AWS control
-    # plane which holds decrypt-only on byok-envelope) refuse BYOK
+    # Replica nodes (byok_registration_enabled=False) refuse BYOK
     # registration with a clean 503 BEFORE any KMS attempt — a direct hit to a
-    # decrypt-only node never 500s.
+    # read-only node never 500s.
     from trusted_router.config import Settings
     from trusted_router.main import create_app
 

@@ -87,6 +87,14 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "api.trustedrouter.com/v1" in response.text
         assert "trustedrouter/eu" in response.text
         assert "trustedrouter/synth" in response.text
+        assert "trustedrouter/iris" in response.text
+        assert "trustedrouter/prometheus" in response.text
+        assert "trustedrouter/zeus" in response.text
+        assert "trustedrouter/prometheus-code" in response.text
+        assert "trustedrouter/iris-1.0" in response.text
+        assert "trustedrouter/prometheus-1.0" in response.text
+        assert "trustedrouter/zeus-1.0" in response.text
+        assert "trustedrouter/prometheus-code-1.0" in response.text
         assert "https://trustedrouter.com/docs/synth" in response.text
         assert "https://trustedrouter.com/blog" in response.text
         assert "OpenAI compatible" in response.text or "OpenAI-compatible" in response.text
