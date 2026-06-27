@@ -51,6 +51,7 @@ PROBES: list[tuple[str, str]] = [
     ("venice", "z-ai/glm-4.6"),
     ("baseten", "z-ai/glm-5.2"),
     ("wafer", "z-ai/glm-5.2"),
+    ("crusoe", "deepseek/deepseek-v4-flash"),
 ]
 
 # Per-region enclave URLs the smoke targets. We deliberately use the

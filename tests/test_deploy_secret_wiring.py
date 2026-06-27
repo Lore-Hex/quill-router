@@ -13,6 +13,7 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "NOVITA_API_KEY": "trustedrouter-novita-api-key",
         "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
         "WAFER_API_KEY": "trustedrouter-wafer-api-key",
+        "CRUSOE_API_KEY": "trustedrouter-crusoe-api-key",
     }
     for env_name, secret_name in expected.items():
         assert f'add_secret_env_if_exists "{env_name}" "{secret_name}"' in rollout

@@ -118,6 +118,9 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "Baseten": "baseten",
     "Wafer": "wafer",
     "Wafer AI": "wafer",
+    # Crusoe Managed Inference.
+    "Crusoe": "crusoe",
+    "Crusoe Cloud": "crusoe",
 }
 
 # Fields we keep from each model. Anything not in this list is dropped to

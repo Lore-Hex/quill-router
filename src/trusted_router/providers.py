@@ -61,6 +61,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     # Wafer serverless API — OpenAI-compatible chat completions with
     # request-scoped ZDR when `Wafer-ZDR: required` is present.
     "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
+    # Crusoe Managed Inference — OpenAI-compatible chat completions.
+    "crusoe": (("CRUSOE_API_KEY",), "https://api.inference.crusoecloud.com/v1"),
 }
 
 WAFER_ZDR_NATIVE_MODELS = frozenset(

@@ -24,7 +24,7 @@
     <header class="fusion-header">
       <div>
         <span class="fusion-kicker">OpenAI compatible API · trustedrouter/synth</span>
-        <h1>Compare a panel. Return one answer.</h1>
+        <h1>Synthesize many models into one perfect frontier answer.</h1>
       </div>
       <div class="fusion-header-actions">
         <a class="btn" href="/docs/synth">Docs</a>
@@ -39,18 +39,20 @@
           <textarea data-fusion-prompt rows="8" placeholder="Ask a hard question where multiple model opinions help."></textarea>
         </label>
 
-        <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="panel">
-          <div class="fusion-model-set-head">
-            <span>Panel models</span>
-            <button class="fusion-model-reset" type="button" data-fusion-model-reset="panel">Reset</button>
-          </div>
-          <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="panel"></div>
-        </div>
+        <label class="fusion-field fusion-field-wide">
+          Preset
+          <select data-fusion-preset>
+            <option value="budget" selected>Iris 1.0 &mdash; budget</option>
+            <option value="quality">Prometheus 1.0 &mdash; quality</option>
+            <option value="frontier">Zeus 1.0 &mdash; frontier</option>
+          </select>
+          <span class="fusion-help" data-fusion-preset-help></span>
+        </label>
 
         <details class="fusion-advanced">
           <summary>
             <span>Advanced settings</span>
-            <small>Prompts, fallbacks, tokens</small>
+            <small>Models, prompts, fallbacks, tokens</small>
           </summary>
           <div class="fusion-advanced-body">
             <label class="fusion-field fusion-field-wide">
@@ -58,16 +60,15 @@
               <textarea data-fusion-synthesis-prompt rows="3" maxlength="4000" placeholder="Optional final-answer instructions."></textarea>
             </label>
 
-            <div class="fusion-row">
-              <label class="fusion-field">
-                Preset
-                <select data-fusion-preset>
-                  <option value="budget" selected>Iris 1.0 &mdash; budget</option>
-                  <option value="quality">Prometheus 1.0 &mdash; quality</option>
-                  <option value="frontier">Zeus 1.0 &mdash; frontier</option>
-                </select>
-                <span class="fusion-help" data-fusion-preset-help></span>
-              </label>
+            <div class="fusion-model-set fusion-field-wide" data-fusion-model-set="panel">
+              <div class="fusion-model-set-head">
+                <span>Panel models</span>
+                <button class="fusion-model-reset" type="button" data-fusion-model-reset="panel">Reset</button>
+              </div>
+              <div class="fusion-model-cards chat-models-bar" data-fusion-model-cards="panel"></div>
+            </div>
+
+            <div class="fusion-row fusion-row-single">
               <label class="fusion-field">
                 Max tokens
                 <input data-fusion-max-tokens type="number" min="64" max="8192" step="1" value="2048">

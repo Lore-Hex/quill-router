@@ -679,6 +679,21 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://docs.wafer.ai/serverless/api-reference",
     ),
+    # Crusoe Managed Inference — OpenAI-compatible API at
+    # api.inference.crusoecloud.com/v1. Publishes model availability,
+    # supported parameters, context, and pricing in /v1/models; TR keeps
+    # provider-native upstream IDs in data/provider_models/crusoe.json.
+    "crusoe": Provider(
+        slug="crusoe",
+        name="Crusoe",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Crusoe's Managed Inference "
+            "docs and pricing/catalog pages are linked for model and API "
+            "data-handling review."
+        ),
+        provider_policy_url="https://docs.crusoecloud.com/managed-inference/overview/",
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -834,6 +849,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "friendli",
         "baseten",
         "wafer",
+        "crusoe",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
@@ -1455,7 +1471,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     control plane can authorize routes the attested gateway can actually
     call and bill.
 
-    Novita, Nebius, MiniMax, Cerebras, Gemini, Fireworks, DeepInfra, and Z.AI currently use this path because their
+    Novita, Nebius, MiniMax, Crusoe, Cerebras, Gemini, Fireworks, DeepInfra, and Z.AI currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
     Claude Opus 4.8, which shipped after the snapshot — the attested gateway
@@ -1482,6 +1498,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "friendli",
         "baseten",
         "wafer",
+        "crusoe",
         "zai",
         "tinfoil",
         "xiaomi",

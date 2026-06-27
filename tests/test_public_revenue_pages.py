@@ -17,8 +17,8 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/synth": "Run a panel of models inside the attested gateway.",
         "/docs/fusion": "Run a panel of models inside the attested gateway.",
-        "/synth": "Compare a panel. Return one answer.",
-        "/fusion": "Compare a panel. Return one answer.",
+        "/synth": "Synthesize many models into one perfect frontier answer.",
+        "/fusion": "Synthesize many models into one perfect frontier answer.",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
         "/security": "TrustedRouter does not store prompt or output content by default.",
@@ -130,7 +130,7 @@ def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClien
 
     assert response.status_code == 200
     assert "trustedrouter/synth" in response.text
-    assert "Compare a panel. Return one answer." in response.text
+    assert "Synthesize many models into one perfect frontier answer." in response.text
     assert "/chat-proxy/v1" in response.text
     assert "/internal/chat/issue-browser-key" in response.text
     assert "/static/fusion.css" in response.text

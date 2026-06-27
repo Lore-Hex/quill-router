@@ -121,6 +121,34 @@ def _wafer_model_id(native_id: str) -> str | None:
     return _WAFER_MODEL_IDS.get(value)
 
 
+_CRUSOE_MODEL_IDS = {
+    "deepseek-ai/DeepSeek-V3-0324": "deepseek/deepseek-v3-0324",
+    "deepseek-ai/Deepseek-V4-Flash": "deepseek/deepseek-v4-flash",
+    "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
+    "google/gemma-4-31b-it": "google/gemma-4-31b-it",
+    "meta-llama/Llama-3.3-70B-Instruct": "meta-llama/llama-3.3-70b-instruct",
+    "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": "nvidia/nemotron-3-nano-30b-a3b",
+    "nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B": (
+        "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b"
+    ),
+    "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B": "nvidia/nemotron-3-super-120b-a12b",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B": "nvidia/nemotron-3-ultra-550b",
+    "openai/gpt-oss-120b": "openai/gpt-oss-120b",
+    "Qwen/Qwen3-235B-A22B-Instruct-2507": "qwen/qwen3-235b-a22b-2507",
+    "yutori/n1.5": "yutori/n1.5",
+    "zai/GLM-5.1": "z-ai/glm-5.1",
+    "zai/GLM-5.2": "z-ai/glm-5.2",
+}
+
+
+def _crusoe_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _CRUSOE_MODEL_IDS.get(value, _identity_model_id(value))
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
@@ -177,6 +205,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://pass.wafer.ai/v1/models",
         ("WAFER_API_KEY",),
         _wafer_model_id,
+    ),
+    (
+        "crusoe",
+        "https://api.inference.crusoecloud.com/v1/models",
+        ("CRUSOE_API_KEY",),
+        _crusoe_model_id,
     ),
 )
 
@@ -240,6 +274,11 @@ _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = 
         "wafer",
         "https://pass.wafer.ai/v1/models",
         ("WAFER_API_KEY",),
+    ),
+    (
+        "crusoe",
+        "https://api.inference.crusoecloud.com/v1/models",
+        ("CRUSOE_API_KEY",),
     ),
 )
 

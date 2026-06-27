@@ -46,6 +46,45 @@ require_secret_from_env_file() {
   log "uploaded secret ${secret_name}"
 }
 
+ensure_secret_from_prompt_file() {
+  local secret_name="$1"
+  local prompt_file="$2"
+  local section="$3"
+  local value
+  if [ ! -f "$prompt_file" ]; then
+    if gc secrets describe "$secret_name" >/dev/null 2>&1; then
+      log "using existing prompt secret ${secret_name}"
+    else
+      log "WARN: prompt file ${prompt_file} missing; ${secret_name} not uploaded"
+    fi
+    return 0
+  fi
+  value="$(python3 - "$prompt_file" "$section" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+section = sys.argv[2]
+text = path.read_text()
+match = re.search(
+    rf"^##\s+{re.escape(section)}\s*$.*?```(?:text)?\s*\n(.*?)\n```",
+    text,
+    flags=re.M | re.S,
+)
+if not match:
+    raise SystemExit(f"section not found: {section}")
+print(match.group(1).strip())
+PY
+)"
+  if [ -z "$value" ]; then
+    echo "ERROR: ${prompt_file} section '${section}' is empty." >&2
+    exit 1
+  fi
+  ensure_secret_value "$secret_name" "$value"
+  log "uploaded prompt secret ${secret_name}"
+}
+
 ensure_secret_from_env_file "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key" "CLAUDE_API_KEY"
 ensure_secret_from_env_file "OPENAI_API_KEY" "trustedrouter-openai-api-key" "CHATGPT_API_KEY"
 ensure_secret_from_env_file "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
@@ -90,6 +129,15 @@ ensure_secret_from_env_file "NEBIUS_API_KEY" "trustedrouter-nebius-api-key" "NEB
 ensure_secret_from_env_file "MINIMAX_API_KEY" "trustedrouter-minimax-api-key" "MINIMAX_TOKEN_PLAN_API_KEY"
 ensure_secret_from_env_file "BASETEN_API_KEY" "trustedrouter-baseten-api-key"
 ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
+ensure_secret_from_env_file "CRUSOE_API_KEY" "trustedrouter-crusoe-api-key"
+
+SYNTH_PROMPTS_FILE="${TR_SYNTH_PROMPTS_FILE:-${HOME}/.trustedrouter_synth_prompts_v1.md}"
+SYNTH_CODE_PROMPTS_FILE="${TR_SYNTH_CODE_PROMPTS_FILE:-/Users/jperla/claude/fusion-code-prompts-v1.md}"
+ensure_secret_from_prompt_file "trustedrouter-synth-panel-prompt-v1" "$SYNTH_PROMPTS_FILE" "Panel Prompt V1"
+ensure_secret_from_prompt_file "trustedrouter-synth-synthesis-prompt-v1" "$SYNTH_PROMPTS_FILE" "Synthesis Prompt V1"
+ensure_secret_from_prompt_file "trustedrouter-synth-code-panel-prompt-v1" "$SYNTH_CODE_PROMPTS_FILE" "Panel Prompt V1"
+ensure_secret_from_prompt_file "trustedrouter-synth-code-synthesis-prompt-v1" "$SYNTH_CODE_PROMPTS_FILE" "Synthesis Prompt V1"
+
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
 

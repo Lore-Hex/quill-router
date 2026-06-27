@@ -138,7 +138,8 @@ jobs:
                       GEMINI_API_KEY:trustedrouter-gemini-api-key \
                       NOVITA_API_KEY:trustedrouter-novita-api-key \
                       NEBIUS_API_KEY:trustedrouter-nebius-api-key \
-                      MINIMAX_API_KEY:trustedrouter-minimax-api-key; do
+                      MINIMAX_API_KEY:trustedrouter-minimax-api-key \
+                      CRUSOE_API_KEY:trustedrouter-crusoe-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)

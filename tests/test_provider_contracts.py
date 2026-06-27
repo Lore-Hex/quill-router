@@ -230,6 +230,19 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
             "https://inference.baseten.co/v1/chat/completions",
             "zai-org/GLM-5.2",
         ),
+        (
+            Model(
+                id="z-ai/glm-5.2",
+                name="GLM 5.2 on Crusoe",
+                provider="crusoe",
+                context_length=262144,
+                upstream_id="zai/GLM-5.2",
+            ),
+            "CRUSOE_API_KEY",
+            "crusoe-value",
+            "https://api.inference.crusoecloud.com/v1/chat/completions",
+            "zai/GLM-5.2",
+        ),
     ],
 )
 @pytest.mark.asyncio

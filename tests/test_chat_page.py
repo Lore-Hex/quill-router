@@ -127,6 +127,7 @@ def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestCl
     body = resp.text
 
     assert "trustedrouter/synth" in body
+    assert "Synthesize many models into one perfect frontier answer." in body
     assert "raw thinking when returned" in body
     assert "data-fusion-details" in body
     assert "data-fusion-synthesis-prompt" in body
@@ -138,6 +139,8 @@ def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestCl
     assert '<option value="frontier">Zeus 1.0 &mdash; frontier</option>' in body
     assert "Panel models" in body
     assert 'data-fusion-model-cards="panel"' in body
+    assert body.index("data-fusion-preset") < body.index('<details class="fusion-advanced">')
+    assert body.index('data-fusion-model-cards="panel"') > body.index('<details class="fusion-advanced">')
     assert "/static/model_catalog.js" in body
     assert "data-fusion-panel" not in body
     assert "deepseek/deepseek-v4-flash" in body

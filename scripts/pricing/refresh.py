@@ -92,6 +92,7 @@ PROVIDER_SLUGS = [
     "friendli",
     "baseten",
     "wafer",
+    "crusoe",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

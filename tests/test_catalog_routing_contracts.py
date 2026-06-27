@@ -60,6 +60,9 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "venice"),
         ("z-ai/glm-5.2", "parasail"),
         ("z-ai/glm-5.2", "friendli"),
+        ("z-ai/glm-5.2", "crusoe"),
+        ("deepseek/deepseek-v4-flash", "crusoe"),
+        ("moonshotai/kimi-k2.6", "crusoe"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -536,6 +539,44 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     )
 
 
+def test_crusoe_provider_models_present_and_routable() -> None:
+    """Crusoe onboarding: native /v1/models rows load from the manifest,
+    preserve case-sensitive upstream ids, and create prepaid + BYOK endpoints."""
+
+    assert "crusoe" in PROVIDERS
+    assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
+    expected = {
+        "z-ai/glm-5.2": "zai/GLM-5.2",
+        "deepseek/deepseek-v4-flash": "deepseek-ai/Deepseek-V4-Flash",
+        "moonshotai/kimi-k2.6": "moonshotai/Kimi-K2.6",
+        "openai/gpt-oss-120b": "openai/gpt-oss-120b",
+        "google/gemma-4-31b-it": "google/gemma-4-31b-it",
+    }
+    crusoe_model_ids = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "crusoe" and str(endpoint.usage_type) == "Credits"
+    }
+    assert len(crusoe_model_ids) >= 15
+    for model_id, upstream in expected.items():
+        model = MODELS.get(model_id)
+        assert model is not None, f"{model_id} missing from catalog"
+        credits = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "Credits" and e.provider == "crusoe"
+        ]
+        byok = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "BYOK" and e.provider == "crusoe"
+        ]
+        assert credits, f"{model_id} has no crusoe prepaid endpoint"
+        assert byok, f"{model_id} has no crusoe BYOK endpoint"
+        assert credits[0].upstream_id == upstream
+        assert credits[0].prompt_price_microdollars_per_million_tokens > 0
+
+
 def test_anthropic_claude_fable_5_is_blocked_and_not_zdr_routable() -> None:
     """Claude Fable 5 is blocked and is not a ZDR route. It must not appear
     in the public catalog, endpoint list, or privacy-filtered candidate pools."""
@@ -563,6 +604,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
     baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
     wafer = MODEL_ENDPOINTS["z-ai/glm-5.2@wafer/prepaid"]
+    crusoe = MODEL_ENDPOINTS["z-ai/glm-5.2@crusoe/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
@@ -582,6 +624,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
+    assert crusoe.upstream_id == "zai/GLM-5.2"
     assert prepaid.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert prepaid.completion_price_microdollars_per_million_tokens == 4_840_000
     assert gmi.prompt_price_microdollars_per_million_tokens == 1_078_000
@@ -598,3 +641,5 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.completion_price_microdollars_per_million_tokens == 4_840_000
     assert wafer.prompt_price_microdollars_per_million_tokens == 1_320_000
     assert wafer.completion_price_microdollars_per_million_tokens == 4_510_000
+    assert crusoe.prompt_price_microdollars_per_million_tokens == 1_540_000
+    assert crusoe.completion_price_microdollars_per_million_tokens == 4_840_000

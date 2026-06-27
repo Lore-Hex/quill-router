@@ -19,6 +19,7 @@
     ...configList("suggestedModels"),
     ...DEFAULT_PANEL,
     ...BUDGET_PANEL,
+    ...FRONTIER_PANEL,
     ...DEFAULT_JUDGES,
     ...DEFAULT_FINALS,
   ]);
@@ -203,6 +204,7 @@
     modelSets.panel = presetPanel(preset).slice();
     renderModelSet("panel");
     if (els.presetHelp) els.presetHelp.textContent = PRESET_COPY[preset] || "";
+    renderCode();
   }
 
   function modelLabel(id) {

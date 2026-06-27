@@ -186,6 +186,10 @@
   gap: 10px;
 }
 
+.fusion-row-single {
+  grid-template-columns: minmax(0, 180px);
+}
+
 .fusion-advanced {
   border: 1px solid rgba(39, 50, 68, .72);
   border-radius: var(--fusion-radius);
