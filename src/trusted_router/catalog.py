@@ -2436,22 +2436,15 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return e2e_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
-    if model_id in (
-        SYNTH_MODEL_ID,
-        PROMETHEUS_MODEL_ID,
-        PROMETHEUS_1_0_MODEL_ID,
-        FUSION_MODEL_ID,
-    ):
+    if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
     if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
     if model_id in (
-        SYNTH_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
-        FUSION_CODE_MODEL_ID,
     ):
         return _models_for_ids(SYNTH_CODE_QUALITY_MODEL_ORDER)
     if model_id in (IRIS_CODE_MODEL_ID, IRIS_CODE_1_0_MODEL_ID):
