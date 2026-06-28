@@ -19,6 +19,7 @@ OLD_REV="${3:?usage: $0 <region> <new-rev> <old-rev>}"
 
 PROJECT_ID="${PROJECT_ID:-quill-cloud-proxy}"
 SERVICE="${SERVICE:-trusted-router}"
+WATCHDOG_SLO_CLASS="${TR_WATCHDOG_SLO_CLASS:-router_core}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[staged-traffic ${REGION}] $*"; }
@@ -46,7 +47,8 @@ watch_or_rollback() {
   if ! python3 "${SCRIPT_DIR}/watchdog.py" \
       --regions "$REGION" \
       --duration-min 1 \
-      --rollback-after 1; then
+      --rollback-after 1 \
+      --slo-class "$WATCHDOG_SLO_CLASS"; then
     log "ROLLBACK at ${stage_pct}% — synthetics tripped; reverting to 100% ${OLD_REV}"
     gcloud run services update-traffic "$SERVICE" \
       --region="$REGION" --project="$PROJECT_ID" \

@@ -325,6 +325,8 @@ jobs:
         # synthetic watch between stages. On any watch trip, traffic
         # is reverted to 100% on the old revision and the workflow
         # fails before ever shipping anything to europe-west4.
+        env:
+          TR_WATCHDOG_SLO_CLASS: control_plane
         run: bash scripts/deploy/staged_traffic.sh us-central1 "${{ steps.new_us.outputs.revision }}" "${{ steps.prev.outputs.us_central1_revision }}"
 
       - name: Canary gate — watch us-central1 only (3 min)
@@ -333,7 +335,7 @@ jobs:
         # received the new image yet, so the bad change is contained.
         id: canary_us
         continue-on-error: true
-        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 ${{ steps.wd_args.outputs.extra }}
+        run: python3 scripts/deploy/watchdog.py --regions us-central1 --duration-min 3 --rollback-after 2 --slo-class control_plane ${{ steps.wd_args.outputs.extra }}
 
       - name: Rollback us-central1 + abort (canary tripped)
         if: ${{ steps.canary_us.outcome == 'failure' && steps.canary_us.outputs.rollback_regions != '' }}
@@ -358,6 +360,7 @@ jobs:
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
           PREV_US_EAST4: ${{ steps.prev.outputs.us_east4_revision }}
           WD_EXTRA: ${{ steps.wd_args.outputs.extra }}
+          TR_WATCHDOG_SLO_CLASS: control_plane
         run: |
           set -euo pipefail
 
@@ -408,6 +411,7 @@ jobs:
               --regions "${region}" \
               --duration-min 3 \
               --rollback-after 2 \
+              --slo-class control_plane \
               ${WD_EXTRA}; then
               rollback_region "${region}"
               return 1
