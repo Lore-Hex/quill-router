@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import random
@@ -76,44 +77,63 @@ async def run_synthetic_once(
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
     samples: list[SyntheticProbeSample] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for target in configured_targets(settings):
-            samples.append(await tls_health_probe(client, target, monitor_region=region))
-            samples.append(await attestation_nonce_probe(client, target, monitor_region=region))
-            # Per-region control plane health via Cloud Run direct URL.
-            # tls_health above probes target.api_base_url which is the
-            # ENCLAVE (api-{region}.quillrouter.com) — that path can be
-            # broken by an enclave-side issue (MIG at size 0, ACME cert
-            # not issued, etc.) while the regional Cloud Run is fine.
-            # This separate probe pins the control-plane signal per
-            # region so dashboards can tell "the Cloud Run instance is
-            # up but the regional enclave isn't" from "the whole
-            # region is dead".
-            if target.control_plane_url:
-                samples.append(
-                    await control_plane_health_probe(
-                        client, target, monitor_region=region
-                    )
+        target_results = await asyncio.gather(
+            *[
+                _run_target_synthetic_probes(
+                    client,
+                    target,
+                    monitor_region=region,
+                    api_key=key,
+                    model=settings.synthetic_monitor_model,
                 )
-            if key:
-                samples.append(
-                    await openai_chat_pong_probe(
-                        client,
-                        target,
-                        monitor_region=region,
-                        api_key=key,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
-                samples.append(
-                    await responses_pong_probe(
-                        client,
-                        target,
-                        monitor_region=region,
-                        api_key=key,
-                        model=settings.synthetic_monitor_model,
-                    )
-                )
+                for target in configured_targets(settings)
+            ]
+        )
+    for target_samples in target_results:
+        samples.extend(target_samples)
     return samples
+
+
+async def _run_target_synthetic_probes(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str | None,
+    model: str,
+) -> list[SyntheticProbeSample]:
+    probes = [
+        tls_health_probe(client, target, monitor_region=monitor_region),
+        attestation_nonce_probe(client, target, monitor_region=monitor_region),
+    ]
+    # Per-region control plane health via Cloud Run direct URL.
+    # tls_health above probes target.api_base_url which is the
+    # ENCLAVE (api-{region}.quillrouter.com) — that path can be
+    # broken by an enclave-side issue (MIG at size 0, ACME cert
+    # not issued, etc.) while the regional Cloud Run is fine.
+    # This separate probe pins the control-plane signal per region.
+    if target.control_plane_url:
+        probes.append(control_plane_health_probe(client, target, monitor_region=monitor_region))
+    if api_key:
+        probes.extend(
+            [
+                openai_chat_pong_probe(
+                    client,
+                    target,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    model=model,
+                ),
+                responses_pong_probe(
+                    client,
+                    target,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    model=model,
+                ),
+            ]
+        )
+    return list(await asyncio.gather(*probes))
 
 
 async def tls_health_probe(

@@ -41,7 +41,7 @@ BASE_ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
   "TR_ENABLE_LIVE_PROVIDERS=false"
-  "TR_API_BASE_URL=https://api.quillrouter.com/v1"
+  "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_STORAGE_BACKEND=spanner-bigtable"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
@@ -58,16 +58,11 @@ BASE_ENV_VARS=(
   # downtime, while still bounding true hangs.
   "TR_SYNTHETIC_MONITOR_TIMEOUT_SECONDS=30"
   "TR_SYNTHETIC_CONTROL_PLANE_URL=https://trustedrouter.com"
-  # 30-second sub-cadence (2 passes/invocation). The 10s/6-passes
-  # plan from a prior iteration exceeded the Cloud Run Job CPU budget
-  # — N concurrent TLS handshakes serialized on 1 CPU, probe latency
-  # ballooned from 2s → 12s, executions hit 90-400s and stacked up
-  # past the 60s cron tick. With CPU 2 / 1Gi (set below in the job
-  # deploy flags) we may be able to safely return to 10s — but
-  # ratchet there in a SEPARATE PR after we've watched a few hours
-  # of clean runs at 30s under the new resources.
-  "TR_SYNTHETIC_RUNS_PER_INVOCATION=2"
-  "TR_SYNTHETIC_RUN_SPACING_SECONDS=30"
+  # One bounded pass per scheduler tick. Sub-minute passes made
+  # provider-effective timeouts stack up behind health probes and caused
+  # Cloud Run Job self-timeouts.
+  "TR_SYNTHETIC_RUNS_PER_INVOCATION=1"
+  "TR_SYNTHETIC_RUN_SPACING_SECONDS=0"
   # Provider/model rotation probe — LAUNCHED (2026-06-04). Each pass takes
   # TR_SYNTHETIC_ROTATION_PER_PASS random provider+model samples (two-stage),
   # streams a tiny request, and records measured TTFB/TTFT into the benchmark

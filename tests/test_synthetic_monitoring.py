@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime as dt
 import json
 import random
+import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -52,6 +55,7 @@ from trusted_router.synthetic.probes import (
     provider_rotation_probe,
     responses_pong_probe,
     rotation_candidates,
+    run_synthetic_once,
     tls_health_probe,
 )
 from trusted_router.synthetic.rollups import (
@@ -1479,6 +1483,117 @@ def _jwt(payload: dict[str, Any]) -> bytes:
     raw = json.dumps(payload, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     return f"header.{body}.signature".encode()
+
+
+@pytest.mark.asyncio
+async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.synthetic import probes as probe_module
+
+    targets = [
+        SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1"),
+        SyntheticTarget("us-east4", "https://api-us-east4.quillrouter.com/v1", "us-east4"),
+        SyntheticTarget(
+            "europe-west4",
+            "https://api-europe-west4.quillrouter.com/v1",
+            "europe-west4",
+            "https://trusted-router-control-eu.example",
+        ),
+    ]
+
+    def fake_probe(probe_type: str) -> Any:
+        async def run(
+            _client: httpx.AsyncClient,
+            target: SyntheticTarget,
+            *,
+            monitor_region: str,
+            **_kwargs: Any,
+        ) -> SyntheticProbeSample:
+            await asyncio.sleep(0.03)
+            return _sample(
+                id=f"{probe_type}-{target.name}",
+                probe_type=probe_type,
+                status="up",
+                target=target.name,
+                target_region=target.region,
+                monitor_region=monitor_region,
+            )
+
+        return run
+
+    monkeypatch.setattr(probe_module, "configured_targets", lambda _settings: targets)
+    monkeypatch.setattr(probe_module, "tls_health_probe", fake_probe("tls_health"))
+    monkeypatch.setattr(probe_module, "attestation_nonce_probe", fake_probe("attestation_nonce"))
+    monkeypatch.setattr(
+        probe_module, "control_plane_health_probe", fake_probe("control_plane_health")
+    )
+    monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_probe("openai_sdk_pong"))
+    monkeypatch.setattr(probe_module, "responses_pong_probe", fake_probe("responses_pong"))
+
+    started = time.perf_counter()
+    samples = await run_synthetic_once(
+        Settings(
+            environment="test",
+            api_base_url="https://api.trustedrouter.com/v1",
+            synthetic_monitor_api_key="sk-tr-test",
+        ),
+        monitor_region="us-central1",
+        api_key="sk-tr-test",
+    )
+    elapsed = time.perf_counter() - started
+
+    assert len(samples) == 13
+    assert {sample.target for sample in samples} == {"canonical", "us-east4", "europe-west4"}
+    # Serial execution would take about 13 * 30ms. Keep enough slack for busy CI
+    # while still proving a single slow target no longer blocks the whole pass.
+    assert elapsed < 0.18
+
+
+@pytest.mark.asyncio
+async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    async def fake_rotation_probe(
+        _client: httpx.AsyncClient,
+        _target: SyntheticTarget,
+        *,
+        monitor_region: str,
+        api_key: str,
+        provider: str,
+        model: str,
+    ) -> tuple[str, str, str, str]:
+        assert monitor_region == "us-central1"
+        assert api_key == "sk-tr-test"
+        await asyncio.sleep(0.03)
+        return (provider, model, monitor_region, api_key)
+
+    monkeypatch.setattr(
+        cli_module,
+        "rotation_candidates",
+        lambda: {"provider-a": ["model-a"], "provider-b": ["model-b"]},
+    )
+    monkeypatch.setattr(cli_module, "provider_rotation_probe", fake_rotation_probe)
+
+    started = time.perf_counter()
+    samples = await cli_module._rotation_pass(
+        settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
+        monitor_region="us-central1",
+        api_key="sk-tr-test",
+        timeout=httpx.Timeout(1),
+        count=4,
+        rng=random.Random(0),  # noqa: S311 - deterministic test selection.
+    )
+    elapsed = time.perf_counter() - started
+
+    assert len(samples) == 4
+    assert elapsed < 0.12
+
+
+def test_synthetic_deploy_targets_public_api_domain() -> None:
+    deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
+    body = deploy_script.read_text()
+
+    assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
+    assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
 
 
 class _FakeCell:

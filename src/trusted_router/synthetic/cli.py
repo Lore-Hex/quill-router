@@ -21,21 +21,11 @@ from trusted_router.synthetic.probes import (
     run_synthetic_once,
 )
 
-# Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-
-# granularity at best (`* * * * *`); to get sub-minute sampling we
-# run the probe multiple times per invocation with a sleep between
-# starts. 2 passes × 30s spacing = ~32K samples/day per region pair,
-# fits comfortably in a 60s scheduler tick on Cloud Run Job defaults.
-#
-# Going more aggressive (6 × 10s for ~96K samples/day) caused probe
-# executions to stack up under load: with default 1 CPU / 512Mi the
-# concurrent TLS handshakes serialized, individual probe latency
-# ballooned from ~2s to ~12s, and 60s cron ticks fired faster than
-# 90-400s executions could finish. Bumping Cloud Run Job to 2 CPU /
-# 1Gi in synthetic.sh should make 10s feasible again — try that in
-# a separate PR after watching a stable 30s baseline.
-# Override via TR_SYNTHETIC_RUNS_PER_INVOCATION (1 = old behaviour).
-_DEFAULT_RUNS_PER_INVOCATION = 2
+# Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-granularity
+# at best (`* * * * *`). Keep production to one bounded pass per invocation;
+# sub-minute passes made provider-effective timeouts stack up and caused the
+# monitor itself to hit Cloud Run Job timeouts.
+_DEFAULT_RUNS_PER_INVOCATION = 1
 _DEFAULT_RUN_SPACING_SECONDS = 30.0
 
 # Provider/model rotation probe — how many random provider+model samples to
@@ -83,15 +73,15 @@ async def _rotation_pass(
 ) -> list[ProviderBenchmarkSample]:
     pool = rotation_candidates()
     target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
-    samples: list[ProviderBenchmarkSample] = []
+    probes = []
     async with httpx.AsyncClient(timeout=timeout) as client:
         for _ in range(max(0, count)):
             picked = choose_rotation_target(pool, rng)
             if picked is None:
                 break
             provider, model = picked
-            samples.append(
-                await provider_rotation_probe(
+            probes.append(
+                provider_rotation_probe(
                     client,
                     target,
                     monitor_region=monitor_region,
@@ -100,7 +90,9 @@ async def _rotation_pass(
                     model=model,
                 )
             )
-    return samples
+        if not probes:
+            return []
+        return list(await asyncio.gather(*probes))
 
 
 async def run() -> int:
