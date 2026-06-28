@@ -48,6 +48,16 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "description": "api.trustedrouter.com chat, Responses, TLS, and attestation checks.",
     },
     {
+        "id": "us_central1_regional_api",
+        "name": "US Central Regional API",
+        "description": "api-us-central1.quillrouter.com regional attested gateway checks.",
+    },
+    {
+        "id": "us_east4_regional_api",
+        "name": "US East Regional API",
+        "description": "api-us-east4.quillrouter.com regional attested gateway checks.",
+    },
+    {
         "id": "eu_regional_api",
         "name": "EU Regional API",
         "description": "api-europe-west4.quillrouter.com regional attested gateway checks.",
@@ -74,6 +84,10 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
     ids: list[str] = []
     if sample.target == "canonical" and sample.probe_type in API_PROBES:
         ids.append("canonical_api")
+    if sample.target == "us-central1" and sample.probe_type in API_PROBES:
+        ids.append("us_central1_regional_api")
+    if sample.target == "us-east4" and sample.probe_type in API_PROBES:
+        ids.append("us_east4_regional_api")
     if sample.target == "europe-west4" and sample.probe_type in API_PROBES:
         ids.append("eu_regional_api")
     if sample.probe_type == "attestation_nonce":

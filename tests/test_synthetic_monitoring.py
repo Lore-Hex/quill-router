@@ -1485,6 +1485,67 @@ def _jwt(payload: dict[str, Any]) -> bytes:
     return f"header.{body}.signature".encode()
 
 
+def test_configured_targets_include_primary_regional_gateway() -> None:
+    from trusted_router.synthetic.probes import configured_targets
+
+    settings = Settings(
+        environment="test",
+        api_base_url="https://api.trustedrouter.com/v1",
+        regions="us-central1,us-east4,europe-west4",
+        primary_region="us-central1",
+    )
+
+    targets = configured_targets(settings)
+    by_name = {target.name: target for target in targets}
+
+    assert by_name["canonical"].api_base_url == "https://api.trustedrouter.com/v1"
+    assert by_name["canonical"].region == "us-central1"
+    assert by_name["us-central1"].api_base_url == (
+        "https://api-us-central1.quillrouter.com/v1"
+    )
+    assert by_name["us-central1"].region == "us-central1"
+    assert by_name["us-east4"].api_base_url == "https://api-us-east4.quillrouter.com/v1"
+    assert by_name["europe-west4"].api_base_url == (
+        "https://api-europe-west4.quillrouter.com/v1"
+    )
+
+
+def test_status_components_include_all_warm_regional_gateways() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_us_central",
+            target="us-central1",
+            target_region="us-central1",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_us_east",
+            target="us-east4",
+            target_region="us-east4",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_eu",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    components = {row["id"]: row for row in status_snapshot(samples, now=now)["components"]}
+
+    assert components["us_central1_regional_api"]["status"] == "up"
+    assert components["us_east4_regional_api"]["status"] == "up"
+    assert components["eu_regional_api"]["status"] == "up"
+
+
 @pytest.mark.asyncio
 async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.synthetic import probes as probe_module

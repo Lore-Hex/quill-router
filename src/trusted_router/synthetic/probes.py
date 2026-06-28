@@ -43,6 +43,18 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
         name = str(region["id"])
         api_base_url = str(region["api_base_url"])
         control_plane_url = region.get("control_plane_url") or None
+        if name == choose_region(settings):
+            # The canonical hostname now publishes all healthy gateway regions,
+            # so it is not a primary-region-only signal. Probe the primary
+            # regional hostname separately when it exists so us-central1 can
+            # fail independently of the global/canonical record.
+            regional_hostname = settings.regional_api_hostname_template.format(region=name)
+            regional_api_base_url = f"https://{regional_hostname}/v1"
+            if regional_api_base_url != settings.api_base_url:
+                targets.append(
+                    SyntheticTarget(name, regional_api_base_url, name, control_plane_url)
+                )
+                continue
         # If the api_base_url is already represented (e.g. the primary
         # region whose api_base_url == settings.api_base_url), skip
         # adding a duplicate enclave target — but DO still attach the
