@@ -1588,6 +1588,48 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
     assert elapsed < 0.12
 
 
+@pytest.mark.asyncio
+async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    async def fake_one_probe_pass(**_kwargs: Any) -> list[SyntheticProbeSample]:
+        await asyncio.sleep(0.03)
+        return [
+            _sample(id="tls", probe_type="tls_health", status="up"),
+            _sample(id="settle", probe_type="gateway_authorize_settle", status="up"),
+        ]
+
+    async def fake_rotation_pass(**_kwargs: Any) -> list[str]:
+        await asyncio.sleep(0.03)
+        return ["rotation-a", "rotation-b"]
+
+    monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
+    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+
+    started = time.perf_counter()
+    samples, rotation_samples = await cli_module._probe_and_rotation_pass(
+        settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
+        monitor_region="us-central1",
+        control_plane="https://trustedrouter.com",
+        internal_token="internal",  # noqa: S106 - test placeholder.
+        api_key="sk-tr-test",
+        timeout=httpx.Timeout(1),
+        rotation_enabled=True,
+        rotation_per_pass=4,
+        rotation_rng=random.Random(0),  # noqa: S311 - deterministic test selection.
+    )
+    elapsed = time.perf_counter() - started
+
+    assert [sample.probe_type for sample in samples] == [
+        "tls_health",
+        "gateway_authorize_settle",
+    ]
+    assert rotation_samples == ["rotation-a", "rotation-b"]
+    assert elapsed < 0.06
+
+
 def test_synthetic_deploy_targets_public_api_domain() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()

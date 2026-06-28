@@ -39,32 +39,74 @@ async def _one_probe_pass(
     internal_token: str | None, api_key: str | None,
     timeout: httpx.Timeout,
 ) -> list[SyntheticProbeSample]:
-    samples = await run_synthetic_once(
-        settings, monitor_region=monitor_region, api_key=api_key,
+    synthetic_task = asyncio.create_task(
+        run_synthetic_once(
+            settings,
+            monitor_region=monitor_region,
+            api_key=api_key,
+        )
     )
-    if api_key and internal_token:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            samples.extend(
-                await gateway_billing_probe(
-                    client,
-                    control_plane_base_url=control_plane,
-                    monitor_region=monitor_region,
-                    api_key=api_key,
-                    internal_token=internal_token,
-                    model=settings.synthetic_monitor_model,
-                )
+    if not (api_key and internal_token):
+        return await synthetic_task
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        synthetic_samples, billing_samples, fallback_samples = await asyncio.gather(
+            synthetic_task,
+            gateway_billing_probe(
+                client,
+                control_plane_base_url=control_plane,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                internal_token=internal_token,
+                model=settings.synthetic_monitor_model,
+            ),
+            gateway_fallback_probe(
+                client,
+                control_plane_base_url=control_plane,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                internal_token=internal_token,
+                model=settings.synthetic_monitor_model,
+            ),
+        )
+    return [*synthetic_samples, *billing_samples, *fallback_samples]
+
+
+async def _probe_and_rotation_pass(
+    *,
+    settings: Settings,
+    monitor_region: str,
+    control_plane: str,
+    internal_token: str | None,
+    api_key: str | None,
+    timeout: httpx.Timeout,
+    rotation_enabled: bool,
+    rotation_per_pass: int,
+    rotation_rng: random.Random,
+) -> tuple[list[SyntheticProbeSample], list[ProviderBenchmarkSample]]:
+    probe_task = asyncio.create_task(
+        _one_probe_pass(
+            settings=settings,
+            monitor_region=monitor_region,
+            control_plane=control_plane,
+            internal_token=internal_token,
+            api_key=api_key,
+            timeout=timeout,
+        )
+    )
+    if rotation_enabled and api_key:
+        rotation_task = asyncio.create_task(
+            _rotation_pass(
+                settings=settings,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                timeout=timeout,
+                count=rotation_per_pass,
+                rng=rotation_rng,
             )
-            samples.extend(
-                await gateway_fallback_probe(
-                    client,
-                    control_plane_base_url=control_plane,
-                    monitor_region=monitor_region,
-                    api_key=api_key,
-                    internal_token=internal_token,
-                    model=settings.synthetic_monitor_model,
-                )
-            )
-    return samples
+        )
+        probe_samples, rotation_samples = await asyncio.gather(probe_task, rotation_task)
+        return probe_samples, rotation_samples
+    return await probe_task, []
 
 
 async def _rotation_pass(
@@ -137,27 +179,19 @@ async def run() -> int:
     rotation_samples: list[ProviderBenchmarkSample] = []
     pass_start_monotonic = time.monotonic()
     for pass_idx in range(runs_per_invocation):
-        all_samples.extend(
-            await _one_probe_pass(
-                settings=settings,
-                monitor_region=monitor_region,
-                control_plane=control_plane,
-                internal_token=internal_token,
-                api_key=api_key,
-                timeout=timeout,
-            )
+        pass_samples, pass_rotation_samples = await _probe_and_rotation_pass(
+            settings=settings,
+            monitor_region=monitor_region,
+            control_plane=control_plane,
+            internal_token=internal_token,
+            api_key=api_key,
+            timeout=timeout,
+            rotation_enabled=rotation_enabled,
+            rotation_per_pass=rotation_per_pass,
+            rotation_rng=rotation_rng,
         )
-        if rotation_enabled and api_key:
-            rotation_samples.extend(
-                await _rotation_pass(
-                    settings=settings,
-                    monitor_region=monitor_region,
-                    api_key=api_key,
-                    timeout=timeout,
-                    count=rotation_per_pass,
-                    rng=rotation_rng,
-                )
-            )
+        all_samples.extend(pass_samples)
+        rotation_samples.extend(pass_rotation_samples)
         # Sleep until the next probe pass should start, but only if
         # there IS a next pass. Compensates for the time the probe
         # itself took so the spacing is between pass-starts, not
