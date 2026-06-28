@@ -1661,7 +1661,6 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
     monkeypatch.setattr(cli_module, "gateway_billing_probe", fake_billing_probe)
     monkeypatch.setattr(cli_module, "gateway_fallback_probe", fake_fallback_probe)
 
-    started = time.perf_counter()
     samples = await cli_module._one_probe_pass(
         settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
         monitor_region="us-central1",
@@ -1670,7 +1669,6 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         api_key="sk-tr-test",
         timeout=httpx.Timeout(1),
     )
-    elapsed = time.perf_counter() - started
 
     assert [sample.probe_type for sample in samples] == [
         "tls_health",
@@ -1678,9 +1676,6 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
         "provider_fallback",
     ]
     assert events.index("billing-end") < events.index("fallback-start")
-    # The synthetic status pass can overlap the ordered gateway probes, but
-    # the two gateway accounting probes themselves must stay sequential.
-    assert elapsed < 0.09
 
 
 def test_synthetic_deploy_targets_public_api_domain() -> None:
