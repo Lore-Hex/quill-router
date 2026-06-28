@@ -48,27 +48,34 @@ async def _one_probe_pass(
     )
     if not (api_key and internal_token):
         return await synthetic_task
+    # Keep ledger-style probes ordered. They reserve, settle, and refund
+    # against the same synthetic key; running them concurrently turns the
+    # monitor into a Spanner/key-row contention test and can create false
+    # router-core failures.
+    gateway_samples: list[SyntheticProbeSample] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        synthetic_samples, billing_samples, fallback_samples = await asyncio.gather(
-            synthetic_task,
-            gateway_billing_probe(
+        gateway_samples.extend(
+            await gateway_billing_probe(
                 client,
                 control_plane_base_url=control_plane,
                 monitor_region=monitor_region,
                 api_key=api_key,
                 internal_token=internal_token,
                 model=settings.synthetic_monitor_model,
-            ),
-            gateway_fallback_probe(
-                client,
-                control_plane_base_url=control_plane,
-                monitor_region=monitor_region,
-                api_key=api_key,
-                internal_token=internal_token,
-                model=settings.synthetic_monitor_model,
-            ),
+            )
         )
-    return [*synthetic_samples, *billing_samples, *fallback_samples]
+        gateway_samples.extend(
+            await gateway_fallback_probe(
+                client,
+                control_plane_base_url=control_plane,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                internal_token=internal_token,
+                model=settings.synthetic_monitor_model,
+            )
+        )
+    synthetic_samples = await synthetic_task
+    return [*synthetic_samples, *gateway_samples]
 
 
 async def _probe_and_rotation_pass(

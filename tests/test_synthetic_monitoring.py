@@ -1630,12 +1630,66 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
     assert elapsed < 0.06
 
 
+@pytest.mark.asyncio
+async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    events: list[str] = []
+
+    async def fake_run_synthetic_once(*_args: Any, **_kwargs: Any) -> list[SyntheticProbeSample]:
+        events.append("synthetic-start")
+        await asyncio.sleep(0.05)
+        events.append("synthetic-end")
+        return [_sample(id="tls", probe_type="tls_health", status="up")]
+
+    async def fake_billing_probe(*_args: Any, **_kwargs: Any) -> list[SyntheticProbeSample]:
+        events.append("billing-start")
+        await asyncio.sleep(0.03)
+        events.append("billing-end")
+        return [_sample(id="billing", probe_type="gateway_authorize_settle", status="up")]
+
+    async def fake_fallback_probe(*_args: Any, **_kwargs: Any) -> list[SyntheticProbeSample]:
+        assert "billing-end" in events
+        events.append("fallback-start")
+        await asyncio.sleep(0.03)
+        events.append("fallback-end")
+        return [_sample(id="fallback", probe_type="provider_fallback", status="up")]
+
+    monkeypatch.setattr(cli_module, "run_synthetic_once", fake_run_synthetic_once)
+    monkeypatch.setattr(cli_module, "gateway_billing_probe", fake_billing_probe)
+    monkeypatch.setattr(cli_module, "gateway_fallback_probe", fake_fallback_probe)
+
+    started = time.perf_counter()
+    samples = await cli_module._one_probe_pass(
+        settings=Settings(environment="test", api_base_url="https://api.trustedrouter.com/v1"),
+        monitor_region="us-central1",
+        control_plane="https://trustedrouter.com",
+        internal_token="internal",  # noqa: S106 - test placeholder.
+        api_key="sk-tr-test",
+        timeout=httpx.Timeout(1),
+    )
+    elapsed = time.perf_counter() - started
+
+    assert [sample.probe_type for sample in samples] == [
+        "tls_health",
+        "gateway_authorize_settle",
+        "provider_fallback",
+    ]
+    assert events.index("billing-end") < events.index("fallback-start")
+    # The synthetic status pass can overlap the ordered gateway probes, but
+    # the two gateway accounting probes themselves must stay sequential.
+    assert elapsed < 0.09
+
+
 def test_synthetic_deploy_targets_public_api_domain() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
 
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
+    assert '--schedule "*/2 * * * *"' in body
 
 
 class _FakeCell:

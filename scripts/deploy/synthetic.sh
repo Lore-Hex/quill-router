@@ -2,7 +2,9 @@
 # Phase 5: deploy scheduled synthetic monitor jobs in each configured region.
 # Jobs run outside the prompt path and write privacy-safe samples to
 # /internal/synthetic/samples. Cloud Scheduler triggers each regional job
-# once per minute via the Cloud Run Jobs API.
+# every two minutes via the Cloud Run Jobs API. Each pass includes real
+# provider and ledger probes; minute-granularity scheduling can overlap during
+# upstream slowness and create synthetic-only router-core failures.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
@@ -121,7 +123,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     log "updating synthetic scheduler ${scheduler_name}"
     if ! gc scheduler jobs update http "$scheduler_name" \
       --location "$monitor_region" \
-      --schedule "* * * * *" \
+      --schedule "*/2 * * * *" \
       --uri "$run_uri" \
       --http-method POST \
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
@@ -132,7 +134,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
     log "creating synthetic scheduler ${scheduler_name}"
     if ! gc scheduler jobs create http "$scheduler_name" \
       --location "$monitor_region" \
-      --schedule "* * * * *" \
+      --schedule "*/2 * * * *" \
       --uri "$run_uri" \
       --http-method POST \
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
