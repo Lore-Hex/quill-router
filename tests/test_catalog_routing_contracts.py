@@ -4,6 +4,8 @@ import pytest
 
 from trusted_router.catalog import (
     ADVISOR_MODEL_ID,
+    ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID,
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -12,11 +14,19 @@ from trusted_router.catalog import (
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MODEL_ENDPOINTS,
     MODELS,
+    PLATO_1_0_MODEL_ID,
+    PLATO_MODEL_ID,
+    PLATO_PRO_1_0_MODEL_ID,
+    PLATO_PRO_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_MODEL_ID,
+    SOCRATES_PRO_1_0_MODEL_ID,
+    SOCRATES_PRO_MODEL_ID,
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+    SOCRATES_PRO_PLUS_MODEL_ID,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
     auto_candidate_models,
@@ -372,7 +382,8 @@ def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
 def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
     expected_candidates = [
         "cerebras/gpt-oss-120b",
-        "deepseek/deepseek-v4-flash",
+        "cerebras/zai-glm-4.7",
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
         "anthropic/claude-opus-4.8",
     ]
 
@@ -385,6 +396,82 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
         assert shape["trustedrouter"]["stores_content"] is False
         assert shape["trustedrouter"]["auto_candidates"] == expected_candidates
         assert [model.id for model in meta_candidate_models(model_id)] == expected_candidates
+
+
+def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
+    expected: dict[str, list[str]] = {
+        ARISTOTLE_1_0_MODEL_ID: [
+            "deepseek/deepseek-v4-flash",
+            "anthropic/claude-opus-4.8",
+            "openai/gpt-5.5",
+            "anthropic/claude-sonnet-4.6",
+            "google/gemini-3.1-pro-preview",
+            "moonshotai/kimi-k2.6",
+        ],
+        ARISTOTLE_MODEL_ID: [
+            "deepseek/deepseek-v4-flash",
+            "anthropic/claude-opus-4.8",
+            "openai/gpt-5.5",
+            "anthropic/claude-sonnet-4.6",
+            "google/gemini-3.1-pro-preview",
+            "moonshotai/kimi-k2.6",
+        ],
+        PLATO_1_0_MODEL_ID: [
+            "deepseek/deepseek-v4-flash",
+            "z-ai/glm-5.2",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.6",
+            "google/gemma-4-31b-it",
+            "deepseek/deepseek-v4-pro",
+        ],
+        PLATO_MODEL_ID: [
+            "deepseek/deepseek-v4-flash",
+            "z-ai/glm-5.2",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.6",
+            "google/gemma-4-31b-it",
+            "deepseek/deepseek-v4-pro",
+        ],
+        PLATO_PRO_1_0_MODEL_ID: [
+            "z-ai/glm-5.2",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.6",
+            "google/gemma-4-31b-it",
+            "deepseek/deepseek-v4-pro",
+        ],
+        PLATO_PRO_MODEL_ID: [
+            "z-ai/glm-5.2",
+            "minimax/minimax-m3",
+            "moonshotai/kimi-k2.6",
+            "google/gemma-4-31b-it",
+            "deepseek/deepseek-v4-pro",
+        ],
+        SOCRATES_PRO_1_0_MODEL_ID: [
+            "cerebras/zai-glm-4.7",
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "anthropic/claude-opus-4.8",
+        ],
+        SOCRATES_PRO_MODEL_ID: [
+            "cerebras/zai-glm-4.7",
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "anthropic/claude-opus-4.8",
+        ],
+        SOCRATES_PRO_PLUS_1_0_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "anthropic/claude-opus-4.8",
+        ],
+        SOCRATES_PRO_PLUS_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "anthropic/claude-opus-4.8",
+        ],
+    }
+    for model_id, candidates in expected.items():
+        shape = model_to_openrouter_shape(MODELS[model_id])
+
+        assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
+        assert shape["trustedrouter"]["stores_content"] is False
+        assert shape["trustedrouter"]["auto_candidates"] == candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == candidates
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

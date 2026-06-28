@@ -636,6 +636,16 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/iris",
         "trustedrouter/prometheus",
         "trustedrouter/zeus",
+        "trustedrouter/aristotle",
+        "trustedrouter/aristotle-1.0",
+        "trustedrouter/plato",
+        "trustedrouter/plato-1.0",
+        "trustedrouter/plato-pro",
+        "trustedrouter/plato-pro-1.0",
+        "trustedrouter/socrates-pro",
+        "trustedrouter/socrates-pro-1.0",
+        "trustedrouter/socrates-pro-plus",
+        "trustedrouter/socrates-pro-plus-1.0",
         "trustedrouter/iris-1.0",
         "trustedrouter/prometheus-1.0",
         "trustedrouter/zeus-1.0",
@@ -676,6 +686,17 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ]
     assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"] == zeus_meta[
         "auto_candidates"
+    ]
+    aristotle_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
+    assert aristotle_meta["route_kind"] == "advisor_orchestration"
+    assert aristotle_meta["auto_candidates"][:2] == [
+        "deepseek/deepseek-v4-flash",
+        "anthropic/claude-opus-4.8",
+    ]
+    socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
+    assert socrates_pro_plus_meta["auto_candidates"] == [
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "anthropic/claude-opus-4.8",
     ]
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't

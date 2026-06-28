@@ -873,6 +873,16 @@ MONITOR_MODEL_ID = "trustedrouter/monitor"
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 SOCRATES_MODEL_ID = "trustedrouter/socrates"
 ADVISOR_MODEL_ID = "trustedrouter/advisor"
+ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
+ARISTOTLE_MODEL_ID = "trustedrouter/aristotle"
+PLATO_1_0_MODEL_ID = "trustedrouter/plato-1.0"
+PLATO_MODEL_ID = "trustedrouter/plato"
+PLATO_PRO_1_0_MODEL_ID = "trustedrouter/plato-pro-1.0"
+PLATO_PRO_MODEL_ID = "trustedrouter/plato-pro"
+SOCRATES_PRO_1_0_MODEL_ID = "trustedrouter/socrates-pro-1.0"
+SOCRATES_PRO_MODEL_ID = "trustedrouter/socrates-pro"
+SOCRATES_PRO_PLUS_1_0_MODEL_ID = "trustedrouter/socrates-pro-plus-1.0"
+SOCRATES_PRO_PLUS_MODEL_ID = "trustedrouter/socrates-pro-plus"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -906,6 +916,16 @@ META_MODEL_IDS = frozenset(
         SOCRATES_1_0_MODEL_ID,
         SOCRATES_MODEL_ID,
         ADVISOR_MODEL_ID,
+        ARISTOTLE_1_0_MODEL_ID,
+        ARISTOTLE_MODEL_ID,
+        PLATO_1_0_MODEL_ID,
+        PLATO_MODEL_ID,
+        PLATO_PRO_1_0_MODEL_ID,
+        PLATO_PRO_MODEL_ID,
+        SOCRATES_PRO_1_0_MODEL_ID,
+        SOCRATES_PRO_MODEL_ID,
+        SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+        SOCRATES_PRO_PLUS_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -1007,11 +1027,67 @@ SYNTH_CODE_FRONTIER_MODEL_ORDER = (
 
 SOCRATES_WORKER_MODEL_ORDER = (
     "cerebras/gpt-oss-120b",
-    "deepseek/deepseek-v4-flash",
 )
 SOCRATES_ADVISOR_MODEL_ORDER = (
+    SOCRATES_PRO_1_0_MODEL_ID,
+)
+
+SOCRATES_CATALOG_MODEL_ORDER = (
+    "cerebras/gpt-oss-120b",
+    "cerebras/zai-glm-4.7",
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
     "anthropic/claude-opus-4.8",
 )
+
+ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
+    SOCRATES_1_0_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    SOCRATES_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    ARISTOTLE_1_0_MODEL_ID: (
+        "deepseek/deepseek-v4-flash",
+        *SYNTH_FRONTIER_MODEL_ORDER,
+    ),
+    ARISTOTLE_MODEL_ID: (
+        "deepseek/deepseek-v4-flash",
+        *SYNTH_FRONTIER_MODEL_ORDER,
+    ),
+    PLATO_1_0_MODEL_ID: (
+        "deepseek/deepseek-v4-flash",
+        "z-ai/glm-5.2",
+        *SYNTH_QUALITY_MODEL_ORDER,
+    ),
+    PLATO_MODEL_ID: (
+        "deepseek/deepseek-v4-flash",
+        "z-ai/glm-5.2",
+        *SYNTH_QUALITY_MODEL_ORDER,
+    ),
+    PLATO_PRO_1_0_MODEL_ID: (
+        "z-ai/glm-5.2",
+        *SYNTH_QUALITY_MODEL_ORDER,
+    ),
+    PLATO_PRO_MODEL_ID: (
+        "z-ai/glm-5.2",
+        *SYNTH_QUALITY_MODEL_ORDER,
+    ),
+    SOCRATES_PRO_1_0_MODEL_ID: (
+        "cerebras/zai-glm-4.7",
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "anthropic/claude-opus-4.8",
+    ),
+    SOCRATES_PRO_MODEL_ID: (
+        "cerebras/zai-glm-4.7",
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "anthropic/claude-opus-4.8",
+    ),
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID: (
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "anthropic/claude-opus-4.8",
+    ),
+    SOCRATES_PRO_PLUS_MODEL_ID: (
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "anthropic/claude-opus-4.8",
+    ),
+}
 
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
@@ -1118,6 +1194,96 @@ MODELS: dict[str, Model] = {
     ADVISOR_MODEL_ID: Model(
         id=ADVISOR_MODEL_ID,
         name="TrustedRouter Advisor",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ARISTOTLE_1_0_MODEL_ID: Model(
+        id=ARISTOTLE_1_0_MODEL_ID,
+        name="TrustedRouter Aristotle 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ARISTOTLE_MODEL_ID: Model(
+        id=ARISTOTLE_MODEL_ID,
+        name="TrustedRouter Aristotle",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PLATO_1_0_MODEL_ID: Model(
+        id=PLATO_1_0_MODEL_ID,
+        name="TrustedRouter Plato 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PLATO_MODEL_ID: Model(
+        id=PLATO_MODEL_ID,
+        name="TrustedRouter Plato",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PLATO_PRO_1_0_MODEL_ID: Model(
+        id=PLATO_PRO_1_0_MODEL_ID,
+        name="TrustedRouter Plato Pro 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PLATO_PRO_MODEL_ID: Model(
+        id=PLATO_PRO_MODEL_ID,
+        name="TrustedRouter Plato Pro",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_PRO_1_0_MODEL_ID: Model(
+        id=SOCRATES_PRO_1_0_MODEL_ID,
+        name="TrustedRouter Socrates Pro 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_PRO_MODEL_ID: Model(
+        id=SOCRATES_PRO_MODEL_ID,
+        name="TrustedRouter Socrates Pro",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID: Model(
+        id=SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+        name="TrustedRouter Socrates Pro Plus 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_PRO_PLUS_MODEL_ID: Model(
+        id=SOCRATES_PRO_PLUS_MODEL_ID,
+        name="TrustedRouter Socrates Pro Plus",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2457,11 +2623,18 @@ def e2e_candidate_models(limit: int = 12) -> list[Model]:
 
 
 def _models_for_ids(model_ids: tuple[str, ...]) -> list[Model]:
-    return [MODELS[model_id] for model_id in model_ids if model_id in MODELS]
+    models: list[Model] = []
+    seen: set[str] = set()
+    for model_id in model_ids:
+        if model_id in seen or model_id not in MODELS:
+            continue
+        seen.add(model_id)
+        models.append(MODELS[model_id])
+    return models
 
 
 def socrates_candidate_models() -> list[Model]:
-    return _models_for_ids(SOCRATES_WORKER_MODEL_ORDER + SOCRATES_ADVISOR_MODEL_ORDER)
+    return _models_for_ids(SOCRATES_CATALOG_MODEL_ORDER)
 
 
 def meta_candidate_models(model_id: str) -> list[Model]:
@@ -2481,8 +2654,9 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return e2e_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
-    if model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
-        return socrates_candidate_models()
+    advisor_order = ADVISOR_CATALOG_MODEL_ORDERS.get(model_id)
+    if advisor_order is not None:
+        return _models_for_ids(advisor_order)
     if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
     if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
@@ -2516,7 +2690,7 @@ def _meta_route_kind(model_id: str) -> str:
         return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
-    if model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
+    if model_id in ADVISOR_CATALOG_MODEL_ORDERS:
         return "advisor_orchestration"
     if model_id in (
         SYNTH_MODEL_ID,
