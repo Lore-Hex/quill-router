@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from trusted_router.catalog import (
+    ADVISOR_MODEL_ID,
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -14,6 +15,8 @@ from trusted_router.catalog import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
+    SOCRATES_1_0_MODEL_ID,
+    SOCRATES_MODEL_ID,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
     auto_candidate_models,
@@ -364,6 +367,24 @@ def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
             chat_route_candidates({"model": model_id}, Settings(environment="test"))
         assert getattr(exc.value, "status_code", None) == 501
         assert "attested gateway" in str(exc.value)
+
+
+def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
+    expected_candidates = [
+        "cerebras/gpt-oss-120b",
+        "deepseek/deepseek-v4-flash",
+        "anthropic/claude-opus-4.8",
+    ]
+
+    for model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
+        model = MODELS[model_id]
+        shape = model_to_openrouter_shape(model)
+
+        assert model.provider == "trustedrouter"
+        assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
+        assert shape["trustedrouter"]["stores_content"] is False
+        assert shape["trustedrouter"]["auto_candidates"] == expected_candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == expected_candidates
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

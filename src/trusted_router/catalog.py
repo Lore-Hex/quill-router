@@ -870,6 +870,9 @@ EU_MODEL_ID = "trustedrouter/eu"
 ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
+SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
+SOCRATES_MODEL_ID = "trustedrouter/socrates"
+ADVISOR_MODEL_ID = "trustedrouter/advisor"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -900,6 +903,9 @@ META_MODEL_IDS = frozenset(
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
+        SOCRATES_1_0_MODEL_ID,
+        SOCRATES_MODEL_ID,
+        ADVISOR_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -999,6 +1005,14 @@ SYNTH_CODE_FRONTIER_MODEL_ORDER = (
     "moonshotai/kimi-k2.7-code",
 )
 
+SOCRATES_WORKER_MODEL_ORDER = (
+    "cerebras/gpt-oss-120b",
+    "deepseek/deepseek-v4-flash",
+)
+SOCRATES_ADVISOR_MODEL_ORDER = (
+    "anthropic/claude-opus-4.8",
+)
+
 
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
@@ -1082,6 +1096,33 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
+    ),
+    SOCRATES_1_0_MODEL_ID: Model(
+        id=SOCRATES_1_0_MODEL_ID,
+        name="TrustedRouter Socrates 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_MODEL_ID: Model(
+        id=SOCRATES_MODEL_ID,
+        name="TrustedRouter Socrates",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ADVISOR_MODEL_ID: Model(
+        id=ADVISOR_MODEL_ID,
+        name="TrustedRouter Advisor",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
     ),
     SYNTH_MODEL_ID: Model(
         id=SYNTH_MODEL_ID,
@@ -2419,6 +2460,10 @@ def _models_for_ids(model_ids: tuple[str, ...]) -> list[Model]:
     return [MODELS[model_id] for model_id in model_ids if model_id in MODELS]
 
 
+def socrates_candidate_models() -> list[Model]:
+    return _models_for_ids(SOCRATES_WORKER_MODEL_ORDER + SOCRATES_ADVISOR_MODEL_ORDER)
+
+
 def meta_candidate_models(model_id: str) -> list[Model]:
     if model_id == AUTO_MODEL_ID:
         return auto_candidate_models()
@@ -2436,6 +2481,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return e2e_candidate_models()
     if model_id == MONITOR_MODEL_ID:
         return monitor_candidate_models()
+    if model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
+        return socrates_candidate_models()
     if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
     if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
@@ -2469,6 +2516,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
+    if model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
+        return "advisor_orchestration"
     if model_id in (
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,

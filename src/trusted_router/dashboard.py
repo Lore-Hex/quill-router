@@ -1613,6 +1613,7 @@ def llms_txt(settings: Settings) -> str:
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
+        "- Socrates: use model trustedrouter/socrates-1.0 or trustedrouter/advisor for a fast worker model that can ask a stronger private advisor once when stuck",
         "- Synth: use model trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, or trustedrouter/zeus-1.0 with tool type trustedrouter:synth",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
         "",
@@ -1626,7 +1627,8 @@ def llms_txt(settings: Settings) -> str:
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
             "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
-            "trustedrouter/free. Versioned Synth aliases include trustedrouter/iris-1.0, "
+            "trustedrouter/free. Advisor orchestration aliases include trustedrouter/socrates-1.0, "
+            "trustedrouter/socrates, and trustedrouter/advisor. Versioned Synth aliases include trustedrouter/iris-1.0, "
             "trustedrouter/prometheus-1.0, trustedrouter/zeus-1.0, and their -code variants. "
             "Unversioned Synth aliases track the latest preset."
         ),
@@ -1688,6 +1690,13 @@ def docs_llms_txt(settings: Settings) -> str:
             (
                 "For Europe-focused routing, use "
                 "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
+            ),
+            (
+                "For advisor-style orchestration, call model trustedrouter/socrates-1.0 "
+                "or trustedrouter/advisor. The fast worker gets a private "
+                "_trustedrouter_get_advice tool and may ask the configured advisor "
+                "model once when stuck. The advisor sees the same prompt context, so "
+                "use ZDR/E2E/EU routing when those guarantees matter."
             ),
             (
                 "For multi-model synthesis, call model trustedrouter/synth, "
