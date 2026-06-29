@@ -185,8 +185,12 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     diagram = diagram_match.group(0)
     assert "Fast cheap" in diagram
     assert "Smart advisor" in diagram
+    assert "panel: 7 top models answer in parallel" in diagram
+    assert "Judge" in diagram
+    assert "Synthesizer" in diagram
+    assert "guidance returns to worker" in diagram
     assert "7 top models" in diagram
-    assert "worker + advisor + nested Synth" in diagram
+    assert "worker + advisor + panel + judge + synthesizer" in diagram
     for model_name in ("Claude", "GPT", "GLM", "Kimi", "MiniMax", "DeepSeek"):
         assert model_name not in diagram
 

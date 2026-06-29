@@ -49,52 +49,67 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <p>That puts a <a href="/models/trustedrouter/socrates-pro-plus-1.0">TrustedRouter combo model</a> ahead of the frontier baselines people were treating as the ceiling. The <a href="https://www.aiiq.org/charts/terminal-bench-hard-scores/">AI IQ Terminal-Bench Hard chart</a> currently lists Fable 5 at 63, GPT-5.5 at 61, and Opus 4.8 at 58. The new Socrates-Pro-Plus run is 72. It also beat the GPT-5.6 comparison run we were using locally, while running faster and cheaper than the closed frontier comparison set.</p>
 <p>This is the point of <a href="/blog/combo-models-are-model-containers">combo models</a>. No model has a monopoly on knowledge. A bigger model does not automatically contain every strength of a smaller one. The models learn different things, miss different things, and break in different places. When the task is hard enough, those differences are useful.</p>
 <figure id="socrates-pro-plus-architecture" style="margin:32px 0">
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="100%" style="height:auto" role="img" aria-label="Socrates-Pro-Plus architecture diagram: a fast cheap model asks a smart advisor, which is itself a combo Synth model of seven top models">
-  <rect width="1200" height="680" rx="30" fill="#0f172a"/>
-  <rect x="42" y="42" width="1116" height="596" rx="28" fill="#f8fafc"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="100%" style="height:auto" role="img" aria-label="Socrates-Pro-Plus architecture diagram: a fast cheap model asks a smart advisor, which runs a Synth panel, judge, and synthesizer before returning guidance">
+  <rect width="1200" height="760" rx="30" fill="#0f172a"/>
+  <rect x="42" y="42" width="1116" height="676" rx="28" fill="#f8fafc"/>
   <text x="92" y="104" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="800" fill="#0f766e">Socrates-Pro-Plus</text>
   <text x="92" y="158" font-family="Inter, Arial, sans-serif" font-size="43" font-weight="850" fill="#111827">One model id. A small graph behind it.</text>
   <text x="94" y="196" font-family="Inter, Arial, sans-serif" font-size="22" fill="#4b5563">Most requests stay fast and cheap. Hard requests can ask a stronger advisor.</text>
 
-  <rect x="88" y="284" width="210" height="112" rx="18" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
-  <text x="193" y="326" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="800" fill="#1e3a8a">Fast cheap</text>
-  <text x="193" y="360" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="800" fill="#1e3a8a">model</text>
-  <text x="193" y="386" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15" fill="#2563eb">answers routine work</text>
+  <rect x="82" y="286" width="196" height="110" rx="18" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+  <text x="180" y="326" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="800" fill="#1e3a8a">Fast cheap</text>
+  <text x="180" y="358" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="800" fill="#1e3a8a">worker</text>
+  <text x="180" y="384" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14.5" fill="#2563eb">does routine work</text>
 
-  <path d="M305 338 C372 338, 404 338, 466 338" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
-  <polygon points="466,338 446,324 446,352" fill="#111827"/>
-  <text x="386" y="316" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#374151">when stuck</text>
+  <path d="M286 341 C335 341, 362 341, 408 341" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="408,341 388,327 388,355" fill="#111827"/>
+  <text x="347" y="318" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#374151">when stuck</text>
 
-  <rect x="482" y="268" width="248" height="142" rx="20" fill="#fef3c7" stroke="#d97706" stroke-width="4"/>
-  <text x="606" y="318" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#92400e">Smart advisor</text>
-  <text x="606" y="353" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="19" fill="#a16207">private internal guidance</text>
-  <text x="606" y="380" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15" fill="#92400e">not a user-facing detour</text>
+  <rect x="422" y="264" width="220" height="154" rx="20" fill="#fef3c7" stroke="#d97706" stroke-width="4"/>
+  <text x="532" y="326" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#92400e">Smart advisor</text>
+  <text x="532" y="372" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="16" fill="#a16207">private guidance</text>
+  <text x="532" y="396" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#92400e">only when needed</text>
 
-  <path d="M734 338 C790 338, 820 338, 878 338" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
-  <polygon points="878,338 858,324 858,352" fill="#111827"/>
+  <path d="M652 341 C686 341, 704 341, 738 341" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="738,341 718,327 718,355" fill="#111827"/>
 
-  <rect x="890" y="218" width="236" height="240" rx="22" fill="#ecfdf5" stroke="#059669" stroke-width="4"/>
-  <text x="1008" y="263" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#065f46">Combo Synth</text>
-  <text x="1008" y="292" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" fill="#047857">7 top models</text>
-  <g fill="#bbf7d0" stroke="#059669" stroke-width="3">
-    <rect x="930" y="326" width="45" height="36" rx="9"/>
-    <rect x="985" y="326" width="45" height="36" rx="9"/>
-    <rect x="1040" y="326" width="45" height="36" rx="9"/>
-    <rect x="958" y="374" width="45" height="36" rx="9"/>
-    <rect x="1013" y="374" width="45" height="36" rx="9"/>
-    <rect x="930" y="422" width="45" height="36" rx="9"/>
-    <rect x="985" y="422" width="45" height="36" rx="9"/>
-  </g>
+  <rect x="754" y="222" width="356" height="312" rx="24" fill="#ecfdf5" stroke="#059669" stroke-width="4"/>
+  <text x="932" y="266" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="850" fill="#065f46">Advisor is a Combo Synth</text>
 
-  <path d="M1010 464 C1010 520, 772 548, 650 510 C566 484, 460 468, 334 508 C280 525, 238 506, 224 460" fill="none" stroke="#94a3b8" stroke-width="5" stroke-linecap="round" stroke-dasharray="10 9"/>
-  <polygon points="224,460 217,483 244,473" fill="#94a3b8"/>
+  <rect x="790" y="304" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="876" y="304" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="962" y="304" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="833" y="370" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="919" y="370" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="1005" y="370" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <rect x="876" y="436" width="72" height="50" rx="10" fill="#bbf7d0" stroke="#059669" stroke-width="3"/>
+  <text x="932" y="293" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="17" fill="#047857">panel: 7 top models answer in parallel</text>
 
-  <rect x="88" y="506" width="1038" height="72" rx="18" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
-  <text x="607" y="551" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="800" fill="#111827">Final answer returns as one OpenAI-compatible response</text>
+  <path d="M936 494 C936 528, 936 548, 936 574" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="936,574 922,554 950,554" fill="#111827"/>
 
-  <text x="92" y="620" font-family="Inter, Arial, sans-serif" font-size="18" fill="#4b5563">The model names can change over time. The durable shape is worker + advisor + nested Synth.</text>
+  <rect x="754" y="584" width="160" height="76" rx="18" fill="#ffffff" stroke="#0f766e" stroke-width="4"/>
+  <text x="834" y="616" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="850" fill="#0f766e">Judge</text>
+  <text x="834" y="642" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#047857">finds strongest parts</text>
+
+  <path d="M922 622 C950 622, 966 622, 994 622" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="994,622 974,608 974,636" fill="#111827"/>
+
+  <rect x="1010" y="584" width="160" height="76" rx="18" fill="#ffffff" stroke="#0f766e" stroke-width="4"/>
+  <text x="1090" y="616" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="850" fill="#0f766e">Synthesizer</text>
+  <text x="1090" y="642" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#047857">writes guidance</text>
+
+  <path d="M1012 648 C860 710, 610 706, 432 650 C300 608, 206 604, 184 458" fill="none" stroke="#94a3b8" stroke-width="5" stroke-linecap="round" stroke-dasharray="10 9"/>
+  <polygon points="184,458 177,481 204,471" fill="#94a3b8"/>
+  <text x="520" y="682" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#64748b">guidance returns to worker</text>
+
+  <rect x="82" y="496" width="560" height="76" rx="18" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
+  <text x="362" y="526" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="850" fill="#111827">Worker produces the final answer</text>
+  <text x="362" y="552" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="15.5" fill="#4b5563">The caller still sees one OpenAI-compatible response.</text>
+
+  <text x="92" y="704" font-family="Inter, Arial, sans-serif" font-size="18" fill="#4b5563">The model names can change over time. The durable shape is worker + advisor + panel + judge + synthesizer.</text>
 </svg>
-<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Socrates-Pro-Plus is a combo model. The public abstraction is stable even when the underlying provider routes change.</figcaption>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Socrates-Pro-Plus is a combo model. The advisor is itself a Synth-style flow: parallel panel, judge, synthesizer, then guidance back to the worker.</figcaption>
 </figure>
 <p>Terminal-Bench Hard is a good place to see it because the benchmark is annoying in the right way. It asks models to fix real terminal tasks. Cancel async work. Patch a vuln. Move across languages. Read Rust and C. Debug a webserver. Recover a password. These are not clean trivia questions with one memorized answer. They are little software jobs, and little software jobs punish models that are good in the average case but bad at the weird edge.</p>
 <figure style="margin:32px 0">
