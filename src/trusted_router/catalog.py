@@ -2508,25 +2508,11 @@ def fast_candidate_models(limit: int = 8) -> list[Model]:
 
 
 def monitor_candidate_models(limit: int = 12) -> list[Model]:
-    # Order is ASCENDING by cost-per-probe so the steady-state synthetic
-    # spend hits the cheapest reliable model first; rollover only
-    # escalates to pricier models when the cheap path fails. This keeps
-    # the rollover-resilience signal AND cuts steady-state probe cost
-    # ~12x vs. anthropic/claude-haiku-4.5 leading.
-    #
-    # Tiers 1-3 are ALL DeepSeek-family non-reasoning models —
-    # v4-flash, v3.2, v4-pro. The lead (v4-flash) is served by 4
-    # providers (deepseek, parasail, siliconflow, novita) so TR's
-    # within-model routing already fans across providers transparently.
-    # Tier 2 (v3.2) is same-family fallback for the cheap path; tier 3
-    # (v4-pro) brings 2 ADDITIONAL providers (tinfoil + gmi) so a 6th
-    # and 7th provider show up in the rollover ladder before crossing
-    # to Mistral / OpenAI / etc.
-    #
-    # Leading with non-reasoning models (DeepSeek V4/V3.2, Mistral
-    # Small, GPT-5.4 nano) avoids the reasoning_content failure mode
-    # that drove the 2026-05 pong_mismatch surge — kimi-k2.6 / glm-4.6
-    # stay in the rollover tail but won't be hit in steady state.
+    # Order favors models that reliably emit a visible one-token PONG.
+    # DeepSeek V4 Flash is cheaper, but in thinking-default mode it can spend
+    # the entire tiny output budget on hidden reasoning and return an empty
+    # visible message. That is a false status-page outage. Keep cheap reasoning
+    # models in the tail; use visible-output models for the steady-state probe.
     #
     # Costs at 2026-06 prices ($/M tokens, in / out):
     #   deepseek/deepseek-v4-flash    0.154 / 0.308   ← lead (4 providers)
@@ -2540,16 +2526,16 @@ def monitor_candidate_models(limit: int = 12) -> list[Model]:
     #   moonshotai/kimi-k2.6          0.880 / 3.850   ← reasoning, tail
     #   anthropic/claude-haiku-4.5    1.100 / 5.500   ← most expensive
     preferred_ids = [
+        "openai/gpt-4.1-mini",
+        "mistralai/mistral-small-2603",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-haiku-4.5",
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v3.2",
         "deepseek/deepseek-v4-pro",
-        "mistralai/mistral-small-2603",
-        "openai/gpt-4.1-mini",
         "z-ai/glm-4.5-air",
-        "google/gemini-2.5-flash",
         "z-ai/glm-4.6",
         "moonshotai/kimi-k2.6",
-        "anthropic/claude-haiku-4.5",
     ]
     candidates: list[Model] = []
     seen: set[str] = set()

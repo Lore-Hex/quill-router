@@ -113,23 +113,21 @@ def test_monitor_alias_expands_to_paid_rollover_candidates() -> None:
     )
 
     assert len(candidates) >= 4
-    # Tiers 1-3 are all DeepSeek-family non-reasoning models:
-    #   1. v4-flash (cheapest, 4 providers: deepseek/parasail/siliconflow/novita)
-    #   2. v3.2     (same-family backup if v4-flash misbehaves)
-    #   3. v4-pro   (+tinfoil +gmi providers — total of ~7 routes before
-    #                we cross to a different model)
-    # Mistral Small comes at tier 4 as the first cross-MODEL fallback.
+    # Lead with models that reliably put PONG in visible message.content.
+    # DeepSeek V4 Flash is cheaper, but can burn a tiny monitor response budget
+    # on hidden reasoning and return an empty visible message.
     assert [candidate.id for candidate in candidates[:4]] == [
-        "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v3.2",
-        "deepseek/deepseek-v4-pro",
+        "openai/gpt-4.1-mini",
         "mistralai/mistral-small-2603",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-haiku-4.5",
     ]
     assert all(not candidate.id.endswith(":free") for candidate in candidates)
-    # Reasoning-by-default models (kimi-k2.6, glm-4.6) are kept in the
+    # Reasoning-by-default models (DeepSeek, kimi-k2.6, glm-4.6) are kept in the
     # rollover tail but not at the head, so the steady-state probe
     # path is reasoning-content-free and pong_mismatch noise stays low.
-    head = [c.id for c in candidates[:5]]
+    head = [c.id for c in candidates[:4]]
+    assert "deepseek/deepseek-v4-flash" not in head
     assert "moonshotai/kimi-k2.6" not in head
     assert "z-ai/glm-4.6" not in head
 
