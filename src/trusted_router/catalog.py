@@ -1098,11 +1098,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     SOCRATES_PRO_PLUS_1_0_MODEL_ID: (
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "anthropic/claude-opus-4.8",
+        ZEUS_1_0_MODEL_ID,
     ),
     SOCRATES_PRO_PLUS_MODEL_ID: (
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "anthropic/claude-opus-4.8",
+        ZEUS_1_0_MODEL_ID,
     ),
 }
 

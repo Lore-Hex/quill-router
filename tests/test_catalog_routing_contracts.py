@@ -502,11 +502,11 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         ],
         SOCRATES_PRO_PLUS_1_0_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
-            "anthropic/claude-opus-4.8",
+            "trustedrouter/zeus-1.0",
         ],
         SOCRATES_PRO_PLUS_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
-            "anthropic/claude-opus-4.8",
+            "trustedrouter/zeus-1.0",
         ],
     }
     for model_id, candidates in expected.items():

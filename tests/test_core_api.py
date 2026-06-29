@@ -698,7 +698,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
     assert socrates_pro_plus_meta["auto_candidates"] == [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "anthropic/claude-opus-4.8",
+        "trustedrouter/zeus-1.0",
     ]
     selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
     mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
