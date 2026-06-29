@@ -30,6 +30,76 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="combo-models-are-model-containers",
+        title="Combo models are model containers",
+        description=(
+            "TrustedRouter now lets one model id package a graph of models: Synth panels, advisor "
+            "models, selectors, and mapreduce flows. The API call still looks like one model. Inside, "
+            "the attested gateway can route work across specialized models and return one answer."
+        ),
+        published_date="2026-06-28",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <rect x="42" y="42" width="1116" height="546" rx="36" fill="#f8fafc"/>
+  <text x="88" y="102" font-size="24" font-weight="800" fill="#0f766e">TrustedRouter</text>
+  <text x="88" y="170" font-size="64" font-weight="850" fill="#111827">Combo models</text>
+  <text x="92" y="217" font-size="25" fill="#4b5563">A model id can package a panel, advisor, selector, or mapreduce graph.</text>
+  <text x="92" y="253" font-size="25" fill="#4b5563">You call one model. The attested gateway runs the structure inside.</text>
+  <rect x="86" y="338" width="150" height="82" rx="16" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+  <text x="161" y="387" text-anchor="middle" font-size="25" font-weight="800" fill="#075985">Request</text>
+  <line x1="244" y1="379" x2="328" y2="379" stroke="#0f172a" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="328,379 310,366 310,392" fill="#0f172a"/>
+  <rect x="346" y="294" width="494" height="190" rx="24" fill="#ffffff" stroke="#111827" stroke-width="4"/>
+  <text x="593" y="330" text-anchor="middle" font-size="22" font-weight="850" fill="#111827">Model container</text>
+  <rect x="385" y="354" width="116" height="82" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="3"/>
+  <text x="443" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#065f46">Synth</text>
+  <text x="443" y="414" text-anchor="middle" font-size="15" fill="#047857">panel</text>
+  <rect x="530" y="354" width="116" height="82" rx="14" fill="#fef3c7" stroke="#d97706" stroke-width="3"/>
+  <text x="588" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#92400e">Advisor</text>
+  <text x="588" y="414" text-anchor="middle" font-size="15" fill="#a16207">optional</text>
+  <rect x="675" y="354" width="116" height="82" rx="14" fill="#eef2ff" stroke="#4f46e5" stroke-width="3"/>
+  <text x="733" y="386" text-anchor="middle" font-size="18" font-weight="800" fill="#3730a3">Selector</text>
+  <text x="733" y="414" text-anchor="middle" font-size="15" fill="#4338ca">choose</text>
+  <path d="M443 452 C510 494, 656 494, 733 452" fill="none" stroke="#94a3b8" stroke-width="4" stroke-dasharray="9 8"/>
+  <line x1="848" y1="379" x2="932" y2="379" stroke="#0f172a" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="932,379 914,366 914,392" fill="#0f172a"/>
+  <rect x="950" y="338" width="164" height="82" rx="16" fill="#dcfce7" stroke="#16a34a" stroke-width="3"/>
+  <text x="1032" y="387" text-anchor="middle" font-size="25" font-weight="800" fill="#166534">Answer</text>
+  <text x="89" y="543" font-size="22" fill="#374151">Standard containers made shipping composable. Combo models do that for model orchestration.</text>
+</svg>
+</figure>
+<p>Combo models are model containers.</p>
+<p>Before container shipping, loading a ship was bespoke. Every crate, barrel, and machine had to be handled as its own weird object. The standard container made the unit boring, which made the system fast. Ports, trucks, cranes, ships, warehouses, insurance, finance, and customs could all speak the same shape.</p>
+<p>The same thing is starting to happen with model orchestration. The token API made one model callable. Combo models make a whole structure callable. A panel, a judge, an advisor, a selector, a mapreduce graph, or a chain of those pieces can sit behind one model id.</p>
+<p>That is what we just launched on TrustedRouter.</p>
+<figure style="margin:32px 0">
+  <img src="/static/og/blog/combination-models-infographic.svg" alt="TrustedRouter combo models infographic" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:18px;background:#fff"/>
+</figure>
+<p>The API call still looks normal:</p>
+<pre><code>model = "trustedrouter/socrates-1.0"</code></pre>
+<p>Inside the attested gateway, that model can use a fast worker and ask a stronger advisor only when it needs help. A different id can run a fusion panel. Another can split work into parallel parts and reduce the result. Another can select the best answer from several candidates. The caller does not need to wire all of that together on every request.</p>
+<p>This is already in the product. The catalog now includes the Synth family, advisor models, selector, and mapreduce models.</p>
+<table class="data-table">
+  <tr><th>type</th><th>model ids</th><th>what it does</th></tr>
+  <tr><td><strong>Synth</strong></td><td><span class="mono">trustedrouter/synth</span>, <span class="mono">trustedrouter/iris</span>, <span class="mono">trustedrouter/prometheus</span>, <span class="mono">trustedrouter/zeus</span></td><td>runs a panel of models, judges the drafts, and synthesizes one answer</td></tr>
+  <tr><td><strong>Advisor</strong></td><td><span class="mono">trustedrouter/socrates-1.0</span>, <span class="mono">trustedrouter/aristotle</span>, <span class="mono">trustedrouter/plato</span></td><td>lets a cheap or fast worker ask a stronger private advisor when stuck</td></tr>
+  <tr><td><strong>Selector</strong></td><td><span class="mono">trustedrouter/selector</span></td><td>asks candidates and returns the best answer under a selection policy</td></tr>
+  <tr><td><strong>MapReduce</strong></td><td><span class="mono">trustedrouter/mapreduce</span></td><td>splits work, runs parts in parallel, and reduces the result</td></tr>
+</table>
+<p>Socrates is the fast version: <span class="mono">cerebras/gpt-oss-120b</span> as worker, with a stronger advisor path behind it. Plato is the cheaper open version. Aristotle is the smartest advisor path. Synth has named presets like Iris, Prometheus, and Zeus. The point is not the names. The point is that these can be composed.</p>
+<p>A combo model can contain advisors which are themselves combo models. A Synth can ask several advisors. A selector can choose between Synth outputs. MapReduce can run a cheap model over many shards and reserve a smarter model for the final reduce. Once the unit is a model id, the graph becomes reusable.</p>
+<p>This matters most when it becomes an artifact other people can use. Today you can call our shipped combo models. The next step is a public builder: define a combo model, run evals, publish the scorecard, set a price, and offer it on TrustedRouter. The marketplace should care about measured quality per dollar, latency, privacy class, and reliability, not vibes.</p>
+<p>There is prior art here. DSPy got the important abstraction right: programs made of model calls should be typed, optimized, and evaluated. TrustedRouter is taking that idea to the hosted token API boundary. You should be able to put a serious orchestration graph behind an OpenAI-compatible model id, make it private, test it, and let another developer call it without copying your prompt graph into their app.</p>
+<p>The privacy part is not decoration. Combo models can create many subcalls. If those subcalls spray prompts across random systems, nobody should use this for legal, medical, financial, or proprietary work. TrustedRouter runs prompt traffic through the attested gateway, and the trust page lets an agent verify what code is running. For the highest privacy classes we expose routes like <span class="mono">trustedrouter/zdr</span> and <span class="mono">trustedrouter/e2e</span>. The goal is simple: powerful orchestration without making users give up control of their data.</p>
+<p>The model id is becoming the package boundary. That is the launch.</p>
+<p><a href="/docs">Use it from the API</a>, or start with <span class="mono">trustedrouter/socrates-1.0</span>, <span class="mono">trustedrouter/prometheus</span>, and <span class="mono">trustedrouter/selector</span>. If you want to design a combo model and sell it, that is where this is going next.</p>
+""",
+    ),
+    BlogPost(
         slug="synth-iris-prometheus-zeus",
         title="Synth beats Fable 5: introducing Iris, Zeus, and Prometheus",
         description=(
