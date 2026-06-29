@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from fastapi.testclient import TestClient
@@ -175,6 +176,19 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "/blog/fusion-evals-open-source" in socrates_blog.text
     assert "/blog/attestation-is-all-you-need" in socrates_blog.text
     assert "/static/blog/terminal-bench-hard-subset.jpg" in socrates_blog.text
+    diagram_match = re.search(
+        r'<figure id="socrates-pro-plus-architecture".*?</figure>',
+        socrates_blog.text,
+        flags=re.DOTALL,
+    )
+    assert diagram_match is not None
+    diagram = diagram_match.group(0)
+    assert "Fast cheap" in diagram
+    assert "Smart advisor" in diagram
+    assert "7 top models" in diagram
+    assert "worker + advisor + nested Synth" in diagram
+    for model_name in ("Claude", "GPT", "GLM", "Kimi", "MiniMax", "DeepSeek"):
+        assert model_name not in diagram
 
     removed_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert removed_blog.status_code == 404
@@ -189,6 +203,36 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert 'alt="Synth is two jobs, and no model wins both visual summary"' in response.text
     assert 'href="/blog/fusion-is-two-jobs"' in response.text
     assert response.text.count('class="blog-thumb"') >= 10
+
+
+def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) -> None:
+    caplog.set_level(logging.INFO, logger="trusted_router.middleware")
+    response = client.get(
+        "/blog/socrates-pro-plus-terminal-bench-hard-72"
+        "?utm_source=hn&utm_campaign=launch&secret=sk-tr-do-not-log",
+        headers={
+            "referer": "https://news.ycombinator.com/item?id=1",
+            "user-agent": "Mozilla/5.0 Chrome/146.0",
+        },
+    )
+    assert response.status_code == 200
+
+    page_view_records = [
+        record for record in caplog.records if record.getMessage() == "public.page_view"
+    ]
+    assert len(page_view_records) == 1
+    record = page_view_records[0]
+    assert record.event == "public.page_view"
+    assert record.page_kind == "blog_post"
+    assert record.path == "/blog/socrates-pro-plus-terminal-bench-hard-72"
+    assert record.blog_slug == "socrates-pro-plus-terminal-bench-hard-72"
+    assert record.status_code == 200
+    assert record.referer_host == "news.ycombinator.com"
+    assert record.user_agent_family == "chrome"
+    assert record.utm_source == "hn"
+    assert record.utm_campaign == "launch"
+    assert not hasattr(record, "secret")
+    assert "sk-tr-do-not-log" not in caplog.text
 
 
 def _json_ld(html: str) -> dict[str, object]:

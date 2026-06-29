@@ -1,12 +1,13 @@
 """HTTP middleware shared across the FastAPI app.
 
-Three middlewares register in order from outermost to innermost:
+Four middlewares register in order from outermost to innermost:
   1. request_id  — mints/accepts a per-request id, echoes in response
                    header, makes it available as request.state.request_id.
-  2. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
+  2. public_pageview — emits metadata-only public blog pageview events.
+  3. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
                    via STORE.hit_rate_limit; logs structured 429s with
                    the request_id from (1).
-  3. security_headers — sets HSTS so browsers remember to skip http://
+  4. security_headers — sets HSTS so browsers remember to skip http://
                         on subsequent visits.
 
 Splitting these out of main.py keeps the app factory readable. The
@@ -16,9 +17,11 @@ it could be reused by other ASGI services in the same project.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from hashlib import sha256
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -41,11 +44,11 @@ OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
 
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
-    """Wire all three middlewares onto `app` in the right order.
+    """Wire all HTTP middlewares onto `app` in the right order.
 
     Starlette wraps middleware in reverse-add order: the FIRST one
     registered runs first on the way in (outermost wrap). We want
-    request_id to mint the id before rate_limit logs a 429 against it,
+    request_id to mint the id before pageview/rate-limit logs use it,
     so request_id is registered first.
     """
 
@@ -76,6 +79,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
+        return response
+
+    @app.middleware("http")
+    async def public_pageview_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        start = time.perf_counter()
+        response = await call_next(request)
+        _log_public_page_view(request, response, latency_ms=(time.perf_counter() - start) * 1000)
         return response
 
     @app.middleware("http")
@@ -280,3 +293,74 @@ def _client_ip(request: Request) -> str:
 
 def _fingerprint(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _log_public_page_view(request: Request, response: Response, *, latency_ms: float) -> None:
+    """Emit privacy-bounded public page analytics through the app logger.
+
+    The Axiom integration subscribes to Python log records. We only log
+    metadata needed for blog traffic analytics and deliberately avoid raw IPs,
+    cookies, auth headers, full query strings, or user-agent strings.
+    """
+    if request.method.upper() != "GET":
+        return
+    path = request.url.path
+    if path != "/blog" and not path.startswith("/blog/"):
+        return
+    slug = path.removeprefix("/blog/") if path.startswith("/blog/") else ""
+    extra: dict[str, object] = {
+        "event": "public.page_view",
+        "request_id": getattr(request.state, "request_id", None),
+        "page_kind": "blog_post" if slug else "blog_index",
+        "path": path,
+        "blog_slug": slug or None,
+        "status_code": response.status_code,
+        "latency_ms": round(latency_ms, 2),
+        "referer_host": _referer_host(request),
+        "user_agent_family": _user_agent_family(request.headers.get("user-agent", "")),
+    }
+    extra.update(_utm_fields(request))
+    log.info("public.page_view", extra=extra)
+
+
+def _referer_host(request: Request) -> str | None:
+    referer = request.headers.get("referer", "").strip()
+    if not referer:
+        return None
+    try:
+        return urlsplit(referer).netloc[:128] or None
+    except ValueError:
+        return None
+
+
+def _utm_fields(request: Request) -> dict[str, str]:
+    values = parse_qs(request.url.query, keep_blank_values=False)
+    fields: dict[str, str] = {}
+    for key in ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"):
+        value = values.get(key, [""])[0].strip()
+        if value:
+            fields[key] = value[:128]
+    return fields
+
+
+def _user_agent_family(user_agent: str) -> str | None:
+    normalized = user_agent.lower()
+    if not normalized:
+        return None
+    if "googlebot" in normalized:
+        return "googlebot"
+    if "bingbot" in normalized:
+        return "bingbot"
+    if "claudebot" in normalized or "anthropic-ai" in normalized:
+        return "claude"
+    if "gptbot" in normalized or "chatgpt-user" in normalized or "oai-searchbot" in normalized:
+        return "openai"
+    if "firefox" in normalized:
+        return "firefox"
+    if "chrome" in normalized or "chromium" in normalized:
+        return "chrome"
+    if "safari" in normalized:
+        return "safari"
+    if "bot" in normalized or "crawler" in normalized or "spider" in normalized:
+        return "bot"
+    return "other"
