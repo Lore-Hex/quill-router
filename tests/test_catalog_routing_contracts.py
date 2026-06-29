@@ -24,6 +24,7 @@ from trusted_router.catalog import (
     PROVIDERS,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
+    SOCRATES_1_1_MODEL_ID,
     SOCRATES_MODEL_ID,
     SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID,
@@ -501,6 +502,10 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "anthropic/claude-opus-4.8",
         ],
         SOCRATES_PRO_PLUS_1_0_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "trustedrouter/zeus-1.0",
+        ],
+        SOCRATES_1_1_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "trustedrouter/zeus-1.0",
         ],

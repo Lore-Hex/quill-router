@@ -310,8 +310,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/blog/{slug}")
     async def blog_post(slug: str) -> Any:
-        if slug == "zeus-terminal-bench-hard-72":
-            return RedirectResponse(url="/blog/socrates-pro-plus-terminal-bench-hard-72", status_code=301)
+        if slug in {"zeus-terminal-bench-hard-72", "socrates-pro-plus-terminal-bench-hard-72"}:
+            return RedirectResponse(url="/blog/socrates-1.1-terminal-bench-hard-72", status_code=301)
         html = public_blog_post_html(settings, slug)
         if html is None:
             return HTMLResponse(public_page_html(settings, "docs"), status_code=404)

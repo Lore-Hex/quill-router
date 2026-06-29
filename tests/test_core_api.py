@@ -642,6 +642,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/plato-1.0",
         "trustedrouter/plato-pro",
         "trustedrouter/plato-pro-1.0",
+        "trustedrouter/socrates-1.1",
         "trustedrouter/socrates-pro",
         "trustedrouter/socrates-pro-1.0",
         "trustedrouter/socrates-pro-plus",
@@ -700,6 +701,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "trustedrouter/zeus-1.0",
     ]
+    assert models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"] == (
+        socrates_pro_plus_meta["auto_candidates"]
+    )
     selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
     mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
     assert selector_meta["route_kind"] == "selector_orchestration"

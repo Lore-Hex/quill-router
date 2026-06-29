@@ -871,6 +871,7 @@ ZDR_MODEL_ID = "trustedrouter/zdr"
 E2E_MODEL_ID = "trustedrouter/e2e"
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
+SOCRATES_1_1_MODEL_ID = "trustedrouter/socrates-1.1"
 SOCRATES_MODEL_ID = "trustedrouter/socrates"
 ADVISOR_MODEL_ID = "trustedrouter/advisor"
 ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
@@ -916,6 +917,7 @@ META_MODEL_IDS = frozenset(
         E2E_MODEL_ID,
         MONITOR_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
+        SOCRATES_1_1_MODEL_ID,
         SOCRATES_MODEL_ID,
         ADVISOR_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
@@ -1058,6 +1060,10 @@ MAPREDUCE_CATALOG_MODEL_ORDER = (
 
 ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     SOCRATES_1_0_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    SOCRATES_1_1_MODEL_ID: (
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        ZEUS_1_0_MODEL_ID,
+    ),
     SOCRATES_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     ARISTOTLE_1_0_MODEL_ID: (
@@ -1193,6 +1199,15 @@ MODELS: dict[str, Model] = {
     SOCRATES_1_0_MODEL_ID: Model(
         id=SOCRATES_1_0_MODEL_ID,
         name="TrustedRouter Socrates 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SOCRATES_1_1_MODEL_ID: Model(
+        id=SOCRATES_1_1_MODEL_ID,
+        name="TrustedRouter Socrates 1.1",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,

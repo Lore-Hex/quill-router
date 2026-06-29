@@ -163,21 +163,27 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
 
     wrong_zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72", follow_redirects=False)
     assert wrong_zeus_blog.status_code == 301
-    assert wrong_zeus_blog.headers["location"] == "/blog/socrates-pro-plus-terminal-bench-hard-72"
+    assert wrong_zeus_blog.headers["location"] == "/blog/socrates-1.1-terminal-bench-hard-72"
+    old_socrates_blog = client.get(
+        "/blog/socrates-pro-plus-terminal-bench-hard-72",
+        follow_redirects=False,
+    )
+    assert old_socrates_blog.status_code == 301
+    assert old_socrates_blog.headers["location"] == "/blog/socrates-1.1-terminal-bench-hard-72"
 
-    socrates_blog = client.get("/blog/socrates-pro-plus-terminal-bench-hard-72")
+    socrates_blog = client.get("/blog/socrates-1.1-terminal-bench-hard-72")
     assert socrates_blog.status_code == 200
     socrates_payload = _json_ld(socrates_blog.text)
-    assert "Socrates-Pro-Plus just scored 72 on Terminal-Bench Hard" in json.dumps(socrates_payload)
+    assert "Socrates-1.1 just scored 72 on Terminal-Bench Hard" in json.dumps(socrates_payload)
     assert "https://www.aiiq.org/charts/terminal-bench-hard-scores/" in socrates_blog.text
-    assert "/models/trustedrouter/socrates-pro-plus-1.0" in socrates_blog.text
+    assert "/models/trustedrouter/socrates-1.1" in socrates_blog.text
     assert "/blog/combo-models-are-model-containers" in socrates_blog.text
     assert "/blog/synth-iris-prometheus-zeus" in socrates_blog.text
     assert "/blog/fusion-evals-open-source" in socrates_blog.text
     assert "/blog/attestation-is-all-you-need" in socrates_blog.text
     assert "/static/blog/terminal-bench-hard-subset.jpg" in socrates_blog.text
     diagram_match = re.search(
-        r'<figure id="socrates-pro-plus-architecture".*?</figure>',
+        r'<figure id="socrates-1.1-architecture".*?</figure>',
         socrates_blog.text,
         flags=re.DOTALL,
     )
@@ -212,7 +218,7 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
 def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) -> None:
     caplog.set_level(logging.INFO, logger="trusted_router.middleware")
     response = client.get(
-        "/blog/socrates-pro-plus-terminal-bench-hard-72"
+        "/blog/socrates-1.1-terminal-bench-hard-72"
         "?utm_source=hn&utm_campaign=launch&secret=sk-tr-do-not-log",
         headers={
             "referer": "https://news.ycombinator.com/item?id=1",
@@ -228,8 +234,8 @@ def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) ->
     record = page_view_records[0]
     assert record.event == "public.page_view"
     assert record.page_kind == "blog_post"
-    assert record.path == "/blog/socrates-pro-plus-terminal-bench-hard-72"
-    assert record.blog_slug == "socrates-pro-plus-terminal-bench-hard-72"
+    assert record.path == "/blog/socrates-1.1-terminal-bench-hard-72"
+    assert record.blog_slug == "socrates-1.1-terminal-bench-hard-72"
     assert record.status_code == 200
     assert record.referer_host == "news.ycombinator.com"
     assert record.user_agent_family == "chrome"
@@ -461,12 +467,12 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
-    socrates = client.get("/blog/socrates-pro-plus-terminal-bench-hard-72")
-    socrates_card = "https://trustedrouter.com/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.png"
+    socrates = client.get("/blog/socrates-1.1-terminal-bench-hard-72")
+    socrates_card = "https://trustedrouter.com/static/og/blog/socrates-1.1-terminal-bench-hard-72.png"
     assert f'property="og:image" content="{socrates_card}"' in socrates.text
     assert f'name="twitter:image" content="{socrates_card}"' in socrates.text
-    assert client.get("/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.png").status_code == 200
-    assert client.get("/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.svg").status_code == 200
+    assert client.get("/static/og/blog/socrates-1.1-terminal-bench-hard-72.png").status_code == 200
+    assert client.get("/static/og/blog/socrates-1.1-terminal-bench-hard-72.svg").status_code == 200
     assert client.get("/static/blog/terminal-bench-hard-subset.jpg").status_code == 200
 
     # post that opens with an inline <svg> -> its rasterized card
