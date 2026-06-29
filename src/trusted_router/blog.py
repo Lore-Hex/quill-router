@@ -74,6 +74,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 </figure>
 <p>Combo models are model containers.</p>
 <p>Before container shipping, loading a ship was bespoke. Every crate, barrel, and machine had to be handled as its own weird object. The standard container made the unit boring, which made the system fast. Ports, trucks, cranes, ships, warehouses, insurance, finance, and customs could all speak the same shape.</p>
+<p>There is a circuit analogy too. A useful circuit diagram is not one giant blob called "computer." It is made out of blocks with names and contracts: gates, adders, registers, clocks, buses, memory. You can reason about each piece, test it, reuse it, and then wire it into something larger. Combo models should work like that. Advisor, Synth, selector, and mapreduce are the blocks. Socrates, Plato, Prometheus, and Zeus are named circuit modules built from those blocks. Bigger combo models are the diagram that wires them together.</p>
 <p>The same thing is starting to happen with model orchestration. The token API made one model callable. Combo models make a whole structure callable. A panel, a judge, an advisor, a selector, a mapreduce graph, or a chain of those pieces can sit behind one model id.</p>
 <p>That is what we just launched on TrustedRouter.</p>
 <figure style="margin:32px 0">
