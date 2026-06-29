@@ -903,6 +903,8 @@ ZEUS_CODE_1_0_MODEL_ID = "trustedrouter/zeus-code-1.0"
 FUSION_MODEL_ID = "trustedrouter/fusion"
 # Legacy compatibility aliases. Keep these working for existing customers.
 FUSION_CODE_MODEL_ID = "trustedrouter/fusion-code"
+SELECTOR_MODEL_ID = "trustedrouter/selector"
+MAPREDUCE_MODEL_ID = "trustedrouter/mapreduce"
 META_MODEL_IDS = frozenset(
     {
         AUTO_MODEL_ID,
@@ -942,6 +944,8 @@ META_MODEL_IDS = frozenset(
         ZEUS_CODE_1_0_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
+        SELECTOR_MODEL_ID,
+        MAPREDUCE_MODEL_ID,
     }
 )
 
@@ -1037,6 +1041,19 @@ SOCRATES_CATALOG_MODEL_ORDER = (
     "cerebras/zai-glm-4.7",
     "xiaomi/mimo-v2.5-pro-ultraspeed",
     "anthropic/claude-opus-4.8",
+)
+
+SELECTOR_CATALOG_MODEL_ORDER = (
+    *SYNTH_QUALITY_MODEL_ORDER,
+    "moonshotai/kimi-k2.7-code",
+    "minimax/minimax-m3",
+)
+
+MAPREDUCE_CATALOG_MODEL_ORDER = (
+    "deepseek/deepseek-v4-flash",
+    "minimax/minimax-m3",
+    "cerebras/gpt-oss-120b",
+    *SYNTH_QUALITY_MODEL_ORDER,
 )
 
 ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
@@ -1428,6 +1445,24 @@ MODELS: dict[str, Model] = {
     FUSION_CODE_MODEL_ID: Model(
         id=FUSION_CODE_MODEL_ID,
         name="TrustedRouter Synth Code Legacy Alias",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SELECTOR_MODEL_ID: Model(
+        id=SELECTOR_MODEL_ID,
+        name="TrustedRouter Selector",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    MAPREDUCE_MODEL_ID: Model(
+        id=MAPREDUCE_MODEL_ID,
+        name="TrustedRouter MapReduce",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2672,6 +2707,10 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_CODE_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_CODE_MODEL_ID, ZEUS_CODE_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_CODE_FRONTIER_MODEL_ORDER)
+    if model_id == SELECTOR_MODEL_ID:
+        return _models_for_ids(SELECTOR_CATALOG_MODEL_ORDER)
+    if model_id == MAPREDUCE_MODEL_ID:
+        return _models_for_ids(MAPREDUCE_CATALOG_MODEL_ORDER)
     return []
 
 
@@ -2711,6 +2750,10 @@ def _meta_route_kind(model_id: str) -> str:
         FUSION_CODE_MODEL_ID,
     ):
         return "fusion_panel"
+    if model_id == SELECTOR_MODEL_ID:
+        return "selector_orchestration"
+    if model_id == MAPREDUCE_MODEL_ID:
+        return "mapreduce_orchestration"
     if model_id == AUTO_MODEL_ID:
         return "auto_pool"
     return "model"

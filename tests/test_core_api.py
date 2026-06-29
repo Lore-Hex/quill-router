@@ -655,6 +655,8 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/iris-code-1.0",
         "trustedrouter/prometheus-code-1.0",
         "trustedrouter/zeus-code-1.0",
+        "trustedrouter/selector",
+        "trustedrouter/mapreduce",
     }.issubset(model_ids)
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
@@ -697,6 +699,16 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert socrates_pro_plus_meta["auto_candidates"] == [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "anthropic/claude-opus-4.8",
+    ]
+    selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
+    mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
+    assert selector_meta["route_kind"] == "selector_orchestration"
+    assert "moonshotai/kimi-k2.7-code" in selector_meta["auto_candidates"]
+    assert mapreduce_meta["route_kind"] == "mapreduce_orchestration"
+    assert mapreduce_meta["auto_candidates"][:3] == [
+        "deepseek/deepseek-v4-flash",
+        "minimax/minimax-m3",
+        "cerebras/gpt-oss-120b",
     ]
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't

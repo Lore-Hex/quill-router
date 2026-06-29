@@ -12,10 +12,12 @@ from trusted_router.catalog import (
     EU_MODEL_ID,
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
+    MAPREDUCE_MODEL_ID,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
     PROVIDERS,
+    SELECTOR_MODEL_ID,
     SYNTH_CODE_MODEL_ID,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
@@ -398,10 +400,12 @@ def _requested_model_ids(
             SYNTH_CODE_MODEL_ID,
             FUSION_MODEL_ID,
             FUSION_CODE_MODEL_ID,
+            SELECTOR_MODEL_ID,
+            MAPREDUCE_MODEL_ID,
         }:
             raise api_error(
                 501,
-                "trustedrouter/synth executes only inside the attested gateway; control-plane routing must not silently degrade to a single model",
+                "TrustedRouter orchestration models execute only inside the attested gateway; control-plane routing must not silently degrade to a single model",
                 ErrorType.ENDPOINT_NOT_SUPPORTED,
             )
         if ovr:

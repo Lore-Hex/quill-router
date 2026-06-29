@@ -12,6 +12,7 @@ from trusted_router.catalog import (
     EU_MODEL_ID,
     FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
+    MAPREDUCE_MODEL_ID,
     MODEL_ENDPOINTS,
     MODELS,
     PLATO_1_0_MODEL_ID,
@@ -21,6 +22,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
+    SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
     SOCRATES_MODEL_ID,
     SOCRATES_PRO_1_0_MODEL_ID,
@@ -373,6 +375,48 @@ def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
     assert meta_candidate_models(SYNTH_MODEL_ID) == []
     assert meta_candidate_models(FUSION_MODEL_ID) == []
     for model_id in (SYNTH_MODEL_ID, FUSION_MODEL_ID):
+        with pytest.raises(Exception) as exc:
+            chat_route_candidates({"model": model_id}, Settings(environment="test"))
+        assert getattr(exc.value, "status_code", None) == 501
+        assert "attested gateway" in str(exc.value)
+
+
+def test_selector_and_mapreduce_primitives_are_cataloged_but_gateway_only() -> None:
+    expected: dict[str, tuple[str, list[str]]] = {
+        SELECTOR_MODEL_ID: (
+            "selector_orchestration",
+            [
+                "minimax/minimax-m3",
+                "moonshotai/kimi-k2.6",
+                "z-ai/glm-5.2",
+                "google/gemma-4-31b-it",
+                "deepseek/deepseek-v4-pro",
+                "moonshotai/kimi-k2.7-code",
+            ],
+        ),
+        MAPREDUCE_MODEL_ID: (
+            "mapreduce_orchestration",
+            [
+                "deepseek/deepseek-v4-flash",
+                "minimax/minimax-m3",
+                "cerebras/gpt-oss-120b",
+                "moonshotai/kimi-k2.6",
+                "z-ai/glm-5.2",
+                "google/gemma-4-31b-it",
+                "deepseek/deepseek-v4-pro",
+            ],
+        ),
+    }
+    for model_id, (route_kind, candidates) in expected.items():
+        model = MODELS[model_id]
+        shape = model_to_openrouter_shape(model)
+
+        assert model.provider == "trustedrouter"
+        assert shape["trustedrouter"]["route_kind"] == route_kind
+        assert shape["trustedrouter"]["stores_content"] is False
+        assert shape["trustedrouter"]["auto_candidates"] == candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == candidates
+
         with pytest.raises(Exception) as exc:
             chat_route_candidates({"model": model_id}, Settings(environment="test"))
         assert getattr(exc.value, "status_code", None) == 501
