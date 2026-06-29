@@ -30,6 +30,38 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="zeus-terminal-bench-hard-72",
+        title="Zeus just scored 72 on Terminal-Bench Hard",
+        description=(
+            "TrustedRouter Zeus scored 72% on Terminal-Bench Hard, ahead of the public Fable 5, "
+            "GPT-5.5, and Opus 4.8 baselines on AI IQ. The reason is simple: no model has a "
+            "monopoly on knowledge."
+        ),
+        published_date="2026-06-29",
+        source_label="AI IQ Terminal-Bench Hard chart",
+        source_url="https://www.aiiq.org/charts/terminal-bench-hard-scores/",
+        og_image="/static/og/blog/zeus-terminal-bench-hard-72.png",
+        body_html="""
+<figure style="margin:0 0 32px">
+  <img src="/static/og/blog/zeus-terminal-bench-hard-72.svg" alt="TrustedRouter Zeus scores 72 percent on Terminal-Bench Hard" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:18px;background:#fff"/>
+</figure>
+<p>Zeus just scored 72% on Terminal-Bench Hard.</p>
+<p>That puts a <a href="/models/trustedrouter/zeus">TrustedRouter combo model</a> ahead of the frontier baselines people were treating as the ceiling. The <a href="https://www.aiiq.org/charts/terminal-bench-hard-scores/">AI IQ Terminal-Bench Hard chart</a> currently lists Fable 5 at 63, GPT-5.5 at 61, and Opus 4.8 at 58. The new Zeus run is 72. It also beat the GPT-5.6 comparison run we were using locally, while running faster and cheaper than the closed frontier comparison set.</p>
+<p>This is the point of <a href="/blog/combo-models-are-model-containers">combo models</a>. No model has a monopoly on knowledge. A bigger model does not automatically contain every strength of a smaller one. The models learn different things, miss different things, and break in different places. When the task is hard enough, those differences are useful.</p>
+<p>Terminal-Bench Hard is a good place to see it because the benchmark is annoying in the right way. It asks models to fix real terminal tasks. Cancel async work. Patch a vuln. Move across languages. Read Rust and C. Debug a webserver. Recover a password. These are not clean trivia questions with one memorized answer. They are little software jobs, and little software jobs punish models that are good in the average case but bad at the weird edge.</p>
+<figure style="margin:32px 0">
+  <img src="/static/blog/terminal-bench-hard-subset.jpg" alt="Subset of Terminal-Bench Hard task outcomes comparing GPT-5.5, Gemini 3.1 Pro, GLM 5.2, MiniMax M3, Claude Opus 4.8, Kimi K2.6, MiMo 2.5 Pro, Grok 4.3, and Nemotron 3 Ultra" style="display:block;width:100%;height:auto;border:1px solid #e5e7eb;border-radius:12px;background:#fff"/>
+  <figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">A subset of the Terminal-Bench Hard run. The full score is across the benchmark, not only these rows.</figcaption>
+</figure>
+<p>Look at the sample. GPT-5.5 and Gemini 3.1 Pro get five of six in this slice, but both miss Rust/C. GLM 5.2 gets Rust/C and misses the webserver. MiniMax M3 gets four and times out on FEAL. Opus gets three. Kimi gets three with timeouts. Nobody owns the whole table.</p>
+<p>The combination is plain engineering. Ask several strong models. Let them fail in different places. Use a strong synthesizer to keep the useful parts and throw away the bad parts. This is why <a href="/blog/synth-iris-prometheus-zeus">Synth</a> exists, and why <a href="/blog/fusion-evals-open-source">the earlier DRACO result</a> mattered. The same idea is showing up again on Terminal-Bench Hard.</p>
+<p>The important part is the API shape. You do not need to wire a research harness into your app to use this. You call <span class="mono">trustedrouter/zeus-1.0</span>, or the rolling <span class="mono">trustedrouter/zeus</span> alias, through the normal OpenAI-compatible endpoint. Behind that model id, the attested gateway can run the panel, the judge, and the synthesizer, then return one answer. It is the same model-container idea from <a href="/blog/combo-models-are-model-containers">the combo models post</a>, now with a score that is hard to ignore.</p>
+<p>There is an obvious objection. Ensembles are old. Yes. So are compilers and databases. The useful thing is making the abstraction boring enough that people can depend on it. A model id should be able to package a real graph of model calls, publish its score, publish its sub-models, and run inside infrastructure that developers can verify. That is the line from <a href="/blog/attestation-is-all-you-need">attestation</a> to <a href="/blog/the-best-open-models-arent-on-your-leaderboard">open models</a> to combo models.</p>
+<p>TrustedRouter is built for that. The model pages show the routes. The <a href="/leaderboard">leaderboard</a> shows health and latency. The <a href="https://trust.trustedrouter.com/">trust page</a> lets an agent verify the gateway binary before sending prompts. The score is the exciting part, but the product only matters if people can use the winning model without handing their terminal session to a black box.</p>
+<p>Zeus is now the leading model in our Terminal-Bench Hard run. The strongest answer is often spread across several models, and the router can finally make that usable as one model.</p>
+""",
+    ),
+    BlogPost(
         slug="combo-models-are-model-containers",
         title="Combo models are model containers",
         description=(

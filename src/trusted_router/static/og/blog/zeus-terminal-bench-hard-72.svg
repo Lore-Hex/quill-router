@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="TrustedRouter Zeus scores 72 percent on Terminal-Bench Hard">
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="42" y="42" width="1116" height="546" rx="34" fill="#f8fafc" stroke="#d9e2e8"/>
+  <text x="82" y="102" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="800" fill="#0f766e">TrustedRouter</text>
+  <text x="82" y="176" font-family="Inter, Arial, sans-serif" font-size="66" font-weight="850" fill="#111827">Zeus scored 72%</text>
+  <text x="86" y="224" font-family="Inter, Arial, sans-serif" font-size="26" fill="#4b5563">Terminal-Bench Hard, ahead of the public frontier baselines</text>
+  <line x1="92" y1="506" x2="1090" y2="506" stroke="#d1d5db" stroke-width="2"/>
+  <line x1="92" y1="286" x2="92" y2="506" stroke="#d1d5db" stroke-width="2"/>
+  <g font-family="Inter, Arial, sans-serif" font-size="22" fill="#111827">
+    <text x="92" y="274" font-size="15" fill="#6b7280">score</text>
+    <text x="92" y="537" font-size="15" fill="#6b7280">0</text>
+    <text x="1056" y="537" font-size="15" fill="#6b7280">75</text>
+    <text x="238" y="315" text-anchor="end" font-weight="750">Zeus</text>
+    <text x="238" y="366" text-anchor="end">Fable 5</text>
+    <text x="238" y="417" text-anchor="end">GPT-5.5</text>
+    <text x="238" y="468" text-anchor="end">Opus 4.8</text>
+  </g>
+  <g font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800">
+    <rect x="266" y="294" width="806" height="30" rx="7" fill="#10b981"/>
+    <text x="1086" y="316" fill="#065f46">72</text>
+    <rect x="266" y="345" width="705" height="30" rx="7" fill="#9ca3af"/>
+    <text x="985" y="367" fill="#4b5563">63</text>
+    <rect x="266" y="396" width="683" height="30" rx="7" fill="#9ca3af"/>
+    <text x="963" y="418" fill="#4b5563">61</text>
+    <rect x="266" y="447" width="649" height="30" rx="7" fill="#9ca3af"/>
+    <text x="929" y="469" fill="#4b5563">58</text>
+  </g>
+  <text x="86" y="565" font-family="Inter, Arial, sans-serif" font-size="20" fill="#374151">No model has a monopoly on knowledge. Combo models use disagreement as an advantage.</text>
+  <text x="1118" y="565" text-anchor="end" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800" fill="#0f766e">trustedrouter/zeus</text>
+</svg>

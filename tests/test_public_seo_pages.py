@@ -160,6 +160,17 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "DRACO" in blog.text
     assert "TrustedRouter Synth Draco on GitHub" in blog.text
 
+    zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72")
+    assert zeus_blog.status_code == 200
+    zeus_payload = _json_ld(zeus_blog.text)
+    assert "Zeus just scored 72 on Terminal-Bench Hard" in json.dumps(zeus_payload)
+    assert "https://www.aiiq.org/charts/terminal-bench-hard-scores/" in zeus_blog.text
+    assert "/blog/combo-models-are-model-containers" in zeus_blog.text
+    assert "/blog/synth-iris-prometheus-zeus" in zeus_blog.text
+    assert "/blog/fusion-evals-open-source" in zeus_blog.text
+    assert "/blog/attestation-is-all-you-need" in zeus_blog.text
+    assert "/static/blog/terminal-bench-hard-subset.jpg" in zeus_blog.text
+
     removed_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert removed_blog.status_code == 404
     assert "Chasing Mythos-level Synth" not in removed_blog.text
@@ -397,6 +408,14 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
+    zeus = client.get("/blog/zeus-terminal-bench-hard-72")
+    zeus_card = "https://trustedrouter.com/static/og/blog/zeus-terminal-bench-hard-72.png"
+    assert f'property="og:image" content="{zeus_card}"' in zeus.text
+    assert f'name="twitter:image" content="{zeus_card}"' in zeus.text
+    assert client.get("/static/og/blog/zeus-terminal-bench-hard-72.png").status_code == 200
+    assert client.get("/static/og/blog/zeus-terminal-bench-hard-72.svg").status_code == 200
+    assert client.get("/static/blog/terminal-bench-hard-subset.jpg").status_code == 200
+
     # post that opens with an inline <svg> -> its rasterized card
     sota = client.get("/blog/fusion-evals-open-source")
     card = "https://trustedrouter.com/static/og/blog/fusion-evals-open-source.png"
