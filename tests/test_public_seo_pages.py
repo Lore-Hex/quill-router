@@ -160,16 +160,21 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "DRACO" in blog.text
     assert "TrustedRouter Synth Draco on GitHub" in blog.text
 
-    zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72")
-    assert zeus_blog.status_code == 200
-    zeus_payload = _json_ld(zeus_blog.text)
-    assert "Zeus just scored 72 on Terminal-Bench Hard" in json.dumps(zeus_payload)
-    assert "https://www.aiiq.org/charts/terminal-bench-hard-scores/" in zeus_blog.text
-    assert "/blog/combo-models-are-model-containers" in zeus_blog.text
-    assert "/blog/synth-iris-prometheus-zeus" in zeus_blog.text
-    assert "/blog/fusion-evals-open-source" in zeus_blog.text
-    assert "/blog/attestation-is-all-you-need" in zeus_blog.text
-    assert "/static/blog/terminal-bench-hard-subset.jpg" in zeus_blog.text
+    wrong_zeus_blog = client.get("/blog/zeus-terminal-bench-hard-72", follow_redirects=False)
+    assert wrong_zeus_blog.status_code == 301
+    assert wrong_zeus_blog.headers["location"] == "/blog/socrates-pro-plus-terminal-bench-hard-72"
+
+    socrates_blog = client.get("/blog/socrates-pro-plus-terminal-bench-hard-72")
+    assert socrates_blog.status_code == 200
+    socrates_payload = _json_ld(socrates_blog.text)
+    assert "Socrates-Pro-Plus just scored 72 on Terminal-Bench Hard" in json.dumps(socrates_payload)
+    assert "https://www.aiiq.org/charts/terminal-bench-hard-scores/" in socrates_blog.text
+    assert "/models/trustedrouter/socrates-pro-plus-1.0" in socrates_blog.text
+    assert "/blog/combo-models-are-model-containers" in socrates_blog.text
+    assert "/blog/synth-iris-prometheus-zeus" in socrates_blog.text
+    assert "/blog/fusion-evals-open-source" in socrates_blog.text
+    assert "/blog/attestation-is-all-you-need" in socrates_blog.text
+    assert "/static/blog/terminal-bench-hard-subset.jpg" in socrates_blog.text
 
     removed_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert removed_blog.status_code == 404
@@ -408,12 +413,12 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
-    zeus = client.get("/blog/zeus-terminal-bench-hard-72")
-    zeus_card = "https://trustedrouter.com/static/og/blog/zeus-terminal-bench-hard-72.png"
-    assert f'property="og:image" content="{zeus_card}"' in zeus.text
-    assert f'name="twitter:image" content="{zeus_card}"' in zeus.text
-    assert client.get("/static/og/blog/zeus-terminal-bench-hard-72.png").status_code == 200
-    assert client.get("/static/og/blog/zeus-terminal-bench-hard-72.svg").status_code == 200
+    socrates = client.get("/blog/socrates-pro-plus-terminal-bench-hard-72")
+    socrates_card = "https://trustedrouter.com/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.png"
+    assert f'property="og:image" content="{socrates_card}"' in socrates.text
+    assert f'name="twitter:image" content="{socrates_card}"' in socrates.text
+    assert client.get("/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.png").status_code == 200
+    assert client.get("/static/og/blog/socrates-pro-plus-terminal-bench-hard-72.svg").status_code == 200
     assert client.get("/static/blog/terminal-bench-hard-subset.jpg").status_code == 200
 
     # post that opens with an inline <svg> -> its rasterized card
