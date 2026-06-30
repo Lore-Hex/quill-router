@@ -649,6 +649,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/socrates-pro-plus-1.0",
         "trustedrouter/iris-1.0",
         "trustedrouter/prometheus-1.0",
+        "trustedrouter/prometheus-1.0-1m",
         "trustedrouter/zeus-1.0",
         "trustedrouter/iris-code",
         "trustedrouter/prometheus-code",

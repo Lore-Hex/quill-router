@@ -24,6 +24,7 @@ from trusted_router.catalog import (
     PLATO_PRO_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
+    PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDERS,
@@ -588,6 +589,29 @@ def test_openexploiter_s1_is_cataloged_as_custom_synth_preset() -> None:
         "moonshotai/kimi-k2.7-code",
         "z-ai/glm-5.2",
     ]
+
+
+def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
+    model = MODELS[PROMETHEUS_1_0_1M_MODEL_ID]
+    candidates = meta_candidate_models(PROMETHEUS_1_0_1M_MODEL_ID)
+    candidate_ids = [candidate.id for candidate in candidates]
+
+    assert model.name == "TrustedRouter Prometheus 1.0 1M"
+    assert model.context_length == 1_048_576
+    assert candidate_ids == [
+        "minimax/minimax-m3",
+        "xiaomi/mimo-v2.5-pro",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro",
+    ]
+    assert all(candidate.context_length >= 1_000_000 for candidate in candidates)
+    assert all(model_open_weights(candidate) for candidate in candidates)
+
+    shape = model_to_openrouter_shape(model)
+    assert shape["context_length"] == 1_048_576
+    assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert shape["trustedrouter"]["auto_candidates"] == candidate_ids
+    assert shape["trustedrouter"]["open_weights"] is True
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

@@ -893,6 +893,7 @@ PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
 ZEUS_MODEL_ID = "trustedrouter/zeus"
 IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
+PROMETHEUS_1_0_1M_MODEL_ID = "trustedrouter/prometheus-1.0-1m"
 ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
 # Code-tuned synth variant: same panel/synthesizers as synth, but judged by
 # kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
@@ -942,6 +943,7 @@ META_MODEL_IDS = frozenset(
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
+        PROMETHEUS_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
@@ -1008,6 +1010,12 @@ SYNTH_QUALITY_MODEL_ORDER = (
     "moonshotai/kimi-k2.6",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_QUALITY_1M_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "xiaomi/mimo-v2.5-pro",
+    "z-ai/glm-5.2",
     "deepseek/deepseek-v4-pro",
 )
 SYNTH_FRONTIER_MODEL_ORDER = (
@@ -1413,6 +1421,15 @@ MODELS: dict[str, Model] = {
         name="TrustedRouter Prometheus 1.0",
         provider="trustedrouter",
         context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    PROMETHEUS_1_0_1M_MODEL_ID: Model(
+        id=PROMETHEUS_1_0_1M_MODEL_ID,
+        name="TrustedRouter Prometheus 1.0 1M",
+        provider="trustedrouter",
+        context_length=1_048_576,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
@@ -2734,6 +2751,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
     advisor_order = ADVISOR_CATALOG_MODEL_ORDERS.get(model_id)
     if advisor_order is not None:
         return _models_for_ids(advisor_order)
+    if model_id == PROMETHEUS_1_0_1M_MODEL_ID:
+        return _models_for_ids(SYNTH_QUALITY_1M_MODEL_ORDER)
     if model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
     if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
@@ -2785,6 +2804,7 @@ def _meta_route_kind(model_id: str) -> str:
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
+        PROMETHEUS_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
