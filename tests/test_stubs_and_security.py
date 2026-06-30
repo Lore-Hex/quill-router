@@ -360,6 +360,11 @@ def test_favicon_assets_are_served(client: TestClient) -> None:
     assert favicon.headers["cache-control"] == "max-age=86400, public"
     assert favicon.content.startswith(b"\x00\x00\x01\x00")
 
+    favicon_head = client.head("/favicon.ico")
+    assert favicon_head.status_code == 200
+    assert favicon_head.headers["content-type"] == "image/x-icon"
+    assert favicon_head.headers["cache-control"] == "max-age=86400, public"
+
     svg = client.get("/static/favicon.svg")
     assert svg.status_code == 200
     assert svg.headers["content-type"].startswith("image/svg+xml")

@@ -661,6 +661,7 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @app.get("/favicon.ico")
+    @app.head("/favicon.ico")
     async def favicon() -> FileResponse:
         return FileResponse(
             path=STATIC_DIR / "favicon.ico",
