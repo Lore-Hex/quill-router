@@ -124,9 +124,7 @@ class SpannerBigtableStore:
             try:
                 from google.oauth2 import service_account
             except ImportError as exc:  # pragma: no cover
-                raise RuntimeError(
-                    "Install google-auth for cross-cloud SA-key auth"
-                ) from exc
+                raise RuntimeError("Install google-auth for SA-key auth") from exc
             try:
                 info = json.loads(sa_json)
             except json.JSONDecodeError as exc:

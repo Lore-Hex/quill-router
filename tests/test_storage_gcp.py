@@ -137,8 +137,8 @@ def test_gcp_store_disables_spanner_builtin_metrics(monkeypatch: Any) -> None:
     )
 
     # credentials=None is the GCP-default ADC path (Cloud Run / GCE);
-    # AWS deploys pass an explicit service_account.Credentials via
-    # GCP_SERVICE_ACCOUNT_KEY_JSON. Both keep disable_builtin_metrics
+    # local or migration tooling may pass explicit service_account.Credentials
+    # via GCP_SERVICE_ACCOUNT_KEY_JSON. Both keep disable_builtin_metrics
     # set so we don't pull OpenTelemetry runtime metrics.
     assert spanner_calls == [
         {

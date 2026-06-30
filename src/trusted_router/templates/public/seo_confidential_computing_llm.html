@@ -5,7 +5,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">Confidential computing for LLMs</span>
     <h2>Run LLM inference behind hardware attestation — across every provider.</h2>
-    <p>Confidential computing has been deployable since 2018. The industry just never put inference behind it. TrustedRouter does: the gateway runs inside AWS Nitro Enclaves and GCP Confidential VMs, and signs the exact binary it's running.</p>
+    <p>Confidential computing has been deployable for years. The industry just never put inference behind it. TrustedRouter does: the gateway runs inside GCP Confidential Space and signs the exact binary it's running.</p>
     <p>You challenge it with a nonce, get a JWT signed by the CPU's hardware root key, and match the image digest to the open-source build. That's confidential computing applied to the one data path that's becoming the most sensitive: your prompts.</p>
     <p>
       <a class="btn primary" href="/security">See the attestation flow</a>
@@ -28,12 +28,12 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" | jq .
   <div class="marketing-card">
     <span class="card-label">TEE-backed</span>
     <h3>Hardware root of trust.</h3>
-    <p>Nitro Enclaves and GCP Confidential VMs isolate the gateway from the host. Even the cloud operator can't read what's inside.</p>
+    <p>GCP Confidential Space isolates the gateway from the host. Even the cloud operator can't read what's inside.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Cross-cloud</span>
-    <h3>No single-vendor dependency.</h3>
-    <p>Attested on both AWS and GCP. A single vendor's compromise is detectable by divergence, not silent.</p>
+    <span class="card-label">GCP-only</span>
+    <h3>One attested production path.</h3>
+    <p>The hosted gateway terminates prompt traffic only inside GCP Confidential Space. There is no non-attested fallback path.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Remote attestation</span>
@@ -48,7 +48,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" | jq .
     <h2>The overhead is gone. The excuse is gone.</h2>
   </div>
   <div>
-    <p>Nitro enclave overhead is single-digit milliseconds. GCP confidential VM overhead is the same. There's no longer a performance reason to run inference outside a TEE — only inertia.</p>
+    <p>GCP Confidential Space overhead is small compared with model latency. There's no longer a performance reason to run inference outside a TEE — only inertia.</p>
     <p>TrustedRouter makes confidential inference a one-line base_url change, across 30+ providers, with the attestation exposed for you to check.</p>
     <p>The full argument: <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
   </div>
@@ -57,7 +57,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" | jq .
 <section class="limitation-band">
   <span class="pill warn">Honest scope</span>
   <div>
-    <p>Attestation proves the running binary is the published binary on hardware you can challenge. It does not defeat a nation-state with physical access to the host, and it does not prove the open-source binary is bug-free. The trust anchor is the chip vendor's root key. Cross-cloud narrows that dependency; it does not remove it.</p>
+    <p>Attestation proves the running binary is the published binary on hardware you can challenge. It does not defeat a nation-state with physical access to the host, and it does not prove the open-source binary is bug-free. The trust anchor is the hardware and cloud attestation chain.</p>
   </div>
 </section>
 

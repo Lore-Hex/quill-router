@@ -13,7 +13,6 @@ import pytest
 
 from trusted_router.config import Settings
 from trusted_router.regions import (
-    AWS_REGION_GEO,
     GCP_REGION_GEO,
     _project_x,
     _project_y,
@@ -56,7 +55,7 @@ def test_project_y_maps_latitude_to_svg_pixels(lat: float, expected_y: float) ->
 def test_every_known_region_projects_inside_svg_bounds() -> None:
     """If we add a new region with a typo'd lat/long, this catches the
     marker landing off the canvas before it ships."""
-    for region in [*GCP_REGION_GEO.values(), *AWS_REGION_GEO.values()]:
+    for region in GCP_REGION_GEO.values():
         x = _project_x(region.lng)
         y = _project_y(region.lat)
         assert 0 <= x <= SVG_WIDTH, f"{region.id} x={x} outside [0, {SVG_WIDTH}]"
@@ -91,7 +90,7 @@ def test_region_map_payload_marks_primary() -> None:
     assert primaries[0]["id"] == settings.primary_region
 
 
-def test_default_region_map_shows_eight_region_marketing_footprint() -> None:
+def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)
 
@@ -103,7 +102,6 @@ def test_default_region_map_shows_eight_region_marketing_footprint() -> None:
         "asia-east2",
         "asia-southeast1",
         "southamerica-east1",
-        "aws-us-west-2",
     ]
     assert [r["status_label"] for r in rendered[:2]] == ["live", "live"]
     assert all(r["status_label"] == "edge" for r in rendered[2:])

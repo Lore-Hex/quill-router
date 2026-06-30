@@ -13,8 +13,7 @@ class RegionGeo:
     keep the raw coordinates here so other surfaces (status page,
     docs) can reuse the same data.
 
-    `cloud` defaults to `"gcp"` for back-compat. AWS regions set it to
-    `"aws"` so the homepage map can color-code multi-cloud points."""
+    `cloud` defaults to `"gcp"` for back-compat and future portability."""
 
     id: str
     city: str
@@ -52,26 +51,9 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
 }
 
 
-# AWS region locations — for the multi-cloud failover compute layer
-# (see Stage 4 of the multi-region expansion plan). The ID prefix
-# `aws-` distinguishes these from GCP regions in the configured-regions
-# list. Geo coordinates are AWS's published city for the region; the
-# homepage map color-codes via the `cloud` field on RegionGeo so users
-# can see we run in two clouds.
-AWS_REGION_GEO: dict[str, RegionGeo] = {
-    "aws-us-west-2": RegionGeo(
-        "aws-us-west-2", "Oregon (AWS)", 45.523, -122.676, cloud="aws"
-    ),
-}
-
-
 def _lookup_region_geo(region: str) -> RegionGeo | None:
-    """Return geo info for either a GCP or AWS region. Single lookup
-    point so callers don't have to know which cloud a region is in."""
-    geo = GCP_REGION_GEO.get(region)
-    if geo is not None:
-        return geo
-    return AWS_REGION_GEO.get(region)
+    """Return geo info for a configured GCP region."""
+    return GCP_REGION_GEO.get(region)
 
 
 def configured_regions(settings: Settings) -> list[str]:

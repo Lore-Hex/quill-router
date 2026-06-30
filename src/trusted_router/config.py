@@ -93,12 +93,9 @@ class Settings(BaseSettings):
     byok_kms_key_name: str | None = None
     byok_envelope_key_b64: str | None = None
     byok_envelope_key_ref: str = "trustedrouter/byok-envelope-key/v1"
-    # BYOK key REGISTRATION wraps the secret with the byok-envelope KMS key,
-    # which only the primary (GCP) control-plane SA may encrypt with — replica
-    # nodes (e.g. the AWS control-plane) hold decrypt-only and must not attempt
-    # it. Set False on replicas so registration is refused cleanly (clean 503)
-    # instead of attempting a KMS encrypt it can't perform. Unwrapping at
-    # inference (decrypt) is unaffected.
+    # BYOK key REGISTRATION wraps the secret with the byok-envelope KMS key.
+    # Production is GCP-primary and encrypt-enabled; set False on any future
+    # read-only replica so registration is refused cleanly.
     byok_registration_enabled: bool = True
 
     auth_session_ttl_seconds: int = 60 * 60 * 24 * 30
@@ -170,7 +167,7 @@ class Settings(BaseSettings):
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
         "asia-northeast1,asia-east2,asia-southeast1,"
-        "southamerica-east1,aws-us-west-2"
+        "southamerica-east1"
     )
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"

@@ -64,6 +64,7 @@ add_secret_env_if_exists "TR_GOOGLE_CLIENT_ID" "trustedrouter-google-client-id"
 add_secret_env_if_exists "TR_GOOGLE_CLIENT_SECRET" "trustedrouter-google-client-secret"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_ID" "trustedrouter-github-client-id"
 add_secret_env_if_exists "TR_GITHUB_CLIENT_SECRET" "trustedrouter-github-client-secret"
+# SES email credentials only; not used for AWS hosting or failover.
 add_secret_env_if_exists "TR_AWS_ACCESS_KEY_ID" "trustedrouter-aws-access-key-id"
 add_secret_env_if_exists "TR_AWS_SECRET_ACCESS_KEY" "trustedrouter-aws-secret-access-key"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
@@ -95,7 +96,7 @@ ENV_VARS=(
   "TR_GOOGLE_OAUTH_REDIRECT_URL=https://trustedrouter.com/google_oauth_callback"
   "TR_GITHUB_OAUTH_REDIRECT_URL=https://trustedrouter.com/github_oauth_callback"
   "TR_SIWE_DOMAIN=trustedrouter.com"
-  "TR_AWS_REGION=us-east-1"
+  "TR_AWS_REGION=us-east-1" # SES region only; hosted compute is GCP-only.
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
   # Axiom log shipping. Token comes from Secret Manager via the

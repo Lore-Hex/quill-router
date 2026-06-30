@@ -1,10 +1,8 @@
-"""/internal/gateway/fetch-image — server-side image-URL fetcher
-for AWS Nitro enclaves.
+"""/internal/gateway/fetch-image — server-side image-URL fetcher.
 
-The Nitro enclave has no network stack. When a chat request references
-an image by URL, the enclave can't fetch the bytes itself (no DNS, no
-routes, no eth0). It proxies the fetch through this endpoint instead;
-the control plane does:
+When a chat request references an image by URL and the gateway cannot fetch
+it directly, it proxies the fetch through this endpoint. The control plane
+does:
 
   1. URL parse + scheme allowlist (http / https only)
   2. DNS resolve via socket.getaddrinfo
@@ -17,10 +15,9 @@ the control plane does:
   5. Return media_type + base64-encoded bytes; the enclave normalizes
      and embeds them in the upstream provider request
 
-Trust property: this URL is metadata about user intent, not prompt
-content — the same kind of metadata authorize/settle already see.
-The image bytes flow back over TLS-passthrough vsock to the enclave;
-the parent's vsock-proxy never sees them in plaintext.
+Trust property: this URL is metadata about user intent, not prompt content —
+the same kind of metadata authorize/settle already see. The image bytes flow
+back to the attested gateway, which normalizes them before calling providers.
 
 Auth: same internal-gateway-token guard as the rest of /internal/*.
 """
@@ -55,8 +52,8 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 def _is_safe_public_ip(ip_str: str) -> bool:
     """Mirror of enclave-go's allowedImageIP: reject loopback, RFC1918,
-    link-local, multicast, unspecified, and the AWS-metadata 169.254.0.0/16
-    range. ipaddress.ip_address handles IPv6 too."""
+    link-local, multicast, and unspecified addresses. ipaddress.ip_address
+    handles IPv6 too."""
     try:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:

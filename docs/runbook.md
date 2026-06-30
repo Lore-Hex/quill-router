@@ -177,8 +177,6 @@ Steps:
    - Get a fresh key from the provider's dashboard.
    - Add it to `~/.quill_cloud_keys.private` under the appropriate var name.
    - Run `bash scripts/deploy/secrets.sh` to push to GCP Secret Manager.
-   - Run `bash tools/sync-secrets-to-aws.sh --apply --secret trustedrouter-<provider>-api-key`
-     to mirror to AWS.
    - Redeploy the enclave (next bot run or manual workflow dispatch).
 4. If the curl 200s but the gateway 401s, the enclave is using an OLDER
    value (it caches at boot). The next enclave deploy picks up the
@@ -366,14 +364,10 @@ Touchpoints, in order:
    - new `<provider>ModelMap` if needed
    - `byok_test.go` — add at least one `TestPerProviderNativeMaps` case
 7. `enclave-go/internal/llm/multi.go` — wire the new client + struct field.
-8. `enclave-go/internal/llm/http_client_aws.go` — add the vsock tunnel entry.
-9. `enclave-go/internal/types/types.go` — add the `<Provider>APIKey string` field.
-10. `enclave-go/internal/bootstrap/bootstrap_gcp.go` + `parent/src/quill_parent/bootstrap_server.py` — fetch the new secret.
-11. `tools/deploy-gcp-mig.sh` — `QUILL_<PROVIDER>_SECRET` default + tee-env entry.
-12. `tools/deploy-aws-nitro.sh` — vsock-proxy.yaml allowlist + write_vsock_unit.
-13. `tools/sync-secrets-to-aws.sh` — `SECRETS` allowlist.
-14. Add the key to `~/.quill_cloud_keys.private`, run `secrets.sh`, then
-    `sync-secrets-to-aws.sh --apply`.
+8. `enclave-go/internal/types/types.go` — add the `<Provider>APIKey string` field.
+9. `enclave-go/internal/bootstrap/bootstrap_gcp.go` — fetch the new secret.
+10. `tools/deploy-gcp-mig.sh` — `QUILL_<PROVIDER>_SECRET` default + tee-env entry.
+11. Add the key to `~/.quill_cloud_keys.private`, then run `scripts/deploy/secrets.sh`.
 
 Then commit, deploy. After the deploy, smoke a known-good model to
 verify routing.
@@ -399,10 +393,7 @@ Pure scraper edit:
 1. Update the value in `~/.quill_cloud_keys.private` (or wherever you keep
    the canonical local copy).
 2. `bash scripts/deploy/secrets.sh` — pushes to GCP Secret Manager.
-3. `bash tools/sync-secrets-to-aws.sh --apply` — mirrors to AWS.
-4. Redeploy enclave: GCP picks up automatically on next deploy; AWS via
-   `bash tools/deploy-aws-nitro.sh --apply --phase compute` (rebuilds LT,
-   triggers ASG instance refresh).
+3. Redeploy the GCP enclave. Secret Manager values are read at boot.
 
 For OAuth/Stripe/non-LLM secrets, only step 1+2 needed; the Cloud Run
 service re-reads on next deploy.
@@ -422,7 +413,6 @@ Phala has TWO key tiers behind the same `api.redpill.ai` host:
 TR uses tier 2. The key lives in:
 - `~/.quill_cloud_keys.private` as `PHALA_CONFIDENTIAL_API_KEY`
 - GCP Secret Manager as `trustedrouter-phala-confidential-api-key`
-- AWS Secrets Manager as `quill/trustedrouter-phala-confidential-api-key`
 
 If Phala 401s after a re-enable:
 1. Run a direct probe with the keyfile value against `api.redpill.ai/v1/chat/completions`
@@ -550,51 +540,6 @@ After deploys that add SEO pages:
    not contain secrets.
 4. Follow `docs/marketing/llm-seo-opportunities.md` for Ahrefs exports
    and new page prioritization.
-
----
-
-## <a id="aws-control-plane"></a>Standing up the AWS control plane (Stage 4d)
-
-A global GCP outage takes down trustedrouter.com (homepage / signup /
-console / status) even though `api.quillrouter.com` failovers to AWS
-via the Cloudflare LB. Stage 4d closes this gap by running the same
-FastAPI image on AWS Fargate behind an ALB, with cross-cloud reads to
-Spanner + Bigtable via the existing
-`quill/trustedrouter-aws-cross-cloud-sa-key` secret.
-
-Script: `quill-cloud-proxy/tools/deploy-aws-control-plane.sh`
-(11 phases: ECR → image mirror → IAM → SG → ACM cert → ALB → log
-group → ECS cluster → task def → ECS service → Cloudflare DNS hint).
-
-Apply:
-```bash
-cd /Users/jperla/claude/quill-cloud-proxy
-bash tools/deploy-aws-control-plane.sh                   # dry-run all phases
-bash tools/deploy-aws-control-plane.sh --apply           # commit it
-```
-
-Idempotent — every resource creation is check-then-create. Safe to
-re-run.
-
-After apply:
-1. Wait for ECS service `trustedrouter-control` to land healthy (1
-   running task, target group health = 2/2).
-2. The script's final phase prints `AWS ALB DNS: <hostname>`. Add
-   that hostname as a second origin pool to the Cloudflare LB
-   currently fronting trustedrouter.com (mirror the api.quillrouter.com
-   pattern: GCP primary at weight 99, AWS secondary at weight 1 so the
-   AWS path stays warm under 1% real traffic).
-3. Smoke: `curl -sSI https://<alb-dns>/v1/healthz` should 200. The
-   page should render at `https://<alb-dns>/` (it'll 421 on the cert
-   until DNS is wired, but the underlying server-cert TLS handshake
-   works since the script provisions an ACM cert for trustedrouter.com).
-
-Cost: ~$35-40/mo (0.5 vCPU + 1GB Fargate task + ALB + CloudWatch logs).
-
-If the task task crash-loops on boot, the most likely cause is a
-secrets-fetch failure (missing AWS Secrets Manager entry). Check
-the CloudWatch log group `/ecs/trustedrouter-control` for the
-first 30 seconds of container output.
 
 ---
 

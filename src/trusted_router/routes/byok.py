@@ -43,10 +43,9 @@ def register_byok_routes(router: APIRouter) -> None:
     ) -> JSONResponse:
         slug = _require_byok_provider(provider)
         if not settings.byok_registration_enabled:
-            # Replica nodes (e.g. the AWS control-plane) hold decrypt-only on
-            # the byok-envelope KMS key and are not the registration authority.
-            # Refuse the write cleanly here — before attempting a KMS encrypt
-            # that would be denied — and point callers at the primary endpoint.
+            # Read-only replicas are not the registration authority. Refuse
+            # the write cleanly here before attempting a KMS encrypt that
+            # would be denied, and point callers at the primary endpoint.
             raise api_error(
                 503,
                 "BYOK key registration is handled by the primary control plane. "
@@ -77,13 +76,10 @@ def register_byok_routes(router: APIRouter) -> None:
                 )
             except gcp_exceptions.PermissionDenied as exc:
                 # The BYOK envelope DEK is wrapped with the GCP KMS
-                # byok-envelope key, which ONLY the GCP control-plane SA
-                # (trusted-router-control-run@) may encrypt with — the
-                # AWS/cross-cloud SA is decrypt-only by design (it just
-                # unwraps keys at inference). So a management caller hitting a
-                # non-primary endpoint (e.g. the AWS control-plane directly)
-                # can't register a key. Return a clean, actionable 503 instead
-                # of an unhandled 500 + KMS stack trace.
+                # byok-envelope key, which only the primary control-plane SA
+                # may encrypt with. Return a clean, actionable 503 instead of
+                # an unhandled 500 + KMS stack trace if this endpoint lacks
+                # encrypt permission.
                 log.warning(
                     "byok.encrypt_permission_denied",
                     extra={"provider": slug, "workspace_id": principal.workspace.id},

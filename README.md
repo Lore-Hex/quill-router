@@ -76,8 +76,8 @@ client = OpenAI(base_url="https://api.trustedrouter.com/v1", api_key="sk-tr-v1-.
 <details>
 <summary><strong>For the nerds: how the privacy is provable</strong></summary>
 
-TrustedRouter's gateway runs inside hardware enclaves (AWS Nitro Enclaves + GCP
-Confidential VMs). The CPU signs a measurement of the running binary; you
+TrustedRouter's gateway runs inside GCP Confidential Space. The platform signs
+a measurement of the running binary; you
 compare that hash to this repo. If they match, you *know* — not assume — that
 the code handling your prompts is the code you can read here, and that it never
 writes your prompts to disk.
@@ -104,8 +104,8 @@ curl -s "https://api.trustedrouter.com/attestation?nonce=$NONCE" | jq .
 Honest scope: attestation proves the running binary is the published binary on
 hardware you can challenge with a nonce. It does not defeat a nation-state with
 physical host access, and it does not prove the open-source binary is bug-free.
-The trust anchor is the chip vendor's root key; cross-cloud (AWS + GCP) narrows
-that dependency without eliminating it. Upstream providers handle prompts per
+The trust anchor is Google Confidential Computing's hardware-backed attestation
+chain. Upstream providers handle prompts per
 their own policies — each provider's posture is published on the model pages.
 
 </details>
@@ -355,18 +355,16 @@ Multi-region is feasible while preserving the trust boundary, but it has to be
 done carefully:
 
 - Run independent warm attested gateway pools in at least `us-central1`,
-  `us-east4`, and `europe-west4`. Add one exercised non-GCP pool next
-  (initially AWS Nitro with a tiny real-traffic trickle), then Asia once the
-  first three regions are boring.
+  `us-east4`, and `europe-west4`, then Asia once the first three regions are
+  boring.
 - Keep TLS private keys inside each regional Confidential Space workload.
 - Move ACME from TLS-ALPN-01 to DNS-01 or another challenge flow that works
   with multiple regional endpoints for the same hostname. The current
   TLS-ALPN-01 flow is fine for one region, but a global DNS record can route
   challenges to the wrong replica.
 - Keep regional hostnames such as `api-us-central1.quillrouter.com`,
-  `api-us-east4.quillrouter.com`, `api-europe-west4.quillrouter.com`, and the
-  future `api-aws-us-west-2.quillrouter.com` for deterministic attestation,
-  smoke tests, and SDK failover.
+  `api-us-east4.quillrouter.com`, and `api-europe-west4.quillrouter.com` for
+  deterministic attestation, smoke tests, and SDK failover.
 - Put `api.trustedrouter.com` behind latency/geo DNS or TCP passthrough that does
   not terminate TLS. Cloudflare orange-cloud proxying remains incompatible
   with the prompt-path trust claim.
