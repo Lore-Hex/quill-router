@@ -660,6 +660,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={"cache-control": "max-age=3600, public"},
         )
 
+    @app.get("/favicon.ico")
+    async def favicon() -> FileResponse:
+        return FileResponse(
+            path=STATIC_DIR / "favicon.ico",
+            media_type="image/x-icon",
+            headers={"cache-control": "max-age=86400, public"},
+        )
+
     @app.get("/trust/gcp-release.json")
     async def trust_release() -> JSONResponse:
         return JSONResponse(gcp_release(settings), headers={"cache-control": "max-age=60, public"})

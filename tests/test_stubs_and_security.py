@@ -305,6 +305,9 @@ def test_production_dashboard_does_not_default_to_dev_user_header() -> None:
 def test_dashboard_emits_open_graph_and_twitter_card(client: TestClient) -> None:
     dashboard = client.get("/")
     assert dashboard.status_code == 200
+    assert '<link rel="icon" href="/favicon.ico" sizes="any">' in dashboard.text
+    assert '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">' in dashboard.text
+    assert '<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">' in dashboard.text
     assert 'property="og:type" content="website"' in dashboard.text
     assert f'property="og:title" content="{OG_TITLE}"' in dashboard.text
     assert f'property="og:description" content="{OG_DESCRIPTION}"' in dashboard.text
@@ -348,6 +351,24 @@ def test_og_image_route_serves_png(client: TestClient) -> None:
     assert "https://github.com/Lore-Hex/quill-cloud-infra" in trust.text
     assert "https://github.com/Lore-Hex/quill" in trust.text
     assert "https://github.com/Lore-Hex/trusted-router-js" in trust.text
+
+
+def test_favicon_assets_are_served(client: TestClient) -> None:
+    favicon = client.get("/favicon.ico")
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"] == "image/x-icon"
+    assert favicon.headers["cache-control"] == "max-age=86400, public"
+    assert favicon.content.startswith(b"\x00\x00\x01\x00")
+
+    svg = client.get("/static/favicon.svg")
+    assert svg.status_code == 200
+    assert svg.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in svg.content
+
+    apple = client.get("/static/apple-touch-icon.png")
+    assert apple.status_code == 200
+    assert apple.headers["content-type"] == "image/png"
+    assert apple.content.startswith(b"\x89PNG\r\n\x1a\n")
 
     release = client.get("/trust/gcp-release.json")
     assert release.status_code == 200
