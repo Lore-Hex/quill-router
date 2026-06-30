@@ -884,6 +884,9 @@ SOCRATES_PRO_1_0_MODEL_ID = "trustedrouter/socrates-pro-1.0"
 SOCRATES_PRO_MODEL_ID = "trustedrouter/socrates-pro"
 SOCRATES_PRO_PLUS_1_0_MODEL_ID = "trustedrouter/socrates-pro-plus-1.0"
 SOCRATES_PRO_PLUS_MODEL_ID = "trustedrouter/socrates-pro-plus"
+OPEN_EXPLOITER_S1_MODEL_ID = "trustedrouter/openexploiter-s1"
+OPEN_EXPLOITER_A1_MODEL_ID = "trustedrouter/openexploiter-a1"
+OPEN_EXPLOITER_FAST1_MODEL_ID = "trustedrouter/openexploiter-fast1"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -930,6 +933,9 @@ META_MODEL_IDS = frozenset(
         SOCRATES_PRO_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         SOCRATES_PRO_PLUS_MODEL_ID,
+        OPEN_EXPLOITER_S1_MODEL_ID,
+        OPEN_EXPLOITER_A1_MODEL_ID,
+        OPEN_EXPLOITER_FAST1_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -1109,6 +1115,14 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     SOCRATES_PRO_PLUS_MODEL_ID: (
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         ZEUS_1_0_MODEL_ID,
+    ),
+    OPEN_EXPLOITER_A1_MODEL_ID: (
+        OPEN_EXPLOITER_S1_MODEL_ID,
+        PROMETHEUS_1_0_MODEL_ID,
+    ),
+    OPEN_EXPLOITER_FAST1_MODEL_ID: (
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        OPEN_EXPLOITER_A1_MODEL_ID,
     ),
 }
 
@@ -1316,6 +1330,33 @@ MODELS: dict[str, Model] = {
     SOCRATES_PRO_PLUS_MODEL_ID: Model(
         id=SOCRATES_PRO_PLUS_MODEL_ID,
         name="TrustedRouter Socrates Pro Plus",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    OPEN_EXPLOITER_S1_MODEL_ID: Model(
+        id=OPEN_EXPLOITER_S1_MODEL_ID,
+        name="TrustedRouter OpenExploiter-S1",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    OPEN_EXPLOITER_A1_MODEL_ID: Model(
+        id=OPEN_EXPLOITER_A1_MODEL_ID,
+        name="TrustedRouter OpenExploiter-A1",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    OPEN_EXPLOITER_FAST1_MODEL_ID: Model(
+        id=OPEN_EXPLOITER_FAST1_MODEL_ID,
+        name="TrustedRouter OpenExploiter-Fast1",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2699,6 +2740,11 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
+    if model_id == OPEN_EXPLOITER_S1_MODEL_ID:
+        return _models_for_ids((
+            "moonshotai/kimi-k2.7-code",
+            "z-ai/glm-5.2",
+        ))
     if model_id in (
         PROMETHEUS_CODE_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
@@ -2747,6 +2793,7 @@ def _meta_route_kind(model_id: str) -> str:
         IRIS_CODE_1_0_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
         ZEUS_CODE_1_0_MODEL_ID,
+        OPEN_EXPLOITER_S1_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):

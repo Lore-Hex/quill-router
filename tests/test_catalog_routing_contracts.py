@@ -15,6 +15,9 @@ from trusted_router.catalog import (
     MAPREDUCE_MODEL_ID,
     MODEL_ENDPOINTS,
     MODELS,
+    OPEN_EXPLOITER_A1_MODEL_ID,
+    OPEN_EXPLOITER_FAST1_MODEL_ID,
+    OPEN_EXPLOITER_S1_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
@@ -513,6 +516,14 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "trustedrouter/zeus-1.0",
         ],
+        OPEN_EXPLOITER_A1_MODEL_ID: [
+            "trustedrouter/openexploiter-s1",
+            "trustedrouter/prometheus-1.0",
+        ],
+        OPEN_EXPLOITER_FAST1_MODEL_ID: [
+            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "trustedrouter/openexploiter-a1",
+        ],
     }
     for model_id, candidates in expected.items():
         shape = model_to_openrouter_shape(MODELS[model_id])
@@ -521,6 +532,23 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         assert shape["trustedrouter"]["stores_content"] is False
         assert shape["trustedrouter"]["auto_candidates"] == candidates
         assert [model.id for model in meta_candidate_models(model_id)] == candidates
+
+
+def test_openexploiter_s1_is_cataloged_as_custom_synth_preset() -> None:
+    model = MODELS[OPEN_EXPLOITER_S1_MODEL_ID]
+    shape = model_to_openrouter_shape(model)
+
+    assert model.name == "TrustedRouter OpenExploiter-S1"
+    assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert shape["trustedrouter"]["stores_content"] is False
+    assert shape["trustedrouter"]["auto_candidates"] == [
+        "moonshotai/kimi-k2.7-code",
+        "z-ai/glm-5.2",
+    ]
+    assert [model.id for model in meta_candidate_models(OPEN_EXPLOITER_S1_MODEL_ID)] == [
+        "moonshotai/kimi-k2.7-code",
+        "z-ai/glm-5.2",
+    ]
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
