@@ -30,6 +30,7 @@ from trusted_router.catalog import (
     Provider,
     endpoints_for_model,
     meta_candidate_models,
+    model_open_weights,
     providers_for_display,
 )
 from trusted_router.config import Settings
@@ -1860,6 +1861,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "provider_zero_data_retention": provider.provider_zero_data_retention,
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
+        "open_weights": model_open_weights(model),
         "providers": providers,
         "provider_count": len(providers),
         "ai_iq": ai_iq,
@@ -2006,6 +2008,7 @@ def _model_detail_view(
         ),
         "ai_iq": ai_iq,
         "is_meta": is_meta,
+        "open_weights": model_open_weights(model),
         "candidate_models": candidate_models,
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,

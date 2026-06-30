@@ -24,6 +24,8 @@ from trusted_router.catalog import (
     PLATO_PRO_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_ZERO_RETENTION,
+    PROMETHEUS_1_0_MODEL_ID,
+    PROMETHEUS_MODEL_ID,
     PROVIDERS,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
@@ -35,9 +37,12 @@ from trusted_router.catalog import (
     SOCRATES_PRO_PLUS_MODEL_ID,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
+    ZEUS_1_0_MODEL_ID,
+    ZEUS_MODEL_ID,
     auto_candidate_models,
     endpoints_for_model,
     meta_candidate_models,
+    model_open_weights,
     model_to_openrouter_shape,
     provider_privacy_tier,
 )
@@ -446,6 +451,40 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
         assert [model.id for model in meta_candidate_models(model_id)] == expected_candidates
 
 
+def test_open_weights_badge_is_recursive_for_combo_models() -> None:
+    open_ids = [
+        "deepseek/deepseek-v4-pro",
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.6",
+        "google/gemma-4-31b-it",
+        PROMETHEUS_MODEL_ID,
+        PROMETHEUS_1_0_MODEL_ID,
+        PLATO_MODEL_ID,
+        PLATO_1_0_MODEL_ID,
+        PLATO_PRO_MODEL_ID,
+        PLATO_PRO_1_0_MODEL_ID,
+        OPEN_EXPLOITER_S1_MODEL_ID,
+        OPEN_EXPLOITER_A1_MODEL_ID,
+        OPEN_EXPLOITER_FAST1_MODEL_ID,
+    ]
+    for model_id in open_ids:
+        assert model_open_weights(MODELS[model_id]), model_id
+        assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is True
+
+    closed_ids = [
+        "anthropic/claude-opus-4.8",
+        SOCRATES_1_1_MODEL_ID,
+        SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+        ZEUS_MODEL_ID,
+        ZEUS_1_0_MODEL_ID,
+        ARISTOTLE_MODEL_ID,
+        ARISTOTLE_1_0_MODEL_ID,
+    ]
+    for model_id in closed_ids:
+        assert not model_open_weights(MODELS[model_id]), model_id
+        assert model_to_openrouter_shape(MODELS[model_id])["trustedrouter"]["open_weights"] is False
+
+
 def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     expected: dict[str, list[str]] = {
         ARISTOTLE_1_0_MODEL_ID: [
@@ -709,15 +748,19 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
 
+    pro = MODELS["xiaomi/mimo-v2.5-pro"]
+    assert pro.context_length == 1_048_576
+    assert pro.prompt_price_microdollars_per_million_tokens == 478_500
+    assert pro.completion_price_microdollars_per_million_tokens == 957_000
+
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
     # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.10,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
-    # collapse them onto the regular v2.5-pro numbers ($1.10/$3.30 customer).
+    # collapse them onto the regular v2.5-pro numbers.
     ultraspeed = MODELS["xiaomi/mimo-v2.5-pro-ultraspeed"]
     assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_435_500
     assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_871_000
     # ...and that it is genuinely a distinct row from regular v2.5-pro.
-    pro = MODELS["xiaomi/mimo-v2.5-pro"]
     assert (
         ultraspeed.completion_price_microdollars_per_million_tokens
         != pro.completion_price_microdollars_per_million_tokens

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from trusted_router.auth import SettingsDep
@@ -22,16 +22,18 @@ from trusted_router.storage_custom_models import (
 def register(app: FastAPI) -> None:
     @app.get("/console/custom-models")
     async def console_custom_models(
+        request: Request,
         ctx: ConsoleDep,
         settings: SettingsDep,
     ) -> Response:
-        return HTMLResponse(_render_page(ctx, settings))
+        return HTMLResponse(_render_page(ctx, settings, request=request))
 
     @app.post("/console/custom-models")
     async def console_create_custom_model(
         ctx: ConsoleDep,
         settings: SettingsDep,
         name: str = Form(..., min_length=1, max_length=120),
+        slug: str | None = Form(default=None, max_length=96),
         base_model_id: str = Form(..., min_length=1, max_length=256),
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
         enabled: bool = Form(False),
@@ -45,13 +47,16 @@ def register(app: FastAPI) -> None:
                 base_model_id=base_model_id,
                 hidden_prompt=hidden_prompt,
                 enabled=enabled,
+                slug=slug or None,
             )
         except ValueError as exc:
-            if str(exc) == "custom_model_limit_exceeded":
-                return RedirectResponse(
-                    url="/console/custom-models?error=limit",
-                    status_code=303,
-                )
+            error = str(exc)
+            if error == "custom_model_limit_exceeded":
+                return _custom_model_redirect("error=limit")
+            if error == "invalid_custom_model_slug":
+                return _custom_model_redirect("error=slug")
+            if error == "custom_model_slug_taken":
+                return _custom_model_redirect("error=slug_taken")
             raise
         return RedirectResponse(url="/console/custom-models?saved=created", status_code=303)
 
@@ -60,22 +65,32 @@ def register(app: FastAPI) -> None:
         ctx: ConsoleDep,
         model_id: str,
         name: str = Form(..., min_length=1, max_length=120),
+        slug: str | None = Form(default=None, min_length=3, max_length=96),
         base_model_id: str = Form(..., min_length=1, max_length=256),
         hidden_prompt: str = Form("", max_length=CUSTOM_MODEL_PROMPT_CHAR_LIMIT),
         enabled: bool = Form(False),
     ) -> Response:
         model = _require_owner_model(model_id, ctx.user.id)
         _require_base_model(base_model_id)
-        STORE.update_custom_model(
-            model.id,
-            owner_user_id=ctx.user.id,
-            patch={
-                "name": name,
-                "base_model_id": base_model_id,
-                "hidden_prompt": hidden_prompt,
-                "enabled": enabled,
-            },
-        )
+        try:
+            STORE.update_custom_model(
+                model.id,
+                owner_user_id=ctx.user.id,
+                patch={
+                    "name": name,
+                    "slug": slug,
+                    "base_model_id": base_model_id,
+                    "hidden_prompt": hidden_prompt,
+                    "enabled": enabled,
+                },
+            )
+        except ValueError as exc:
+            error = str(exc)
+            if error == "invalid_custom_model_slug":
+                return _custom_model_redirect("error=slug")
+            if error == "custom_model_slug_taken":
+                return _custom_model_redirect("error=slug_taken")
+            raise
         return RedirectResponse(url="/console/custom-models?saved=updated", status_code=303)
 
     @app.post("/console/custom-models/{model_id:path}/delete")
@@ -85,7 +100,7 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/custom-models?saved=deleted", status_code=303)
 
 
-def _render_page(ctx: ConsoleDep, settings: SettingsDep) -> str:
+def _render_page(ctx: ConsoleDep, settings: SettingsDep, *, request: Request) -> str:
     models = [_model_view(model) for model in STORE.list_custom_models_for_user(ctx.user.id)]
     return render(
         "console/custom_models.html",
@@ -99,6 +114,7 @@ def _render_page(ctx: ConsoleDep, settings: SettingsDep) -> str:
         base_models=_base_model_options(),
         limit=CUSTOM_MODEL_LIMIT_PER_USER,
         prompt_limit=CUSTOM_MODEL_PROMPT_CHAR_LIMIT,
+        flash=_flash_message(request.query_params.get("saved"), request.query_params.get("error")),
     )
 
 
@@ -106,6 +122,7 @@ def _model_view(model: CustomModel) -> dict[str, Any]:
     base = MODELS.get(model.base_model_id)
     return {
         "id": model.id,
+        "slug": model.id.removeprefix("trustedrouter/user-"),
         "name": model.name,
         "base_model_id": model.base_model_id,
         "base_model_name": base.name if base else model.base_model_id,
@@ -137,3 +154,25 @@ def _require_owner_model(model_id: str, owner_user_id: str) -> CustomModel:
 
 def _require_base_model(model_id: str) -> None:
     require_custom_model_base_model(model_id)
+
+
+def _custom_model_redirect(query: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/console/custom-models?{query}", status_code=303)
+
+
+def _flash_message(saved: str | None, error: str | None) -> dict[str, str] | None:
+    if error == "limit":
+        return {
+            "type": "error",
+            "text": f"Custom model limit reached ({CUSTOM_MODEL_LIMIT_PER_USER}).",
+        }
+    if error == "slug":
+        return {
+            "type": "error",
+            "text": "Slug must be 3-64 lowercase letters, numbers, or hyphens.",
+        }
+    if error == "slug_taken":
+        return {"type": "error", "text": "That custom model slug is already in use."}
+    if saved:
+        return {"type": "success", "text": "Custom model saved."}
+    return None

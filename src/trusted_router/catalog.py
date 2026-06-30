@@ -2860,6 +2860,44 @@ def model_max_privacy_tier(model: Model) -> int:
     return _model_max_privacy_tier(model, endpoints_for_model(model.id))
 
 
+_OPEN_WEIGHT_PREFIXES = (
+    "deepseek/",
+    "google/gemma",
+    "meta-llama/",
+    "minimax/minimax-m3",
+    "moonshotai/kimi",
+    "qwen/",
+    "xiaomi/mimo",
+    "z-ai/glm",
+)
+_OPEN_WEIGHT_CONTAINS = (
+    "/qwen",
+    "gpt-oss",
+    "zai-glm",
+)
+
+
+def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> bool:
+    """Whether a model route is purely open weights.
+
+    For TrustedRouter orchestration models this is recursive: every candidate
+    beneath the alias must be open weights. If the graph is empty or cycles, we
+    fail closed and do not show the badge.
+    """
+    model_id = model.id.lower()
+    if model.id in _seen:
+        return False
+    if model.id in META_MODEL_IDS:
+        candidates = meta_candidate_models(model.id)
+        if not candidates:
+            return False
+        next_seen = frozenset((*_seen, model.id))
+        return all(model_open_weights(candidate, _seen=next_seen) for candidate in candidates)
+    return model_id.startswith(_OPEN_WEIGHT_PREFIXES) or any(
+        marker in model_id for marker in _OPEN_WEIGHT_CONTAINS
+    )
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -2929,6 +2967,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # confidential" without re-deriving from raw posture flags.
         "privacy_tier": _model_max_privacy_tier(model, endpoints),
         "privacy_tier_label": PRIVACY_TIER_LABELS[_model_max_privacy_tier(model, endpoints)],
+        "open_weights": model_open_weights(model),
         "prompt_price_microdollars_per_million_tokens": prompt_min,
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,

@@ -424,6 +424,7 @@
         ${model.output_per_m != null ? `<span>$${model.output_per_m.toFixed(2)}/M out</span>` : ""}
         ${model.context_length ? `<span>${(model.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
         ${model.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
+        ${model.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
         ${(model.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">Vision</span>' : ""}
         ${(model.capabilities || []).includes("tools") || (model.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">Tools</span>' : ""}
         ${activeIds.has(model.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}

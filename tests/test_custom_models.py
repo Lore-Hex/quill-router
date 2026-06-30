@@ -22,16 +22,20 @@ def _create_custom_model(
     base_model_id: str = "anthropic/claude-sonnet-4.6",
     hidden_prompt: str = "private policy",
     enabled: bool = True,
+    slug: str | None = None,
 ) -> dict:
+    body = {
+        "name": name,
+        "base_model_id": base_model_id,
+        "hidden_prompt": hidden_prompt,
+        "enabled": enabled,
+    }
+    if slug is not None:
+        body["slug"] = slug
     resp = client.post(
         "/v1/custom-models",
         headers={"x-trustedrouter-user": email},
-        json={
-            "name": name,
-            "base_model_id": base_model_id,
-            "hidden_prompt": hidden_prompt,
-            "enabled": enabled,
-        },
+        json=body,
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["data"]
@@ -92,6 +96,57 @@ def test_custom_model_crud_owner_limit_and_public_catalog_redaction(client: Test
         },
     )
     assert over_limit.status_code == 400
+
+
+def test_custom_model_slug_create_duplicate_and_rename(client: TestClient) -> None:
+    created = _create_custom_model(client, slug="legal-reviewer")
+    assert created["id"] == "trustedrouter/user-legal-reviewer"
+    assert created["slug"] == "legal-reviewer"
+
+    duplicate = client.post(
+        "/v1/custom-models",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "name": "dupe",
+            "slug": "trustedrouter/user-legal-reviewer",
+            "base_model_id": "anthropic/claude-sonnet-4.6",
+            "hidden_prompt": "x",
+        },
+    )
+    assert duplicate.status_code == 409
+
+    invalid = client.post(
+        "/v1/custom-models",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "name": "bad slug",
+            "slug": "not_ok",
+            "base_model_id": "anthropic/claude-sonnet-4.6",
+            "hidden_prompt": "x",
+        },
+    )
+    assert invalid.status_code == 400
+
+    renamed = client.patch(
+        f"/v1/custom-models/{created['id']}",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"slug": "litigation-briefs"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["id"] == "trustedrouter/user-litigation-briefs"
+    assert renamed.json()["data"]["slug"] == "litigation-briefs"
+    assert renamed.json()["data"]["revision"] == 2
+
+    old = client.get(
+        f"/v1/custom-models/{created['id']}",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+    )
+    assert old.status_code == 404
+    new = client.get(
+        "/v1/custom-models/trustedrouter/user-litigation-briefs",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+    )
+    assert new.status_code == 200
 
 
 def test_custom_models_validate_prompt_length_and_base_model(client: TestClient) -> None:
@@ -269,11 +324,15 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     assert page.status_code == 200
     assert "Custom Models" in page.text
     assert "Create custom model" in page.text
+    assert "/static/model_catalog.js" in page.text
+    assert "data-base-model-picker" in page.text
+    assert "Socrates, Prometheus, Zeus" in page.text
 
     created = client.post(
         "/console/custom-models",
         data={
             "name": "Console model",
+            "slug": "console-model",
             "base_model_id": "anthropic/claude-sonnet-4.6",
             "hidden_prompt": "console secret",
             "enabled": "on",
@@ -286,6 +345,7 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     updated_page = client.get("/console/custom-models")
     assert updated_page.status_code == 200
     assert custom.id in updated_page.text
+    assert "console-model" in updated_page.text
     assert f"/user-chat?model={custom.id}" in updated_page.text
 
     chat = client.get(f"/user-chat?model={custom.id}")

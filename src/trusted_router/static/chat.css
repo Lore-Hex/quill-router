@@ -49,6 +49,8 @@
     --chat-tag-vision-ink: #c0a3ff;
     --chat-tag-tools-bg: rgba(210, 153, 34, 0.2);
     --chat-tag-tools-ink: #e3b341;
+    --chat-tag-open-bg: rgba(45, 212, 191, 0.18);
+    --chat-tag-open-ink: #5eead4;
     --chat-font:
         "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
         "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
@@ -76,6 +78,8 @@
     --chat-tag-vision-ink: #5b21b6;
     --chat-tag-tools-bg: #fef3c7;
     --chat-tag-tools-ink: #92400e;
+    --chat-tag-open-bg: #ccfbf1;
+    --chat-tag-open-ink: #115e59;
 }
 
 /* ── Shell + layout ────────────────────────────────────────────── */
@@ -2555,6 +2559,11 @@
 .chat-tag-tools {
     background: var(--chat-tag-tools-bg);
     color: var(--chat-tag-tools-ink);
+}
+
+.chat-tag-open {
+    background: var(--chat-tag-open-bg);
+    color: var(--chat-tag-open-ink);
 }
 
 .chat-tag-active {

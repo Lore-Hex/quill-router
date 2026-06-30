@@ -2212,6 +2212,7 @@
                 }
                 ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
                 ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
+                ${m.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
                 ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
                 ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
                 ${activeIds && activeIds.has(m.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}

@@ -21,7 +21,9 @@
   </script>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
+  {% block head_extra %}{% endblock %}
   <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
+  {% block scripts %}{% endblock %}
 </head>
 <body class="console">
   <header class="console-topbar">

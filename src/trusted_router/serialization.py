@@ -19,6 +19,7 @@ from trusted_router.storage import (
     Member,
     Workspace,
 )
+from trusted_router.storage_custom_models import custom_model_slug
 
 
 def key_shape(key: ApiKey) -> dict[str, Any]:
@@ -98,6 +99,7 @@ def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
 def custom_model_owner_shape(model: CustomModel) -> dict[str, Any]:
     return {
         "id": model.id,
+        "slug": custom_model_slug(model.id),
         "name": model.name,
         "base_model_id": model.base_model_id,
         "hidden_prompt": model.hidden_prompt,
@@ -113,6 +115,7 @@ def custom_model_owner_shape(model: CustomModel) -> dict[str, Any]:
 def custom_model_public_shape(model: CustomModel) -> dict[str, Any]:
     return {
         "id": model.id,
+        "slug": custom_model_slug(model.id),
         "name": model.name,
         "base_model_id": model.base_model_id,
         "revision": model.revision,

@@ -40,6 +40,7 @@
           <td>
             {% if model.detail_href %}<a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a>{% else %}<code>{{ model.id }}</code>{% endif %}
             <br>{{ model.name }}
+            {% if model.open_weights %}<div class="mini-links"><span class="pill good">open weights</span></div>{% endif %}
             {% if model.benchmarks_href %}
             <div class="mini-links">
               <a href="{{ model.benchmarks_href }}">benchmarks</a>

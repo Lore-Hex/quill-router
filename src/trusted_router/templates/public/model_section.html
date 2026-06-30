@@ -3,7 +3,10 @@
 <section class="panel">
   <div class="panel-head">
     <h2><code>{{ model.id }}</code></h2>
-    <span class="pill good">{{ section_label }}</span>
+    <div class="provider-chip-list">
+      {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+      <span class="pill good">{{ section_label }}</span>
+    </div>
   </div>
   <div class="panel-body">
     <p><a href="/models">All models</a></p>

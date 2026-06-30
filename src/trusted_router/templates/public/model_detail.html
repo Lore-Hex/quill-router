@@ -3,7 +3,10 @@
 <section class="panel">
   <div class="panel-head">
     <h2><code>{{ model.id }}</code></h2>
-    <span class="pill good">{{ model.provider }}</span>
+    <div class="provider-chip-list">
+      {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+      <span class="pill good">{{ model.provider }}</span>
+    </div>
   </div>
   <div class="panel-body">
     <p><a href="/models">All models</a></p>
@@ -46,6 +49,7 @@
           {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
+          {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
         </td></tr>
         <tr><th>Routes</th><td>
           {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
@@ -77,7 +81,7 @@
       <tbody>
         {% for candidate in model.candidate_models %}
         <tr>
-          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a><br><span class="muted-copy">{{ candidate.name }}</span></td>
+          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a>{% if candidate.open_weights %} <span class="pill good">open weights</span>{% endif %}<br><span class="muted-copy">{{ candidate.name }}</span></td>
           <td>{{ candidate.provider }}</td>
           <td>{{ candidate.prompt_price }}</td>
           <td>{{ candidate.completion_price }}</td>

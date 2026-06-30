@@ -1,5 +1,15 @@
 {% extends "console/_layout.html" %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
+{% endblock %}
+{% block scripts %}
+<script defer src="/static/model_catalog.js?v={{ static_version|default('local') }}"></script>
+<script defer src="/static/custom_models.js?v={{ static_version|default('local') }}"></script>
+{% endblock %}
 {% block body %}
+{% if flash %}
+<div class="console-flash {{ flash.type }}">{{ flash.text }}</div>
+{% endif %}
 <section class="panel">
   <div class="panel-head">
     <h2>Create custom model</h2>
@@ -10,12 +20,22 @@
       <label>Name
         <input name="name" required maxlength="120" placeholder="Legal reviewer">
       </label>
+      <label>Slug
+        <span class="custom-model-slug-input">
+          <span>trustedrouter/user-</span>
+          <input name="slug" maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" placeholder="legal-reviewer">
+        </span>
+      </label>
       <label>Base model
-        <select name="base_model_id" required>
-          {% for base in base_models %}
-          <option value="{{ base.id }}">{{ base.name }} — {{ base.id }}</option>
-          {% endfor %}
-        </select>
+        {% set default_base = base_models[0] if base_models else none %}
+        <div class="custom-model-picker" data-base-model-picker data-current-model="{{ default_base.id if default_base else '' }}">
+          <input data-base-model-input type="hidden" name="base_model_id" required value="{{ default_base.id if default_base else '' }}">
+          <button class="custom-model-picker-button" data-base-model-button type="button">
+            <span data-base-model-name>{{ default_base.name if default_base else 'Choose a model' }}</span>
+            <code data-base-model-id>{{ default_base.id if default_base else '' }}</code>
+          </button>
+        </div>
+        <span class="form-hint">Direct chat models and routing aliases are supported. Socrates, Prometheus, Zeus, Selector, and MapReduce are available in the public catalog, but not as hidden-prompt bases until nested orchestration is wired for custom models.</span>
       </label>
       <label>Hidden prompt
         <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}" placeholder="Instructions prepended inside the attested gateway. Callers cannot see this text."></textarea>
@@ -56,12 +76,21 @@
             <label>Name
               <input name="name" required maxlength="120" value="{{ model.name }}">
             </label>
+            <label>Slug
+              <span class="custom-model-slug-input">
+                <span>trustedrouter/user-</span>
+                <input name="slug" required maxlength="64" pattern="[a-z0-9][a-z0-9-]{1,62}[a-z0-9]" value="{{ model.slug }}">
+              </span>
+              <span class="form-hint">Changing the slug changes the callable model ID. Existing callers must update.</span>
+            </label>
             <label>Base model
-              <select name="base_model_id" required>
-                {% for base in base_models %}
-                <option value="{{ base.id }}" {{ 'selected' if base.id == model.base_model_id else '' }}>{{ base.name }} — {{ base.id }}</option>
-                {% endfor %}
-              </select>
+              <div class="custom-model-picker" data-base-model-picker data-current-model="{{ model.base_model_id }}">
+                <input data-base-model-input type="hidden" name="base_model_id" required value="{{ model.base_model_id }}">
+                <button class="custom-model-picker-button" data-base-model-button type="button">
+                  <span data-base-model-name>{{ model.base_model_name }}</span>
+                  <code data-base-model-id>{{ model.base_model_id }}</code>
+                </button>
+              </div>
             </label>
             <label>Hidden prompt
               <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}">{{ model.hidden_prompt }}</textarea>

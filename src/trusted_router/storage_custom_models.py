@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 import string
 import threading
@@ -12,6 +13,7 @@ CUSTOM_MODEL_ID_CHARS = string.ascii_lowercase + string.digits
 CUSTOM_MODEL_ID_RANDOM_LENGTH = 8
 CUSTOM_MODEL_LIMIT_PER_USER = 10
 CUSTOM_MODEL_PROMPT_CHAR_LIMIT = 262_144
+CUSTOM_MODEL_SLUG_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])?$")
 
 
 class InMemoryCustomModels:
@@ -31,6 +33,7 @@ class InMemoryCustomModels:
         base_model_id: str,
         hidden_prompt: str,
         enabled: bool = True,
+        slug: str | None = None,
     ) -> CustomModel:
         with self._lock:
             existing = [
@@ -40,7 +43,13 @@ class InMemoryCustomModels:
             ]
             if len(existing) >= CUSTOM_MODEL_LIMIT_PER_USER:
                 raise ValueError("custom_model_limit_exceeded")
-            model_id = self._new_id_locked()
+            model_id = (
+                self._new_id_locked()
+                if slug is None
+                else custom_model_id_from_slug(slug)
+            )
+            if model_id in self.models:
+                raise ValueError("custom_model_slug_taken")
             model = CustomModel(
                 id=model_id,
                 owner_user_id=owner_user_id,
@@ -78,9 +87,18 @@ class InMemoryCustomModels:
             model = self.models.get(normalize_custom_model_id(model_id))
             if model is None or model.owner_user_id != owner_user_id:
                 return None
+            new_id = None
+            if "slug" in patch:
+                new_id = custom_model_id_from_slug(str(patch.pop("slug")))
+                if new_id != model.id and new_id in self.models:
+                    raise ValueError("custom_model_slug_taken")
             for key in ("name", "base_model_id", "hidden_prompt", "enabled"):
                 if key in patch:
                     setattr(model, key, patch[key])
+            if new_id is not None and new_id != model.id:
+                self.models.pop(model.id, None)
+                model.id = new_id
+                self.models[model.id] = model
             model.revision += 1
             model.updated_at = iso_now()
             return model
@@ -113,6 +131,26 @@ def normalize_custom_model_id(model_id: str) -> str:
     if value.startswith("user-"):
         return f"trustedrouter/{value}"
     return value
+
+
+def custom_model_slug(model_id: str) -> str:
+    value = normalize_custom_model_id(model_id)
+    if value.startswith(CUSTOM_MODEL_PREFIX):
+        return value.removeprefix(CUSTOM_MODEL_PREFIX)
+    return value
+
+
+def custom_model_id_from_slug(slug: str) -> str:
+    value = slug.strip().lower()
+    if value.startswith(CUSTOM_MODEL_PREFIX):
+        value = value.removeprefix(CUSTOM_MODEL_PREFIX)
+    elif value.startswith("trustedrouter/"):
+        value = value.removeprefix("trustedrouter/")
+    if value.startswith("user-"):
+        value = value.removeprefix("user-")
+    if not CUSTOM_MODEL_SLUG_PATTERN.fullmatch(value):
+        raise ValueError("invalid_custom_model_slug")
+    return f"{CUSTOM_MODEL_PREFIX}{value}"
 
 
 def is_custom_model_id(model_id: str | None) -> bool:

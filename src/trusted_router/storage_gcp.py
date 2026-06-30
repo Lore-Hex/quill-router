@@ -616,6 +616,7 @@ class SpannerBigtableStore:
         base_model_id: str,
         hidden_prompt: str,
         enabled: bool = True,
+        slug: str | None = None,
     ) -> CustomModel:
         return self.custom_model_store.create(
             owner_user_id=owner_user_id,
@@ -624,6 +625,7 @@ class SpannerBigtableStore:
             base_model_id=base_model_id,
             hidden_prompt=hidden_prompt,
             enabled=enabled,
+            slug=slug,
         )
 
     def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:

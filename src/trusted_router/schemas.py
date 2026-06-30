@@ -152,6 +152,7 @@ class BroadcastDestinationPatchRequest(_Strict):
 
 class CustomModelCreateRequest(_Strict):
     name: str = Field(min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
     base_model_id: str = Field(min_length=1, max_length=256)
     hidden_prompt: str = Field(min_length=0, max_length=262_144)
     enabled: bool = True
@@ -159,6 +160,7 @@ class CustomModelCreateRequest(_Strict):
 
 class CustomModelPatchRequest(_Strict):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, min_length=3, max_length=96)
     base_model_id: str | None = Field(default=None, min_length=1, max_length=256)
     hidden_prompt: str | None = Field(default=None, min_length=0, max_length=262_144)
     enabled: bool | None = None

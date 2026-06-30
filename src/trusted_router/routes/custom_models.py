@@ -44,13 +44,27 @@ def register_custom_model_routes(router: APIRouter) -> None:
                 base_model_id=body.base_model_id,
                 hidden_prompt=body.hidden_prompt,
                 enabled=body.enabled,
+                slug=body.slug,
             )
         except ValueError as exc:
-            if str(exc) == "custom_model_limit_exceeded":
+            error = str(exc)
+            if error == "custom_model_limit_exceeded":
                 raise api_error(
                     400,
                     f"Custom model limit reached ({CUSTOM_MODEL_LIMIT_PER_USER})",
                     ErrorType.BAD_REQUEST,
+                ) from exc
+            if error == "invalid_custom_model_slug":
+                raise api_error(
+                    400,
+                    "Custom model slug must be 3-64 lowercase letters, numbers, or hyphens",
+                    ErrorType.BAD_REQUEST,
+                ) from exc
+            if error == "custom_model_slug_taken":
+                raise api_error(
+                    409,
+                    "Custom model slug is already in use",
+                    ErrorType.CONFLICT,
                 ) from exc
             raise
         return JSONResponse({"data": custom_model_owner_shape(model)}, status_code=201)
@@ -73,11 +87,27 @@ def register_custom_model_routes(router: APIRouter) -> None:
         base_model_id = patch.get("base_model_id")
         if base_model_id is not None:
             _require_base_model(str(base_model_id))
-        updated = STORE.update_custom_model(
-            existing.id,
-            owner_user_id=existing.owner_user_id,
-            patch=patch,
-        )
+        try:
+            updated = STORE.update_custom_model(
+                existing.id,
+                owner_user_id=existing.owner_user_id,
+                patch=patch,
+            )
+        except ValueError as exc:
+            error = str(exc)
+            if error == "invalid_custom_model_slug":
+                raise api_error(
+                    400,
+                    "Custom model slug must be 3-64 lowercase letters, numbers, or hyphens",
+                    ErrorType.BAD_REQUEST,
+                ) from exc
+            if error == "custom_model_slug_taken":
+                raise api_error(
+                    409,
+                    "Custom model slug is already in use",
+                    ErrorType.CONFLICT,
+                ) from exc
+            raise
         if updated is None:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
         return {"data": custom_model_owner_shape(updated)}
