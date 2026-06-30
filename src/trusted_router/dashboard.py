@@ -1337,7 +1337,7 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
     Returns None when the model id isn't in the catalog (route handler
     converts that to a styled 404)."""
     model = MODELS.get(model_id)
-    if model is None or model.id in META_MODEL_IDS:
+    if model is None:
         return None
     test_mode = settings.environment == "test"
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
@@ -1850,7 +1850,7 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "providers": providers,
         "provider_count": len(providers),
         "ai_iq": ai_iq,
-        "detail_href": f"/models/{model.id}" if model.id not in META_MODEL_IDS else None,
+        "detail_href": f"/models/{model.id}",
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks" if model.id not in META_MODEL_IDS else None
         ),
@@ -1938,8 +1938,10 @@ def _model_detail_view(
     test_mode: bool = False,
 ) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
+    is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
-    ai_iq = ai_iq_for_model(model.id, test_mode=test_mode)
+    ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
+    candidate_models = [_model_view(candidate, test_mode=test_mode) for candidate in meta_candidate_models(model.id)]
     endpoint_views: list[dict[str, object]] = []
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
@@ -1984,8 +1986,14 @@ def _model_detail_view(
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
         "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),
-        "section_links": _model_section_links(model.id, active_section=active_section),
+        "section_links": _model_section_links(
+            model.id,
+            active_section=active_section,
+            include_sections=not is_meta,
+        ),
         "ai_iq": ai_iq,
+        "is_meta": is_meta,
+        "candidate_models": candidate_models,
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,
         "supports_embeddings": model.supports_embeddings,
@@ -2004,6 +2012,7 @@ def _model_section_links(
     model_id: str,
     *,
     active_section: str | None,
+    include_sections: bool = True,
 ) -> list[dict[str, object]]:
     links: list[dict[str, object]] = [
         {
@@ -2012,6 +2021,8 @@ def _model_section_links(
             "active": active_section is None,
         }
     ]
+    if not include_sections:
+        return links
     for section in MODEL_SEO_SECTIONS:
         links.append(
             {

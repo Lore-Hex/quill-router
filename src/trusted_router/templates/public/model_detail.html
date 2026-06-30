@@ -26,12 +26,20 @@
           {% endif %}
         </td></tr>
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
-        <tr><th>Providers</th><td>
+        <tr><th>{% if model.is_meta %}Components{% else %}Providers{% endif %}</th><td>
+          {% if model.is_meta %}
+          <div class="provider-chip-list">
+            {% for candidate in model.candidate_models %}
+            <a class="pill" href="{{ candidate.detail_href }}" title="{{ candidate.id }}">{{ candidate.name }}</a>
+            {% endfor %}
+          </div>
+          {% else %}
           <div class="provider-chip-list">
             {% for provider in model.providers %}
             <a class="pill" href="/providers/{{ provider.slug }}" title="{{ provider.slug }}">{{ provider.name }}</a>
             {% endfor %}
           </div>
+          {% endif %}
         </td></tr>
         <tr><th>Endpoints</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
         <tr><th>Modes</th><td>
@@ -49,8 +57,35 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head"><h2>Providers serving this model</h2></div>
+  <div class="panel-head"><h2>{% if model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
   <div class="panel-body">
+    {% if model.is_meta %}
+    <p style="color:var(--muted);font-size:14px">
+      This TrustedRouter model is an orchestration preset. The gateway routes
+      through the component models below inside the attested prompt path, using
+      the preset's worker, advisor, judge, or synthesizer roles.
+    </p>
+    <table data-sortable="true">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Provider</th>
+          <th>Prompt</th>
+          <th>Completion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for candidate in model.candidate_models %}
+        <tr>
+          <td><a href="{{ candidate.detail_href }}">{{ candidate.id }}</a><br><span class="muted-copy">{{ candidate.name }}</span></td>
+          <td>{{ candidate.provider }}</td>
+          <td>{{ candidate.prompt_price }}</td>
+          <td>{{ candidate.completion_price }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
     <p style="color:var(--muted);font-size:14px">
       Sorted by lowest combined prompt and completion price. Use
       <code>"provider": {"sort": "throughput"}</code> in the request body
@@ -91,6 +126,7 @@
     <p class="signup-foot">
       Endpoint JSON: <span class="mono">{{ api_base_url }}/models/{{ model.id }}/endpoints</span>
     </p>
+    {% endif %}
   </div>
 </section>
 {% endblock %}

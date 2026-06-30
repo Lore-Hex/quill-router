@@ -207,6 +207,18 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
         assert f'title="{provider}"' in response.text
 
 
+def test_public_meta_model_detail_renders_orchestration_components(client: TestClient) -> None:
+    response = client.get("/models/trustedrouter/socrates-1.1")
+
+    assert response.status_code == 200
+    assert "TrustedRouter Socrates 1.1" in response.text
+    assert "Models used by this orchestration" in response.text
+    assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
+    assert "trustedrouter/zeus-1.0" in response.text
+    assert "Model not found" not in response.text
+    assert "/models/trustedrouter/socrates-1.1/providers" not in response.text
+
+
 def test_public_model_detail_uses_service_structured_data(client: TestClient) -> None:
     response = client.get("/models/moonshotai/kimi-k2.6")
 
