@@ -217,6 +217,19 @@ class GatewayValidateRequest(_Lenient):
         return self
 
 
+class GatewayResolveCustomModelRequest(_Lenient):
+    api_key_hash: str | None = Field(default=None, min_length=1)
+    api_key_lookup_hash: str | None = Field(default=None, min_length=1)
+    model: str = Field(min_length=1, max_length=256)
+    route_type: str | None = None
+
+    @model_validator(mode="after")
+    def key_identifier_required(self) -> GatewayResolveCustomModelRequest:
+        if not self.api_key_hash and not self.api_key_lookup_hash:
+            raise ValueError("api_key_hash or api_key_lookup_hash is required")
+        return self
+
+
 class ReconcileGenerationActivityRequest(_Strict):
     workspace_id: str = Field(min_length=1)
     date: str | None = None

@@ -41,6 +41,7 @@ from trusted_router.routing import (
 )
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
+    GatewayResolveCustomModelRequest,
     GatewaySettleRequest,
     GatewayValidateRequest,
 )
@@ -79,6 +80,43 @@ def register(router: APIRouter) -> None:
                 "workspace_id": workspace.id,
                 "api_key_hash": api_key.hash,
                 "route_type": body.route_type,
+            }
+        }
+
+    @router.post("/internal/gateway/resolve-custom-model")
+    async def gateway_resolve_custom_model(
+        request: Request,
+        body: GatewayResolveCustomModelRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        require_internal_gateway(request, settings)
+        api_key = _api_key_for_gateway_lookup(
+            api_key_hash=body.api_key_hash,
+            api_key_lookup_hash=body.api_key_lookup_hash,
+        )
+        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        workspace = STORE.get_workspace(api_key.workspace_id)
+        if workspace is None:
+            raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+        assert_workspace_billing_active(workspace)
+        if not is_custom_model_id(body.model):
+            raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
+        custom_model = STORE.get_custom_model(normalize_custom_model_id(body.model))
+        if custom_model is None or not custom_model.enabled:
+            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+        return {
+            "data": {
+                "workspace_id": workspace.id,
+                "api_key_hash": api_key.hash,
+                "route_type": body.route_type,
+                "custom_model": {
+                    "id": custom_model.id,
+                    "name": custom_model.name,
+                    "base_model_id": custom_model.base_model_id,
+                    "hidden_prompt": custom_model.hidden_prompt,
+                    "revision": custom_model.revision,
+                },
             }
         }
 

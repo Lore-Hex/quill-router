@@ -35,14 +35,14 @@
             <code data-base-model-id>{{ default_base.id if default_base else '' }}</code>
           </button>
         </div>
-        <span class="form-hint">Direct chat models and routing aliases are supported. Socrates, Prometheus, Zeus, Selector, and MapReduce are available in the public catalog, but not as hidden-prompt bases until nested orchestration is wired for custom models.</span>
+        <span class="form-hint">Direct chat models, routing aliases, and orchestration models such as Socrates, Prometheus, Zeus, Selector, and MapReduce are supported.</span>
       </label>
       <label>Hidden prompt
         <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}" placeholder="Instructions prepended inside the attested gateway. Callers cannot see this text."></textarea>
       </label>
       <label class="inline-check">
         <input name="enabled" type="checkbox" value="true" checked>
-        Enabled
+        Published
       </label>
       <button class="btn primary" type="submit">Create model</button>
     </form>
@@ -68,7 +68,7 @@
               </div>
             </div>
             <div class="custom-model-actions">
-              {% if model.enabled %}<span class="pill good">enabled</span>{% else %}<span class="pill warn">disabled</span>{% endif %}
+              {% if model.enabled %}<span class="pill good">published</span>{% else %}<span class="pill warn">unpublished</span>{% endif %}
               <a class="btn" href="{{ model.test_url }}">Test</a>
             </div>
           </div>
@@ -97,7 +97,7 @@
             </label>
             <label class="inline-check">
               <input name="enabled" type="checkbox" value="true" {{ 'checked' if model.enabled else '' }}>
-              Enabled
+              Published
             </label>
             <div class="row-actions">
               <button class="btn primary" type="submit">Save</button>

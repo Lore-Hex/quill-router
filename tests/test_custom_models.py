@@ -188,7 +188,18 @@ def test_custom_models_validate_prompt_length_and_base_model(client: TestClient)
             "hidden_prompt": "x",
         },
     )
-    assert orchestration.status_code == 400
+    assert orchestration.status_code == 201, orchestration.text
+
+    synth = client.post(
+        "/v1/custom-models",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={
+            "name": "custom prometheus",
+            "base_model_id": "trustedrouter/prometheus-1.0",
+            "hidden_prompt": "x",
+        },
+    )
+    assert synth.status_code == 201, synth.text
 
     routing_alias = client.post(
         "/v1/custom-models",
@@ -278,6 +289,70 @@ def test_gateway_authorizes_custom_model_against_base_model_and_revision(
     assert replay.status_code == 409
 
 
+def test_gateway_authorizes_custom_model_backed_by_orchestration_alias(
+    client: TestClient,
+) -> None:
+    key = _create_key(client)
+    custom = _create_custom_model(
+        client,
+        name="Private Socrates",
+        base_model_id="trustedrouter/socrates-1.0",
+        hidden_prompt="use the private playbook",
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": custom["id"],
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 10,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["requested_model"] == custom["id"]
+    assert data["model"] == "cerebras/gpt-oss-120b"
+    assert data["custom_model"]["base_model_id"] == "trustedrouter/socrates-1.0"
+    assert data["route_candidates"], data
+
+
+def test_gateway_resolves_custom_model_without_authorizing_outer_hold(
+    client: TestClient,
+) -> None:
+    key = _create_key(client)
+    custom = _create_custom_model(
+        client,
+        name="Private Prometheus",
+        base_model_id="trustedrouter/prometheus-1.0",
+        hidden_prompt="private synthesis policy",
+    )
+
+    resolved = client.post(
+        "/v1/internal/gateway/resolve-custom-model",
+        json={
+            "api_key_hash": key["hash"],
+            "model": custom["id"],
+            "route_type": "chat.completions",
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+    data = resolved.json()["data"]
+    assert data["workspace_id"] == key["workspace_id"]
+    assert data["api_key_hash"] == key["hash"]
+    assert data["route_type"] == "chat.completions"
+    assert data["custom_model"] == {
+        "id": custom["id"],
+        "name": "Private Prometheus",
+        "base_model_id": "trustedrouter/prometheus-1.0",
+        "hidden_prompt": "private synthesis policy",
+        "revision": 1,
+    }
+    assert STORE.get_gateway_authorization_by_idempotency_key(
+        key["workspace_id"], key["hash"], "unused"
+    ) is None
+
+
 def test_gateway_rejects_custom_models_in_fallback_arrays_and_disabled_aliases(
     client: TestClient,
 ) -> None:
@@ -327,6 +402,8 @@ def test_console_custom_models_and_user_chat_locked_model_smoke() -> None:
     assert "/static/model_catalog.js" in page.text
     assert "data-base-model-picker" in page.text
     assert "Socrates, Prometheus, Zeus" in page.text
+    assert "Published" in page.text
+    assert "Enabled" not in page.text
 
     created = client.post(
         "/console/custom-models",

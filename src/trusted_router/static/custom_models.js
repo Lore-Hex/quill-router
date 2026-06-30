@@ -34,17 +34,6 @@
   function baseAllowed(model) {
     if (!model || model.internal_only) return false;
     if (!model.id || model.id.startsWith("trustedrouter/user-")) return false;
-    if (model.id.startsWith("trustedrouter/")) {
-      return [
-        "trustedrouter/auto",
-        "trustedrouter/free",
-        "trustedrouter/cheap",
-        "trustedrouter/fast",
-        "trustedrouter/eu",
-        "trustedrouter/zdr",
-        "trustedrouter/e2e",
-      ].includes(model.id);
-    }
     return model.supports_chat !== false;
   }
 
