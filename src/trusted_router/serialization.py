@@ -11,7 +11,14 @@ from typing import Any
 
 from trusted_router.catalog import PROVIDERS
 from trusted_router.money import microdollars_to_float
-from trusted_router.storage import STORE, ApiKey, ByokProviderConfig, Member, Workspace
+from trusted_router.storage import (
+    STORE,
+    ApiKey,
+    ByokProviderConfig,
+    CustomModel,
+    Member,
+    Workspace,
+)
 
 
 def key_shape(key: ApiKey) -> dict[str, Any]:
@@ -85,6 +92,33 @@ def byok_provider_shape(config: ByokProviderConfig) -> dict[str, Any]:
         "key_hint": config.key_hint,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
+    }
+
+
+def custom_model_owner_shape(model: CustomModel) -> dict[str, Any]:
+    return {
+        "id": model.id,
+        "name": model.name,
+        "base_model_id": model.base_model_id,
+        "hidden_prompt": model.hidden_prompt,
+        "revision": model.revision,
+        "enabled": model.enabled,
+        "owner_user_id": model.owner_user_id,
+        "owner_workspace_id": model.owner_workspace_id,
+        "created_at": model.created_at,
+        "updated_at": model.updated_at,
+    }
+
+
+def custom_model_public_shape(model: CustomModel) -> dict[str, Any]:
+    return {
+        "id": model.id,
+        "name": model.name,
+        "base_model_id": model.base_model_id,
+        "revision": model.revision,
+        "enabled": model.enabled,
+        "created_at": model.created_at,
+        "updated_at": model.updated_at,
     }
 
 

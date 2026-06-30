@@ -19,6 +19,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -221,6 +222,28 @@ class Store(Protocol):
     ) -> ByokProviderConfig | None: ...
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool: ...
 
+    # Custom models -----------------------------------------------------------
+    def create_custom_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        base_model_id: str,
+        hidden_prompt: str,
+        enabled: bool = ...,
+    ) -> CustomModel: ...
+    def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]: ...
+    def get_custom_model(self, model_id: str) -> CustomModel | None: ...
+    def update_custom_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> CustomModel | None: ...
+    def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool: ...
+
     # Broadcast destinations -------------------------------------------------
     def create_broadcast_destination(
         self,
@@ -326,6 +349,8 @@ class Store(Protocol):
         candidate_endpoint_ids: list[str] | None = ...,
         idempotency_key: str | None = ...,
         idempotency_fingerprint: str | None = ...,
+        custom_model_id: str | None = ...,
+        custom_model_revision: int | None = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(
         self, authorization_id: str

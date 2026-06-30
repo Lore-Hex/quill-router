@@ -1154,7 +1154,12 @@ def public_rankings_html(settings: Settings) -> str:
     )
 
 
-def public_chat_html(settings: Settings) -> str:
+def public_chat_html(
+    settings: Settings,
+    *,
+    locked_model_id: str = "",
+    locked_model_label: str = "Custom model",
+) -> str:
     """Render the public chat playground at /chat.
 
     The page itself is auth-free — anyone can load it and explore the
@@ -1166,6 +1171,11 @@ def public_chat_html(settings: Settings) -> str:
 
     See docs (plan file) for the full architecture.
     """
+    storage_key = "tr_chat_state_v1"
+    if locked_model_id:
+        storage_key = "tr_user_chat_state_" + "".join(
+            ch if ch.isalnum() else "_" for ch in locked_model_id.lower()
+        )
     return _env().get_template("public/chat.html").render(
         # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
         # streaming pipe in routes/chat_proxy.py) to forward to
@@ -1187,6 +1197,9 @@ def public_chat_html(settings: Settings) -> str:
         google_enabled=settings.google_oauth_enabled,
         github_enabled=settings.github_oauth_enabled,
         static_version=_static_version(settings),
+        storage_key=storage_key,
+        locked_model_id=locked_model_id,
+        locked_model_label=locked_model_label,
     )
 
 

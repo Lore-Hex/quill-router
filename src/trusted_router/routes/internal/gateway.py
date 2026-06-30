@@ -32,6 +32,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
@@ -51,6 +52,7 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
+from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
 from trusted_router.types import ErrorType, UsageType
 
 
@@ -97,11 +99,27 @@ def register(router: APIRouter) -> None:
         body_dict = body.model_dump(exclude_none=True)
         _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
         requested_model_id = body.model
+        if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
+            raise api_error(
+                400,
+                "Custom models cannot be used with models fallback arrays in v1",
+                ErrorType.BAD_REQUEST,
+            )
+        custom_model = None
+        if is_custom_model_id(requested_model_id):
+            custom_model = STORE.get_custom_model(normalize_custom_model_id(requested_model_id))
+            if custom_model is None or not custom_model.enabled:
+                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+            body_dict["model"] = custom_model.base_model_id
+            body_dict.pop("models", None)
+            body_dict["custom_model_id"] = custom_model.id
+            body_dict["custom_model_revision"] = custom_model.revision
         # Embedding-only models can't go through the chat resolver (it
         # rejects supports_chat=False). Route them to the embeddings
         # resolver so the attested enclave can authorize + bill an
         # embeddings call exactly like a chat one.
-        requested_model = MODELS.get(body.model) if body.model else None
+        route_model_id = str(body_dict.get("model") or body.model)
+        requested_model = MODELS.get(route_model_id) if route_model_id else None
         is_embeddings_request = (
             requested_model is not None
             and requested_model.supports_embeddings
@@ -132,6 +150,8 @@ def register(router: APIRouter) -> None:
         region = choose_region(settings, body.region or None)
 
         input_tokens = body.estimated_input_tokens
+        if custom_model is not None and custom_model.hidden_prompt.strip():
+            input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
         output_tokens = body.output_estimate
         estimate = max(
             _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
@@ -187,6 +207,7 @@ def register(router: APIRouter) -> None:
                 broadcast_destinations=broadcast_destinations,
                 endpoint_candidates=existing_candidates,
                 idempotent_replay=True,
+                custom_model=custom_model,
             )
 
         existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
@@ -249,6 +270,8 @@ def register(router: APIRouter) -> None:
                 candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
                 idempotency_key=request_idempotency_key,
                 idempotency_fingerprint=request_fingerprint,
+                custom_model_id=custom_model.id if custom_model else None,
+                custom_model_revision=custom_model.revision if custom_model else None,
                 expires_at=expires_at,
             )
             if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
@@ -312,6 +335,8 @@ def register(router: APIRouter) -> None:
                 ],
                 idempotency_key=request_idempotency_key,
                 idempotency_fingerprint=request_fingerprint,
+                custom_model_id=custom_model.id if custom_model else None,
+                custom_model_revision=custom_model.revision if custom_model else None,
             )
         byok_config = (
             STORE.get_byok_provider(workspace.id, endpoint.provider)
@@ -340,6 +365,7 @@ def register(router: APIRouter) -> None:
             broadcast_destinations=broadcast_destinations,
             endpoint_candidates=endpoint_candidates,
             idempotent_replay=idempotent_replay,
+            custom_model=custom_model,
         )
 
     @router.post("/internal/gateway/settle")
@@ -454,6 +480,7 @@ def _gateway_authorize_response(
     broadcast_destinations: list[dict[str, Any]],
     endpoint_candidates: list[tuple[Model, ModelEndpoint]],
     idempotent_replay: bool,
+    custom_model: Any | None,
 ) -> dict[str, Any]:
     return {
         "data": {
@@ -476,6 +503,15 @@ def _gateway_authorize_response(
             "regions": region_payload(settings),
             "broadcast_destinations": broadcast_destinations,
             "idempotent_replay": idempotent_replay,
+            "custom_model": None
+            if custom_model is None
+            else {
+                "id": custom_model.id,
+                "name": custom_model.name,
+                "base_model_id": custom_model.base_model_id,
+                "hidden_prompt": custom_model.hidden_prompt,
+                "revision": custom_model.revision,
+            },
             "route_candidates": [
                 _gateway_candidate_payload(
                     candidate_model, candidate_endpoint, workspace_id, region

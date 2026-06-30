@@ -8,6 +8,7 @@ from typing import Any, cast
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
+from trusted_router.storage_custom_models import InMemoryCustomModels
 from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_keys import InMemoryApiKeys
@@ -18,6 +19,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -75,6 +77,7 @@ class InMemoryStore:
         )
         self.synthetic_store = InMemorySyntheticChecks(lock=self._lock)
         self.byok_store = InMemoryByok(lock=self._lock)
+        self.custom_model_store = InMemoryCustomModels(lock=self._lock)
         self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
@@ -96,6 +99,7 @@ class InMemoryStore:
             self.generation_store.reset()
             self.synthetic_store.reset()
             self.byok_store.reset()
+            self.custom_model_store.reset()
             self.broadcast_store.reset()
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
@@ -451,6 +455,47 @@ class InMemoryStore:
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool:
         return self.byok_store.delete(workspace_id, provider)
 
+    def create_custom_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        base_model_id: str,
+        hidden_prompt: str,
+        enabled: bool = True,
+    ) -> CustomModel:
+        return self.custom_model_store.create(
+            owner_user_id=owner_user_id,
+            owner_workspace_id=owner_workspace_id,
+            name=name,
+            base_model_id=base_model_id,
+            hidden_prompt=hidden_prompt,
+            enabled=enabled,
+        )
+
+    def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:
+        return self.custom_model_store.list_for_user(owner_user_id)
+
+    def get_custom_model(self, model_id: str) -> CustomModel | None:
+        return self.custom_model_store.get(model_id)
+
+    def update_custom_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> CustomModel | None:
+        return self.custom_model_store.update(
+            model_id,
+            owner_user_id=owner_user_id,
+            patch=patch,
+        )
+
+    def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        return self.custom_model_store.delete(model_id, owner_user_id=owner_user_id)
+
     def create_broadcast_destination(
         self,
         *,
@@ -649,6 +694,8 @@ class InMemoryStore:
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
         idempotency_fingerprint: str | None = None,
+        custom_model_id: str | None = None,
+        custom_model_revision: int | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -665,6 +712,8 @@ class InMemoryStore:
             candidate_endpoint_ids=candidate_endpoint_ids,
             idempotency_key=idempotency_key,
             idempotency_fingerprint=idempotency_fingerprint,
+            custom_model_id=custom_model_id,
+            custom_model_revision=custom_model_revision,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:

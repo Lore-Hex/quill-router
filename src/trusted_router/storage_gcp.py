@@ -14,6 +14,7 @@ from trusted_router.storage import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
     GatewayAuthorization,
@@ -49,6 +50,7 @@ from trusted_router.storage_gcp_codec import (
 )
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
+from trusted_router.storage_gcp_custom_models import SpannerCustomModels
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
@@ -111,15 +113,11 @@ class SpannerBigtableStore:
                 "TR_STORAGE_BACKEND=spanner-bigtable"
             ) from exc
 
-        # Cross-cloud credential bootstrap. On GCP (Cloud Run / GCE) the
-        # default ADC chain finds the runtime SA automatically and
-        # `credentials=None` is correct. On AWS ECS Fargate (Stage 4D
-        # control plane), there's no metadata service the GCP SDK can
-        # use, so we feed it a service-account key JSON via env. The
-        # AWS task definition mounts the key from Secrets Manager into
-        # `GCP_SERVICE_ACCOUNT_KEY_JSON`; we parse it once and pass to
-        # both Spanner and Bigtable clients explicitly. Same SA the
-        # Nitro enclave uses for cross-cloud Spanner reads.
+        # GCP credential bootstrap. On GCP (Cloud Run / GCE) the default ADC
+        # chain finds the runtime SA automatically and `credentials=None` is
+        # correct. Local tests or one-off admin jobs may still provide
+        # `GCP_SERVICE_ACCOUNT_KEY_JSON`; we parse it once and pass it to both
+        # Spanner and Bigtable clients explicitly.
         credentials = None
         sa_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY_JSON", "").strip()
         if sa_json:
@@ -210,6 +208,7 @@ class SpannerBigtableStore:
             add_usage_to_key=self.api_keys.add_usage,
         )
         self.byok_store = SpannerByok(io)
+        self.custom_model_store = SpannerCustomModels(io)
         self.broadcast_store = SpannerBroadcastDestinations(io)
         self.auth_session_store = SpannerAuthSessions(io)
         self.oauth_code_store = SpannerOAuthCodes(io)
@@ -608,6 +607,47 @@ class SpannerBigtableStore:
     def delete_byok_provider(self, workspace_id: str, provider: str) -> bool:
         return self.byok_store.delete(workspace_id, provider)
 
+    def create_custom_model(
+        self,
+        *,
+        owner_user_id: str,
+        owner_workspace_id: str,
+        name: str,
+        base_model_id: str,
+        hidden_prompt: str,
+        enabled: bool = True,
+    ) -> CustomModel:
+        return self.custom_model_store.create(
+            owner_user_id=owner_user_id,
+            owner_workspace_id=owner_workspace_id,
+            name=name,
+            base_model_id=base_model_id,
+            hidden_prompt=hidden_prompt,
+            enabled=enabled,
+        )
+
+    def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:
+        return self.custom_model_store.list_for_user(owner_user_id)
+
+    def get_custom_model(self, model_id: str) -> CustomModel | None:
+        return self.custom_model_store.get(model_id)
+
+    def update_custom_model(
+        self,
+        model_id: str,
+        *,
+        owner_user_id: str,
+        patch: dict[str, Any],
+    ) -> CustomModel | None:
+        return self.custom_model_store.update(
+            model_id,
+            owner_user_id=owner_user_id,
+            patch=patch,
+        )
+
+    def delete_custom_model(self, model_id: str, *, owner_user_id: str) -> bool:
+        return self.custom_model_store.delete(model_id, owner_user_id=owner_user_id)
+
     def create_broadcast_destination(
         self,
         *,
@@ -815,6 +855,8 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
         idempotency_fingerprint: str | None = None,
+        custom_model_id: str | None = None,
+        custom_model_revision: int | None = None,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -831,6 +873,8 @@ class SpannerBigtableStore:
             candidate_endpoint_ids=candidate_endpoint_ids,
             idempotency_key=idempotency_key,
             idempotency_fingerprint=idempotency_fingerprint,
+            custom_model_id=custom_model_id,
+            custom_model_revision=custom_model_revision,
         )
 
     def get_gateway_authorization(
@@ -1012,7 +1056,9 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
-        expires_at: Any,
+        custom_model_id: str | None = None,
+        custom_model_revision: int | None = None,
+        expires_at: Any = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
@@ -1047,6 +1093,8 @@ class SpannerBigtableStore:
                 candidate_endpoint_ids=list(candidate_endpoint_ids or []),
                 idempotency_key=idempotency_key,
                 idempotency_fingerprint=idempotency_fingerprint,
+                custom_model_id=custom_model_id,
+                custom_model_revision=custom_model_revision,
             )
             return _json_body(auth)
 

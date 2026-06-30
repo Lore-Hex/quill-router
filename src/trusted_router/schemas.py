@@ -150,6 +150,20 @@ class BroadcastDestinationPatchRequest(_Strict):
     api_key: str | None = None
 
 
+class CustomModelCreateRequest(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    base_model_id: str = Field(min_length=1, max_length=256)
+    hidden_prompt: str = Field(min_length=0, max_length=262_144)
+    enabled: bool = True
+
+
+class CustomModelPatchRequest(_Strict):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_model_id: str | None = Field(default=None, min_length=1, max_length=256)
+    hidden_prompt: str | None = Field(default=None, min_length=0, max_length=262_144)
+    enabled: bool | None = None
+
+
 class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
@@ -183,12 +197,9 @@ class GatewayAuthorizeRequest(_Lenient):
 
 
 class GatewayFetchImageRequest(_Lenient):
-    # AWS Nitro enclaves have no DNS/network stack of their own, so when a
-    # caller references an image by URL the enclave proxies the fetch
-    # through this endpoint. The control plane resolves DNS, rejects
-    # private/loopback IPs (the same SSRF check the GCP-direct enclave
-    # variant does locally in llm/multimodal_direct.go), and returns
-    # the bytes as base64 to be re-embedded inline by the enclave.
+    # Some gateway paths proxy image URL fetches through the control plane.
+    # The control plane resolves DNS, rejects private/loopback IPs, and
+    # returns the bytes as base64 to be re-embedded inline by the gateway.
     url: str = Field(min_length=1)
 
 

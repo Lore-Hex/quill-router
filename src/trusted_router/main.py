@@ -31,6 +31,7 @@ from trusted_router.routes.catalog import register_catalog_routes
 from trusted_router.routes.chat_proxy import register_chat_proxy_routes
 from trusted_router.routes.compat import register_compat_stub_routes
 from trusted_router.routes.console import register_console_routes
+from trusted_router.routes.custom_models import register_custom_model_routes
 from trusted_router.routes.email_verify import register_email_verify_routes
 from trusted_router.routes.inference import register_inference_routes
 from trusted_router.routes.internal import register_internal_routes
@@ -141,6 +142,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
     register_byok_routes(router)
     register_billing_routes(router)
     register_broadcast_routes(router)
+    register_custom_model_routes(router)
     register_key_routes(router)
     register_oauth_key_routes(router)
     register_activity_routes(router)

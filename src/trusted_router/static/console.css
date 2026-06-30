@@ -244,6 +244,58 @@ body.console {
   margin: 0;
 }
 
+.custom-model-list {
+  display: grid;
+  gap: 16px;
+}
+
+.custom-model-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.custom-model-card-head,
+.custom-model-actions,
+.row-actions,
+.inline-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.inline-check input[type="checkbox"] {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--blue);
+}
+
+.custom-model-card-head {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.custom-model-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.custom-model-card textarea {
+  min-height: 160px;
+}
+
+.row-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 800px) {
   .console-shell {
     grid-template-columns: 1fr;

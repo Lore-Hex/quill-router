@@ -1,0 +1,89 @@
+{% extends "console/_layout.html" %}
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Create custom model</h2>
+    <span class="pill">{{ models|length }} / {{ limit }}</span>
+  </div>
+  <div class="panel-body">
+    <form class="form" method="post" action="/console/custom-models">
+      <label>Name
+        <input name="name" required maxlength="120" placeholder="Legal reviewer">
+      </label>
+      <label>Base model
+        <select name="base_model_id" required>
+          {% for base in base_models %}
+          <option value="{{ base.id }}">{{ base.name }} — {{ base.id }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Hidden prompt
+        <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}" placeholder="Instructions prepended inside the attested gateway. Callers cannot see this text."></textarea>
+      </label>
+      <label class="inline-check">
+        <input name="enabled" type="checkbox" value="true" checked>
+        Enabled
+      </label>
+      <button class="btn primary" type="submit">Create model</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Your custom models</h2>
+    <span class="pill">{{ models|length }} saved</span>
+  </div>
+  <div class="panel-body">
+    {% if models %}
+      <div class="custom-model-list">
+        {% for model in models %}
+        <article class="custom-model-card" data-copy-secret-scope>
+          <div class="custom-model-card-head">
+            <div>
+              <h3>{{ model.name }}</h3>
+              <div class="secret-row">
+                <code id="custom-model-{{ loop.index }}">{{ model.id }}</code>
+                <button class="btn secret-copy-btn" type="button" data-copy-secret="custom-model-{{ loop.index }}">Copy</button>
+              </div>
+            </div>
+            <div class="custom-model-actions">
+              {% if model.enabled %}<span class="pill good">enabled</span>{% else %}<span class="pill warn">disabled</span>{% endif %}
+              <a class="btn" href="{{ model.test_url }}">Test</a>
+            </div>
+          </div>
+          <form class="form" method="post" action="/console/custom-models/{{ model.id }}">
+            <label>Name
+              <input name="name" required maxlength="120" value="{{ model.name }}">
+            </label>
+            <label>Base model
+              <select name="base_model_id" required>
+                {% for base in base_models %}
+                <option value="{{ base.id }}" {{ 'selected' if base.id == model.base_model_id else '' }}>{{ base.name }} — {{ base.id }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Hidden prompt
+              <textarea name="hidden_prompt" rows="8" maxlength="{{ prompt_limit }}">{{ model.hidden_prompt }}</textarea>
+            </label>
+            <label class="inline-check">
+              <input name="enabled" type="checkbox" value="true" {{ 'checked' if model.enabled else '' }}>
+              Enabled
+            </label>
+            <div class="row-actions">
+              <button class="btn primary" type="submit">Save</button>
+              <span class="muted">Base: <code>{{ model.base_model_id }}</code> · revision {{ model.revision }}</span>
+            </div>
+          </form>
+          <form method="post" action="/console/custom-models/{{ model.id }}/delete">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">No custom models yet. Create one above.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

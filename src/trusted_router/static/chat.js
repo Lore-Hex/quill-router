@@ -25,28 +25,31 @@
 
 (function () {
     // ── Constants ─────────────────────────────────────────────────────
-    const STORAGE_KEY = "tr_chat_state_v1";
+    const CHAT_CONFIG = window.__TR_CHAT__ || {};
+    const LOCKED_MODEL_ID = (CHAT_CONFIG.lockedModelId || "").trim();
+    const LOCKED_MODEL_LABEL = (CHAT_CONFIG.lockedModelLabel || "Custom model").trim();
+    const STORAGE_KEY = CHAT_CONFIG.storageKey || "tr_chat_state_v1";
     const KEY_SESSION_STORAGE = "tr_chat_key";
     const KEY_COOKIE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.keyCookieName) || "tr_chat_key";
+        CHAT_CONFIG.keyCookieName || "tr_chat_key";
     // Inference endpoints (chat/completions, messages, responses) go
     // through the same-origin chat-proxy because direct cross-origin
     // fetch to api.trustedrouter.com is CORS-blocked by the attested
     // gateway. Server-side template renders this as "/chat-proxy/v1".
     const API_BASE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.apiBaseUrl) ||
+        CHAT_CONFIG.apiBaseUrl ||
         "/chat-proxy/v1";
     // Public catalog endpoint — TR control plane serves /v1/models
     // anonymously, so the picker can load without any browser key /
     // proxy hop. Avoids hitting the attested gateway's 401 for an
     // unauthenticated catalog list.
     const CATALOG_BASE =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.catalogBaseUrl) ||
+        CHAT_CONFIG.catalogBaseUrl ||
         "/v1";
     const ISSUE_KEY_PATH =
-        (window.__TR_CHAT__ && window.__TR_CHAT__.issueKeyPath) ||
+        CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";
-    const DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6";
+    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || "anthropic/claude-sonnet-4.6";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
 
     // Curated "Popular" list surfaced at the top of the picker when the
@@ -358,6 +361,16 @@
                 // extension with provider-specific context.
                 MODELS = data.map((m) => normalizeModel(m));
             }
+            if (LOCKED_MODEL_ID && !MODELS.some((m) => m.id === LOCKED_MODEL_ID)) {
+                MODELS.push({
+                    id: LOCKED_MODEL_ID,
+                    name: LOCKED_MODEL_LABEL || LOCKED_MODEL_ID,
+                    provider: "trustedrouter",
+                    capabilities: [],
+                    free: false,
+                    internal_only: false,
+                });
+            }
             renderModelPicker();
         } catch (e) {
             console.warn("chat: model catalog load failed:", e);
@@ -464,7 +477,7 @@
     function newChat() {
         const chat = {
             id: newChatId(),
-            title: "New chat",
+            title: LOCKED_MODEL_ID ? LOCKED_MODEL_LABEL : "New chat",
             created_at: isoNow(),
             updated_at: isoNow(),
             models: [
@@ -692,12 +705,21 @@
         if (!bar) return;
         bar.innerHTML = "";
         const chat = ensureActiveChat();
+        if (LOCKED_MODEL_ID) {
+            chat.models = [{
+                model_id: LOCKED_MODEL_ID,
+                system_prompt: "",
+                params: chat.models[0] ? { ...DEFAULT_PARAMS, ...chat.models[0].params } : { ...DEFAULT_PARAMS },
+                enabled: true,
+                label: LOCKED_MODEL_LABEL,
+            }];
+        }
 
         chat.models.forEach((slot, idx) => {
             bar.appendChild(makeModelPill(chat, slot, idx));
         });
 
-        if (chat.models.length < MAX_MODELS_PER_CHAT) {
+        if (!LOCKED_MODEL_ID && chat.models.length < MAX_MODELS_PER_CHAT) {
             const addBtn = document.createElement("button");
             addBtn.type = "button";
             addBtn.className = "chat-model-add";
@@ -751,7 +773,8 @@
         const pill = document.createElement("button");
         pill.type = "button";
         pill.className = "chat-model-pill";
-        pill.dataset.action = "toggle-model-dropdown";
+        if (LOCKED_MODEL_ID) pill.title = LOCKED_MODEL_ID;
+        if (!LOCKED_MODEL_ID) pill.dataset.action = "toggle-model-dropdown";
         pill.dataset.slotIdx = String(idx);
         const label =
             slot.label ||
@@ -777,23 +800,25 @@
             (chat.models.length > 1
                 ? '<span class="chat-model-pill-num">#' + (idx + 1) + "</span>"
                 : "") +
-            '<span class="chat-model-pill-caret">▾</span>';
+            (LOCKED_MODEL_ID ? "" : '<span class="chat-model-pill-caret">▾</span>');
         wrap.appendChild(pill);
         // Inline × close button — OR-style one-click model removal.
         // Visible on hover; on mobile (no hover) it's always visible.
         // For the LAST model the action becomes "reset to default"
         // rather than "remove" so the user is never stuck with zero.
-        const closer = document.createElement("button");
-        closer.type = "button";
-        closer.className = "chat-model-pill-close";
-        closer.dataset.action = "remove-model";
-        closer.dataset.slotIdx = String(idx);
-        closer.title = chat.models.length > 1
-            ? "Remove this model from the chat"
-            : "Reset to default model";
-        closer.setAttribute("aria-label", closer.title);
-        closer.innerHTML = "×";
-        wrap.appendChild(closer);
+        if (!LOCKED_MODEL_ID) {
+            const closer = document.createElement("button");
+            closer.type = "button";
+            closer.className = "chat-model-pill-close";
+            closer.dataset.action = "remove-model";
+            closer.dataset.slotIdx = String(idx);
+            closer.title = chat.models.length > 1
+                ? "Remove this model from the chat"
+                : "Reset to default model";
+            closer.setAttribute("aria-label", closer.title);
+            closer.innerHTML = "×";
+            wrap.appendChild(closer);
+        }
         if (openDropdownSlotIdx === idx) {
             wrap.appendChild(makeModelDropdown(chat, slot, idx));
         }
@@ -988,6 +1013,7 @@
     }
 
     function addModel() {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length >= MAX_MODELS_PER_CHAT) return;
         chat.models.push({
@@ -1006,6 +1032,7 @@
     }
 
     function duplicateModel(idx) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const src = chat.models[idx];
         if (!src || chat.models.length >= MAX_MODELS_PER_CHAT) return;
@@ -1022,6 +1049,7 @@
     }
 
     function removeModel(idx) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         if (chat.models.length > 1) {
             chat.models.splice(idx, 1);
@@ -1142,16 +1170,7 @@
         // showing it after the user gets the hang of things.
         const welcomeBanner = STATE.preferences.welcome_dismissed
             ? ""
-            : '<div class="chat-welcome">' +
-              '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
-              '<div class="chat-welcome-eyebrow">Welcome</div>' +
-              '<h3>Compare models side-by-side</h3>' +
-              '<ol>' +
-              '<li>Pick a model in the header, type a prompt.</li>' +
-              '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
-              '<li>Sign in only when you press Send — nothing fires until then.</li>' +
-              "</ol>" +
-              "</div>";
+            : lockedWelcomeBanner();
         const grid = pickedSuggestions()
             .map(
                 (p) =>
@@ -1166,10 +1185,16 @@
                     "</span></button>",
             )
             .join("");
+        const heading = LOCKED_MODEL_ID
+            ? "Chat with this custom model."
+            : "Try any model — zero tokens until you sign in.";
+        const body = LOCKED_MODEL_ID
+            ? "The hidden prompt is prepended inside the attested gateway. Callers only need the model ID."
+            : "Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.";
         empty.innerHTML =
             welcomeBanner +
-            '<h2>Try any model — zero tokens until you sign in.</h2>' +
-            '<p>Pick a model above, type a prompt, hit Send. Compare up to 4 models side-by-side.</p>' +
+            "<h2>" + escapeHtml(heading) + "</h2>" +
+            "<p>" + escapeHtml(body) + "</p>" +
             '<div class="chat-suggest-grid">' + grid + "</div>";
         empty.addEventListener("click", (e) => {
             const closer = e.target && e.target.closest
@@ -1192,6 +1217,31 @@
             }
         });
         thread.appendChild(empty);
+    }
+
+    function lockedWelcomeBanner() {
+        if (!LOCKED_MODEL_ID) {
+            return '<div class="chat-welcome">' +
+                '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
+                '<div class="chat-welcome-eyebrow">Welcome</div>' +
+                '<h3>Compare models side-by-side</h3>' +
+                '<ol>' +
+                '<li>Pick a model in the header, type a prompt.</li>' +
+                '<li>Hit <kbd>+ Add model</kbd> to add up to 3 more. Each one streams its response in its own column.</li>' +
+                '<li>Sign in only when you press Send — nothing fires until then.</li>' +
+                "</ol>" +
+                "</div>";
+        }
+        return '<div class="chat-welcome">' +
+            '<button class="chat-welcome-close" data-action="dismiss-welcome" aria-label="Dismiss">×</button>' +
+            '<div class="chat-welcome-eyebrow">Custom model</div>' +
+            "<h3>" + escapeHtml(LOCKED_MODEL_LABEL) + "</h3>" +
+            '<ol>' +
+            "<li>Locked to <code>" + escapeHtml(LOCKED_MODEL_ID) + "</code>.</li>" +
+            "<li>Type a prompt and press Send. Nothing fires until then.</li>" +
+            '<li>Edit the hidden prompt from <a href="/console/custom-models">Custom Models</a>.</li>' +
+            "</ol>" +
+            "</div>";
     }
 
     function renderThread() {
@@ -2287,6 +2337,7 @@
     let pickerTargetSlot = 0;
 
     function selectModel(modelId) {
+        if (LOCKED_MODEL_ID) return;
         const chat = ensureActiveChat();
         const slot = chat.models[pickerTargetSlot] || chat.models[0];
         if (slot) slot.model_id = modelId;
@@ -2307,6 +2358,7 @@
     }
 
     function openModelPicker(slotIdx) {
+        if (LOCKED_MODEL_ID) return;
         pickerTargetSlot = typeof slotIdx === "number" ? slotIdx : 0;
         if (pickerEl) return;
         pickerEl = document.createElement("div");

@@ -131,6 +131,20 @@ class ByokProviderConfig:
 
 
 @dataclass
+class CustomModel:
+    id: str
+    owner_user_id: str
+    owner_workspace_id: str
+    name: str
+    base_model_id: str
+    hidden_prompt: str
+    revision: int = 1
+    enabled: bool = True
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+
+@dataclass
 class BroadcastDestination:
     id: str
     workspace_id: str
@@ -229,6 +243,8 @@ class GatewayAuthorization:
     candidate_endpoint_ids: list[str] = field(default_factory=list)
     idempotency_key: str | None = None
     idempotency_fingerprint: str | None = None
+    custom_model_id: str | None = None
+    custom_model_revision: int | None = None
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field

@@ -320,6 +320,8 @@ class InMemoryApiKeys:
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
         idempotency_fingerprint: str | None = None,
+        custom_model_id: str | None = None,
+        custom_model_revision: int | None = None,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -346,6 +348,8 @@ class InMemoryApiKeys:
                 candidate_endpoint_ids=list(candidate_endpoint_ids or []),
                 idempotency_key=idempotency_key,
                 idempotency_fingerprint=idempotency_fingerprint,
+                custom_model_id=custom_model_id,
+                custom_model_revision=custom_model_revision,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:

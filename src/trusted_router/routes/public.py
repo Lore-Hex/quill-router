@@ -73,6 +73,7 @@ from trusted_router.dashboard import (
 )
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.storage import STORE
+from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_models import utcnow
 from trusted_router.synthetic.leaderboard import aggregate_leaderboard
 from trusted_router.synthetic.status import history_payload, status_snapshot
@@ -613,6 +614,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/chat")
     async def chat() -> str:
         return public_chat_html(settings)
+
+    @public_html_route("/user-chat")
+    async def user_chat(model: str = Query(..., min_length=1)) -> str:
+        locked_model_id = normalize_custom_model_id(model)
+        return public_chat_html(
+            settings,
+            locked_model_id=locked_model_id,
+            locked_model_label="Custom model",
+        )
 
     @public_html_route("/synth")
     async def synth() -> str:
