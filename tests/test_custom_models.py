@@ -289,6 +289,56 @@ def test_gateway_authorizes_custom_model_against_base_model_and_revision(
     assert replay.status_code == 409
 
 
+def test_gateway_custom_models_are_credits_only_even_when_base_supports_byok(
+    client: TestClient,
+) -> None:
+    key = _create_key(client)
+    byok = client.put(
+        "/v1/byok/providers/anthropic",
+        headers={"x-trustedrouter-user": "alice@example.com"},
+        json={"secret_ref": "env://ANTHROPIC_USER_KEY", "key_hint": "****user"},
+    )
+    assert byok.status_code == 201, byok.text
+    custom = _create_custom_model(
+        client,
+        base_model_id="anthropic/claude-sonnet-4.6",
+        hidden_prompt="hidden billing prompt",
+    )
+
+    byok_forced = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": custom["id"],
+            "provider": {"usage": "byok"},
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 10,
+        },
+    )
+    assert byok_forced.status_code == 400
+    assert byok_forced.json()["error"]["message"] == (
+        "Custom models do not support BYOK routes"
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": custom["id"],
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 10,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["usage_type"] == "Credits"
+    assert data["limit_usage_type"] == "Credits"
+    assert data["byok_secret_ref"] is None
+    assert data["route_candidates"]
+    assert {candidate["usage_type"] for candidate in data["route_candidates"]} == {"Credits"}
+    assert all(candidate["byok_secret_ref"] is None for candidate in data["route_candidates"])
+
+
 def test_gateway_authorizes_custom_model_backed_by_orchestration_alias(
     client: TestClient,
 ) -> None:

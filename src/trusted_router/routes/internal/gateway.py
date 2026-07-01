@@ -38,6 +38,7 @@ from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     chat_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
+    provider_route_preferences,
 )
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
@@ -152,6 +153,7 @@ def register(router: APIRouter) -> None:
             body_dict.pop("models", None)
             body_dict["custom_model_id"] = custom_model.id
             body_dict["custom_model_revision"] = custom_model.revision
+            _force_custom_model_credit_routes(body_dict)
         # Embedding-only models can't go through the chat resolver (it
         # rejects supports_chat=False). Route them to the embeddings
         # resolver so the attested enclave can authorize + bill an
@@ -598,6 +600,21 @@ def _requests_monitor_model(body: dict[str, Any]) -> bool:
     if isinstance(models, list):
         return any(str(model).strip() == MONITOR_MODEL_ID for model in models)
     return False
+
+
+def _force_custom_model_credit_routes(body: dict[str, Any]) -> None:
+    prefs = provider_route_preferences(body)
+    if prefs.usage_type == UsageType.BYOK:
+        raise api_error(
+            400,
+            "Custom models do not support BYOK routes",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    provider = body.get("provider")
+    if isinstance(provider, dict):
+        body["provider"] = {**provider, "usage": "credits"}
+    else:
+        body["provider"] = {"usage": "credits"}
 
 
 def _settle_gateway_authorization(
