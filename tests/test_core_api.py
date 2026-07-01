@@ -651,6 +651,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/prometheus-1.0",
         "trustedrouter/prometheus-1.0-1m",
         "trustedrouter/zeus-1.0",
+        "trustedrouter/zeus-1.0-mini",
         "trustedrouter/iris-code",
         "trustedrouter/prometheus-code",
         "trustedrouter/zeus-code",
@@ -686,12 +687,24 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         == prometheus_code_meta["auto_candidates"]
     )
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
-    assert zeus_meta["auto_candidates"][:2] == [
+    assert zeus_meta["auto_candidates"] == [
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
+        "google/gemini-3.1-pro-preview",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro",
     ]
     assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"] == zeus_meta[
         "auto_candidates"
+    ]
+    assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
+        "google/gemini-3.5-flash",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro",
     ]
     aristotle_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
     assert aristotle_meta["route_kind"] == "advisor_orchestration"

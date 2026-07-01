@@ -914,6 +914,7 @@ IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
 PROMETHEUS_1_0_1M_MODEL_ID = "trustedrouter/prometheus-1.0-1m"
 ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
+ZEUS_1_0_MINI_MODEL_ID = "trustedrouter/zeus-1.0-mini"
 # Code-tuned synth variant: same panel/synthesizers as synth, but judged by
 # kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
 # enclave, cmd/enclave/fusion.go).
@@ -966,6 +967,7 @@ META_MODEL_IDS = frozenset(
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
+        ZEUS_1_0_MINI_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,
@@ -1042,9 +1044,18 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
 SYNTH_FRONTIER_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
-    "anthropic/claude-sonnet-4.6",
     "google/gemini-3.1-pro-preview",
-    "moonshotai/kimi-k2.6",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2",
+    "xiaomi/mimo-v2.5-pro",
+    "deepseek/deepseek-v4-pro",
+)
+SYNTH_FRONTIER_MINI_MODEL_ORDER = (
+    "google/gemini-3.5-flash",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2",
+    "xiaomi/mimo-v2.5-pro",
+    "deepseek/deepseek-v4-pro",
 )
 SYNTH_CODE_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
@@ -1162,8 +1173,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ATHENA_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
-        "moonshotai/kimi-k2.7-code",
-        PROMETHEUS_1_0_1M_MODEL_ID,
+        ZEUS_1_0_MINI_MODEL_ID,
     ),
 }
 
@@ -1489,6 +1499,15 @@ MODELS: dict[str, Model] = {
     ZEUS_1_0_MODEL_ID: Model(
         id=ZEUS_1_0_MODEL_ID,
         name="TrustedRouter Zeus 1.0",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    ZEUS_1_0_MINI_MODEL_ID: Model(
+        id=ZEUS_1_0_MINI_MODEL_ID,
+        name="TrustedRouter Zeus 1.0 Mini",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2811,6 +2830,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
+    if model_id == ZEUS_1_0_MINI_MODEL_ID:
+        return _models_for_ids(SYNTH_FRONTIER_MINI_MODEL_ORDER)
     if model_id == OPEN_PATCHER_S1_MODEL_ID:
         return _models_for_ids((
             "moonshotai/kimi-k2.7-code",
@@ -2858,6 +2879,7 @@ def _meta_route_kind(model_id: str) -> str:
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
+        ZEUS_1_0_MINI_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
         IRIS_CODE_MODEL_ID,
         PROMETHEUS_CODE_MODEL_ID,

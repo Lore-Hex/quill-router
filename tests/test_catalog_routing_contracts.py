@@ -39,6 +39,7 @@ from trusted_router.catalog import (
     SOCRATES_PRO_PLUS_MODEL_ID,
     SYNTH_MODEL_ID,
     ZDR_MODEL_ID,
+    ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_MODEL_ID,
     auto_candidate_models,
@@ -493,17 +494,21 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "deepseek/deepseek-v4-flash",
             "anthropic/claude-opus-4.8",
             "openai/gpt-5.5",
-            "anthropic/claude-sonnet-4.6",
             "google/gemini-3.1-pro-preview",
-            "moonshotai/kimi-k2.6",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2",
+            "xiaomi/mimo-v2.5-pro",
+            "deepseek/deepseek-v4-pro",
         ],
         ARISTOTLE_MODEL_ID: [
             "deepseek/deepseek-v4-flash",
             "anthropic/claude-opus-4.8",
             "openai/gpt-5.5",
-            "anthropic/claude-sonnet-4.6",
             "google/gemini-3.1-pro-preview",
-            "moonshotai/kimi-k2.6",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2",
+            "xiaomi/mimo-v2.5-pro",
+            "deepseek/deepseek-v4-pro",
         ],
         PLATO_1_0_MODEL_ID: [
             "deepseek/deepseek-v4-flash",
@@ -593,10 +598,28 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
     assert [model.id for model in meta_candidate_models(ATHENA_MODEL_ID)] == [
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
-        "moonshotai/kimi-k2.7-code",
-        "trustedrouter/prometheus-1.0-1m",
+        "trustedrouter/zeus-1.0-mini",
     ]
     assert shape["trustedrouter"]["open_weights"] is False
+
+
+def test_zeus_1_0_and_mini_have_expected_panels() -> None:
+    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == [
+        "anthropic/claude-opus-4.8",
+        "openai/gpt-5.5",
+        "google/gemini-3.1-pro-preview",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro",
+    ]
+    assert [model.id for model in meta_candidate_models(ZEUS_1_0_MINI_MODEL_ID)] == [
+        "google/gemini-3.5-flash",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2",
+        "xiaomi/mimo-v2.5-pro",
+        "deepseek/deepseek-v4-pro",
+    ]
 
 
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:
