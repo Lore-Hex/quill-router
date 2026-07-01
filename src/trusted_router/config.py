@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # axiom-py / axiom-cli conventions; dataset is plain config so it
     # can be overridden per environment (e.g. `staging-trusted-router`).
     # Empty token at startup → handler is not registered (graceful no-op).
-    axiom_dataset: str = "trusted-router"
+    axiom_dataset: str = "trusted-router-logs"
     axiom_url: str = "https://api.axiom.co"
     # Levels at and above this go to Axiom. INFO captures rate-limit
     # decisions, structured business events, and the Bigtable swallowed-

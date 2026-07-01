@@ -103,8 +103,8 @@ ENV_VARS=(
   # Axiom log shipping. Token comes from Secret Manager via the
   # add_secret_env_if_exists block above; dataset name is plain config.
   # Empty AXIOM_API_TOKEN at runtime → handler is not registered (graceful no-op).
-  "AXIOM_DATASET=trusted-router"
-  "AXIOM_URL=https://api.axiom.co"
+  "TR_AXIOM_DATASET=trusted-router-logs"
+  "TR_AXIOM_URL=https://api.axiom.co"
   # Billing typed-counter migration cutover, step 2 (docs/design/
   # billing-typed-counters.md): dual-write the hot credit/api_key counters to
   # the typed Spanner tables. Enforcement stays on the JSON path; this only
