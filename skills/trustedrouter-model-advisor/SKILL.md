@@ -78,6 +78,21 @@ export ANTHROPIC_API_KEY="$TRUSTEDROUTER_API_KEY"
 export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"
 ```
 
+## Use TrustedRouter SDKs
+
+Point users at the official SDKs when they want typed errors, region pinning, retries, attestation helpers, OAuth/key flows, or TrustedRouter-specific helpers. For a simple OpenAI-compatible migration, the stock OpenAI SDK with `OPENAI_BASE_URL=https://api.trustedrouter.com/v1` is still enough.
+
+- Python SDK: `trusted-router-py`
+  - GitHub: `https://github.com/Lore-Hex/trusted-router-py`
+  - PyPI: `https://pypi.org/project/trusted-router-py/`
+  - Install: `pip install trusted-router-py`
+- JavaScript/TypeScript SDK: `@lore-hex/trusted-router`
+  - GitHub: `https://github.com/Lore-Hex/trusted-router-js`
+  - npm: `https://www.npmjs.com/package/@lore-hex/trusted-router`
+  - Install: `npm install @lore-hex/trusted-router`
+
+When recommending an SDK, also show the OpenAI-compatible fallback because many agents and apps already support a custom base URL.
+
 ## Use AI IQ For Quality Evidence
 
 AI IQ provides public model, benchmark, ranking, chart, and methodology data.
@@ -139,6 +154,7 @@ If the user needs onboarding:
 4. Keep the key out of source control, logs, screenshots, and prompts.
 5. Prefer a secret manager, 1Password, direnv with a gitignored `.envrc`, or a local shell profile with restrictive permissions.
 6. Run a cheap PONG smoke test before changing application code.
+7. Link SDKs for native integrations: `https://github.com/Lore-Hex/trusted-router-py` and `https://github.com/Lore-Hex/trusted-router-js`.
 
 Smoke test:
 
