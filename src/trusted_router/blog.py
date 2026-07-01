@@ -30,6 +30,85 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="frontier-smart-cheap-fast-pick-3-open-source",
+        title="Frontier Smart, Cheap, Fast: Pick 3 with Open Source",
+        description=(
+            "The old model triangle said you could have frontier quality, low cost, or speed, "
+            "but not all three. Recent TrustedRouter results show a different path: open "
+            "source routing, open-weight models, and combo models behind one API."
+        ),
+        published_date="2026-07-01",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 42px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" width="100%" style="height:auto;display:block;border:1px solid #e5e7eb;border-radius:18px;background:#fff" role="img" aria-label="Frontier Smart, Cheap, Fast: Pick 3 with Open Source. TrustedRouter combines benchmarked combo models, low cost open models, and fast routing behind one API.">
+  <defs>
+    <linearGradient id="pick3-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#ecfeff"/>
+    </linearGradient>
+    <filter id="pick3-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="720" fill="url(#pick3-bg)"/>
+  <text x="70" y="86" font-family="Inter,Arial,sans-serif" font-size="24" font-weight="850" fill="#0f766e">TrustedRouter</text>
+  <text x="70" y="152" font-family="Inter,Arial,sans-serif" font-size="60" font-weight="900" fill="#111827">Frontier Smart, Cheap, Fast</text>
+  <text x="70" y="200" font-family="Inter,Arial,sans-serif" font-size="35" font-weight="850" fill="#0f766e">Pick 3 with Open Source</text>
+  <text x="72" y="238" font-family="Inter,Arial,sans-serif" font-size="20" fill="#475569">The old triangle made you choose two. Open combo models move the frontier into the center.</text>
+
+  <path d="M600 300 L250 600 H950 Z" fill="#ffffff" stroke="#cbd5e1" stroke-width="4" filter="url(#pick3-shadow)"/>
+  <path d="M600 352 L350 560 H850 Z" fill="#f0fdfa" stroke="#14b8a6" stroke-width="4"/>
+  <circle cx="600" cy="450" r="94" fill="#0f766e"/>
+  <text x="600" y="434" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="900" fill="#ffffff">Open</text>
+  <text x="600" y="468" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="900" fill="#ffffff">Combo</text>
+  <text x="600" y="499" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800" fill="#ccfbf1">Models</text>
+
+  <rect x="450" y="268" width="300" height="90" rx="18" fill="#eef2ff" stroke="#4f46e5" stroke-width="3"/>
+  <text x="600" y="303" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="900" fill="#312e81">Smart</text>
+  <text x="600" y="333" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#4338ca">Terminal-Bench, DRACO, ExploitBench</text>
+
+  <rect x="116" y="538" width="294" height="100" rx="18" fill="#ecfdf5" stroke="#059669" stroke-width="3"/>
+  <text x="263" y="576" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="900" fill="#065f46">Cheap</text>
+  <text x="263" y="608" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#047857">open models, panels, selective depth</text>
+
+  <rect x="790" y="538" width="294" height="100" rx="18" fill="#fff7ed" stroke="#f97316" stroke-width="3"/>
+  <text x="937" y="576" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="900" fill="#9a3412">Fast</text>
+  <text x="937" y="608" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-size="15" fill="#c2410c">fast workers, health routing, fallback</text>
+
+  <path d="M506 378 C430 414, 364 470, 306 526" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round"/>
+  <path d="M694 378 C770 414, 836 470, 894 526" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round"/>
+  <path d="M420 590 H780" fill="none" stroke="#0f766e" stroke-width="5" stroke-linecap="round" stroke-dasharray="12 10"/>
+
+  <text x="70" y="678" font-family="Inter,Arial,sans-serif" font-size="17" fill="#475569">One OpenAI-compatible model id can package fast workers, open panels, judges, synthesizers, and fallbacks.</text>
+  <text x="1130" y="678" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="900" fill="#0f766e">TrustedRouter.com</text>
+</svg>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Every request gets the shape it needs: a fast single model, a cheap open panel, an advisor call, or a deeper combo model.</figcaption>
+</figure>
+<p>Smart, cheap, fast used to be a cruel little triangle. You picked two and pretended you were happy.</p>
+<p>I don't think that is true anymore. A model name used to mean one blob of weights behind one vendor endpoint. That was a bad abstraction. The right abstraction is a package: a fast worker, a judge, a synthesizer, a fallback list, maybe an advisor, maybe a panel, all sitting behind the same token API that every developer already knows how to call.</p>
+<p>We have been publishing the numbers because this argument is worthless without numbers. Socrates-1.1 scored 72 on Terminal-Bench Hard. Synth hit 73.4 on DRACO. DeepSeek V4 Pro drew level with Opus on SimpleQA Verified in our run. A four-cent Gemma run did most of a small biology slice. OpenPatcher-S1 scored 7 out of 16 on a hard ExploitBench target where the listed open baselines were at 3, 2, and 2.</p>
+<p>Those are very different benchmarks. That is why I like the pattern. This is showing up in code, research, factuality, biology, and cyber. The common thing is structure. Open models are now good enough to be building blocks, and the router can decide which block to use.</p>
+<table class="data-table">
+  <thead><tr><th>Result</th><th>What it shows</th><th>Why it matters</th></tr></thead>
+  <tbody>
+    <tr><td><a href="/blog/socrates-1.1-terminal-bench-hard-72">Socrates-1.1 scored 72 on Terminal-Bench Hard</a></td><td>A combo model beat the frontier baselines in that run.</td><td>Smart can come from structure, not only from one expensive model.</td></tr>
+    <tr><td><a href="/blog/fusion-evals-open-source">Synth reached 73.4 on DRACO</a></td><td>A panel plus judge plus synthesizer beat the strongest solo runs.</td><td>Open panels can recover strengths no single model owns.</td></tr>
+    <tr><td><a href="/blog/the-best-open-models-arent-on-your-leaderboard">Open models caught frontier models on factuality</a></td><td>DeepSeek V4 Pro drew level with Opus on SimpleQA Verified in our run.</td><td>Cheap open-weight models are no longer toy alternatives.</td></tr>
+    <tr><td><a href="/blog/the-best-biology-ai-wont-do-biology">A four-cent Gemma run solved most of a biology slice</a></td><td>For some tasks, small open models do nearly all the useful work.</td><td>The expensive model should be reserved for the parts that need it.</td></tr>
+    <tr><td><a href="/blog/openpatcher-s1-exploitbench-cve-2024-2887">OpenPatcher-S1 hit 7 / 16 on ExploitBench CVE-2024-2887</a></td><td>A specialized open cyber model more than doubled the listed open baseline in the chart.</td><td>Open specialized models can move faster than general-purpose vendor models.</td></tr>
+  </tbody>
+</table>
+<p>The obvious objection is cost. Ensembles sound expensive because bad ensembles are expensive. Asking seven huge models every time is dumb. Most prompts do not need that. A routine request should hit the fast cheap model and be done. A suspicious request should ask an advisor. A research request should use Synth. A security request should go to a specialist. The expensive path should be a conditional branch. Otherwise it becomes a tax on every token.</p>
+<p>That is how the triangle breaks. You get frontier-level answers by spending extra only on the hard parts. You get cheap answers because the common path is open-weight and small. You get speed because the default path stays short and because fast providers can sit at the front. You get reliability because the route has fallbacks instead of one vendor outage taking the whole app down.</p>
+<p>The open source part is the part people underrate. The TrustedRouter software is open. The eval harnesses are open. The blog posts link the runs. The model pages show the routes and privacy classes. Open-weight models like DeepSeek, GLM, Kimi, MiniMax, Gemma, and Qwen can be first-class building blocks instead of "budget models" people apologize for using.</p>
+<p>Privacy matters more when a model becomes a graph. Combo models create subcalls. If those subcalls go through a black-box proxy, you multiplied your trust problem. The routing graph should be inspectable, the privacy class should be explicit, and the gateway should be something an agent can verify before it sends the prompt.</p>
+<p>Smart, cheap, fast was a vendor tradeoff. Open source routing turns it into an engineering problem.</p>
+<p>Pick 3.</p>
+""",
+    ),
+    BlogPost(
         slug="openpatcher-s1-exploitbench-cve-2024-2887",
         title="New Open Source SOTA cybersecurity model released today: OpenPatcher-S1",
         description=(
@@ -83,7 +162,7 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Scores on AI IQ's public ExploitBench CVE-2024-2887 comparison chart. Higher is better. OpenPatcher-S1 is the TrustedRouter + AI IQ run.</figcaption>
 </figure>
 <p><a href="/models/trustedrouter/openpatcher-s1">OpenPatcher-S1</a> scored <strong>7 out of 16</strong> on the <a href="https://exploitbench.ai/env/v8-cve-2024-2887/">ExploitBench CVE-2024-2887</a> target.</p>
-<p>That number is not a victory lap. Seven out of sixteen means the benchmark is still hard. The useful fact is the gap. In the public cyber comparison chart we are tracking, Kimi K2.6 scores 3 out of 16. GLM-5.1 and MiniMax M2.7 score 2. OpenPatcher-S1 more than doubles the strongest listed open baseline on this target.</p>
+<p>Seven out of sixteen is still ugly. It fails more than it passes. That is why the number is interesting. Kimi K2.6 gets 3. GLM-5.1 gets 2. MiniMax M2.7 gets 2. OpenPatcher-S1 more than doubles the strongest listed open baseline on the comparison chart, and it still leaves most of the ladder unsolved. That is exactly the kind of result worth publishing: strong enough to matter, incomplete enough that nobody can pretend the problem is done.</p>
 <table class="data-table">
   <thead><tr><th>Model</th><th>Score</th><th>Notes</th></tr></thead>
   <tbody>
@@ -93,11 +172,11 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
     <tr><td>MiniMax M2.7</td><td>2 / 16</td><td>public model baseline</td></tr>
   </tbody>
 </table>
-<p>The benchmark matters because it is not asking a model to recite a security blog post. ExploitBench measures a ladder of capabilities in a real target environment: finding the patched code, triggering the bug, building useful primitives, and climbing toward control. That is a much better test of cyber reasoning than another multiple-choice safety exam.</p>
-<p>OpenPatcher-S1 is built for defensive patching work. The product goal is not to publish exploit recipes. It is to make a model that reads vulnerable code, understands why the patch matters, produces useful repair guidance, and can be evaluated against deterministic environments instead of vibes. If a model cannot reason through the bug, it will not reliably fix the bug either.</p>
-<p>The encouraging part is that this is not a closed demo model. It is a named TrustedRouter model. You can route to it through the normal API, inspect the model page, and run it under the same privacy boundary as the rest of TrustedRouter. If you are doing sensitive security work, the important property is not only that the model is good. It is that the route is explicit and the gateway is verifiable.</p>
-<p>Poseidon is the next model in the line. It is still in training, so we are not treating it as a published benchmark result yet. But internally it is already scoring above OpenPatcher-S1 on this target. That is the signal we wanted. The method is improving, not just the prompt.</p>
-<p>Cyber benchmarks are moving fast, and the line between defensive repair and offensive capability is real. We are going to keep publishing narrow numbers with narrow claims. On this target, among the open cyber models in the public comparison set, OpenPatcher-S1 is the result to beat. Poseidon is coming next.</p>
+<p>I care about this benchmark because it is a ladder. The model has to find the patched code, trigger the bug, build useful primitives, and climb toward control in a real target environment. Multiple-choice cyber tests are too easy to fake. A ladder is harder to fake. You either reached the rung or you did not.</p>
+<p>OpenPatcher-S1 is built for defensive patching work. The job is to read vulnerable code, understand why the patch matters, and produce repair guidance that survives contact with a real environment. A model that cannot reason through the bug will not reliably fix the bug. That is the whole reason to test it this way.</p>
+<p>The obvious worry is that cyber evals drift into exploit marketing. Yes, they can. So the claim has to stay narrow. We are publishing the score, the target, and the comparison. We are not turning the post into a recipe. The useful product is a model that helps serious teams fix security bugs faster, under a route they can inspect.</p>
+<p>Poseidon is next. It is still training. On the same target it is already above OpenPatcher-S1 internally. I am not calling that a published result yet because that would be dumb. But it tells us the method is working. OpenPatcher-S1 was not a lucky prompt.</p>
+<p>On this target, among the open cyber models in the public comparison set, OpenPatcher-S1 is the result to beat. Poseidon is coming next.</p>
 """,
     ),
     BlogPost(

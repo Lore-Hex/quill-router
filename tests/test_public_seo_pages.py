@@ -41,6 +41,10 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert (
+        "<loc>https://trustedrouter.com/blog/frontier-smart-cheap-fast-pick-3-open-source</loc>"
+        in core.text
+    )
     assert "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
@@ -200,6 +204,16 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "worker + advisor + panel + judge + synthesizer" in diagram
     for model_name in ("Claude", "GPT", "GLM", "Kimi", "MiniMax", "DeepSeek"):
         assert model_name not in diagram
+
+    pick3_blog = client.get("/blog/frontier-smart-cheap-fast-pick-3-open-source")
+    assert pick3_blog.status_code == 200
+    pick3_payload = _json_ld(pick3_blog.text)
+    assert "Frontier Smart, Cheap, Fast: Pick 3 with Open Source" in json.dumps(pick3_payload)
+    assert "/blog/socrates-1.1-terminal-bench-hard-72" in pick3_blog.text
+    assert "/blog/fusion-evals-open-source" in pick3_blog.text
+    assert "/blog/the-best-open-models-arent-on-your-leaderboard" in pick3_blog.text
+    assert "/blog/openpatcher-s1-exploitbench-cve-2024-2887" in pick3_blog.text
+    assert "Pick 3" in pick3_blog.text
 
     openpatcher_blog = client.get("/blog/openpatcher-s1-exploitbench-cve-2024-2887")
     assert openpatcher_blog.status_code == 200
