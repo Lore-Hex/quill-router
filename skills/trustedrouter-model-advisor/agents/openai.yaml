@@ -1,0 +1,18 @@
+interface:
+  display_name: "TrustedRouter Model Advisor"
+  short_description: "Pick fast, cheap, high-IQ TR models"
+  default_prompt: "Use $trustedrouter-model-advisor to choose the best TrustedRouter model for this task and estimate cost and speed before I run it."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "trustedrouter"
+      description: "TrustedRouter live models, prices, providers, credits, docs, generation metadata, and short test messages"
+      transport: "streamable_http"
+      url: "https://trustedrouter.com/mcp"
+    - type: "mcp"
+      value: "aiiq"
+      description: "AI IQ public model, benchmark, ranking, chart, and methodology metadata"
+      transport: "streamable_http"
+      url: "https://www.aiiq.org/api/mcp"
+policy:
+  allow_implicit_invocation: true
