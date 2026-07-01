@@ -3,8 +3,8 @@
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
   "price_source": "https://docs.fireworks.ai/serverless/pricing",
-  "generated_at": "2026-06-20T00:00:00Z",
-  "model_count": 6,
+  "generated_at": "2026-07-01T00:00:00Z",
+  "model_count": 7,
   "models": [
     {
       "id": "moonshotai/kimi-k2.6",
@@ -17,10 +17,21 @@
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 160000,
       "model_type": "chat",
-      "features": ["function-calling", "serverless", "vision"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "function-calling",
+        "serverless",
+        "vision"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -34,10 +45,21 @@
       "output_token_price_per_m": 3000000,
       "cached_input_token_price_per_m": 100000,
       "model_type": "chat",
-      "features": ["function-calling", "serverless", "vision"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "function-calling",
+        "serverless",
+        "vision"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -51,10 +73,19 @@
       "output_token_price_per_m": 3480000,
       "cached_input_token_price_per_m": 145000,
       "model_type": "chat",
-      "features": ["reasoning", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -68,10 +99,48 @@
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000,
       "model_type": "chat",
-      "features": ["reasoning", "function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "z-ai/glm-5.2-fast",
+      "upstream_id": "accounts/fireworks/routers/glm-5p2-fast",
+      "display_name": "GLM 5.2 Fast on Fireworks",
+      "title": "accounts/fireworks/routers/glm-5p2-fast",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 2800000,
+      "output_token_price_per_m": 8800000,
+      "cached_input_token_price_per_m": 280000,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless",
+        "fast-router"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -85,10 +154,20 @@
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000,
       "model_type": "chat",
-      "features": ["reasoning", "function-calling", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -102,10 +181,19 @@
       "output_token_price_per_m": 600000,
       "cached_input_token_price_per_m": 15000,
       "model_type": "chat",
-      "features": ["reasoning", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     }
   ]

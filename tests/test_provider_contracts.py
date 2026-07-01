@@ -243,6 +243,22 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
             "https://api.inference.crusoecloud.com/v1/chat/completions",
             "zai/GLM-5.2",
         ),
+        (
+            Model(
+                id="qwen/qwen3.7-plus",
+                name="Qwen3.7 Plus on Alibaba",
+                provider="alibaba",
+                context_length=1_048_576,
+                upstream_id="qwen3.7-plus",
+            ),
+            "ALIBABA_API_KEY",
+            "alibaba-value",
+            (
+                "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/"
+                "compatible-mode/v1/chat/completions"
+            ),
+            "qwen3.7-plus",
+        ),
     ],
 )
 @pytest.mark.asyncio
@@ -419,6 +435,37 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
         165_000
     }
+
+
+def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
+    endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
+    fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
+
+    assert {endpoint.usage_type for endpoint in fireworks} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in fireworks} == {
+        "accounts/fireworks/routers/glm-5p2-fast"
+    }
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        3_080_000
+    }
+
+
+def test_alibaba_catalog_is_staged_but_not_routable_until_entitled() -> None:
+    from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
+
+    # Alibaba /models works, but the current workspace key returns
+    # AccessDenied.Unpurchased for sampled chat calls. Keep the provider and
+    # manifest staged, but do not publish user-routable endpoints until the
+    # Model Studio workspace is entitled to the selected models.
+    assert "alibaba" in PROVIDERS
+    assert PROVIDERS["alibaba"].supports_prepaid is False
+    assert PROVIDERS["alibaba"].supports_byok is False
+    assert "alibaba" not in GATEWAY_PREPAID_PROVIDER_SLUGS
+    assert not [
+        endpoint
+        for endpoint in endpoints_for_model("qwen/qwen3.5-397b-a17b")
+        if endpoint.provider == "alibaba"
+    ]
 
 
 @pytest.mark.asyncio

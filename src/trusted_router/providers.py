@@ -63,6 +63,11 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
     # Crusoe Managed Inference — OpenAI-compatible chat completions.
     "crusoe": (("CRUSOE_API_KEY",), "https://api.inference.crusoecloud.com/v1"),
+    # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
+    "alibaba": (
+        ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
+        "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
+    ),
 }
 
 WAFER_ZDR_NATIVE_MODELS = frozenset(

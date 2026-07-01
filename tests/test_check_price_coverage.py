@@ -29,6 +29,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "GLM-5.2"}]}
     if "api.inference.crusoecloud.com" in url:
         return {"data": [{"id": "zai/GLM-5.2"}]}
+    if "maas.aliyuncs.com" in url:
+        return {"data": [{"id": "glm-5.2"}]}
     return {"data": []}
 
 

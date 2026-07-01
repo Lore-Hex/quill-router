@@ -709,6 +709,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     openexploiter_g1_meta = models_by_id["trustedrouter/openexploiter-g1"]["trustedrouter"]
     assert openexploiter_g1_meta["route_kind"] == "advisor_orchestration"
     assert openexploiter_g1_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         "trustedrouter/prometheus-1.0-1m",
@@ -741,10 +742,19 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
     assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]
-    assert {"anthropic", "openai", "gemini", "deepseek", "kimi", "mistral", "zai"}.issubset(
-        provider_flags
-    )
+    assert {
+        "anthropic",
+        "openai",
+        "gemini",
+        "deepseek",
+        "kimi",
+        "mistral",
+        "zai",
+        "alibaba",
+    }.issubset(provider_flags)
     assert provider_flags["openai"]["supports_prepaid"] is True
+    assert provider_flags["alibaba"]["supports_prepaid"] is False
+    assert provider_flags["alibaba"]["supports_byok"] is False
     assert provider_flags["deepseek"]["supports_byok"] is True
     assert provider_flags["kimi"]["supports_byok"] is True
     assert provider_flags["mistral"]["supports_byok"] is True
@@ -778,6 +788,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "together": "https://docs.together.ai/docs/privacy-and-security",
         "deepinfra": "https://docs.deepinfra.com/account/data-privacy",
         "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
+        "alibaba": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
         "deepseek": (
             "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
             "?locale=en_US"

@@ -1,0 +1,2133 @@
+{
+  "_about": "Provider-native supplement for Alibaba Cloud Model Studio / DashScope OpenAI-compatible endpoint scoped to the configured Frankfurt workspace. Model IDs verified from /compatible-mode/v1/models; prices are published international Model Studio rates where available, in integer microdollars per million tokens, with conservative family defaults for newly listed variants.",
+  "provider": "alibaba",
+  "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
+  "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+  "generated_at": "2026-07-01T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 72,
+  "models": [
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "display_name": "Glm 5.2",
+      "title": "glm-5.2",
+      "created": 1782720706,
+      "context_length": 1048576,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "kimi-k2.7-code",
+      "display_name": "Kimi K2.7 Code",
+      "title": "kimi-k2.7-code",
+      "created": 1781509527,
+      "context_length": 262144,
+      "input_token_price_per_m": 894000,
+      "output_token_price_per_m": 3713000,
+      "cached_input_token_price_per_m": 180000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-max-2026-06-08",
+      "upstream_id": "qwen3.7-max-2026-06-08",
+      "display_name": "Qwen3.7 Max 2026 06 08",
+      "title": "qwen3.7-max-2026-06-08",
+      "created": 1781075402,
+      "context_length": 1048576,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 250000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-plus",
+      "upstream_id": "qwen3.7-plus",
+      "display_name": "Qwen3.7 Plus",
+      "title": "qwen3.7-plus",
+      "created": 1780402976,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 1600000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 4800000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-plus-2026-05-26",
+      "upstream_id": "qwen3.7-plus-2026-05-26",
+      "display_name": "Qwen3.7 Plus 2026 05 26",
+      "title": "qwen3.7-plus-2026-05-26",
+      "created": 1780402966,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 1600000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 4800000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-max-2026-05-20",
+      "upstream_id": "qwen3.7-max-2026-05-20",
+      "display_name": "Qwen3.7 Max 2026 05 20",
+      "title": "qwen3.7-max-2026-05-20",
+      "created": 1779362137,
+      "context_length": 1048576,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 250000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-max",
+      "upstream_id": "qwen3.7-max",
+      "display_name": "Qwen3.7 Max",
+      "title": "qwen3.7-max",
+      "created": 1779362120,
+      "context_length": 1048576,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 250000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "glm-5.1",
+      "display_name": "Glm 5.1",
+      "title": "glm-5.1",
+      "created": 1779269374,
+      "context_length": 131072,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-flash-2026-01-22",
+      "upstream_id": "qwen3-vl-flash-2026-01-22",
+      "display_name": "Qwen3 VL Flash 2026 01 22",
+      "title": "qwen3-vl-flash-2026-01-22",
+      "created": 1778664184,
+      "context_length": 262144,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 50000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 5000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 75000,
+          "output_token_price_per_m": 600000,
+          "cached_input_token_price_per_m": 7500
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 120000,
+          "output_token_price_per_m": 960000,
+          "cached_input_token_price_per_m": 12000
+        }
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "kimi-k2.5",
+      "display_name": "Kimi K2.5",
+      "title": "kimi-k2.5",
+      "created": 1777449432,
+      "context_length": 262144,
+      "input_token_price_per_m": 574000,
+      "output_token_price_per_m": 3011000,
+      "cached_input_token_price_per_m": 115000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-v4-flash",
+      "display_name": "Deepseek V4 Flash",
+      "title": "deepseek-v4-flash",
+      "created": 1777368120,
+      "context_length": 1048576,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-v4-pro",
+      "display_name": "Deepseek V4 Pro",
+      "title": "deepseek-v4-pro",
+      "created": 1777368167,
+      "context_length": 1048576,
+      "input_token_price_per_m": 2400000,
+      "output_token_price_per_m": 4800000,
+      "cached_input_token_price_per_m": 240000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-flash-2026-04-16",
+      "upstream_id": "qwen3.6-flash-2026-04-16",
+      "display_name": "Qwen3.6 Flash 2026 04 16",
+      "title": "qwen3.6-flash-2026-04-16",
+      "created": 1776425093,
+      "context_length": 1048576,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 250000,
+          "output_token_price_per_m": 1500000,
+          "cached_input_token_price_per_m": 25000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 100000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-flash",
+      "upstream_id": "qwen3.6-flash",
+      "display_name": "Qwen3.6 Flash",
+      "title": "qwen3.6-flash",
+      "created": 1776425073,
+      "context_length": 1048576,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 250000,
+          "output_token_price_per_m": 1500000,
+          "cached_input_token_price_per_m": 25000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 100000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "qwen3.6-35b-a3b",
+      "display_name": "Qwen3.6 35b A3b",
+      "title": "qwen3.6-35b-a3b",
+      "created": 1776425041,
+      "context_length": 131072,
+      "input_token_price_per_m": 375000,
+      "output_token_price_per_m": 2250000,
+      "cached_input_token_price_per_m": 37500,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-8b",
+      "upstream_id": "qwen3-8b",
+      "display_name": "Qwen3 8b",
+      "title": "qwen3-8b",
+      "created": 1775211160,
+      "context_length": 262144,
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 2100000,
+      "cached_input_token_price_per_m": 18000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-32b",
+      "upstream_id": "qwen3-32b",
+      "display_name": "Qwen3 32b",
+      "title": "qwen3-32b",
+      "created": 1775211097,
+      "context_length": 262144,
+      "input_token_price_per_m": 160000,
+      "output_token_price_per_m": 640000,
+      "cached_input_token_price_per_m": 16000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-plus",
+      "upstream_id": "qwen3.6-plus",
+      "display_name": "Qwen3.6 Plus",
+      "title": "qwen3.6-plus",
+      "created": 1775212092,
+      "context_length": 1048576,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.6-plus-2026-04-02",
+      "upstream_id": "qwen3.6-plus-2026-04-02",
+      "display_name": "Qwen3.6 Plus 2026 04 02",
+      "title": "qwen3.6-plus-2026-04-02",
+      "created": 1775213657,
+      "context_length": 1048576,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 2000000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 200000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-122b-a10b",
+      "upstream_id": "qwen3.5-122b-a10b",
+      "display_name": "Qwen3.5 122b A10b",
+      "title": "qwen3.5-122b-a10b",
+      "created": 1774012398,
+      "context_length": 262144,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 3200000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen3.5-397b-a17b",
+      "display_name": "Qwen3.5 397b A17b",
+      "title": "qwen3.5-397b-a17b",
+      "created": 1773893640,
+      "context_length": 262144,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3600000,
+      "cached_input_token_price_per_m": 60000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-35b-a3b",
+      "upstream_id": "qwen3.5-35b-a3b",
+      "display_name": "Qwen3.5 35b A3b",
+      "title": "qwen3.5-35b-a3b",
+      "created": 1773900703,
+      "context_length": 262144,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 25000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-27b",
+      "upstream_id": "qwen3.5-27b",
+      "display_name": "Qwen3.5 27b",
+      "title": "qwen3.5-27b",
+      "created": 1773909059,
+      "context_length": 262144,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 30000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-plus",
+      "upstream_id": "qwen3.5-plus",
+      "display_name": "Qwen3.5 Plus",
+      "title": "qwen3.5-plus",
+      "created": 1773900823,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 50000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-plus-2026-02-15",
+      "upstream_id": "qwen3.5-plus-2026-02-15",
+      "display_name": "Qwen3.5 Plus 2026 02 15",
+      "title": "qwen3.5-plus-2026-02-15",
+      "created": 1773900838,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 3000000,
+          "cached_input_token_price_per_m": 50000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-vl-ocr-2025-11-20",
+      "upstream_id": "qwen-vl-ocr-2025-11-20",
+      "display_name": "Qwen VL OCR 2025 11 20",
+      "title": "qwen-vl-ocr-2025-11-20",
+      "created": 1773840741,
+      "context_length": 262144,
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 160000,
+      "cached_input_token_price_per_m": 7000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-vl-ocr",
+      "upstream_id": "qwen-vl-ocr",
+      "display_name": "Qwen VL OCR",
+      "title": "qwen-vl-ocr",
+      "created": 1773840624,
+      "context_length": 262144,
+      "input_token_price_per_m": 70000,
+      "output_token_price_per_m": 160000,
+      "cached_input_token_price_per_m": 7000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-flash-2026-02-23",
+      "upstream_id": "qwen3.5-flash-2026-02-23",
+      "display_name": "Qwen3.5 Flash 2026 02 23",
+      "title": "qwen3.5-flash-2026-02-23",
+      "created": 1777459744,
+      "context_length": 1048576,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-plus-2025-12-19",
+      "upstream_id": "qwen3-vl-plus-2025-12-19",
+      "display_name": "Qwen3 VL Plus 2025 12 19",
+      "title": "qwen3-vl-plus-2025-12-19",
+      "created": 1777533050,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 1600000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 600000,
+          "output_token_price_per_m": 4800000,
+          "cached_input_token_price_per_m": 60000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-max-2026-01-23",
+      "upstream_id": "qwen3-max-2026-01-23",
+      "display_name": "Qwen3 Max 2026 01 23",
+      "title": "qwen3-max-2026-01-23",
+      "created": 1776393330,
+      "context_length": 262144,
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 120000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 120000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 2400000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 240000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-next",
+      "upstream_id": "qwen3-coder-next",
+      "display_name": "Qwen3 Coder Next",
+      "title": "qwen3-coder-next",
+      "created": 1774012704,
+      "context_length": 262144,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 30000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 1500000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 800000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 80000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1600000,
+          "output_token_price_per_m": 9600000,
+          "cached_input_token_price_per_m": 160000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-mt-turbo",
+      "upstream_id": "qwen-mt-turbo",
+      "display_name": "Qwen MT Turbo",
+      "title": "qwen-mt-turbo",
+      "created": 1773662064,
+      "context_length": 131072,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-mt-plus",
+      "upstream_id": "qwen-mt-plus",
+      "display_name": "Qwen MT Plus",
+      "title": "qwen-mt-plus",
+      "created": 1773661748,
+      "context_length": 131072,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-mt-lite",
+      "upstream_id": "qwen-mt-lite",
+      "display_name": "Qwen MT Lite",
+      "title": "qwen-mt-lite",
+      "created": 1773661631,
+      "context_length": 131072,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-mt-flash",
+      "upstream_id": "qwen-mt-flash",
+      "display_name": "Qwen MT Flash",
+      "title": "qwen-mt-flash",
+      "created": 1773661512,
+      "context_length": 131072,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 200000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus-2025-07-28",
+      "upstream_id": "qwen-plus-2025-07-28",
+      "display_name": "Qwen Plus 2025 07 28",
+      "title": "qwen-plus-2025-07-28",
+      "created": 1773641650,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus-2025-09-11",
+      "upstream_id": "qwen-plus-2025-09-11",
+      "display_name": "Qwen Plus 2025 09 11",
+      "title": "qwen-plus-2025-09-11",
+      "created": 1773641641,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus-2025-12-01",
+      "upstream_id": "qwen-plus-2025-12-01",
+      "display_name": "Qwen Plus 2025 12 01",
+      "title": "qwen-plus-2025-12-01",
+      "created": 1776393745,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus",
+      "upstream_id": "qwen-plus",
+      "display_name": "Qwen Plus",
+      "title": "qwen-plus",
+      "created": 1776393548,
+      "context_length": 1048576,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 40000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 400000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 40000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-flash-2025-07-28",
+      "upstream_id": "qwen-flash-2025-07-28",
+      "display_name": "Qwen Flash 2025 07 28",
+      "title": "qwen-flash-2025-07-28",
+      "created": 1773641599,
+      "context_length": 1048576,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 50000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 5000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 250000,
+          "output_token_price_per_m": 2000000,
+          "cached_input_token_price_per_m": 25000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen-flash",
+      "upstream_id": "qwen-flash",
+      "display_name": "Qwen Flash",
+      "title": "qwen-flash",
+      "created": 1773641590,
+      "context_length": 1048576,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 50000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 5000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 250000,
+          "output_token_price_per_m": 2000000,
+          "cached_input_token_price_per_m": 25000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-235b-a22b-instruct",
+      "upstream_id": "qwen3-vl-235b-a22b-instruct",
+      "display_name": "Qwen3 VL 235b A22b Instruct",
+      "title": "qwen3-vl-235b-a22b-instruct",
+      "created": 1773641527,
+      "context_length": 262144,
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 8400000,
+      "cached_input_token_price_per_m": 70000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-235b-a22b-thinking",
+      "upstream_id": "qwen3-vl-235b-a22b-thinking",
+      "display_name": "Qwen3 VL 235b A22b Thinking",
+      "title": "qwen3-vl-235b-a22b-thinking",
+      "created": 1773641518,
+      "context_length": 262144,
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 8400000,
+      "cached_input_token_price_per_m": 70000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-instruct",
+      "upstream_id": "qwen3-vl-30b-a3b-instruct",
+      "display_name": "Qwen3 VL 30b A3b Instruct",
+      "title": "qwen3-vl-30b-a3b-instruct",
+      "created": 1773641509,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-30b-a3b-thinking",
+      "upstream_id": "qwen3-vl-30b-a3b-thinking",
+      "display_name": "Qwen3 VL 30b A3b Thinking",
+      "title": "qwen3-vl-30b-a3b-thinking",
+      "created": 1773641500,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-32b-instruct",
+      "upstream_id": "qwen3-vl-32b-instruct",
+      "display_name": "Qwen3 VL 32b Instruct",
+      "title": "qwen3-vl-32b-instruct",
+      "created": 1773641488,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-32b-thinking",
+      "upstream_id": "qwen3-vl-32b-thinking",
+      "display_name": "Qwen3 VL 32b Thinking",
+      "title": "qwen3-vl-32b-thinking",
+      "created": 1773641477,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-instruct",
+      "upstream_id": "qwen3-vl-8b-instruct",
+      "display_name": "Qwen3 VL 8b Instruct",
+      "title": "qwen3-vl-8b-instruct",
+      "created": 1773641467,
+      "context_length": 262144,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-8b-thinking",
+      "upstream_id": "qwen3-vl-8b-thinking",
+      "display_name": "Qwen3 VL 8b Thinking",
+      "title": "qwen3-vl-8b-thinking",
+      "created": 1773641457,
+      "context_length": 262144,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-flash",
+      "upstream_id": "qwen3-vl-flash",
+      "display_name": "Qwen3 VL Flash",
+      "title": "qwen3-vl-flash",
+      "created": 1773903698,
+      "context_length": 262144,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 50000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 5000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 75000,
+          "output_token_price_per_m": 600000,
+          "cached_input_token_price_per_m": 7500
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 120000,
+          "output_token_price_per_m": 960000,
+          "cached_input_token_price_per_m": 12000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-flash-2025-10-15",
+      "upstream_id": "qwen3-vl-flash-2025-10-15",
+      "display_name": "Qwen3 VL Flash 2025 10 15",
+      "title": "qwen3-vl-flash-2025-10-15",
+      "created": 1777532957,
+      "context_length": 262144,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 50000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 5000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 75000,
+          "output_token_price_per_m": 600000,
+          "cached_input_token_price_per_m": 7500
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 120000,
+          "output_token_price_per_m": 960000,
+          "cached_input_token_price_per_m": 12000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-plus-2025-09-23",
+      "upstream_id": "qwen3-vl-plus-2025-09-23",
+      "display_name": "Qwen3 VL Plus 2025 09 23",
+      "title": "qwen3-vl-plus-2025-09-23",
+      "created": 1777533064,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 1600000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 600000,
+          "output_token_price_per_m": 4800000,
+          "cached_input_token_price_per_m": 60000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-vl-plus",
+      "upstream_id": "qwen3-vl-plus",
+      "display_name": "Qwen3 VL Plus",
+      "title": "qwen3-vl-plus",
+      "created": 1773827114,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 1600000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 600000,
+          "output_token_price_per_m": 4800000,
+          "cached_input_token_price_per_m": 60000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-instruct",
+      "upstream_id": "qwen3-next-80b-a3b-instruct",
+      "display_name": "Qwen3 Next 80b A3b Instruct",
+      "title": "qwen3-next-80b-a3b-instruct",
+      "created": 1773641240,
+      "context_length": 262144,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 15000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking",
+      "upstream_id": "qwen3-next-80b-a3b-thinking",
+      "display_name": "Qwen3 Next 80b A3b Thinking",
+      "title": "qwen3-next-80b-a3b-thinking",
+      "created": 1773641229,
+      "context_length": 262144,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 15000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-max-2025-09-23",
+      "upstream_id": "qwen3-max-2025-09-23",
+      "display_name": "Qwen3 Max 2025 09 23",
+      "title": "qwen3-max-2025-09-23",
+      "created": 1773640926,
+      "context_length": 262144,
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 120000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 120000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 2400000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 240000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-max-preview",
+      "upstream_id": "qwen3-max-preview",
+      "display_name": "Qwen3 Max Preview",
+      "title": "qwen3-max-preview",
+      "created": 1773640917,
+      "context_length": 262144,
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 120000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 120000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 2400000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 240000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-max",
+      "upstream_id": "qwen3-max",
+      "display_name": "Qwen3 Max",
+      "title": "qwen3-max",
+      "created": 1776393281,
+      "context_length": 262144,
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 120000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 120000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 2400000,
+          "output_token_price_per_m": 12000000,
+          "cached_input_token_price_per_m": 240000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-30b-a3b-instruct",
+      "upstream_id": "qwen3-coder-30b-a3b-instruct",
+      "display_name": "Qwen3 Coder 30b A3b Instruct",
+      "title": "qwen3-coder-30b-a3b-instruct",
+      "created": 1773640874,
+      "context_length": 262144,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 2250000,
+      "cached_input_token_price_per_m": 45000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 450000,
+          "output_token_price_per_m": 2250000,
+          "cached_input_token_price_per_m": 45000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 750000,
+          "output_token_price_per_m": 3750000,
+          "cached_input_token_price_per_m": 75000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1200000,
+          "output_token_price_per_m": 6000000,
+          "cached_input_token_price_per_m": 120000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-480b-a35b-instruct",
+      "upstream_id": "qwen3-coder-480b-a35b-instruct",
+      "display_name": "Qwen3 Coder 480b A35b Instruct",
+      "title": "qwen3-coder-480b-a35b-instruct",
+      "created": 1773640862,
+      "context_length": 262144,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 150000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1500000,
+          "output_token_price_per_m": 7500000,
+          "cached_input_token_price_per_m": 150000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 2700000,
+          "output_token_price_per_m": 13500000,
+          "cached_input_token_price_per_m": 270000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 4500000,
+          "output_token_price_per_m": 22500000,
+          "cached_input_token_price_per_m": 450000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-flash",
+      "upstream_id": "qwen3-coder-flash",
+      "display_name": "Qwen3 Coder Flash",
+      "title": "qwen3-coder-flash",
+      "created": 1773640852,
+      "context_length": 1048576,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 30000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 1500000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 800000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 80000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1600000,
+          "output_token_price_per_m": 9600000,
+          "cached_input_token_price_per_m": 160000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-flash-2025-07-28",
+      "upstream_id": "qwen3-coder-flash-2025-07-28",
+      "display_name": "Qwen3 Coder Flash 2025 07 28",
+      "title": "qwen3-coder-flash-2025-07-28",
+      "created": 1773640831,
+      "context_length": 1048576,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 30000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 1500000,
+          "cached_input_token_price_per_m": 30000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 500000,
+          "output_token_price_per_m": 2500000,
+          "cached_input_token_price_per_m": 50000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 800000,
+          "output_token_price_per_m": 4000000,
+          "cached_input_token_price_per_m": 80000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 1600000,
+          "output_token_price_per_m": 9600000,
+          "cached_input_token_price_per_m": 160000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-plus",
+      "upstream_id": "qwen3-coder-plus",
+      "display_name": "Qwen3 Coder Plus",
+      "title": "qwen3-coder-plus",
+      "created": 1773640820,
+      "context_length": 1048576,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 1800000,
+          "output_token_price_per_m": 9000000,
+          "cached_input_token_price_per_m": 180000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 6000000,
+          "output_token_price_per_m": 60000000,
+          "cached_input_token_price_per_m": 600000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-plus-2025-07-22",
+      "upstream_id": "qwen3-coder-plus-2025-07-22",
+      "display_name": "Qwen3 Coder Plus 2025 07 22",
+      "title": "qwen3-coder-plus-2025-07-22",
+      "created": 1773640804,
+      "context_length": 1048576,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 1800000,
+          "output_token_price_per_m": 9000000,
+          "cached_input_token_price_per_m": 180000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 6000000,
+          "output_token_price_per_m": 60000000,
+          "cached_input_token_price_per_m": 600000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-coder-plus-2025-09-23",
+      "upstream_id": "qwen3-coder-plus-2025-09-23",
+      "display_name": "Qwen3 Coder Plus 2025 09 23",
+      "title": "qwen3-coder-plus-2025-09-23",
+      "created": 1773640792,
+      "context_length": 1048576,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 1000000,
+          "output_token_price_per_m": 5000000,
+          "cached_input_token_price_per_m": 100000
+        },
+        {
+          "max_prompt_tokens": 128000,
+          "input_token_price_per_m": 1800000,
+          "output_token_price_per_m": 9000000,
+          "cached_input_token_price_per_m": 180000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 3000000,
+          "output_token_price_per_m": 15000000,
+          "cached_input_token_price_per_m": 300000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 6000000,
+          "output_token_price_per_m": 60000000,
+          "cached_input_token_price_per_m": 600000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b-instruct-2507",
+      "upstream_id": "qwen3-30b-a3b-instruct-2507",
+      "display_name": "Qwen3 30b A3b Instruct 2507",
+      "title": "qwen3-30b-a3b-instruct-2507",
+      "created": 1773640699,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b-thinking-2507",
+      "upstream_id": "qwen3-30b-a3b-thinking-2507",
+      "display_name": "Qwen3 30b A3b Thinking 2507",
+      "title": "qwen3-30b-a3b-thinking-2507",
+      "created": 1773640688,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-30b-a3b",
+      "upstream_id": "qwen3-30b-a3b",
+      "display_name": "Qwen3 30b A3b",
+      "title": "qwen3-30b-a3b",
+      "created": 1773640670,
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 20000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-instruct-2507",
+      "upstream_id": "qwen3-235b-a22b-instruct-2507",
+      "display_name": "Qwen3 235b A22b Instruct 2507",
+      "title": "qwen3-235b-a22b-instruct-2507",
+      "created": 1773640640,
+      "context_length": 262144,
+      "input_token_price_per_m": 230000,
+      "output_token_price_per_m": 920000,
+      "cached_input_token_price_per_m": 23000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-thinking-2507",
+      "upstream_id": "qwen3-235b-a22b-thinking-2507",
+      "display_name": "Qwen3 235b A22b Thinking 2507",
+      "title": "qwen3-235b-a22b-thinking-2507",
+      "created": 1773640628,
+      "context_length": 262144,
+      "input_token_price_per_m": 230000,
+      "output_token_price_per_m": 2300000,
+      "cached_input_token_price_per_m": 23000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b",
+      "upstream_id": "qwen3-235b-a22b",
+      "display_name": "Qwen3 235b A22b",
+      "title": "qwen3-235b-a22b",
+      "created": 1773640616,
+      "context_length": 262144,
+      "input_token_price_per_m": 700000,
+      "output_token_price_per_m": 8400000,
+      "cached_input_token_price_per_m": 70000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen3.5-flash",
+      "upstream_id": "qwen3.5-flash",
+      "display_name": "Qwen3.5 Flash",
+      "title": "qwen3.5-flash",
+      "created": 1781182562,
+      "context_length": 1048576,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ]
+    }
+  ]
+}

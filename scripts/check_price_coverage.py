@@ -65,6 +65,7 @@ _FIREWORKS_MODEL_IDS = {
     "accounts/fireworks/models/kimi-k2p5": "moonshotai/kimi-k2.5",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
+    "accounts/fireworks/routers/glm-5p2-fast": "z-ai/glm-5.2-fast",
     "accounts/fireworks/models/glm-5p1": "z-ai/glm-5.1",
     "accounts/fireworks/models/gpt-oss-120b": "openai/gpt-oss-120b",
 }
@@ -149,6 +150,24 @@ def _crusoe_model_id(native_id: str) -> str | None:
     return _CRUSOE_MODEL_IDS.get(value, _identity_model_id(value))
 
 
+def _alibaba_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    lowered = value.casefold()
+    if lowered.startswith("glm-"):
+        return f"z-ai/{lowered}"
+    if lowered.startswith("kimi-"):
+        return f"moonshotai/{lowered}"
+    if lowered.startswith("deepseek-"):
+        return f"deepseek/{lowered}"
+    if lowered.startswith("qwen") or lowered.startswith("qwq"):
+        return f"qwen/{lowered}"
+    if lowered.startswith("minimax-"):
+        return f"minimax/{lowered}"
+    return None
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
@@ -211,6 +230,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://api.inference.crusoecloud.com/v1/models",
         ("CRUSOE_API_KEY",),
         _crusoe_model_id,
+    ),
+    (
+        "alibaba",
+        "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
+        ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
+        _alibaba_model_id,
     ),
 )
 

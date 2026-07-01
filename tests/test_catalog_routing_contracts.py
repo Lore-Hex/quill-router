@@ -560,6 +560,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "trustedrouter/openexploiter-a1",
         ],
         OPEN_EXPLOITER_G1_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
             "z-ai/glm-5.2",
             "moonshotai/kimi-k2.7-code",
             "trustedrouter/prometheus-1.0-1m",

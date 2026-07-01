@@ -755,6 +755,22 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://platform.xiaomimimo.com/",
     ),
+    # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible
+    # endpoint. The configured key is for an EU Central / Frankfurt MAAS
+    # workspace, so provider-native model availability comes from that
+    # workspace's /compatible-mode/v1/models response.
+    "alibaba": Provider(
+        slug="alibaba",
+        name="Alibaba Cloud Model Studio",
+        supports_prepaid=False,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Alibaba Cloud Model Studio "
+            "model availability and pricing are linked for users who need to "
+            "review API data handling and regional deployment scope."
+        ),
+        provider_policy_url="https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+    ),
     # Cohere — first-party embeddings (embed-v4.0, embed-*-v3.0) plus
     # Command chat models. Embeddings are Cohere's flagship retrieval
     # product; chat is registered but TR currently only catalogs Cohere
@@ -1135,6 +1151,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         OPEN_EXPLOITER_A1_MODEL_ID,
     ),
     OPEN_EXPLOITER_G1_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         PROMETHEUS_1_0_1M_MODEL_ID,
