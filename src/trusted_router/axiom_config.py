@@ -33,6 +33,7 @@ import os
 import sys
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from trusted_router.config import Settings
 from trusted_router.sentry_config import _scrub
@@ -66,11 +67,11 @@ def init_axiom(settings: Settings) -> None:
         return
 
     try:
-        client_kwargs: dict[str, Any] = {"token": token}
-        if org_id:
-            client_kwargs["org_id"] = org_id
-        if settings.axiom_url:
-            client_kwargs["url"] = settings.axiom_url
+        client_kwargs = _client_kwargs(
+            token=token,
+            org_id=org_id,
+            axiom_url=settings.axiom_url,
+        )
         client = axiom_py.Client(**client_kwargs)
     except Exception as exc:  # noqa: BLE001
         log.warning("axiom.disabled reason=client_init_failed err=%s", exc)
@@ -94,6 +95,19 @@ def init_axiom(settings: Settings) -> None:
         settings.axiom_log_level,
         "<set>" if org_id else "<unset>",
     )
+
+
+def _client_kwargs(*, token: str, org_id: str | None, axiom_url: str) -> dict[str, Any]:
+    client_kwargs: dict[str, Any] = {"token": token}
+    if org_id:
+        client_kwargs["org_id"] = org_id
+    if axiom_url:
+        parsed = urlparse(axiom_url)
+        if parsed.hostname and parsed.hostname.endswith(".edge.axiom.co"):
+            client_kwargs["edge_url"] = axiom_url
+        else:
+            client_kwargs["url"] = axiom_url
+    return client_kwargs
 
 
 def _resolve_level(name: str) -> int:
