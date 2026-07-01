@@ -9,7 +9,7 @@
       <li>✓ Read your key from <code>TRUSTEDROUTER_API_KEY</code></li>
       <li>✓ Use <code>trustedrouter/auto</code> for provider failover</li>
       <li>✓ Use <code>trustedrouter/eu</code> with the EU regional API for Europe-focused routing</li>
-      <li>✓ Use <code>trustedrouter/socrates-1.0</code> when a fast model should ask a stronger advisor only if it gets stuck</li>
+      <li>✓ Use <code>trustedrouter/socrates</code> for the rolling advisor preset, or <code>trustedrouter/socrates-1.1</code> for the pinned current version</li>
       <li>✓ Use <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/prometheus-1.0</code>, or <code>trustedrouter/zeus-1.0</code> for versioned Synth presets</li>
       <li>✓ Use <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, or <code>trustedrouter/zeus-code-1.0</code> for code-tuned Synth presets</li>
       <li>✓ Add <code>provider.data_collection = "deny"</code> for zero-retention routing</li>
@@ -38,7 +38,7 @@ const r = await client.chat.completions.create({
     <a class="marketing-card card-as-link" href="/docs/migrate-from-openrouter"><h3>Migrate from OpenRouter</h3><p>Swap one base_url and keep your existing calls working.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/evals"><h3>Evals</h3><p>Run eval suites across providers through one API.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/synth"><h3>Synth</h3><p>Run Iris, Prometheus, Zeus, and code-tuned Synth presets inside the attested gateway.</p><span class="card-link">Open →</span></a>
-    <a class="marketing-card card-as-link" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run a fast worker model that can privately ask Opus for advice when it is stuck.</p><span class="card-link">Open →</span></a>
+    <a class="marketing-card card-as-link" href="/docs/agent-setup#socrates"><h3>Socrates</h3><p>Run the advisor preset, or configure the generic advisor primitive directly.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/docs/x402"><h3>x402 stablecoin funding</h3><p>Let agents add prepaid credits automatically without changing the prompt path.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/eu"><h3>EU routing</h3><p>Use the Europe West attested gateway and the EU-focused model alias.</p><span class="card-link">Open →</span></a>
     <a class="marketing-card card-as-link" href="/sign-in-with-trustedrouter"><h3>Sign in with TrustedRouter</h3><p>Let your users bring their own account and credits.</p><span class="card-link">Open →</span></a>

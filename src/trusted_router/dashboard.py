@@ -28,9 +28,12 @@ from trusted_router.catalog import (
     Model,
     ModelEndpoint,
     Provider,
+    canonical_orchestration_model_id,
     endpoints_for_model,
     meta_candidate_models,
     model_open_weights,
+    orchestration_primitive,
+    orchestration_role,
     providers_for_display,
 )
 from trusted_router.config import Settings
@@ -1637,7 +1640,8 @@ def llms_txt(settings: Settings) -> str:
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
-        "- Socrates: use model trustedrouter/socrates-1.0 or trustedrouter/advisor for a fast worker model that can ask a stronger private advisor once when stuck",
+        "- Advisor primitive: use model trustedrouter/advisor only with explicit worker_models and advisor_models.",
+        "- Socrates: use model trustedrouter/socrates for the rolling advisor preset, or trustedrouter/socrates-1.1 for the current pinned version. trustedrouter/socrates-1.0 remains available for old pinned integrations.",
         "- Subagent: use a concrete parent model with tool type openrouter:subagent or trustedrouter:subagent to delegate self-contained tasks to a worker model",
         "- Synth: use model trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, or trustedrouter/zeus-1.0 with tool type trustedrouter:synth",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
@@ -1652,8 +1656,8 @@ def llms_txt(settings: Settings) -> str:
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
             "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
-            "trustedrouter/free. Advisor orchestration aliases include trustedrouter/socrates-1.0, "
-            "trustedrouter/socrates, and trustedrouter/advisor. Versioned Synth aliases include trustedrouter/iris-1.0, "
+            "trustedrouter/free. Advisor orchestration IDs include the primitive trustedrouter/advisor, "
+            "the rolling preset trustedrouter/socrates, and pinned presets trustedrouter/socrates-1.1 and trustedrouter/socrates-1.0. Versioned Synth aliases include trustedrouter/iris-1.0, "
             "trustedrouter/prometheus-1.0, trustedrouter/zeus-1.0, and their -code variants. "
             "Unversioned Synth aliases track the latest preset."
         ),
@@ -1875,6 +1879,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "open_weights": model_open_weights(model),
+        "orchestration_primitive": orchestration_primitive(model.id),
+        "orchestration_role": orchestration_role(model.id),
+        "canonical_model_id": canonical_orchestration_model_id(model.id),
         "providers": providers,
         "provider_count": len(providers),
         "ai_iq": ai_iq,
@@ -2027,6 +2034,9 @@ def _model_detail_view(
         "is_meta": is_meta,
         "configuration_hidden": model.hidden_public_metadata,
         "open_weights": model_open_weights(model),
+        "orchestration_primitive": orchestration_primitive(model.id),
+        "orchestration_role": orchestration_role(model.id),
+        "canonical_model_id": canonical_orchestration_model_id(model.id),
         "candidate_models": candidate_models,
         "supports_chat": model.supports_chat,
         "supports_messages": model.supports_messages,

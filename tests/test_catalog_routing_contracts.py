@@ -46,10 +46,13 @@ from trusted_router.catalog import (
     ZEUS_1_0_MODEL_ID,
     ZEUS_MODEL_ID,
     auto_candidate_models,
+    canonical_orchestration_model_id,
     endpoints_for_model,
     meta_candidate_models,
     model_open_weights,
     model_to_openrouter_shape,
+    orchestration_primitive,
+    orchestration_role,
     provider_privacy_tier,
 )
 from trusted_router.config import Settings
@@ -453,6 +456,7 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
 
     for model_id, candidates in (
         (SOCRATES_1_0_MODEL_ID, socrates_1_0_candidates),
+        (SOCRATES_1_1_MODEL_ID, rolling_candidates),
         (SOCRATES_MODEL_ID, rolling_candidates),
         (ADVISOR_MODEL_ID, socrates_1_0_candidates),
     ):
@@ -461,9 +465,41 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
 
         assert model.provider == "trustedrouter"
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
+        assert shape["trustedrouter"]["orchestration_primitive"] == "advisor"
         assert shape["trustedrouter"]["stores_content"] is False
         assert shape["trustedrouter"]["auto_candidates"] == candidates
         assert [model.id for model in meta_candidate_models(model_id)] == candidates
+
+    assert orchestration_role(ADVISOR_MODEL_ID) == "primitive"
+    assert canonical_orchestration_model_id(ADVISOR_MODEL_ID) == ADVISOR_MODEL_ID
+    assert orchestration_role(SOCRATES_MODEL_ID) == "rolling_alias"
+    assert canonical_orchestration_model_id(SOCRATES_MODEL_ID) == SOCRATES_1_1_MODEL_ID
+    assert orchestration_role(SOCRATES_1_1_MODEL_ID) == "named_preset"
+    assert canonical_orchestration_model_id(SOCRATES_1_1_MODEL_ID) == SOCRATES_1_1_MODEL_ID
+
+
+def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_aliases() -> None:
+    expected = {
+        ADVISOR_MODEL_ID: ("advisor", "primitive", ADVISOR_MODEL_ID),
+        SYNTH_MODEL_ID: ("synth", "primitive", SYNTH_MODEL_ID),
+        FUSION_MODEL_ID: ("synth", "legacy_alias", SYNTH_MODEL_ID),
+        SELECTOR_MODEL_ID: ("selector", "primitive", SELECTOR_MODEL_ID),
+        MAPREDUCE_MODEL_ID: ("mapreduce", "primitive", MAPREDUCE_MODEL_ID),
+        SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_1_1_MODEL_ID),
+        SOCRATES_1_1_MODEL_ID: ("advisor", "named_preset", SOCRATES_1_1_MODEL_ID),
+        OPEN_PATCHER_S1_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S1_MODEL_ID),
+    }
+
+    for model_id, (primitive, role, canonical) in expected.items():
+        shape = model_to_openrouter_shape(MODELS[model_id])
+        tr_meta = shape["trustedrouter"]
+
+        assert orchestration_primitive(model_id) == primitive
+        assert tr_meta["orchestration_primitive"] == primitive
+        assert orchestration_role(model_id) == role
+        assert tr_meta["orchestration_role"] == role
+        assert canonical_orchestration_model_id(model_id) == canonical
+        assert tr_meta["canonical_model_id"] == canonical
 
 
 def test_open_weights_badge_is_recursive_for_combo_models() -> None:

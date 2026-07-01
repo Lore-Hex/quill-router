@@ -2,7 +2,7 @@
 
 Goal: every structured log line that lands in stdout from
 `logging.getLogger(...)` also flows to the Axiom dataset
-`trusted-router` (override via TR_AXIOM_DATASET) so we can slice by
+`trusted-router-logs` (override via TR_AXIOM_DATASET) so we can slice by
 request_id, provider, error_class, etc. Sentry handles the
 exception-tier; Axiom handles the structured-event tier.
 

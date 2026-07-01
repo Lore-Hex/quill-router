@@ -212,11 +212,19 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
 
     assert response.status_code == 200
     assert "TrustedRouter Socrates 1.1" in response.text
+    assert "<span class=\"pill\">advisor</span>" in response.text
+    assert "<span class=\"pill\">named preset</span>" in response.text
     assert "Models used by this orchestration" in response.text
     assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
     assert "trustedrouter/zeus-1.0" in response.text
     assert "Model not found" not in response.text
     assert "/models/trustedrouter/socrates-1.1/providers" not in response.text
+
+    rolling = client.get("/models/trustedrouter/socrates")
+    assert rolling.status_code == 200
+    assert "<span class=\"pill\">advisor</span>" in rolling.text
+    assert "<span class=\"pill\">rolling alias</span>" in rolling.text
+    assert "Canonical: <a href=\"/models/trustedrouter/socrates-1.1\"" in rolling.text
 
 
 def test_public_athena_model_detail_hides_orchestration_components(client: TestClient) -> None:

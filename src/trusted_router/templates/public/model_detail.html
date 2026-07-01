@@ -29,6 +29,15 @@
           {% endif %}
         </td></tr>
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
+        {% if model.is_meta %}
+        <tr><th>Orchestration</th><td>
+          {% if model.orchestration_primitive %}<span class="pill">{{ model.orchestration_primitive }}</span>{% endif %}
+          {% if model.orchestration_role %}<span class="pill">{{ model.orchestration_role|replace('_', ' ') }}</span>{% endif %}
+          {% if model.canonical_model_id and model.canonical_model_id != model.id %}
+          <span class="muted-copy">Canonical: <a href="/models/{{ model.canonical_model_id }}"><code>{{ model.canonical_model_id }}</code></a></span>
+          {% endif %}
+        </td></tr>
+        {% endif %}
         <tr><th>{% if model.is_meta %}Components{% else %}Providers{% endif %}</th><td>
           {% if model.is_meta %}
           {% if model.configuration_hidden %}

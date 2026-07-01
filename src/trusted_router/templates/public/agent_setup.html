@@ -41,7 +41,7 @@ export ANTHROPIC_BASE_URL="https://api.trustedrouter.com"</code></pre>
           <li><span class="mono">trustedrouter/eu</span>: EU-focused routing. Use with <span class="mono">https://api-europe-west4.quillrouter.com/v1</span> for the EU regional gateway.</li>
           <li><span class="mono">trustedrouter/auto</span>: broad provider fallback when availability matters more than the strictest privacy filter.</li>
           <li><span class="mono">trustedrouter/cheap</span>: low-cost paid route pool for cost-sensitive tests.</li>
-          <li><span class="mono">trustedrouter/socrates-1.0</span>: fast worker model with a private advisor tool. Use when most steps should be cheap but hard turns may need one stronger second opinion.</li>
+          <li><span class="mono">trustedrouter/socrates</span>: rolling named advisor model. Use <span class="mono">trustedrouter/socrates-1.1</span> for the current pinned version; <span class="mono">trustedrouter/socrates-1.0</span> remains available only for old pinned integrations.</li>
           <li><span class="mono">trustedrouter/subagent</span>: primitive for OpenRouter-compatible subtask delegation. Use a concrete parent model with a <span class="mono">trustedrouter:subagent</span> or <span class="mono">openrouter:subagent</span> tool.</li>
           <li><span class="mono">trustedrouter/iris-1.0</span>, <span class="mono">trustedrouter/prometheus-1.0</span>, <span class="mono">trustedrouter/zeus-1.0</span>: versioned budget, open, and frontier Synth presets inside the attested gateway.</li>
           <li><span class="mono">trustedrouter/iris-code-1.0</span>, <span class="mono">trustedrouter/prometheus-code-1.0</span>, <span class="mono">trustedrouter/zeus-code-1.0</span>: versioned code-tuned Synth presets for implementation-heavy agent turns.</li>
@@ -58,7 +58,7 @@ Use trustedrouter/zdr by default unless the user asks for broad fallback.
 For Europe-focused workloads, use base_url "https://api-europe-west4.quillrouter.com/v1" and model trustedrouter/eu.
 Use trustedrouter/prometheus-1.0 for hard prompts, evals, or synthesis where multiple model calls are worth the cost.
 Use trustedrouter/prometheus-code-1.0 for implementation-heavy agent turns.
-Use trustedrouter/socrates-1.0 when a fast model should handle the request but may ask a stronger advisor once if stuck.
+Use trustedrouter/socrates for the current rolling advisor model, or trustedrouter/socrates-1.1 when you need the current pinned version.
 Run a PONG smoke test before editing app code.</code></pre>
       </div>
     </div>
@@ -67,9 +67,9 @@ Run a PONG smoke test before editing app code.</code></pre>
   <div class="panel" id="socrates">
     <div class="panel-head"><h2>Socrates prompt</h2><span class="pill">advisor orchestration</span></div>
     <div class="panel-body">
-      <p><span class="mono">trustedrouter/socrates-1.0</span> runs a fast worker by default. The worker gets one private zero-argument tool, <span class="mono">_trustedrouter_get_advice</span>, and should call it only when stuck, uncertain, or facing a high-stakes decision.</p>
+      <p><span class="mono">trustedrouter/socrates</span> is the rolling named advisor model, currently pointing at <span class="mono">trustedrouter/socrates-1.1</span>. The worker gets one private zero-argument tool, <span class="mono">_trustedrouter_get_advice</span>, and should call it only when stuck, uncertain, or facing a high-stakes decision. Use the generic <span class="mono">trustedrouter/advisor</span> primitive only when you provide explicit worker and advisor models yourself.</p>
       <pre><code>{
-  "model": "trustedrouter/socrates-1.0",
+  "model": "trustedrouter/socrates-1.1",
   "messages": [{"role": "user", "content": "Review this migration plan for production risk."}],
   "tools": [{
     "type": "trustedrouter:advisor",

@@ -1016,6 +1016,136 @@ META_MODEL_IDS = frozenset(
     }
 )
 
+ORCHESTRATION_PRIMITIVE_NAMES = frozenset(
+    {
+        "advisor",
+        "synth",
+        "selector",
+        "mapreduce",
+        "subagent",
+    }
+)
+
+ORCHESTRATION_PRIMITIVE_BY_MODEL_ID: dict[str, str] = {
+    ADVISOR_MODEL_ID: "advisor",
+    SUBAGENT_MODEL_ID: "subagent",
+    SYNTH_MODEL_ID: "synth",
+    SYNTH_CODE_MODEL_ID: "synth",
+    FUSION_MODEL_ID: "synth",
+    FUSION_CODE_MODEL_ID: "synth",
+    SELECTOR_MODEL_ID: "selector",
+    MAPREDUCE_MODEL_ID: "mapreduce",
+}
+
+for _advisor_model_id in (
+    SOCRATES_1_0_MODEL_ID,
+    SOCRATES_1_1_MODEL_ID,
+    SOCRATES_MODEL_ID,
+    ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID,
+    PLATO_1_0_MODEL_ID,
+    PLATO_MODEL_ID,
+    PLATO_PRO_1_0_MODEL_ID,
+    PLATO_PRO_MODEL_ID,
+    SOCRATES_PRO_1_0_MODEL_ID,
+    SOCRATES_PRO_MODEL_ID,
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+    SOCRATES_PRO_PLUS_MODEL_ID,
+    OPEN_PATCHER_A1_MODEL_ID,
+    OPEN_PATCHER_FAST1_MODEL_ID,
+    OPEN_PATCHER_G1_MODEL_ID,
+    ATHENA_MODEL_ID,
+):
+    ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
+
+for _synth_model_id in (
+    IRIS_MODEL_ID,
+    PROMETHEUS_MODEL_ID,
+    ZEUS_MODEL_ID,
+    IRIS_1_0_MODEL_ID,
+    PROMETHEUS_1_0_MODEL_ID,
+    PROMETHEUS_1_0_1M_MODEL_ID,
+    ZEUS_1_0_MODEL_ID,
+    ZEUS_1_0_MINI_MODEL_ID,
+    IRIS_CODE_MODEL_ID,
+    PROMETHEUS_CODE_MODEL_ID,
+    ZEUS_CODE_MODEL_ID,
+    IRIS_CODE_1_0_MODEL_ID,
+    PROMETHEUS_CODE_1_0_MODEL_ID,
+    ZEUS_CODE_1_0_MODEL_ID,
+    OPEN_PATCHER_S1_MODEL_ID,
+):
+    ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
+
+CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
+    SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
+    ARISTOTLE_MODEL_ID: ARISTOTLE_1_0_MODEL_ID,
+    PLATO_MODEL_ID: PLATO_1_0_MODEL_ID,
+    PLATO_PRO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
+    SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
+    SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+    IRIS_MODEL_ID: IRIS_1_0_MODEL_ID,
+    PROMETHEUS_MODEL_ID: PROMETHEUS_1_0_MODEL_ID,
+    ZEUS_MODEL_ID: ZEUS_1_0_MODEL_ID,
+    IRIS_CODE_MODEL_ID: IRIS_CODE_1_0_MODEL_ID,
+    PROMETHEUS_CODE_MODEL_ID: PROMETHEUS_CODE_1_0_MODEL_ID,
+    ZEUS_CODE_MODEL_ID: ZEUS_CODE_1_0_MODEL_ID,
+    FUSION_MODEL_ID: SYNTH_MODEL_ID,
+    FUSION_CODE_MODEL_ID: SYNTH_CODE_MODEL_ID,
+}
+
+ORCHESTRATION_LEGACY_ALIAS_MODEL_IDS = frozenset({FUSION_MODEL_ID, FUSION_CODE_MODEL_ID})
+ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS = frozenset(
+    {
+        SOCRATES_MODEL_ID,
+        ARISTOTLE_MODEL_ID,
+        PLATO_MODEL_ID,
+        PLATO_PRO_MODEL_ID,
+        SOCRATES_PRO_MODEL_ID,
+        SOCRATES_PRO_PLUS_MODEL_ID,
+        IRIS_MODEL_ID,
+        PROMETHEUS_MODEL_ID,
+        ZEUS_MODEL_ID,
+        IRIS_CODE_MODEL_ID,
+        PROMETHEUS_CODE_MODEL_ID,
+        ZEUS_CODE_MODEL_ID,
+    }
+)
+ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
+    {
+        ADVISOR_MODEL_ID,
+        SUBAGENT_MODEL_ID,
+        SYNTH_MODEL_ID,
+        SYNTH_CODE_MODEL_ID,
+        SELECTOR_MODEL_ID,
+        MAPREDUCE_MODEL_ID,
+    }
+)
+
+
+def orchestration_primitive(model_id: str) -> str | None:
+    return ORCHESTRATION_PRIMITIVE_BY_MODEL_ID.get(model_id)
+
+
+def canonical_orchestration_model_id(model_id: str) -> str | None:
+    if model_id not in META_MODEL_IDS:
+        return None
+    return CANONICAL_ORCHESTRATION_MODEL_ID.get(model_id, model_id)
+
+
+def orchestration_role(model_id: str) -> str | None:
+    if model_id not in META_MODEL_IDS:
+        return None
+    if model_id in ORCHESTRATION_LEGACY_ALIAS_MODEL_IDS:
+        return "legacy_alias"
+    if model_id in ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS:
+        return "rolling_alias"
+    if model_id in ORCHESTRATION_PRIMITIVE_MODEL_IDS:
+        return "primitive"
+    if model_id in ORCHESTRATION_PRIMITIVE_BY_MODEL_ID:
+        return "named_preset"
+    return "routing_pool"
+
 # EU-focused routing is a provider policy, not a hard data-residency promise.
 # It keeps traffic on the EU regional attested gateway when the caller uses
 # that base URL, then prefers European / EU-regionable / privacy-forward
@@ -3143,6 +3273,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "discount_microdollars_per_million_tokens": 0,
         "auto_candidates": auto_candidates,
         "route_kind": route_kind,
+        "orchestration_primitive": orchestration_primitive(model.id),
+        "orchestration_role": orchestration_role(model.id),
+        "canonical_model_id": canonical_orchestration_model_id(model.id),
         "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
         "internal_only": model.id == MONITOR_MODEL_ID,
