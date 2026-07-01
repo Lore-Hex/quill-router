@@ -18,6 +18,8 @@ the test suite.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -119,6 +121,16 @@ def test_chat_page_render_does_not_require_models_list() -> None:
     # `<option>` or `<li data-model-id>` elements; assert this stays
     # minimal.)
     assert resp.text.count("data-model-id") == 0
+
+
+def test_chat_js_supports_model_query_param() -> None:
+    """Deep links like /chat?model=trustedrouter/openpatcher-s1 should
+    open the playground with that model selected in the first slot."""
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert 'new URLSearchParams(window.location.search).get("model")' in js
+    assert "applyUrlModelOverride" in js
+    assert "rememberRecentModel(URL_MODEL_ID)" in js
 
 
 def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestClient) -> None:

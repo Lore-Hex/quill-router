@@ -49,7 +49,8 @@
     const ISSUE_KEY_PATH =
         CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";
-    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || "anthropic/claude-sonnet-4.6";
+    const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
+    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "anthropic/claude-sonnet-4.6";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
 
     // Curated "Popular" list surfaced at the top of the picker when the
@@ -130,6 +131,7 @@
     // ── State ─────────────────────────────────────────────────────────
     /** @type {{chats: Object, activeChatId: string|null, preferences: Object}} */
     let STATE = loadState();
+    applyUrlModelOverride();
     /** @type {Array<Object>} cached model catalog from /v1/models */
     let MODELS = [];
     /** @type {boolean} */
@@ -177,6 +179,27 @@
             // Corrupt state — reset rather than break the page
         }
         return { chats: {}, activeChatId: null, preferences: {} };
+    }
+
+    function queryModelId() {
+        try {
+            return (new URLSearchParams(window.location.search).get("model") || "").trim();
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function applyUrlModelOverride() {
+        if (!URL_MODEL_ID || LOCKED_MODEL_ID) return;
+        const chat = ensureActiveChat();
+        const slot = chat.models[0] || _defaultSlot();
+        chat.models[0] = slot;
+        slot.model_id = URL_MODEL_ID;
+        slot.enabled = true;
+        chat.updated_at = isoNow();
+        STATE.preferences.lastModelId = URL_MODEL_ID;
+        rememberRecentModel(URL_MODEL_ID);
+        saveState();
     }
 
     // Belt-and-suspenders chat-shape healer. Returns a guaranteed-valid
@@ -2344,8 +2367,13 @@
         if (slot) slot.model_id = modelId;
         chat.updated_at = isoNow();
         STATE.preferences.lastModelId = modelId;
-        // Track recently-used models so the picker can surface a
-        // "Recent" section at the top of the list.
+        rememberRecentModel(modelId);
+        saveState();
+        renderModelsBar();
+    }
+
+    function rememberRecentModel(modelId) {
+        if (!modelId) return;
         if (!STATE.preferences.recentModelIds) {
             STATE.preferences.recentModelIds = [];
         }
@@ -2354,8 +2382,6 @@
         );
         recent.unshift(modelId);
         STATE.preferences.recentModelIds = recent.slice(0, 6);
-        saveState();
-        renderModelsBar();
     }
 
     function openModelPicker(slotIdx) {
