@@ -1370,6 +1370,22 @@ def test_logout_clears_cookie(console_session: tuple[TestClient, str]) -> None:
     assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
 
 
+def test_browser_logout_redirects_instead_of_showing_raw_json(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    resp = client.post(
+        "/auth/logout",
+        headers={"accept": "text/html,application/xhtml+xml"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/"
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "tr_session=" in set_cookie
+    assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
+
+
 # ── Wallet auth helpers (unit tests) ────────────────────────────────────────
 
 def test_build_siwe_message_format() -> None:
