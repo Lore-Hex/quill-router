@@ -154,6 +154,7 @@ class Model:
     # populates multi-tier values when the snapshot carries them.
     price_tiers: tuple[PriceTier, ...] = ()
     published_price_tiers: tuple[PriceTier, ...] = ()
+    hidden_public_metadata: bool = False
 
 
 @dataclass(frozen=True)
@@ -904,6 +905,7 @@ OPEN_EXPLOITER_S1_MODEL_ID = "trustedrouter/openexploiter-s1"
 OPEN_EXPLOITER_A1_MODEL_ID = "trustedrouter/openexploiter-a1"
 OPEN_EXPLOITER_FAST1_MODEL_ID = "trustedrouter/openexploiter-fast1"
 OPEN_EXPLOITER_G1_MODEL_ID = "trustedrouter/openexploiter-g1"
+ATHENA_MODEL_ID = "trustedrouter/athena"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -955,6 +957,7 @@ META_MODEL_IDS = frozenset(
         OPEN_EXPLOITER_A1_MODEL_ID,
         OPEN_EXPLOITER_FAST1_MODEL_ID,
         OPEN_EXPLOITER_G1_MODEL_ID,
+        ATHENA_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -1151,6 +1154,12 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         OPEN_EXPLOITER_A1_MODEL_ID,
     ),
     OPEN_EXPLOITER_G1_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        PROMETHEUS_1_0_1M_MODEL_ID,
+    ),
+    ATHENA_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
@@ -1403,6 +1412,16 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
+    ),
+    ATHENA_MODEL_ID: Model(
+        id=ATHENA_MODEL_ID,
+        name="TrustedRouter Athena",
+        provider="trustedrouter",
+        context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+        hidden_public_metadata=True,
     ),
     SYNTH_MODEL_ID: Model(
         id=SYNTH_MODEL_ID,
@@ -2938,6 +2957,8 @@ def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> 
     fail closed and do not show the badge.
     """
     model_id = model.id.lower()
+    if model.hidden_public_metadata:
+        return False
     if model.id in _seen:
         return False
     if model.id in META_MODEL_IDS:
@@ -3000,6 +3021,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         pricing["prompt_max"] = microdollars_per_million_tokens_to_token_decimal(prompt_max)
         pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(completion_max)
 
+    auto_candidates = None
+    route_kind = _meta_route_kind(model.id) if is_meta else "model"
+    if is_meta and not model.hidden_public_metadata:
+        auto_candidates = [c.id for c in meta_candidate_models(model.id)]
+    if model.hidden_public_metadata:
+        route_kind = "private_orchestration"
+
     tr_block: dict[str, object] = {
         "provider": model.provider,
         "prepaid_available": prepaid_available,
@@ -3029,8 +3057,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # secret 1¢/M discount layered on top. Field kept for OpenRouter
         # consumer compat, but always zero.
         "discount_microdollars_per_million_tokens": 0,
-        "auto_candidates": [c.id for c in meta_candidate_models(model.id)] if is_meta else None,
-        "route_kind": _meta_route_kind(model.id) if is_meta else "model",
+        "auto_candidates": auto_candidates,
+        "route_kind": route_kind,
+        "configuration_hidden": model.hidden_public_metadata,
         "synthetic_monitor": model.id == MONITOR_MODEL_ID,
         "internal_only": model.id == MONITOR_MODEL_ID,
         # Capability flags so OpenRouter-compat clients (and TR's own chat

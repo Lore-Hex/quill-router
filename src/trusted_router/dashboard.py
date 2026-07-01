@@ -1956,7 +1956,11 @@ def _model_detail_view(
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
     ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
-    candidate_models = [_model_view(candidate, test_mode=test_mode) for candidate in meta_candidate_models(model.id)]
+    candidate_models = []
+    if not model.hidden_public_metadata:
+        candidate_models = [
+            _model_view(candidate, test_mode=test_mode) for candidate in meta_candidate_models(model.id)
+        ]
     endpoint_views: list[dict[str, object]] = []
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
@@ -2008,6 +2012,7 @@ def _model_detail_view(
         ),
         "ai_iq": ai_iq,
         "is_meta": is_meta,
+        "configuration_hidden": model.hidden_public_metadata,
         "open_weights": model_open_weights(model),
         "candidate_models": candidate_models,
         "supports_chat": model.supports_chat,

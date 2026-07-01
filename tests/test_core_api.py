@@ -658,6 +658,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/prometheus-code-1.0",
         "trustedrouter/zeus-code-1.0",
         "trustedrouter/openexploiter-g1",
+        "trustedrouter/athena",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
     }.issubset(model_ids)
@@ -714,6 +715,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "moonshotai/kimi-k2.7-code",
         "trustedrouter/prometheus-1.0-1m",
     ]
+    athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
+    assert athena_meta["route_kind"] == "private_orchestration"
+    assert athena_meta["configuration_hidden"] is True
+    assert athena_meta["auto_candidates"] is None
     selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
     mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
     assert selector_meta["route_kind"] == "selector_orchestration"

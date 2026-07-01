@@ -578,6 +578,27 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[OPEN_EXPLOITER_G1_MODEL_ID].context_length == 1_048_576
 
 
+def test_athena_catalog_hides_orchestration_configuration() -> None:
+    from trusted_router.catalog import ATHENA_MODEL_ID
+
+    model = MODELS[ATHENA_MODEL_ID]
+    shape = model_to_openrouter_shape(model)
+
+    assert model.name == "TrustedRouter Athena"
+    assert model.hidden_public_metadata is True
+    assert model.context_length == 1_048_576
+    assert shape["trustedrouter"]["route_kind"] == "private_orchestration"
+    assert shape["trustedrouter"]["configuration_hidden"] is True
+    assert shape["trustedrouter"]["auto_candidates"] is None
+    assert [model.id for model in meta_candidate_models(ATHENA_MODEL_ID)] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        "trustedrouter/prometheus-1.0-1m",
+    ]
+    assert shape["trustedrouter"]["open_weights"] is False
+
+
 def test_openexploiter_s1_is_cataloged_as_custom_synth_preset() -> None:
     model = MODELS[OPEN_EXPLOITER_S1_MODEL_ID]
     shape = model_to_openrouter_shape(model)

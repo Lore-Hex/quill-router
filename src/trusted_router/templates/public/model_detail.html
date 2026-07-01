@@ -31,11 +31,15 @@
         <tr><th>Context</th><td>{{ model.context_length }} tokens</td></tr>
         <tr><th>{% if model.is_meta %}Components{% else %}Providers{% endif %}</th><td>
           {% if model.is_meta %}
+          {% if model.configuration_hidden %}
+          <span class="muted-copy">Configuration not published.</span>
+          {% else %}
           <div class="provider-chip-list">
             {% for candidate in model.candidate_models %}
             <a class="pill" href="{{ candidate.detail_href }}" title="{{ candidate.id }}">{{ candidate.name }}</a>
             {% endfor %}
           </div>
+          {% endif %}
           {% else %}
           <div class="provider-chip-list">
             {% for provider in model.providers %}
@@ -61,9 +65,14 @@
 </section>
 
 <section class="panel">
-  <div class="panel-head"><h2>{% if model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
+  <div class="panel-head"><h2>{% if model.is_meta and model.configuration_hidden %}Configuration{% elif model.is_meta %}Models used by this orchestration{% else %}Providers serving this model{% endif %}</h2></div>
   <div class="panel-body">
-    {% if model.is_meta %}
+    {% if model.is_meta and model.configuration_hidden %}
+    <p style="color:var(--muted);font-size:14px">
+      This TrustedRouter model uses an attested orchestration preset. The internal
+      model graph and prompts are intentionally not published.
+    </p>
+    {% elif model.is_meta %}
     <p style="color:var(--muted);font-size:14px">
       This TrustedRouter model is an orchestration preset. The gateway routes
       through the component models below inside the attested prompt path, using

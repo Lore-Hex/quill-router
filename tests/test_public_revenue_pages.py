@@ -219,6 +219,18 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert "/models/trustedrouter/socrates-1.1/providers" not in response.text
 
 
+def test_public_athena_model_detail_hides_orchestration_components(client: TestClient) -> None:
+    response = client.get("/models/trustedrouter/athena")
+
+    assert response.status_code == 200
+    assert "TrustedRouter Athena" in response.text
+    assert "Models used by this orchestration" not in response.text
+    assert "z-ai/glm-5.2-fast" not in response.text
+    assert "moonshotai/kimi-k2.7-code" not in response.text
+    assert "trustedrouter/prometheus-1.0-1m" not in response.text
+    assert "Model not found" not in response.text
+
+
 def test_public_model_detail_uses_service_structured_data(client: TestClient) -> None:
     response = client.get("/models/moonshotai/kimi-k2.6")
 
