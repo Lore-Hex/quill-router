@@ -1,0 +1,66 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-section docs-section">
+  <div class="panel">
+    <div class="panel-head"><h2>Connect your agent</h2><span class="pill good">Remote MCP</span></div>
+    <div class="panel-body">
+      <p>The TrustedRouter MCP server gives coding agents live TrustedRouter context: models, prices, providers, credits, docs, generation metadata, and small test messages. Production apps should still call the API directly at <code>{{ api_base_url }}</code>.</p>
+      <pre><code># Claude Code
+claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
+  --header "Authorization: Bearer $TRUSTEDROUTER_API_KEY"</code></pre>
+      <pre><code># Generic MCP client
+{
+  "mcpServers": {
+    "trustedrouter": {
+      "url": "https://trustedrouter.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TRUSTEDROUTER_API_KEY}"
+      }
+    }
+  }
+}</code></pre>
+      <p class="muted">Public lookup tools work without a key. <code>credits-get</code>, <code>generation-get</code>, and <code>chat-send</code> require a normal <code>sk-tr-...</code> API key. <code>chat-send</code> is billable and capped to short test messages.</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Tools</h2><span class="pill">agent-readable</span></div>
+    <div class="panel-body">
+      <div class="public-proof-strip">
+        <div><strong>models-list</strong><span>search model catalog</span></div>
+        <div><strong>model-get</strong><span>one model detail</span></div>
+        <div><strong>model-endpoints</strong><span>providers and prices</span></div>
+        <div><strong>providers-list</strong><span>privacy posture</span></div>
+        <div><strong>credits-get</strong><span>API-key balance</span></div>
+        <div><strong>generation-get</strong><span>usage metadata</span></div>
+        <div><strong>docs-search</strong><span>TrustedRouter docs</span></div>
+        <div><strong>chat-send</strong><span>short test inference</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="docs-grid">
+    <div class="panel">
+      <div class="panel-head"><h2>Ask your agent</h2><span class="pill">examples</span></div>
+      <div class="panel-body">
+        <ul class="plain-list">
+          <li>Which TrustedRouter model should I use for cheap code review with ZDR?</li>
+          <li>Show providers for <code>anthropic/claude-sonnet-5</code> and their data policies.</li>
+          <li>Send a PONG smoke test through <code>trustedrouter/zdr</code> and tell me the generation id.</li>
+          <li>Compare <code>trustedrouter/synth</code>, <code>trustedrouter/advisor</code>, and <code>trustedrouter/subagent</code>.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Privacy boundary</h2><span class="pill">metadata first</span></div>
+      <div class="panel-body">
+        <p>MCP calls go to the control plane. Catalog, docs, providers, credits, and generation metadata never need prompt content. The only MCP tool that sends a prompt is <code>chat-send</code>, which forwards the short test message to the attested API gateway.</p>
+        <p>For application traffic, keep using the OpenAI-compatible API directly:</p>
+        <pre><code>export OPENAI_BASE_URL="{{ api_base_url }}"
+export OPENAI_API_KEY="$TRUSTEDROUTER_API_KEY"</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

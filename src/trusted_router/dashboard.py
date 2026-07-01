@@ -116,6 +116,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/evals",
     "/docs/synth",
     "/docs/fusion",
+    "/docs/mcp",
     "/docs/migrate-from-openrouter",
     "/llms.txt",
     "/docs/llms.txt",
@@ -318,6 +319,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/agent_setup.html",
         title="Agent Setup For TrustedRouter",
         description="Base URLs, env vars, smoke tests, and model aliases for coding agents.",
+    ),
+    "docs/mcp": PublicPage(
+        template="public/mcp.html",
+        title="TrustedRouter MCP Server",
+        description=(
+            "Connect coding agents to TrustedRouter's live model catalog, provider posture, "
+            "credits, docs, and safe test inference over MCP."
+        ),
     ),
     "docs/evals": PublicPage(
         template="public/evals.html",
@@ -1615,6 +1624,7 @@ def llms_txt(settings: Settings) -> str:
         f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
         f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
         f"- Agent setup: https://{domain}/docs/agent-setup",
+        f"- MCP server: https://{domain}/docs/mcp",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Blog: https://{domain}/blog",
@@ -1628,6 +1638,7 @@ def llms_txt(settings: Settings) -> str:
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
         "- Socrates: use model trustedrouter/socrates-1.0 or trustedrouter/advisor for a fast worker model that can ask a stronger private advisor once when stuck",
+        "- Subagent: use a concrete parent model with tool type openrouter:subagent or trustedrouter:subagent to delegate self-contained tasks to a worker model",
         "- Synth: use model trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, or trustedrouter/zeus-1.0 with tool type trustedrouter:synth",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
         "",
@@ -1769,6 +1780,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- EU routing: https://{domain}/eu",
         f"- Compact LLM docs: https://{domain}/docs/llms.txt",
         f"- Full LLM docs: https://{domain}/docs/llms-full.txt",
+        f"- MCP server: https://{domain}/docs/mcp",
         "",
         "## Model Aliases",
         "- trustedrouter/auto: broad provider fallback.",
@@ -1778,6 +1790,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",
         "- trustedrouter/synth: attested multi-model panel, selectable judge, and final synthesis.",
+        "- trustedrouter/subagent: primitive for OpenRouter-compatible subtask delegation with tool type openrouter:subagent or trustedrouter:subagent.",
         "- trustedrouter/iris-1.0: budget Synth preset, MiniMax M3, Kimi K2.6, and DeepSeek V4 Pro panel.",
         "- trustedrouter/prometheus-1.0: all-open Synth preset, MiniMax M3, Kimi K2.6, GLM 5.2, Gemma 4, and DeepSeek V4 Pro panel.",
         "- trustedrouter/zeus-1.0: frontier Synth preset with commercial frontier models on the panel.",

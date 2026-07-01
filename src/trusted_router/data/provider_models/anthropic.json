@@ -1,6 +1,22 @@
 {
-  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. The attested gateway maps the dotted catalog id -> Anthropic's dashed id algorithmically (internal/llm/anthropic.go mapModelID: strip 'anthropic/' prefix, then ReplaceAll('.', '-')), so adding a Claude model here needs NO enclave change. Pricing fields are PROVIDER COST in microdollars/M; the loader applies x1.10 to get the customer price. Claude Opus 4.8: cost x1.10 -> $4.95/$24.75 per M. Claude Fable 5 is intentionally not listed: the route is blocked and is not tracked as ZDR.",
+  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. The attested gateway maps the dotted catalog id -> Anthropic's dashed id algorithmically (internal/llm/anthropic.go mapModelID: strip 'anthropic/' prefix, then ReplaceAll('.', '-')), so adding a Claude model here usually needs no enclave change. Pricing fields are PROVIDER COST in microdollars/M; the loader applies x1.10 to get the customer price. Claude Sonnet 5 is listed at Anthropic's introductory price through 2026-08-31. Claude Fable 5 is intentionally not listed: the route is blocked and is not tracked as ZDR.",
   "models": [
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "display_name": "Claude Sonnet 5",
+      "title": "anthropic/claude-sonnet-5",
+      "context_length": 1048576,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "model_type": "chat",
+      "features": ["function-calling"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "upstream_id": "anthropic/claude-sonnet-5",
+      "status": 1
+    },
     {
       "id": "anthropic/claude-opus-4.8",
       "display_name": "Claude Opus 4.8",

@@ -914,6 +914,7 @@ SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
 SOCRATES_1_1_MODEL_ID = "trustedrouter/socrates-1.1"
 SOCRATES_MODEL_ID = "trustedrouter/socrates"
 ADVISOR_MODEL_ID = "trustedrouter/advisor"
+SUBAGENT_MODEL_ID = "trustedrouter/subagent"
 ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
 ARISTOTLE_MODEL_ID = "trustedrouter/aristotle"
 PLATO_1_0_MODEL_ID = "trustedrouter/plato-1.0"
@@ -976,6 +977,7 @@ META_MODEL_IDS = frozenset(
         SOCRATES_1_1_MODEL_ID,
         SOCRATES_MODEL_ID,
         ADVISOR_MODEL_ID,
+        SUBAGENT_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
         ARISTOTLE_MODEL_ID,
         PLATO_1_0_MODEL_ID,
@@ -1140,6 +1142,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     SOCRATES_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    SUBAGENT_MODEL_ID: (
+        "deepseek/deepseek-v4-flash",
+        "cerebras/gpt-oss-120b",
+        "anthropic/claude-sonnet-5",
+    ),
     ARISTOTLE_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
         *SYNTH_FRONTIER_MODEL_ORDER,
@@ -1319,6 +1326,15 @@ MODELS: dict[str, Model] = {
     ADVISOR_MODEL_ID: Model(
         id=ADVISOR_MODEL_ID,
         name="TrustedRouter Advisor",
+        provider="trustedrouter",
+        context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    SUBAGENT_MODEL_ID: Model(
+        id=SUBAGENT_MODEL_ID,
+        name="TrustedRouter Subagent",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
@@ -2898,6 +2914,8 @@ def _meta_route_kind(model_id: str) -> str:
         return "e2e_pool"
     if model_id == MONITOR_MODEL_ID:
         return "synthetic_monitor_pool"
+    if model_id == SUBAGENT_MODEL_ID:
+        return "subagent_orchestration"
     if model_id in ADVISOR_CATALOG_MODEL_ORDERS:
         return "advisor_orchestration"
     if model_id in (
