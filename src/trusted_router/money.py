@@ -6,7 +6,9 @@ MICRODOLLARS_PER_DOLLAR = 1_000_000
 MICRODOLLARS_PER_CENT = 10_000
 TOKENS_PER_MILLION = 1_000_000
 
-# Default trial credit granted to a new workspace ($10).
+# Standard trial-credit amount ($10). As of 2026-06-25 this is NOT granted by
+# default — new users get no free credit (config.signup_trial_credit_microdollars
+# defaults to 0). Kept as the amount to re-enable with + for test fixtures.
 DEFAULT_TRIAL_CREDIT_MICRODOLLARS = 10 * MICRODOLLARS_PER_DOLLAR
 
 # Stripe checkout cap ($10,000).
