@@ -10,8 +10,8 @@
  *     "0 prompt logs" promise from the homepage holds — TR servers
  *     never see the conversation.
  *   * Send button gated client-side on hasSignedInHint() from
- *     dashboard.js. Signed-out clicks pop the existing #signinModal
- *     and fire ZERO requests to api.trustedrouter.com.
+ *     dashboard.js. Signed-out clicks add a local sign-in notice and
+ *     fire ZERO requests to api.trustedrouter.com.
  *   * Browser-side API key auto-issued via
  *     POST /internal/chat/issue-browser-key on first signed-in Send.
  *     Server returns the raw key in a one-shot tr_chat_key cookie;
@@ -263,12 +263,23 @@
 
     function saveState() {
         try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage()));
         } catch (e) {
             // localStorage may be over-quota or unavailable. Fail silent
             // — the chat continues working in-memory for this session.
             console.warn("chat: localStorage save failed:", e);
         }
+    }
+
+    function stateForStorage() {
+        const chats = {};
+        for (const [id, chat] of Object.entries(STATE.chats || {})) {
+            chats[id] = {
+                ...chat,
+                messages: (chat.messages || []).filter((m) => !m.local_notice),
+            };
+        }
+        return { ...STATE, chats };
     }
 
     function newChatId() {
@@ -1357,6 +1368,10 @@
     }
 
     function renderMessage(msg, chat) {
+        if (msg.local_notice === "signed_out_send") {
+            return renderSignedOutSendNotice(msg, chat);
+        }
+
         const el = document.createElement("div");
         el.className =
             "chat-msg chat-msg-" + (msg.role === "user" ? "user" : "assistant");
@@ -1572,6 +1587,63 @@
         actions.appendChild(makeAction("Branch", () => branchFromMessage(chat, msg)));
         actions.appendChild(makeAction("Delete", () => deleteMessage(chat, msg)));
         el.appendChild(actions);
+        return el;
+    }
+
+    function renderSignedOutSendNotice(msg, chat) {
+        const el = document.createElement("div");
+        el.className = "chat-msg chat-msg-assistant chat-msg-local-notice";
+        el.dataset.msgId = msg.id;
+
+        const bubble = document.createElement("div");
+        bubble.className = "chat-msg-bubble chat-auth-notice";
+        const preview = (msg.draft_preview || "").trim();
+        bubble.innerHTML =
+            '<div class="chat-auth-notice-eyebrow">Sign in required</div>' +
+            "<h3>Sign in to send this message.</h3>" +
+            "<p>Your draft is still in the composer. Sign in to send it through TrustedRouter, or start a fresh chat.</p>" +
+            (preview
+                ? '<div class="chat-auth-notice-draft"><span>Draft</span>' +
+                  escapeHtml(preview) +
+                  "</div>"
+                : "") +
+            '<div class="chat-auth-notice-actions">' +
+            '<button type="button" class="chat-auth-notice-primary" data-action="notice-signin">Sign in</button>' +
+            '<button type="button" class="chat-auth-notice-secondary" data-action="notice-new-chat">New chat</button>' +
+            '<button type="button" class="chat-auth-notice-link" data-action="notice-keep-editing">Keep editing</button>' +
+            "</div>";
+
+        bubble.addEventListener("click", (e) => {
+            const action = e.target && e.target.closest
+                ? e.target.closest("[data-action]")
+                : null;
+            if (!action) return;
+            const name = action.dataset.action;
+            if (name === "notice-signin") {
+                openSigninModal();
+                return;
+            }
+            if (name === "notice-new-chat") {
+                removeSignedOutSendNotices(chat);
+                const next = newChat();
+                const input = document.querySelector("[data-chat-input]");
+                if (input) {
+                    input.focus();
+                    autoResize(input);
+                }
+                renderSidebar();
+                renderModelsBar();
+                renderThread();
+                renderSystemPrompt();
+                return next;
+            }
+            if (name === "notice-keep-editing") {
+                const input = document.querySelector("[data-chat-input]");
+                if (input) input.focus();
+            }
+        });
+
+        el.appendChild(bubble);
         return el;
     }
 
@@ -2500,6 +2572,32 @@
 
     // ── Send + stream ─────────────────────────────────────────────────
 
+    function removeSignedOutSendNotices(chat) {
+        if (!chat || !Array.isArray(chat.messages)) return;
+        chat.messages = chat.messages.filter(
+            (m) => m.local_notice !== "signed_out_send",
+        );
+    }
+
+    function showSignedOutSendNotice(text) {
+        const chat = ensureActiveChat();
+        removeSignedOutSendNotices(chat);
+        const compact = text.replace(/\s+/g, " ").trim();
+        const preview =
+            compact.length > 180 ? compact.slice(0, 177) + "..." : compact;
+        chat.messages.push({
+            id: newMsgId(),
+            role: "assistant",
+            local_notice: "signed_out_send",
+            draft_preview: preview,
+            created_at: isoNow(),
+        });
+        chat.updated_at = isoNow();
+        renderSidebar();
+        renderThread();
+        showToast("Sign in to send your message");
+    }
+
     async function handleSendClick(event) {
         event.preventDefault();
         // If any stream is active, the Send button is now Stop.
@@ -2507,20 +2605,23 @@
             stopAllStreams();
             return;
         }
-        if (!isSignedIn()) {
-            // The user's hard constraint: NO request fires when
-            // signed out.
-            openSigninModal();
-            return;
-        }
         const input = document.querySelector("[data-chat-input]");
         if (!input) return;
         const text = (input.value || "").trim();
         if (!text) return;
+        if (!isSignedIn()) {
+            // The user's hard constraint: NO request fires when
+            // signed out. Show an in-thread local notice instead of
+            // silently doing nothing or immediately hiding the chat
+            // behind a modal.
+            showSignedOutSendNotice(text);
+            return;
+        }
         input.value = "";
         autoResize(input);
 
         const chat = ensureActiveChat();
+        removeSignedOutSendNotices(chat);
         const attachments = consumePendingAttachments(chat);
         const userMsg = {
             id: newMsgId(),
@@ -2623,6 +2724,7 @@
         // model. Find the matching response by model_id+slot_label.
         for (const m of chat.messages) {
             if (m.id === assistantMsg.id) break;
+            if (m.local_notice) continue;
             if (m.role === "user") {
                 // OpenAI content shape: either a string (text only)
                 // or an array of parts (text + image_url for vision).

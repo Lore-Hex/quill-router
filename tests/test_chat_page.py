@@ -9,11 +9,10 @@ Chunk 1 covers:
     and the issue-key-endpoint path
   * Static assets `chat.js` and `chat.css` are referenced
 
-The Send-button gating itself is a JS-runtime behavior covered by
-manual verification (test plan: anonymous user clicks Send → modal
-opens, no network request to api.trustedrouter.com fires). pytest can
-only assert that the right hooks are in place; we don't run JS in
-the test suite.
+The Send-button gating itself is a JS-runtime behavior. pytest asserts
+that the right hooks and static guards are in place; browser smoke can
+verify anonymous user types, clicks Send, sees the local sign-in notice,
+and no inference request fires.
 """
 
 from __future__ import annotations
@@ -131,6 +130,22 @@ def test_chat_js_supports_model_query_param() -> None:
     assert 'new URLSearchParams(window.location.search).get("model")' in js
     assert "applyUrlModelOverride" in js
     assert "rememberRecentModel(URL_MODEL_ID)" in js
+
+
+def test_chat_js_signed_out_send_shows_local_notice_without_request() -> None:
+    """Anonymous Send should produce a pleasant in-thread notice, not
+    silently fail or emit an inference request. The request-builder also
+    skips local notices so they cannot leak into later model history."""
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert 'local_notice: "signed_out_send"' in js
+    assert "showSignedOutSendNotice(text)" in js
+    assert 'Sign in to send this message.' in js
+    assert 'data-action="notice-signin"' in js
+    assert 'data-action="notice-new-chat"' in js
+    assert "if (m.local_notice) continue;" in js
+    assert "stateForStorage" in js
+    assert "filter((m) => !m.local_notice)" in js
 
 
 def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestClient) -> None:

@@ -1225,6 +1225,103 @@
     border-radius: var(--chat-radius-lg);
 }
 
+.chat-msg-local-notice {
+    max-width: 640px;
+}
+
+.chat-auth-notice {
+    background: color-mix(in srgb, var(--chat-primary) 7%, var(--chat-bg)) !important;
+    border-color: color-mix(in srgb, var(--chat-primary) 28%, var(--chat-border)) !important;
+}
+
+.chat-auth-notice-eyebrow {
+    font-size: 10px;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--chat-primary);
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.chat-auth-notice h3 {
+    margin: 0 0 6px;
+    font-size: 16px;
+    line-height: 1.3;
+    color: var(--chat-text);
+}
+
+.chat-auth-notice p {
+    margin: 0;
+    color: var(--chat-muted);
+    font-size: 13px;
+}
+
+.chat-auth-notice-draft {
+    margin-top: 12px;
+    padding: 9px 10px;
+    border-radius: var(--chat-radius);
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
+    color: var(--chat-text);
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.chat-auth-notice-draft span {
+    display: block;
+    color: var(--chat-muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    margin-bottom: 3px;
+}
+
+.chat-auth-notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.chat-auth-notice-actions button {
+    border-radius: var(--chat-radius);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    min-height: 32px;
+    padding: 0 12px;
+}
+
+.chat-auth-notice-primary {
+    background: var(--chat-primary);
+    border: 1px solid var(--chat-primary);
+    color: #fff;
+}
+
+.chat-auth-notice-primary:hover {
+    filter: brightness(0.96);
+}
+
+.chat-auth-notice-secondary {
+    background: var(--chat-bg);
+    border: 1px solid var(--chat-border);
+    color: var(--chat-text);
+}
+
+.chat-auth-notice-secondary:hover,
+.chat-auth-notice-link:hover {
+    background: var(--chat-hover);
+}
+
+.chat-auth-notice-link {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--chat-muted);
+}
+
 .chat-msg-md > *:first-child {
     margin-top: 0;
 }
