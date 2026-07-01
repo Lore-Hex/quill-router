@@ -41,6 +41,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
 
@@ -199,6 +200,18 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "worker + advisor + panel + judge + synthesizer" in diagram
     for model_name in ("Claude", "GPT", "GLM", "Kimi", "MiniMax", "DeepSeek"):
         assert model_name not in diagram
+
+    openpatcher_blog = client.get("/blog/openpatcher-s1-exploitbench-cve-2024-2887")
+    assert openpatcher_blog.status_code == 200
+    openpatcher_payload = _json_ld(openpatcher_blog.text)
+    assert "New Open Source SOTA cybersecurity model released today: OpenPatcher-S1" in json.dumps(
+        openpatcher_payload
+    )
+    assert "/models/trustedrouter/openpatcher-s1" in openpatcher_blog.text
+    assert "https://exploitbench.ai/env/v8-cve-2024-2887/" in openpatcher_blog.text
+    assert "7 / 16" in openpatcher_blog.text
+    assert "3 / 16" in openpatcher_blog.text
+    assert "Poseidon" in openpatcher_blog.text
 
     removed_blog = client.get("/blog/frontier-fusion-mythos-target")
     assert removed_blog.status_code == 404

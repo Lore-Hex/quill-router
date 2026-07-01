@@ -30,6 +30,77 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="openpatcher-s1-exploitbench-cve-2024-2887",
+        title="New Open Source SOTA cybersecurity model released today: OpenPatcher-S1",
+        description=(
+            "OpenPatcher-S1 scored 7 out of 16 on AI IQ's ExploitBench CVE-2024-2887 "
+            "target, more than doubling the strongest open baseline in the public comparison "
+            "chart. Poseidon is still training and is already ahead internally."
+        ),
+        published_date="2026-07-01",
+        source_label="ExploitBench CVE-2024-2887",
+        source_url="https://exploitbench.ai/env/v8-cve-2024-2887/",
+        body_html="""
+<figure style="margin:0 0 36px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="100%" style="height:auto;display:block;border:1px solid #e5e7eb;border-radius:18px;background:#fff" role="img" aria-label="OpenPatcher-S1 scores 7 out of 16 on ExploitBench CVE-2024-2887, ahead of Kimi K2.6 at 3, GLM-5.1 at 2, and MiniMax M2.7 at 2">
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="60" y="78" font-family="Georgia,serif" font-size="38" font-weight="800" fill="#111827">ExploitBench CVE-2024-2887</text>
+  <text x="60" y="116" font-family="Inter,Arial,sans-serif" font-size="21" fill="#6b7280">Publicly available cyber model comparison. OpenPatcher-S1 is highlighted.</text>
+  <line x1="150" y1="178" x2="1110" y2="178" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="310" x2="1110" y2="310" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="442" x2="1110" y2="442" stroke="#e5e7eb" stroke-width="1"/>
+  <line x1="150" y1="574" x2="1110" y2="574" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="122" y="184" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">8</text>
+  <text x="122" y="316" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">6</text>
+  <text x="122" y="448" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">4</text>
+  <text x="122" y="580" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">2</text>
+  <text x="122" y="706" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" fill="#6b7280">0</text>
+  <line x1="150" y1="700" x2="1110" y2="700" stroke="#d1d5db" stroke-width="1"/>
+
+  <rect x="192" y="238" width="180" height="462" rx="8" fill="#50c7bb"/>
+  <text x="282" y="222" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">7.00 / 16.00</text>
+  <text x="282" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#111827">OpenPatcher-S1</text>
+  <text x="282" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">TrustedRouter + AI IQ</text>
+
+  <rect x="430" y="502" width="180" height="198" rx="8" fill="#aeb9c8"/>
+  <text x="520" y="486" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">3.00 / 16.00</text>
+  <text x="520" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">Kimi K2.6</text>
+  <text x="520" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">Kimi</text>
+
+  <rect x="668" y="568" width="180" height="132" rx="8" fill="#aeb9c8"/>
+  <text x="758" y="552" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">2.00 / 16.00</text>
+  <text x="758" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">GLM-5.1</text>
+  <text x="758" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">Z.ai</text>
+
+  <rect x="906" y="568" width="180" height="132" rx="8" fill="#aeb9c8"/>
+  <text x="996" y="552" text-anchor="middle" font-family="Georgia,serif" font-size="19" font-weight="800" fill="#6b7280">2.00 / 16.00</text>
+  <text x="996" y="735" text-anchor="middle" font-family="Georgia,serif" font-size="17" font-weight="700" fill="#6b7280">MiniMax M2.7</text>
+  <text x="996" y="756" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#6b7280">MiniMax</text>
+
+  <text x="60" y="662" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="#0f6e56">AI IQ</text>
+  <text x="1110" y="662" text-anchor="end" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+<figcaption style="font-family:Inter,system-ui,sans-serif;font-size:13px;line-height:1.45;color:#6b7280;margin-top:10px">Scores on AI IQ's public ExploitBench CVE-2024-2887 comparison chart. Higher is better. OpenPatcher-S1 is the TrustedRouter + AI IQ run.</figcaption>
+</figure>
+<p><a href="/models/trustedrouter/openpatcher-s1">OpenPatcher-S1</a> scored <strong>7 out of 16</strong> on the <a href="https://exploitbench.ai/env/v8-cve-2024-2887/">ExploitBench CVE-2024-2887</a> target.</p>
+<p>That number is not a victory lap. Seven out of sixteen means the benchmark is still hard. The useful fact is the gap. In the public cyber comparison chart we are tracking, Kimi K2.6 scores 3 out of 16. GLM-5.1 and MiniMax M2.7 score 2. OpenPatcher-S1 more than doubles the strongest listed open baseline on this target.</p>
+<table class="data-table">
+  <thead><tr><th>Model</th><th>Score</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><a href="/models/trustedrouter/openpatcher-s1"><span class="mono">trustedrouter/openpatcher-s1</span></a></td><td><strong>7 / 16</strong></td><td>TrustedRouter + AI IQ open patching model</td></tr>
+    <tr><td>Kimi K2.6</td><td>3 / 16</td><td>strongest listed baseline in the comparison chart</td></tr>
+    <tr><td>GLM-5.1</td><td>2 / 16</td><td>public model baseline</td></tr>
+    <tr><td>MiniMax M2.7</td><td>2 / 16</td><td>public model baseline</td></tr>
+  </tbody>
+</table>
+<p>The benchmark matters because it is not asking a model to recite a security blog post. ExploitBench measures a ladder of capabilities in a real target environment: finding the patched code, triggering the bug, building useful primitives, and climbing toward control. That is a much better test of cyber reasoning than another multiple-choice safety exam.</p>
+<p>OpenPatcher-S1 is built for defensive patching work. The product goal is not to publish exploit recipes. It is to make a model that reads vulnerable code, understands why the patch matters, produces useful repair guidance, and can be evaluated against deterministic environments instead of vibes. If a model cannot reason through the bug, it will not reliably fix the bug either.</p>
+<p>The encouraging part is that this is not a closed demo model. It is a named TrustedRouter model. You can route to it through the normal API, inspect the model page, and run it under the same privacy boundary as the rest of TrustedRouter. If you are doing sensitive security work, the important property is not only that the model is good. It is that the route is explicit and the gateway is verifiable.</p>
+<p>Poseidon is the next model in the line. It is still in training, so we are not treating it as a published benchmark result yet. But internally it is already scoring above OpenPatcher-S1 on this target. That is the signal we wanted. The method is improving, not just the prompt.</p>
+<p>Cyber benchmarks are moving fast, and the line between defensive repair and offensive capability is real. We are going to keep publishing narrow numbers with narrow claims. On this target, among the open cyber models in the public comparison set, OpenPatcher-S1 is the result to beat. Poseidon is coming next.</p>
+""",
+    ),
+    BlogPost(
         slug="socrates-1.1-terminal-bench-hard-72",
         title="Socrates-1.1 just scored 72 on Terminal-Bench Hard",
         description=(
