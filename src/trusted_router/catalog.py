@@ -901,10 +901,10 @@ SOCRATES_PRO_1_0_MODEL_ID = "trustedrouter/socrates-pro-1.0"
 SOCRATES_PRO_MODEL_ID = "trustedrouter/socrates-pro"
 SOCRATES_PRO_PLUS_1_0_MODEL_ID = "trustedrouter/socrates-pro-plus-1.0"
 SOCRATES_PRO_PLUS_MODEL_ID = "trustedrouter/socrates-pro-plus"
-OPEN_EXPLOITER_S1_MODEL_ID = "trustedrouter/openexploiter-s1"
-OPEN_EXPLOITER_A1_MODEL_ID = "trustedrouter/openexploiter-a1"
-OPEN_EXPLOITER_FAST1_MODEL_ID = "trustedrouter/openexploiter-fast1"
-OPEN_EXPLOITER_G1_MODEL_ID = "trustedrouter/openexploiter-g1"
+OPEN_PATCHER_S1_MODEL_ID = "trustedrouter/openpatcher-s1"
+OPEN_PATCHER_A1_MODEL_ID = "trustedrouter/openpatcher-a1"
+OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
+OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 ATHENA_MODEL_ID = "trustedrouter/athena"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
@@ -953,10 +953,10 @@ META_MODEL_IDS = frozenset(
         SOCRATES_PRO_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         SOCRATES_PRO_PLUS_MODEL_ID,
-        OPEN_EXPLOITER_S1_MODEL_ID,
-        OPEN_EXPLOITER_A1_MODEL_ID,
-        OPEN_EXPLOITER_FAST1_MODEL_ID,
-        OPEN_EXPLOITER_G1_MODEL_ID,
+        OPEN_PATCHER_S1_MODEL_ID,
+        OPEN_PATCHER_A1_MODEL_ID,
+        OPEN_PATCHER_FAST1_MODEL_ID,
+        OPEN_PATCHER_G1_MODEL_ID,
         ATHENA_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
@@ -1145,15 +1145,15 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         ZEUS_1_0_MODEL_ID,
     ),
-    OPEN_EXPLOITER_A1_MODEL_ID: (
-        OPEN_EXPLOITER_S1_MODEL_ID,
+    OPEN_PATCHER_A1_MODEL_ID: (
+        OPEN_PATCHER_S1_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
     ),
-    OPEN_EXPLOITER_FAST1_MODEL_ID: (
+    OPEN_PATCHER_FAST1_MODEL_ID: (
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        OPEN_EXPLOITER_A1_MODEL_ID,
+        OPEN_PATCHER_A1_MODEL_ID,
     ),
-    OPEN_EXPLOITER_G1_MODEL_ID: (
+    OPEN_PATCHER_G1_MODEL_ID: (
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
@@ -1377,36 +1377,36 @@ MODELS: dict[str, Model] = {
         prepaid_available=True,
         byok_available=True,
     ),
-    OPEN_EXPLOITER_S1_MODEL_ID: Model(
-        id=OPEN_EXPLOITER_S1_MODEL_ID,
-        name="TrustedRouter OpenExploiter-S1",
+    OPEN_PATCHER_S1_MODEL_ID: Model(
+        id=OPEN_PATCHER_S1_MODEL_ID,
+        name="TrustedRouter OpenPatcher-S1",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
     ),
-    OPEN_EXPLOITER_A1_MODEL_ID: Model(
-        id=OPEN_EXPLOITER_A1_MODEL_ID,
-        name="TrustedRouter OpenExploiter-A1",
+    OPEN_PATCHER_A1_MODEL_ID: Model(
+        id=OPEN_PATCHER_A1_MODEL_ID,
+        name="TrustedRouter OpenPatcher-A1",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
     ),
-    OPEN_EXPLOITER_FAST1_MODEL_ID: Model(
-        id=OPEN_EXPLOITER_FAST1_MODEL_ID,
-        name="TrustedRouter OpenExploiter-Fast1",
+    OPEN_PATCHER_FAST1_MODEL_ID: Model(
+        id=OPEN_PATCHER_FAST1_MODEL_ID,
+        name="TrustedRouter OpenPatcher-Fast1",
         provider="trustedrouter",
         context_length=200_000,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
     ),
-    OPEN_EXPLOITER_G1_MODEL_ID: Model(
-        id=OPEN_EXPLOITER_G1_MODEL_ID,
-        name="TrustedRouter OpenExploiter-G1",
+    OPEN_PATCHER_G1_MODEL_ID: Model(
+        id=OPEN_PATCHER_G1_MODEL_ID,
+        name="TrustedRouter OpenPatcher-G1",
         provider="trustedrouter",
         context_length=1_048_576,
         supports_messages=False,
@@ -2811,7 +2811,7 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
-    if model_id == OPEN_EXPLOITER_S1_MODEL_ID:
+    if model_id == OPEN_PATCHER_S1_MODEL_ID:
         return _models_for_ids((
             "moonshotai/kimi-k2.7-code",
             "z-ai/glm-5.2",
@@ -2865,7 +2865,7 @@ def _meta_route_kind(model_id: str) -> str:
         IRIS_CODE_1_0_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
         ZEUS_CODE_1_0_MODEL_ID,
-        OPEN_EXPLOITER_S1_MODEL_ID,
+        OPEN_PATCHER_S1_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):
