@@ -17,10 +17,12 @@ from trusted_router.catalog import (
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
+    PROVIDER_JURISDICTION_US,
     PROVIDERS,
     SELECTOR_MODEL_ID,
     SYNTH_CODE_MODEL_ID,
     SYNTH_MODEL_ID,
+    US_PROVIDER_ONLY_MODEL_IDS,
     ZDR_MODEL_ID,
     Model,
     ModelEndpoint,
@@ -44,6 +46,7 @@ class RoutePreferences:
     data_collection: str | None = None
     sort: str | None = None
     usage_type: str | None = None
+    provider_jurisdiction: str | None = None
     # Minimum upstream-provider privacy tier (see catalog.PRIVACY_TIER_*).
     # 0 = no filter (default). Set via provider.min_privacy in the body.
     min_privacy_rank: int = 0
@@ -183,7 +186,9 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
     return candidates
 
 
-def chat_route_endpoint_candidates(body: dict[str, Any], settings: Settings) -> list[tuple[Model, ModelEndpoint]]:
+def chat_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
     raw_ids, prefs = _routing_for_body(body, settings)
     candidates: list[tuple[Model, ModelEndpoint]] = []
     seen: set[str] = set()
@@ -280,6 +285,12 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
 
     sort = _sort_mode(raw.get("sort"))
     usage_type = _usage_type(raw.get("usage") or raw.get("usage_type") or raw.get("billing"))
+    provider_jurisdiction = _provider_jurisdiction(
+        raw.get("jurisdiction")
+        or raw.get("country")
+        or raw.get("headquarters_country")
+        or raw.get("provider_country")
+    )
 
     # provider.min_privacy: route only to providers whose posture clears
     # this bar. Accepts friendly names ("zdr", "confidential", "no_store",
@@ -306,6 +317,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         min_privacy_rank=min_privacy_rank,
         sort=sort,
         usage_type=usage_type,
+        provider_jurisdiction=provider_jurisdiction,
     )
 
 
@@ -363,6 +375,15 @@ def _routing_for_body(
                 ErrorType.MODEL_NOT_SUPPORTED,
             )
         prefs = dataclasses.replace(prefs, usage_type="Credits")
+    if "provider_jurisdiction" in overrides:
+        jurisdiction = overrides["provider_jurisdiction"]
+        if prefs.provider_jurisdiction and prefs.provider_jurisdiction != jurisdiction:
+            raise api_error(
+                400,
+                "Requested model requires provider.jurisdiction='us'",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        prefs = dataclasses.replace(prefs, provider_jurisdiction=jurisdiction)
     return ids, prefs
 
 
@@ -406,6 +427,8 @@ def _requested_model_ids(
         stripped = resolve_model_alias(stripped)
         if stripped in META_MODEL_IDS:
             overrides["usage"] = "Credits"
+        if stripped in US_PROVIDER_ONLY_MODEL_IDS:
+            overrides["provider_jurisdiction"] = PROVIDER_JURISDICTION_US
         if stripped in {
             SYNTH_MODEL_ID,
             SYNTH_CODE_MODEL_ID,
@@ -468,6 +491,8 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
             continue
         if model.provider in prefs.ignore:
             continue
+        if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
+            continue
         # "deny" = no data collection — require at least the no-store
         # tier. Keyed off the privacy tier (not raw stores_content) so
         # ZDR/confidential providers, which carry the conservative
@@ -523,6 +548,8 @@ def _apply_endpoint_provider_filters(
         if prefs.only and endpoint.provider not in prefs.only:
             continue
         if endpoint.provider in prefs.ignore:
+            continue
+        if not _provider_matches_jurisdiction(provider, prefs.provider_jurisdiction):
             continue
         # "deny" = no data collection — require at least the no-store
         # tier. Keyed off the privacy tier (not raw stores_content) so
@@ -594,6 +621,35 @@ def _provider_filter_list(field: str, value: Any) -> list[str]:
             )
         out.append(slug)
     return out
+
+
+def _provider_jurisdiction(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise api_error(
+            400,
+            "provider.jurisdiction must be 'us'",
+            ErrorType.BAD_REQUEST,
+        )
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return None
+    if normalized in {"us", "usa", "united_states", "united_states_of_america"}:
+        return PROVIDER_JURISDICTION_US
+    raise api_error(
+        400,
+        "provider.jurisdiction currently supports only 'us'",
+        ErrorType.BAD_REQUEST,
+    )
+
+
+def _provider_matches_jurisdiction(provider: Any, jurisdiction: str | None) -> bool:
+    if jurisdiction is None:
+        return True
+    if jurisdiction == PROVIDER_JURISDICTION_US:
+        return provider.provider_headquarters_country == PROVIDER_JURISDICTION_US
+    return False
 
 
 def _string_list(field: str, value: Any) -> list[str]:

@@ -6,6 +6,7 @@ from trusted_router.catalog import (
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
     ARISTOTLE_MODEL_ID,
+    ATHENA_MODEL_ID,
     AUTO_MODEL_ID,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -29,6 +30,7 @@ from trusted_router.catalog import (
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_MODEL_ID,
+    PROVIDER_JURISDICTION_US,
     PROVIDERS,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
@@ -562,7 +564,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "trustedrouter/prometheus-1.0",
         ],
         OPEN_PATCHER_FAST1_MODEL_ID: [
-            "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "z-ai/glm-5.2-fast",
             "trustedrouter/openpatcher-a1",
         ],
         OPEN_PATCHER_G1_MODEL_ID: [
@@ -674,9 +676,7 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         assert tr_meta["prepaid_available"] is True, model_id
         assert tr_meta["byok_available"] is False, model_id
         assert not [
-            endpoint
-            for endpoint in endpoints_for_model(model_id)
-            if endpoint.usage_type == "BYOK"
+            endpoint for endpoint in endpoints_for_model(model_id) if endpoint.usage_type == "BYOK"
         ], model_id
 
 
@@ -709,6 +709,54 @@ def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> No
         )
     assert getattr(exc.value, "status_code", None) == 400
     assert "do not support BYOK" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        OPEN_PATCHER_S1_MODEL_ID,
+        OPEN_PATCHER_A1_MODEL_ID,
+        OPEN_PATCHER_FAST1_MODEL_ID,
+        OPEN_PATCHER_G1_MODEL_ID,
+        ATHENA_MODEL_ID,
+    ],
+)
+def test_openpatcher_and_athena_force_us_provider_routes(model_id: str) -> None:
+    shape = model_to_openrouter_shape(MODELS[model_id])
+    assert shape["trustedrouter"]["required_provider_jurisdiction"] == PROVIDER_JURISDICTION_US
+
+    if model_id == OPEN_PATCHER_A1_MODEL_ID:
+        # A1 is meta-on-meta: the enclave decomposes it into OpenPatcher-S1
+        # and Prometheus sub-orchestrations. There is no direct control-plane
+        # endpoint list to inspect here; Go tests pin the subrequest policy.
+        return
+
+    endpoints = chat_route_endpoint_candidates(
+        {"model": model_id},
+        Settings(environment="test"),
+    )
+
+    assert endpoints
+    assert all(
+        PROVIDERS[endpoint.provider].provider_headquarters_country == PROVIDER_JURISDICTION_US
+        for _model, endpoint in endpoints
+    )
+    assert {"kimi", "zai", "xiaomi", "minimax", "siliconflow"}.isdisjoint(
+        {endpoint.provider for _model, endpoint in endpoints}
+    )
+
+
+def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
+    endpoints = chat_route_endpoint_candidates(
+        {"model": "z-ai/glm-5.2", "provider": {"jurisdiction": "us"}},
+        Settings(environment="test"),
+    )
+
+    assert endpoints
+    assert all(
+        PROVIDERS[endpoint.provider].provider_headquarters_country == PROVIDER_JURISDICTION_US
+        for _model, endpoint in endpoints
+    )
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

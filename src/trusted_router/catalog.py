@@ -39,6 +39,7 @@ class Provider:
         "end-to-end-encryption claim is tracked yet."
     )
     provider_policy_url: str | None = None
+    provider_headquarters_country: str | None = None
 
 
 # Privacy-posture tiers, lowest → highest. A request can demand a minimum
@@ -75,6 +76,8 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
     PRIVACY_TIER_ZERO_RETENTION: "Zero retention",
     PRIVACY_TIER_CONFIDENTIAL: "Confidential + E2EE",
 }
+
+PROVIDER_JURISDICTION_US = "US"
 
 
 def provider_privacy_tier(provider: Provider) -> int:
@@ -368,6 +371,7 @@ PROVIDERS: dict[str, Provider] = {
             "Provider compute policy still depends on the selected upstream route."
         ),
         provider_policy_url="https://trust.trustedrouter.com",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "anthropic": Provider(
         slug="anthropic",
@@ -384,6 +388,7 @@ PROVIDERS: dict[str, Provider] = {
             "may differ.)"
         ),
         provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "openai": Provider(
         slug="openai",
@@ -397,6 +402,7 @@ PROVIDERS: dict[str, Provider] = {
             "ZDR depends on eligible endpoint usage and account configuration."
         ),
         provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "gemini": Provider(
         slug="gemini",
@@ -410,6 +416,7 @@ PROVIDERS: dict[str, Provider] = {
             "and outputs."
         ),
         provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "cerebras": Provider(
         slug="cerebras",
@@ -421,6 +428,7 @@ PROVIDERS: dict[str, Provider] = {
             "prompt caching and no persisted prompt cache data."
         ),
         provider_policy_url="https://inference-docs.cerebras.ai/capabilities/prompt-caching",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "deepseek": Provider(
         slug="deepseek",
@@ -484,6 +492,7 @@ PROVIDERS: dict[str, Provider] = {
             "on content without opt-in."
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Fireworks AI — OpenAI-compatible serverless inference at
     # api.fireworks.ai/inference/v1. The live account currently exposes a
@@ -498,6 +507,7 @@ PROVIDERS: dict[str, Provider] = {
             "contracted ZDR posture before marking this provider as ZDR."
         ),
         provider_policy_url="https://trust.fireworks.ai",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
     # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
@@ -510,6 +520,7 @@ PROVIDERS: dict[str, Provider] = {
             "retention, with ZDR as an enterprise feature."
         ),
         provider_policy_url="https://docs.x.ai/docs/resources/faq-api/security",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Novita — multi-model serverless inference. OpenAI-compatible
     # at api.novita.ai/v3/openai. Hosts DeepSeek, Qwen, Llama,
@@ -571,6 +582,7 @@ PROVIDERS: dict[str, Provider] = {
             "provider compute and no prompt/output logging claims."
         ),
         provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
     # positioning. OpenAI-compatible at api.venice.ai/api/v1.
@@ -589,6 +601,7 @@ PROVIDERS: dict[str, Provider] = {
             "those providers' policies; TR routes Venice-native open models here.)"
         ),
         provider_policy_url="https://docs.venice.ai/overview/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Parasail — serverless inference platform. Hosts Llama, Qwen,
     # Gemma 4 family, plus their own quantized variants
@@ -607,6 +620,7 @@ PROVIDERS: dict[str, Provider] = {
             "https://docs.parasail.io/parasail-docs/security-and-account-management/"
             "data-privacy-retention"
         ),
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Lightning AI — Lightning's hosted inference. OpenAI-compatible at
     # lightning.ai/api/v1. Pricing is published per-model in their
@@ -621,6 +635,7 @@ PROVIDERS: dict[str, Provider] = {
             "security documentation is linked for retention review."
         ),
         provider_policy_url="https://lightning.ai/legal/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # GMI Cloud — confidential-GPU inference hosted on H100/H200.
     # OpenAI-compatible at api.gmi-serving.com/v1. Pricing is in the
@@ -637,6 +652,7 @@ PROVIDERS: dict[str, Provider] = {
             "published policy page is JavaScript-only and would not render)."
         ),
         provider_policy_url="https://gmicloud.ai/legal/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # FriendliAI — OpenAI-compatible serverless Model API at
     # api.friendli.ai/serverless/v1. Hosts GLM 5.2 plus a compact
@@ -666,6 +682,7 @@ PROVIDERS: dict[str, Provider] = {
             "data handling."
         ),
         provider_policy_url="https://docs.baseten.co/inference/overview",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer
     # supports request-scoped ZDR with `Wafer-ZDR: required` on models whose
@@ -682,6 +699,7 @@ PROVIDERS: dict[str, Provider] = {
             "keeps provider-level claims conservative."
         ),
         provider_policy_url="https://docs.wafer.ai/serverless/api-reference",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Crusoe Managed Inference — OpenAI-compatible API at
     # api.inference.crusoecloud.com/v1. Publishes model availability,
@@ -697,6 +715,7 @@ PROVIDERS: dict[str, Provider] = {
             "data-handling review."
         ),
         provider_policy_url="https://docs.crusoecloud.com/managed-inference/overview/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
@@ -812,6 +831,7 @@ PROVIDERS: dict[str, Provider] = {
             "API data. (Not a confidential-compute/TEE provider.)"
         ),
         provider_policy_url="https://www.voyageai.com/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
 }
 # Vertex is intentionally excluded until TR's GCP project gets the
@@ -909,6 +929,15 @@ OPEN_PATCHER_A1_MODEL_ID = "trustedrouter/openpatcher-a1"
 OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
 OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 ATHENA_MODEL_ID = "trustedrouter/athena"
+US_PROVIDER_ONLY_MODEL_IDS = frozenset(
+    {
+        OPEN_PATCHER_S1_MODEL_ID,
+        OPEN_PATCHER_A1_MODEL_ID,
+        OPEN_PATCHER_FAST1_MODEL_ID,
+        OPEN_PATCHER_G1_MODEL_ID,
+        ATHENA_MODEL_ID,
+    }
+)
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -1080,12 +1109,8 @@ SYNTH_CODE_FRONTIER_MODEL_ORDER = (
     "moonshotai/kimi-k2.7-code",
 )
 
-SOCRATES_WORKER_MODEL_ORDER = (
-    "cerebras/gpt-oss-120b",
-)
-SOCRATES_ADVISOR_MODEL_ORDER = (
-    SOCRATES_PRO_1_0_MODEL_ID,
-)
+SOCRATES_WORKER_MODEL_ORDER = ("cerebras/gpt-oss-120b",)
+SOCRATES_ADVISOR_MODEL_ORDER = (SOCRATES_PRO_1_0_MODEL_ID,)
 
 SOCRATES_CATALOG_MODEL_ORDER = (
     "cerebras/gpt-oss-120b",
@@ -1164,7 +1189,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         PROMETHEUS_1_0_MODEL_ID,
     ),
     OPEN_PATCHER_FAST1_MODEL_ID: (
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "z-ai/glm-5.2-fast",
         OPEN_PATCHER_A1_MODEL_ID,
     ),
     OPEN_PATCHER_G1_MODEL_ID: (
@@ -2836,10 +2861,12 @@ def meta_candidate_models(model_id: str) -> list[Model]:
     if model_id == ZEUS_1_0_MINI_MODEL_ID:
         return _models_for_ids(SYNTH_FRONTIER_MINI_MODEL_ORDER)
     if model_id == OPEN_PATCHER_S1_MODEL_ID:
-        return _models_for_ids((
-            "moonshotai/kimi-k2.7-code",
-            "z-ai/glm-5.2",
-        ))
+        return _models_for_ids(
+            (
+                "moonshotai/kimi-k2.7-code",
+                "z-ai/glm-5.2",
+            )
+        )
     if model_id in (
         PROMETHEUS_CODE_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
@@ -3004,9 +3031,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     prepaid_available = (
         any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
     )
-    byok_available = False if is_meta else (
-        any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
-        or (model.byok_available and PROVIDERS[model.provider].supports_byok)
+    byok_available = (
+        False
+        if is_meta
+        else (
+            any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+            or (model.byok_available and PROVIDERS[model.provider].supports_byok)
+        )
     )
 
     # For meta routers, derive prompt/completion price from the candidate range
@@ -3068,6 +3099,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
         "provider_policy_url": provider.provider_policy_url,
+        "provider_headquarters_country": provider.provider_headquarters_country,
+        "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
+        "required_provider_jurisdiction": (
+            PROVIDER_JURISDICTION_US if model.id in US_PROVIDER_ONLY_MODEL_IDS else None
+        ),
         # Highest privacy tier reachable for this model — the max across
         # every provider that serves it (a request can route to the best
         # one). Lets the picker / SEO pages show "this model can run
@@ -3111,6 +3147,11 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
                 "provider_policy": PROVIDERS[endpoint.provider].provider_policy,
                 "provider_policy_url": PROVIDERS[endpoint.provider].provider_policy_url,
+                "provider_headquarters_country": PROVIDERS[
+                    endpoint.provider
+                ].provider_headquarters_country,
+                "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
+                == PROVIDER_JURISDICTION_US,
             }
             for endpoint in endpoints
         ],
@@ -3162,6 +3203,8 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
         "provider_policy_url": provider.provider_policy_url,
+        "provider_headquarters_country": provider.provider_headquarters_country,
+        "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
     }
 
 

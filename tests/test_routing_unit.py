@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from trusted_router.catalog import PROVIDER_JURISDICTION_US
 from trusted_router.config import Settings
 from trusted_router.routing import (
     _sort_endpoint_candidates,
@@ -239,6 +240,19 @@ def test_provider_route_preferences_accepts_comma_separated_order() -> None:
     assert prefs.order == ("anthropic", "openai")
 
 
+@pytest.mark.parametrize("value", ["us", "US", "usa", "united-states", "united states"])
+def test_provider_route_preferences_accepts_us_jurisdiction_aliases(value: str) -> None:
+    prefs = provider_route_preferences({"provider": {"jurisdiction": value}})
+    assert prefs.provider_jurisdiction == PROVIDER_JURISDICTION_US
+
+
+def test_provider_route_preferences_rejects_non_us_jurisdiction() -> None:
+    with pytest.raises(HTTPException) as ctx:
+        provider_route_preferences({"provider": {"jurisdiction": "eu"}})
+    assert ctx.value.status_code == 400
+    assert "supports only 'us'" in ctx.value.detail["error"]["message"]
+
+
 def test_provider_route_preferences_rejects_router_as_provider() -> None:
     with pytest.raises(HTTPException) as ctx:
         provider_route_preferences({"provider": {"only": ["openrouter"]}})
@@ -286,13 +300,9 @@ def test_min_privacy_parses_friendly_aliases() -> None:
         PRIVACY_TIER_ZERO_RETENTION,
     )
 
-    p = provider_route_preferences(
-        {"model": "x", "provider": {"min_privacy": "zdr"}}
-    )
+    p = provider_route_preferences({"model": "x", "provider": {"min_privacy": "zdr"}})
     assert p.min_privacy_rank == PRIVACY_TIER_ZERO_RETENTION
-    p2 = provider_route_preferences(
-        {"model": "x", "provider": {"min_privacy": "maximum"}}
-    )
+    p2 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "maximum"}})
     assert p2.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
     # Default: no filter.
     assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
@@ -300,9 +310,7 @@ def test_min_privacy_parses_friendly_aliases() -> None:
 
 def test_min_privacy_rejects_unknown_value() -> None:
     with pytest.raises(HTTPException) as exc:
-        provider_route_preferences(
-            {"model": "x", "provider": {"min_privacy": "kinda-private"}}
-        )
+        provider_route_preferences({"model": "x", "provider": {"min_privacy": "kinda-private"}})
     assert exc.value.status_code == 400
 
 
