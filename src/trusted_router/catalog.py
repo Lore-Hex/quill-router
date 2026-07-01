@@ -887,6 +887,7 @@ SOCRATES_PRO_PLUS_MODEL_ID = "trustedrouter/socrates-pro-plus"
 OPEN_EXPLOITER_S1_MODEL_ID = "trustedrouter/openexploiter-s1"
 OPEN_EXPLOITER_A1_MODEL_ID = "trustedrouter/openexploiter-a1"
 OPEN_EXPLOITER_FAST1_MODEL_ID = "trustedrouter/openexploiter-fast1"
+OPEN_EXPLOITER_G1_MODEL_ID = "trustedrouter/openexploiter-g1"
 SYNTH_MODEL_ID = "trustedrouter/synth"
 IRIS_MODEL_ID = "trustedrouter/iris"
 PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
@@ -937,6 +938,7 @@ META_MODEL_IDS = frozenset(
         OPEN_EXPLOITER_S1_MODEL_ID,
         OPEN_EXPLOITER_A1_MODEL_ID,
         OPEN_EXPLOITER_FAST1_MODEL_ID,
+        OPEN_EXPLOITER_G1_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -1100,11 +1102,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
     PLATO_PRO_1_0_MODEL_ID: (
         "z-ai/glm-5.2",
-        *SYNTH_QUALITY_MODEL_ORDER,
+        PROMETHEUS_1_0_1M_MODEL_ID,
     ),
     PLATO_PRO_MODEL_ID: (
         "z-ai/glm-5.2",
-        *SYNTH_QUALITY_MODEL_ORDER,
+        PROMETHEUS_1_0_1M_MODEL_ID,
     ),
     SOCRATES_PRO_1_0_MODEL_ID: (
         "cerebras/zai-glm-4.7",
@@ -1131,6 +1133,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     OPEN_EXPLOITER_FAST1_MODEL_ID: (
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         OPEN_EXPLOITER_A1_MODEL_ID,
+    ),
+    OPEN_EXPLOITER_G1_MODEL_ID: (
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        PROMETHEUS_1_0_1M_MODEL_ID,
     ),
 }
 
@@ -1294,7 +1301,7 @@ MODELS: dict[str, Model] = {
         id=PLATO_PRO_1_0_MODEL_ID,
         name="TrustedRouter Plato Pro 1.0",
         provider="trustedrouter",
-        context_length=200_000,
+        context_length=1_048_576,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
@@ -1303,7 +1310,7 @@ MODELS: dict[str, Model] = {
         id=PLATO_PRO_MODEL_ID,
         name="TrustedRouter Plato Pro",
         provider="trustedrouter",
-        context_length=200_000,
+        context_length=1_048_576,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,
@@ -1367,6 +1374,15 @@ MODELS: dict[str, Model] = {
         name="TrustedRouter OpenExploiter-Fast1",
         provider="trustedrouter",
         context_length=200_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    OPEN_EXPLOITER_G1_MODEL_ID: Model(
+        id=OPEN_EXPLOITER_G1_MODEL_ID,
+        name="TrustedRouter OpenExploiter-G1",
+        provider="trustedrouter",
+        context_length=1_048_576,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,

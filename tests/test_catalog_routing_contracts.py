@@ -17,6 +17,7 @@ from trusted_router.catalog import (
     MODELS,
     OPEN_EXPLOITER_A1_MODEL_ID,
     OPEN_EXPLOITER_FAST1_MODEL_ID,
+    OPEN_EXPLOITER_G1_MODEL_ID,
     OPEN_EXPLOITER_S1_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
@@ -522,17 +523,11 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         ],
         PLATO_PRO_1_0_MODEL_ID: [
             "z-ai/glm-5.2",
-            "minimax/minimax-m3",
-            "moonshotai/kimi-k2.6",
-            "google/gemma-4-31b-it",
-            "deepseek/deepseek-v4-pro",
+            "trustedrouter/prometheus-1.0-1m",
         ],
         PLATO_PRO_MODEL_ID: [
             "z-ai/glm-5.2",
-            "minimax/minimax-m3",
-            "moonshotai/kimi-k2.6",
-            "google/gemma-4-31b-it",
-            "deepseek/deepseek-v4-pro",
+            "trustedrouter/prometheus-1.0-1m",
         ],
         SOCRATES_PRO_1_0_MODEL_ID: [
             "cerebras/zai-glm-4.7",
@@ -564,6 +559,11 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "xiaomi/mimo-v2.5-pro-ultraspeed",
             "trustedrouter/openexploiter-a1",
         ],
+        OPEN_EXPLOITER_G1_MODEL_ID: [
+            "z-ai/glm-5.2",
+            "moonshotai/kimi-k2.7-code",
+            "trustedrouter/prometheus-1.0-1m",
+        ],
     }
     for model_id, candidates in expected.items():
         shape = model_to_openrouter_shape(MODELS[model_id])
@@ -572,6 +572,9 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         assert shape["trustedrouter"]["stores_content"] is False
         assert shape["trustedrouter"]["auto_candidates"] == candidates
         assert [model.id for model in meta_candidate_models(model_id)] == candidates
+    assert MODELS[PLATO_PRO_1_0_MODEL_ID].context_length == 1_048_576
+    assert MODELS[PLATO_PRO_MODEL_ID].context_length == 1_048_576
+    assert MODELS[OPEN_EXPLOITER_G1_MODEL_ID].context_length == 1_048_576
 
 
 def test_openexploiter_s1_is_cataloged_as_custom_synth_preset() -> None:
@@ -877,8 +880,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
     assert crusoe.upstream_id == "zai/GLM-5.2"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 4_840_000
     assert gmi.prompt_price_microdollars_per_million_tokens == 1_078_000
     assert gmi.completion_price_microdollars_per_million_tokens == 3_388_000
     assert deepinfra.prompt_price_microdollars_per_million_tokens == 1_320_000
@@ -895,3 +896,14 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert wafer.completion_price_microdollars_per_million_tokens == 4_510_000
     assert crusoe.prompt_price_microdollars_per_million_tokens == 1_540_000
     assert crusoe.completion_price_microdollars_per_million_tokens == 4_840_000
+
+
+def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
+    prepaid = MODEL_ENDPOINTS["qwen/qwen3.5-397b-a17b@parasail/prepaid"]
+    byok = MODEL_ENDPOINTS["qwen/qwen3.5-397b-a17b@parasail/byok"]
+
+    assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == 262_144
+    assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
+    assert byok.upstream_id == "parasail-qwen35-397b-a17b"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 550_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_960_000

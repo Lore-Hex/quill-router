@@ -657,6 +657,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/iris-code-1.0",
         "trustedrouter/prometheus-code-1.0",
         "trustedrouter/zeus-code-1.0",
+        "trustedrouter/openexploiter-g1",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
     }.issubset(model_ids)
@@ -705,6 +706,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"] == (
         socrates_pro_plus_meta["auto_candidates"]
     )
+    openexploiter_g1_meta = models_by_id["trustedrouter/openexploiter-g1"]["trustedrouter"]
+    assert openexploiter_g1_meta["route_kind"] == "advisor_orchestration"
+    assert openexploiter_g1_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "moonshotai/kimi-k2.7-code",
+        "trustedrouter/prometheus-1.0-1m",
+    ]
     selector_meta = models_by_id["trustedrouter/selector"]["trustedrouter"]
     mapreduce_meta = models_by_id["trustedrouter/mapreduce"]["trustedrouter"]
     assert selector_meta["route_kind"] == "selector_orchestration"
