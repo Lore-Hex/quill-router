@@ -687,6 +687,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         == prometheus_code_meta["auto_candidates"]
     )
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
+    assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/zeus-1.0"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/zeus-1.0-mini"]["context_length"] == 1_048_576
     assert zeus_meta["auto_candidates"] == [
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",

@@ -604,6 +604,9 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
 
 
 def test_zeus_1_0_and_mini_have_expected_panels() -> None:
+    assert MODELS[ZEUS_MODEL_ID].context_length == 1_048_576
+    assert MODELS[ZEUS_1_0_MODEL_ID].context_length == 1_048_576
+    assert MODELS[ZEUS_1_0_MINI_MODEL_ID].context_length == 1_048_576
     assert [model.id for model in meta_candidate_models(ZEUS_1_0_MODEL_ID)] == [
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
