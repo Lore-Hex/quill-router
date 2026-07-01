@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 from fastapi.testclient import TestClient
 
+from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
 from trusted_router.storage import STORE
 
 
@@ -469,6 +470,19 @@ def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: d
         for item in openai_endpoints
         if item["provider"] == "openai"
     ] == ["Credits", "BYOK"]
+
+    us_filtered = client.get(
+        "/v1/models/z-ai/glm-5.2/endpoints",
+        params={"provider[jurisdiction]": "us"},
+    )
+    assert us_filtered.status_code == 200
+    us_rows = us_filtered.json()["data"]
+    assert us_rows
+    assert all(row["trustedrouter"]["provider_us_based"] is True for row in us_rows)
+    assert all(
+        PROVIDERS[row["provider"]].provider_headquarters_country == PROVIDER_JURISDICTION_US
+        for row in us_rows
+    )
 
     missing = client.get("/v1/models/nope/missing/endpoints")
     assert missing.status_code == 200

@@ -219,6 +219,24 @@ def chat_route_endpoint_candidates(
     return candidates
 
 
+def catalog_endpoint_candidates(
+    model: Model,
+    prefs: RoutePreferences,
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Endpoint candidates for the public model-endpoints catalog route.
+
+    Unlike inference routing, this intentionally does not require
+    `supports_chat`; the OpenRouter-compatible endpoint catalog should be able
+    to describe any served model while still honoring provider filters.
+    """
+    candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
+    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
 def embeddings_route_endpoint_candidates(
     body: dict[str, Any], settings: Settings
 ) -> list[tuple[Model, ModelEndpoint]]:

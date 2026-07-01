@@ -2,19 +2,46 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.catalog import (
     MODELS,
+    PROVIDER_JURISDICTION_US,
     PROVIDERS,
-    endpoints_for_model,
     model_to_openrouter_shape,
     provider_to_openrouter_shape,
     providers_for_display,
 )
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
 from trusted_router.regions import choose_region, region_payload
+from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
+
+
+def _set_provider_query(raw: dict[str, Any], key: str, value: str) -> None:
+    existing = raw.get(key)
+    if existing is None:
+        raw[key] = value
+    elif isinstance(existing, list):
+        existing.append(value)
+    else:
+        raw[key] = [existing, value]
+
+
+def _provider_query_body(request: Request) -> dict[str, Any]:
+    provider: dict[str, Any] = {}
+    for key, value in request.query_params.multi_items():
+        if key.startswith("provider[") and key.endswith("]"):
+            field = key[len("provider[") : -1]
+            if field.endswith("[]"):
+                field = field[:-2]
+            if field:
+                _set_provider_query(provider, field, value)
+        elif key.startswith("provider."):
+            field = key.split(".", 1)[1]
+            if field:
+                _set_provider_query(provider, field, value)
+    return {"provider": provider} if provider else {}
 
 
 def register_catalog_routes(router: APIRouter) -> None:
@@ -50,11 +77,16 @@ def register_catalog_routes(router: APIRouter) -> None:
         return {"data": _public_model_shapes()}
 
     @router.get("/models/{author}/{slug}/endpoints")
-    async def model_endpoints(author: str, slug: str) -> dict[str, list[dict[str, Any]]]:
+    async def model_endpoints(
+        author: str,
+        slug: str,
+        request: Request,
+    ) -> dict[str, list[dict[str, Any]]]:
         model_id = f"{author}/{slug}"
         model = MODELS.get(model_id)
         if model is None:
             return {"data": []}
+        prefs = provider_route_preferences(_provider_query_body(request))
         return {
             "data": [
                 {
@@ -90,6 +122,13 @@ def register_catalog_routes(router: APIRouter) -> None:
                             endpoint.provider
                         ].provider_confidential_compute,
                         "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
+                        "provider_headquarters_country": PROVIDERS[
+                            endpoint.provider
+                        ].provider_headquarters_country,
+                        "provider_us_based": (
+                            PROVIDERS[endpoint.provider].provider_headquarters_country
+                            == PROVIDER_JURISDICTION_US
+                        ),
                         "provider_policy": PROVIDERS[endpoint.provider].provider_policy,
                         "provider_policy_url": PROVIDERS[endpoint.provider].provider_policy_url,
                         "usage_type": endpoint.usage_type,
@@ -97,7 +136,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                         "byok_available": endpoint.usage_type == "BYOK",
                     },
                 }
-                for endpoint in endpoints_for_model(model.id)
+                for _model, endpoint in catalog_endpoint_candidates(model, prefs)
             ]
         }
 
