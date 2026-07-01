@@ -439,22 +439,31 @@ def test_selector_and_mapreduce_primitives_are_cataloged_but_gateway_only() -> N
 
 
 def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
-    expected_candidates = [
+    socrates_1_0_candidates = [
         "cerebras/gpt-oss-120b",
+        "deepseek/deepseek-v4-flash",
         "cerebras/zai-glm-4.7",
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "anthropic/claude-opus-4.8",
     ]
+    rolling_candidates = [
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "trustedrouter/zeus-1.0",
+    ]
 
-    for model_id in (SOCRATES_1_0_MODEL_ID, SOCRATES_MODEL_ID, ADVISOR_MODEL_ID):
+    for model_id, candidates in (
+        (SOCRATES_1_0_MODEL_ID, socrates_1_0_candidates),
+        (SOCRATES_MODEL_ID, rolling_candidates),
+        (ADVISOR_MODEL_ID, socrates_1_0_candidates),
+    ):
         model = MODELS[model_id]
         shape = model_to_openrouter_shape(model)
 
         assert model.provider == "trustedrouter"
         assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
         assert shape["trustedrouter"]["stores_content"] is False
-        assert shape["trustedrouter"]["auto_candidates"] == expected_candidates
-        assert [model.id for model in meta_candidate_models(model_id)] == expected_candidates
+        assert shape["trustedrouter"]["auto_candidates"] == candidates
+        assert [model.id for model in meta_candidate_models(model_id)] == candidates
 
 
 def test_open_weights_badge_is_recursive_for_combo_models() -> None:

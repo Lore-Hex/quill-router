@@ -1111,11 +1111,12 @@ SYNTH_CODE_FRONTIER_MODEL_ORDER = (
     "moonshotai/kimi-k2.7-code",
 )
 
-SOCRATES_WORKER_MODEL_ORDER = ("cerebras/gpt-oss-120b",)
+SOCRATES_WORKER_MODEL_ORDER = ("cerebras/gpt-oss-120b", "deepseek/deepseek-v4-flash")
 SOCRATES_ADVISOR_MODEL_ORDER = (SOCRATES_PRO_1_0_MODEL_ID,)
 
 SOCRATES_CATALOG_MODEL_ORDER = (
     "cerebras/gpt-oss-120b",
+    "deepseek/deepseek-v4-flash",
     "cerebras/zai-glm-4.7",
     "xiaomi/mimo-v2.5-pro-ultraspeed",
     "anthropic/claude-opus-4.8",
@@ -1140,7 +1141,10 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         ZEUS_1_0_MODEL_ID,
     ),
-    SOCRATES_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
+    SOCRATES_MODEL_ID: (
+        "xiaomi/mimo-v2.5-pro-ultraspeed",
+        ZEUS_1_0_MODEL_ID,
+    ),
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SUBAGENT_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
