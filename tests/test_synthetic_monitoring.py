@@ -723,7 +723,7 @@ def test_status_detail_latency_groups_are_not_region_blended() -> None:
 
 
 def test_monthly_history_carries_per_region_latency_breakdown() -> None:
-    now = utcnow()
+    now = dt.datetime(2026, 6, 15, 12, 0, tzinfo=dt.UTC)
     samples = [
         _sample(
             id="syn_month_us",
