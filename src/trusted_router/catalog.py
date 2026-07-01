@@ -355,7 +355,10 @@ PROVIDERS: dict[str, Provider] = {
         supports_messages=True,
         supports_embeddings=False,
         supports_prepaid=True,
-        supports_byok=True,
+        # BYOK attaches to concrete upstream providers. TrustedRouter
+        # orchestration aliases may fan out across multiple managed routes, so
+        # the pseudo-provider itself is intentionally credits-only.
+        supports_byok=False,
         stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
@@ -3001,8 +3004,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     prepaid_available = (
         any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
     )
-    byok_available = any(endpoint.usage_type == "BYOK" for endpoint in endpoints) or (
-        model.byok_available and PROVIDERS[model.provider].supports_byok
+    byok_available = False if is_meta else (
+        any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+        or (model.byok_available and PROVIDERS[model.provider].supports_byok)
     )
 
     # For meta routers, derive prompt/completion price from the candidate range

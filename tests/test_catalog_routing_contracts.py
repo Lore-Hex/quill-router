@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
     MAPREDUCE_MODEL_ID,
+    META_MODEL_IDS,
     MODEL_ENDPOINTS,
     MODELS,
     OPEN_PATCHER_A1_MODEL_ID,
@@ -663,6 +664,51 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["route_kind"] == "fusion_panel"
     assert shape["trustedrouter"]["auto_candidates"] == candidate_ids
     assert shape["trustedrouter"]["open_weights"] is True
+
+
+def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
+    for model_id in sorted(META_MODEL_IDS):
+        shape = model_to_openrouter_shape(MODELS[model_id])
+        tr_meta = shape["trustedrouter"]
+
+        assert tr_meta["prepaid_available"] is True, model_id
+        assert tr_meta["byok_available"] is False, model_id
+        assert not [
+            endpoint
+            for endpoint in endpoints_for_model(model_id)
+            if endpoint.usage_type == "BYOK"
+        ], model_id
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        ZDR_MODEL_ID,
+        E2E_MODEL_ID,
+        EU_MODEL_ID,
+        SOCRATES_1_1_MODEL_ID,
+        SOCRATES_PRO_PLUS_1_0_MODEL_ID,
+        OPEN_PATCHER_G1_MODEL_ID,
+        ZEUS_1_0_MODEL_ID,
+        PROMETHEUS_1_0_1M_MODEL_ID,
+    ],
+)
+def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
+    endpoints = chat_route_endpoint_candidates(
+        {"model": model_id},
+        Settings(environment="test"),
+    )
+
+    assert endpoints
+    assert all(endpoint.usage_type == "Credits" for _model, endpoint in endpoints)
+
+    with pytest.raises(Exception) as exc:
+        chat_route_endpoint_candidates(
+            {"model": model_id, "provider": {"usage": "byok"}},
+            Settings(environment="test"),
+        )
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "do not support BYOK" in str(exc.value)
 
 
 def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:

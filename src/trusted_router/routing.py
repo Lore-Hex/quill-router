@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
     MAPREDUCE_MODEL_ID,
+    META_MODEL_IDS,
     MODELS,
     PRIVACY_TIER_ALIASES,
     PRIVACY_TIER_NO_STORE,
@@ -354,6 +355,14 @@ def _routing_for_body(
                 PRIVACY_TIER_ALIASES[overrides["min_privacy"]],
             ),
         )
+    if overrides.get("usage") == "Credits":
+        if prefs.usage_type == "BYOK":
+            raise api_error(
+                400,
+                "TrustedRouter orchestration models do not support BYOK routes",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        prefs = dataclasses.replace(prefs, usage_type="Credits")
     return ids, prefs
 
 
@@ -395,6 +404,8 @@ def _requested_model_ids(
     def take(raw: str) -> None:
         stripped, ovr = _strip_variant_suffix(raw)
         stripped = resolve_model_alias(stripped)
+        if stripped in META_MODEL_IDS:
+            overrides["usage"] = "Credits"
         if stripped in {
             SYNTH_MODEL_ID,
             SYNTH_CODE_MODEL_ID,
