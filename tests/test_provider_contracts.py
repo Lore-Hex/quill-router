@@ -381,7 +381,7 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(
             return httpx.Response(
                 200,
                 json={
-                    "id": "chatcmpl_wafer_kimi",
+                    "id": "chatcmpl_wafer_qwen",
                     "choices": [{"message": {"content": "pong"}, "finish_reason": "stop"}],
                     "usage": {"prompt_tokens": 4, "completion_tokens": 2},
                 },
@@ -390,11 +390,11 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(
     monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
     client = ProviderClient(LocalKeyFile(key_file), live=True)
     model = Model(
-        id="moonshotai/kimi-k2.7-code",
-        name="Kimi K2.7 Code on Wafer",
+        id="qwen/qwen3.5-397b-a17b",
+        name="Qwen3.5 397B A17B on Wafer",
         provider="wafer",
         context_length=262_144,
-        upstream_id="Kimi-K2.7-Code",
+        upstream_id="Qwen3.5-397B-A17B",
     )
 
     result = await client.chat(
@@ -405,7 +405,7 @@ async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(
     assert result.text == "pong"
     assert calls[0]["url"] == "https://pass.wafer.ai/v1/chat/completions"
     assert calls[0]["headers"] == {"authorization": "Bearer wafer-value"}
-    assert calls[0]["json"]["model"] == "Kimi-K2.7-Code"
+    assert calls[0]["json"]["model"] == "Qwen3.5-397B-A17B"
 
 
 def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:

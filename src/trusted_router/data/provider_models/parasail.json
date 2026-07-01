@@ -3,7 +3,7 @@
   "provider": "parasail",
   "source": "https://api.parasail.io/v1/models",
   "generated_at": "2026-06-22T00:00:00Z",
-  "model_count": 1,
+  "model_count": 2,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -18,6 +18,23 @@
       "model_type": "chat",
       "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
       "input_modalities": ["text"],
+      "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "parasail-qwen35-397b-a17b",
+      "display_name": "Parasail Qwen3.5 397B A17B",
+      "title": "qwen/qwen3.5-397b-a17b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3600000,
+      "cached_input_token_price_per_m": 50000,
+      "model_type": "chat",
+      "features": ["reasoning", "function-calling", "serverless"],
+      "input_modalities": ["text", "image"],
       "output_modalities": ["text"],
       "endpoints": ["chat/completions"],
       "status": 1

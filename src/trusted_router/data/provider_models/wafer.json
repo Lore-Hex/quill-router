@@ -53,7 +53,7 @@
       "input_token_price_per_m": 430000,
       "output_token_price_per_m": 2600000,
       "cached_input_token_price_per_m": 40000,
-      "zdr_supported": true
+      "zdr_supported": false
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
