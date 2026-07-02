@@ -63,3 +63,35 @@ def test_key_info_allowed_while_workspace_paused(client: TestClient) -> None:
         assert resp.status_code == 200, resp.text
     finally:
         STORE.update_workspace(key.workspace_id, billing_paused=False)
+
+
+def test_key_info_requires_internal_token_when_configured() -> None:
+    """codex #95: prove the internal gateway token is enforced (the default
+    test fixture leaves it None, so the other tests don't exercise it)."""
+    from fastapi.testclient import TestClient
+
+    from trusted_router.config import Settings
+    from trusted_router.main import create_app
+
+    internal_token = "internal" + "-keyinfo-token"
+    app = create_app(Settings(environment="test", internal_gateway_token=internal_token))
+    tc = TestClient(app)
+    user = STORE.ensure_user("keyinfo-tok@example.com")
+    ws = STORE.list_workspaces_for_user(user.id)[0]
+    _raw, key = STORE.create_api_key(workspace_id=ws.id, name="k", creator_user_id=user.id)
+    body = {"api_key_lookup_hash": key.lookup_hash}
+
+    missing = tc.post("/v1/internal/gateway/key", json=body)
+    wrong = tc.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": "wrong"},
+        json=body,
+    )
+    correct = tc.post(
+        "/v1/internal/gateway/key",
+        headers={"x-trustedrouter-internal-token": internal_token},
+        json=body,
+    )
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert correct.status_code == 200, correct.text
