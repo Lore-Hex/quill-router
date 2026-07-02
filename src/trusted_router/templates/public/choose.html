@@ -20,6 +20,23 @@
 {% endblock %}
 
 {% block body %}
+<section class="marketing-grid two" aria-label="Agent model advisor" style="margin:6px 0 28px">
+  <div class="marketing-card">
+    <span class="eyebrow">For agents</span>
+    <h2>Give your coding agent the model picker.</h2>
+    <p>Codex, Claude Code, Hermes, Cursor, and other agents can use the
+      <code>trustedrouter-model-advisor</code> skill to choose models with live speed, cost,
+      AI IQ, privacy, context, provider health, and prompt-cache context.</p>
+    <p style="margin-top:14px"><a class="card-link" href="/docs/agent-setup#codex-skill">Install the agent skill →</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Agent prompt</span><span>SKILL.md</span></div>
+    <pre><code>Read https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md
+Choose a TrustedRouter model for this task.
+Estimate cost and speed before making billable calls.</code></pre>
+  </div>
+</section>
+
 <section aria-label="Interactive model picker" class="choose-embed">
   <iframe id="tr-choose-frame"
           title="Interactive model tradeoff explorer — smart, cheap, fast"

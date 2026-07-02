@@ -2766,16 +2766,36 @@ def default_endpoint_for_model(model: Model) -> ModelEndpoint | None:
     return endpoints[0]
 
 
+class InvalidAutoModelOrder(ValueError):
+    """Raised when TR_AUTO_MODEL_ORDER includes a router/orchestration model."""
+
+
+def validate_auto_model_order(order: str | None = None) -> None:
+    raw_ids = [
+        item.strip()
+        for item in (order.split(",") if order else DEFAULT_AUTO_MODEL_ORDER)
+        if item.strip()
+    ]
+    meta_ids = [model_id for model_id in raw_ids if model_id in META_MODEL_IDS]
+    if meta_ids:
+        joined = ", ".join(meta_ids)
+        raise InvalidAutoModelOrder(
+            "TR_AUTO_MODEL_ORDER cannot include TrustedRouter meta or orchestration "
+            f"models: {joined}. Use regular provider/model IDs only."
+        )
+
+
 def auto_candidate_models(order: str | None = None) -> list[Model]:
     raw_ids = [
         item.strip()
         for item in (order.split(",") if order else DEFAULT_AUTO_MODEL_ORDER)
         if item.strip()
     ]
+    validate_auto_model_order(order)
     candidates: list[Model] = []
     seen: set[str] = set()
     for model_id in raw_ids:
-        if model_id in META_MODEL_IDS or model_id in seen:
+        if model_id in seen:
             continue
         model = MODELS.get(model_id)
         if model is not None and _is_regular_chat_model(model):

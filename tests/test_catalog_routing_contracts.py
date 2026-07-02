@@ -45,6 +45,7 @@ from trusted_router.catalog import (
     ZEUS_1_0_MINI_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_MODEL_ID,
+    InvalidAutoModelOrder,
     auto_candidate_models,
     canonical_orchestration_model_id,
     endpoints_for_model,
@@ -56,6 +57,7 @@ from trusted_router.catalog import (
     provider_privacy_tier,
 )
 from trusted_router.config import Settings
+from trusted_router.main import create_app
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
 
 
@@ -334,15 +336,35 @@ def test_prompt_price_equals_published_under_uniform_markup() -> None:
         ), f"{model.id}: completion_price != published_completion"
 
 
-def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
+def test_auto_candidate_order_rejects_meta_and_orchestration_models() -> None:
+    with pytest.raises(InvalidAutoModelOrder, match="TR_AUTO_MODEL_ORDER"):
+        auto_candidate_models(
+            ",".join(
+                [
+                    AUTO_MODEL_ID,
+                    SYNTH_MODEL_ID,
+                    SOCRATES_1_1_MODEL_ID,
+                    ADVISOR_MODEL_ID,
+                    SELECTOR_MODEL_ID,
+                    "mistralai/mistral-small-2603",
+                ]
+            )
+        )
+
+
+def test_app_startup_rejects_orchestration_in_auto_model_order() -> None:
+    with pytest.raises(InvalidAutoModelOrder, match=SYNTH_MODEL_ID):
+        create_app(
+            Settings(environment="test", auto_model_order=SYNTH_MODEL_ID),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+
+
+def test_auto_candidate_order_dedupes_unknowns() -> None:
     candidates = auto_candidate_models(
         ",".join(
             [
-                AUTO_MODEL_ID,
-                SYNTH_MODEL_ID,
-                SOCRATES_1_1_MODEL_ID,
-                ADVISOR_MODEL_ID,
-                SELECTOR_MODEL_ID,
                 "missing/provider",
                 "mistralai/mistral-small-2603",
                 "mistralai/mistral-small-2603",
