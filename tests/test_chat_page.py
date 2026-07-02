@@ -132,6 +132,17 @@ def test_chat_js_supports_model_query_param() -> None:
     assert "rememberRecentModel(URL_MODEL_ID)" in js
 
 
+def test_chat_js_defaults_to_plato_alias() -> None:
+    js = Path("src/trusted_router/static/chat.js").read_text()
+
+    assert (
+        'const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";'
+        in js
+    )
+    assert 'placeholder="trustedrouter/plato"' in js
+    assert '|| "anthropic/claude-sonnet-4.6"' not in js
+
+
 def test_chat_js_signed_out_send_shows_local_notice_without_request() -> None:
     """Anonymous Send should produce a pleasant in-thread notice, not
     silently fail or emit an inference request. The request-builder also

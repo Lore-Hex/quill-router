@@ -1080,7 +1080,7 @@ for _synth_model_id in (
 CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
     SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
     ARISTOTLE_MODEL_ID: ARISTOTLE_1_0_MODEL_ID,
-    PLATO_MODEL_ID: PLATO_1_0_MODEL_ID,
+    PLATO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
@@ -1295,9 +1295,8 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         *SYNTH_QUALITY_MODEL_ORDER,
     ),
     PLATO_MODEL_ID: (
-        "deepseek/deepseek-v4-flash",
         "z-ai/glm-5.2",
-        *SYNTH_QUALITY_MODEL_ORDER,
+        PROMETHEUS_1_0_1M_MODEL_ID,
     ),
     PLATO_PRO_1_0_MODEL_ID: (
         "z-ai/glm-5.2",
@@ -1506,7 +1505,7 @@ MODELS: dict[str, Model] = {
         id=PLATO_MODEL_ID,
         name="TrustedRouter Plato",
         provider="trustedrouter",
-        context_length=200_000,
+        context_length=1_048_576,
         supports_messages=False,
         prepaid_available=True,
         byok_available=True,

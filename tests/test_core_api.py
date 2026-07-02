@@ -686,6 +686,11 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2-flash",
         "cerebras/zai-glm-4.7",
     ]
+    plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]
+    plato_pro_meta = models_by_id["trustedrouter/plato-pro-1.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
+    assert plato_meta["canonical_model_id"] == "trustedrouter/plato-pro-1.0"
+    assert plato_meta["auto_candidates"] == plato_pro_meta["auto_candidates"]
     iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
     assert iris_meta["route_kind"] == "fusion_panel"
     assert iris_meta["auto_candidates"] == [

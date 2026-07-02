@@ -487,6 +487,14 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         MAPREDUCE_MODEL_ID: ("mapreduce", "primitive", MAPREDUCE_MODEL_ID),
         SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_1_1_MODEL_ID),
         SOCRATES_1_1_MODEL_ID: ("advisor", "named_preset", SOCRATES_1_1_MODEL_ID),
+        PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_1_0_MODEL_ID),
+        PLATO_1_0_MODEL_ID: ("advisor", "named_preset", PLATO_1_0_MODEL_ID),
+        PLATO_PRO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_1_0_MODEL_ID),
+        PLATO_PRO_1_0_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            PLATO_PRO_1_0_MODEL_ID,
+        ),
         OPEN_PATCHER_S1_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S1_MODEL_ID),
     }
 
@@ -567,12 +575,8 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "deepseek/deepseek-v4-pro",
         ],
         PLATO_MODEL_ID: [
-            "deepseek/deepseek-v4-flash",
             "z-ai/glm-5.2",
-            "minimax/minimax-m3",
-            "moonshotai/kimi-k2.6",
-            "google/gemma-4-31b-it",
-            "deepseek/deepseek-v4-pro",
+            "trustedrouter/prometheus-1.0-1m",
         ],
         PLATO_PRO_1_0_MODEL_ID: [
             "z-ai/glm-5.2",

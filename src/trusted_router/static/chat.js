@@ -50,7 +50,7 @@
         CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";
     const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
-    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "anthropic/claude-sonnet-4.6";
+    const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
 
     // Curated "Popular" list surfaced at the top of the picker when the
@@ -4035,7 +4035,7 @@
             '<span class="chat-settings-row-label">Default model</span>' +
             '<input type="text" data-setting="default_model_id" value="' +
             escapeHtml(prefs.lastModelId || "") +
-            '" placeholder="anthropic/claude-sonnet-4.6">' +
+            '" placeholder="trustedrouter/plato">' +
             "</label>" +
             '<label class="chat-settings-row chat-settings-row-flex">' +
             '<input type="checkbox" data-setting="enter_to_send" ' +
