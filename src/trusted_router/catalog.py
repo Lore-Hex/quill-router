@@ -2775,10 +2775,10 @@ def auto_candidate_models(order: str | None = None) -> list[Model]:
     candidates: list[Model] = []
     seen: set[str] = set()
     for model_id in raw_ids:
-        if model_id == AUTO_MODEL_ID or model_id in seen:
+        if model_id in META_MODEL_IDS or model_id in seen:
             continue
         model = MODELS.get(model_id)
-        if model is not None and model.supports_chat:
+        if model is not None and _is_regular_chat_model(model):
             candidates.append(model)
             seen.add(model_id)
     return candidates

@@ -339,6 +339,10 @@ def test_auto_candidate_order_dedupes_unknowns_and_self_references() -> None:
         ",".join(
             [
                 AUTO_MODEL_ID,
+                SYNTH_MODEL_ID,
+                SOCRATES_1_1_MODEL_ID,
+                ADVISOR_MODEL_ID,
+                SELECTOR_MODEL_ID,
                 "missing/provider",
                 "mistralai/mistral-small-2603",
                 "mistralai/mistral-small-2603",

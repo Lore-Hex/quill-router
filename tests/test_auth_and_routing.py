@@ -326,6 +326,26 @@ def test_gateway_authorize_honors_models_and_provider_filters() -> None:
         "deepseek/deepseek-v4-flash",
     ]
 
+    pinned = local_client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "openai/gpt-5.4-nano",
+            "models": ["mistralai/mistral-small-2603", "deepseek/deepseek-v4-flash"],
+            "provider": {"order": ["deepseek"], "usage": "byok", "allow_fallbacks": False},
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 4,
+        },
+    )
+
+    assert pinned.status_code == 200, pinned.text
+    pinned_data = pinned.json()["data"]
+    assert pinned_data["model"] == "deepseek/deepseek-v4-flash"
+    assert pinned_data["provider"] == "deepseek"
+    assert [item["model"] for item in pinned_data["route_candidates"]] == [
+        "deepseek/deepseek-v4-flash",
+    ]
+
 
 def test_gateway_authorize_expands_fast_router_pool() -> None:
     app = create_app(Settings(environment="test"))
