@@ -155,7 +155,7 @@ def main() -> int:
     for r in replay_rows:
         if r[0] not in samples_per_kind:
             samples_per_kind[r[0]] = r
-    with target.snapshot() as snap:
+    with target.snapshot(multi_use=True) as snap:  # read per sampled kind (loop)
         for kind, sample in samples_per_kind.items():
             result = list(
                 snap.execute_sql(
