@@ -122,3 +122,27 @@ def test_protocol_uses_storage_models_dataclasses() -> None:
             get_type_hints(method)
         except Exception as exc:  # pragma: no cover - debug aid
             raise AssertionError(f"hint resolution failed for {name}: {exc}") from exc
+
+
+def test_spanner_store_satisfies_typed_billing_store() -> None:
+    """The typed-billing capability (#39): SpannerBigtableStore must declare
+    every TypedBillingStore method so isinstance(store, TypedBillingStore) is a
+    real, mypy-narrowing capability check on the authorization path — replacing
+    the old getattr(STORE, "authorize_gateway_typed", None) probes."""
+    from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.store_protocol import TypedBillingStore
+
+    missing = [
+        name for name in _public_method_names(TypedBillingStore)
+        if not hasattr(SpannerBigtableStore, name)
+    ]
+    assert not missing, f"SpannerBigtableStore missing TypedBillingStore members: {missing}"
+
+
+def test_in_memory_store_is_not_a_typed_billing_store() -> None:
+    """InMemoryStore has NO typed Spanner tables, so it must NOT satisfy the
+    capability — otherwise the isinstance guard would route local/test authorize
+    down the typed-DML path that only exists on Spanner."""
+    from trusted_router.store_protocol import TypedBillingStore
+
+    assert not isinstance(InMemoryStore(), TypedBillingStore)

@@ -55,6 +55,7 @@ from trusted_router.services.broadcast import (
 )
 from trusted_router.storage import STORE, Generation, ProviderBenchmarkSample
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.store_protocol import TypedBillingStore
 from trusted_router.types import ErrorType, UsageType
 
 
@@ -257,9 +258,8 @@ def register(router: APIRouter) -> None:
             # Typed authorizations have no JSON idempotency index; look them up
             # INDEPENDENT of the cohort flag so a retry after a cohort flag-off /
             # denylist rollback still replays (codex 3e route review #2).
-            _typed_idem = getattr(STORE, "get_typed_authorization_by_idempotency", None)
-            if _typed_idem is not None:
-                existing_authorization = _typed_idem(
+            if isinstance(STORE, TypedBillingStore):
+                existing_authorization = STORE.get_typed_authorization_by_idempotency(
                     workspace.id, api_key.hash, request_idempotency_key
                 )
         if existing_authorization is not None:
@@ -275,9 +275,9 @@ def register(router: APIRouter) -> None:
         # Typed-column billing cutover: when this workspace is in the cohort AND
         # the store supports it (Spanner), authorize via the atomic conditional-DML
         # path (the deadlock fix). Default-off -> the legacy path below, unchanged.
-        _typed_authz = getattr(STORE, "authorize_gateway_typed", None)
+        _typed_store = STORE if isinstance(STORE, TypedBillingStore) else None
         _typed_cohort = False
-        if _typed_authz is not None:
+        if _typed_store is not None:
             from trusted_router.storage_gcp_authorize import (
                 typed_billing_enabled_for_workspace,
             )
@@ -287,7 +287,7 @@ def register(router: APIRouter) -> None:
                 allowlist_csv=settings.typed_billing_workspace_ids,
                 denylist_csv=settings.typed_billing_workspace_denylist,
             )
-        if _typed_authz is not None and _typed_cohort:
+        if _typed_store is not None and _typed_cohort:
             import datetime as _dt
 
             from trusted_router.spend_windows import key_window_limits, utcnow, window_resets_at
@@ -305,7 +305,7 @@ def register(router: APIRouter) -> None:
                 if is_byok_request and not api_key.include_byok_in_limit
                 else key_window_limits(api_key)
             )
-            outcome, authorization = _typed_authz(
+            outcome, authorization = _typed_store.authorize_gateway_typed(
                 workspace_id=workspace.id,
                 key_hash=api_key.hash,
                 estimate=estimate,
@@ -735,14 +735,11 @@ def _settle_gateway_authorization(
     # flag, so a request that reserved typed settles typed and a JSON one settles
     # JSON (codex 3e). Default: no typed reservation (or InMemory store) -> legacy
     # path unchanged.
-    _is_typed = getattr(STORE, "is_typed_reservation", None)
-    _typed_finalize = getattr(STORE, "typed_finalize_gateway_authorization", None)
-    if (
-        _is_typed is not None
-        and _typed_finalize is not None
-        and _is_typed(authorization.credit_reservation_id, authorization.id)
+    _typed_store = STORE if isinstance(STORE, TypedBillingStore) else None
+    if _typed_store is not None and _typed_store.is_typed_reservation(
+        authorization.credit_reservation_id, authorization.id
     ):
-        finalized = _typed_finalize(
+        finalized = _typed_store.typed_finalize_gateway_authorization(
             authorization.id,
             success=success,
             actual_microdollars=actual_cost,

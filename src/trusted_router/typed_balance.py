@@ -24,6 +24,7 @@ from typing import Any
 
 from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace
 from trusted_router.storage_models import CreditAccount
+from trusted_router.store_protocol import TypedBillingStore
 
 
 def _typed_enabled(workspace_id: str, settings: Any) -> bool:
@@ -34,33 +35,25 @@ def _typed_enabled(workspace_id: str, settings: Any) -> bool:
     )
 
 
-def _has_typed_tables(store: Any) -> bool:
-    # GCP store only; InMemory has no typed Spanner tables.
-    return hasattr(store, "_database") and hasattr(store, "_param_types")
-
-
-def _read_typed_credit(store: Any, workspace_id: str) -> tuple | None:
-    pt = store._param_types
-    with store._database.snapshot() as snap:
-        rows = list(snap.execute_sql(
-            "SELECT total_credits, total_usage, reserved FROM tr_credit_balance "
-            "WHERE workspace_id=@pk AND shard=0",
-            params={"pk": workspace_id}, param_types={"pk": pt.STRING},
-        ))
-    return tuple(rows[0]) if rows else None
-
-
 def typed_aware_credit_account(
     store: Any, workspace_id: str, *, settings: Any
 ) -> CreditAccount | None:
     """Return the workspace's CreditAccount with total_credits/total_usage/
     reserved overlaid from the typed table when the workspace is typed. JSON
     metadata (auto-refill config, stripe ids) is preserved. No-op for legacy
-    workspaces, stores without typed tables, or a not-yet-seeded typed row."""
+    workspaces, stores without the typed capability, or a not-yet-seeded typed
+    row.
+
+    The typed read goes through the TypedBillingStore capability (a point-read
+    method on the store) instead of reaching into the store's private Spanner
+    handles — the reason isinstance(store, TypedBillingStore) replaced the old
+    hasattr(_database) probe (#39)."""
     account = store.get_credit_account(workspace_id)
-    if account is None or not _has_typed_tables(store) or not _typed_enabled(workspace_id, settings):
+    if account is None or not isinstance(store, TypedBillingStore):
         return account
-    typed = _read_typed_credit(store, workspace_id)
+    if not _typed_enabled(workspace_id, settings):
+        return account
+    typed = store.typed_credit_snapshot(workspace_id)
     if typed is None:
         return account  # typed enforcement on but row not seeded yet — JSON is the best estimate
     return dataclasses.replace(
