@@ -30,6 +30,35 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="keep-doing-biology-with-prometheus",
+        title="Keep doing biology with Prometheus",
+        description=(
+            "Biology work should not stop because one frontier endpoint refuses. "
+            "Use TrustedRouter Prometheus, the open BioMysteryBench harness, MCP, "
+            "and the LLM-advisor skill to choose models that will actually do the work."
+        ),
+        published_date="2026-07-02",
+        source_label="prometheus-biomysterybench on GitHub",
+        source_url="https://github.com/Lore-Hex/prometheus-biomysterybench",
+        body_html="""
+<p>The wrong lesson from <a href="/blog/the-best-biology-ai-wont-do-biology">the biology post</a> would be to give up.</p>
+<p>The right lesson is simpler: keep doing biology, but stop treating one model's policy as the boundary of the work.</p>
+<p>Anthropic built a very strong biology model and kept the best one partner-only. The broadly available model may refuse biology prompts. That is their product decision. It should not become your research workflow. A biologist should not lose the afternoon because a single endpoint decides the question is too close to the lab.</p>
+<p>That is why <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a> exists. Prometheus is the open-model Synth preset: a panel of open models, a judge, and a synthesizer behind one normal model id. You call it through the same OpenAI-compatible API. The work runs through the same <a href="/synth">attested gateway</a>. The point is not that a committee is magic. The point is that model choice becomes an engineering decision instead of a vendor veto.</p>
+<p>The first biology run was intentionally small. Three tasks from an open BioMysteryBench-style harness. <span class="mono">Claude Opus 4.8</span> got all three. <span class="mono">Gemma-4-31b</span> got two for four cents. <span class="mono">GLM-5.2</span> got two and was the only non-Opus model to crack the long motif task. Several cheap models knew the biology but ran out of patience on the long loop. That result is not a leaderboard. It is a useful map.</p>
+<p>Prometheus is what you use after the map exists. For a short lookup, do not pay for a committee. Use the cheap model that already does the job. For a long uncertain analysis, use Prometheus. For the few tasks where every model shares the same blind spot, Prometheus will not save you, and the earlier post says that plainly. That is the whole reason to keep publishing the failures. A router should tell you when the expensive path is worth it and when it is just expensive.</p>
+<p>This is where the <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a> matters. Give the skill to Codex, Claude Code, Cursor, Hermes, or any agent that can read a URL. Let the agent ask TrustedRouter what models are live, what they cost, what privacy tier they sit in, and which route fits the task before it spends your tokens. If the agent supports MCP, connect it to the <a href="/docs/mcp">TrustedRouter MCP server</a>. If it does not, have it read the raw <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">SKILL.md</a>.</p>
+<pre><code>Use the LLM-advisor skill.
+For routine biology lookups, prefer the cheapest model that has passed the local harness.
+For hard biology analysis, try trustedrouter/prometheus.
+If every model agrees on the wrong answer, report the shared blind spot instead of pretending fusion solved it.</code></pre>
+<p>That last line matters. Biology has enough fake certainty already. Prometheus should make the workflow more honest, not more theatrical. A panel is valuable when models disagree and one of them is right. A panel is not valuable when every model marches into the same hole with better citations.</p>
+<p>The pieces are open. The BioMysteryBench-style harness is <a href="https://github.com/Lore-Hex/prometheus-biomysterybench">on GitHub</a>. The broader Synth work is in <a href="/blog/synth-iris-prometheus-zeus">the Iris, Prometheus, and Zeus post</a>. The combo-model framing is in <a href="/blog/combo-models-are-model-containers">Combo models are model containers</a>. The agent setup is in <a href="/docs/agent-setup">the agent guide</a>. The advisor launch is <a href="/blog/trustedrouter-mcp-llm-advisor-ai-iq">here</a>. The whole point is that a smart agent can read the evidence, choose the route, and explain the choice.</p>
+<p>I want biologists to keep asking the questions. I want the model to say when it knows, when it does not know, when it needs a cheaper specialist, when it needs Prometheus, and when the entire panel is probably stuck. That is much more useful than a single refusal page.</p>
+<p>Keep doing biology. Use Prometheus when the problem deserves a committee. Use the skill so the agent knows when it does.</p>
+""",
+    ),
+    BlogPost(
         slug="trustedrouter-mcp-llm-advisor-ai-iq",
         title="Introducing LLM advisor: which model do i choose for my problem?",
         description=(

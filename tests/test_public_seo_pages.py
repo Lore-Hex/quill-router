@@ -41,6 +41,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/keep-doing-biology-with-prometheus</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/trustedrouter-mcp-llm-advisor-ai-iq</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/open-source-open-source-open-source</loc>" in core.text
     assert (
@@ -216,6 +217,23 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "/blog/the-best-open-models-arent-on-your-leaderboard" in pick3_blog.text
     assert "/blog/openpatcher-s1-exploitbench-cve-2024-2887" in pick3_blog.text
     assert "Pick 3" in pick3_blog.text
+
+    biology_prometheus_blog = client.get("/blog/keep-doing-biology-with-prometheus")
+    assert biology_prometheus_blog.status_code == 200
+    biology_prometheus_payload = _json_ld(biology_prometheus_blog.text)
+    assert "Keep doing biology with Prometheus" in json.dumps(biology_prometheus_payload)
+    assert "/blog/the-best-biology-ai-wont-do-biology" in biology_prometheus_blog.text
+    assert "/models/trustedrouter/prometheus" in biology_prometheus_blog.text
+    assert "/blog/synth-iris-prometheus-zeus" in biology_prometheus_blog.text
+    assert "/blog/combo-models-are-model-containers" in biology_prometheus_blog.text
+    assert "/docs/mcp" in biology_prometheus_blog.text
+    assert "https://github.com/Lore-Hex/LLM-advisor" in biology_prometheus_blog.text
+    assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in (
+        biology_prometheus_blog.text
+    )
+    assert "https://github.com/Lore-Hex/prometheus-biomysterybench" in (
+        biology_prometheus_blog.text
+    )
 
     advisor_blog = client.get("/blog/trustedrouter-mcp-llm-advisor-ai-iq")
     assert advisor_blog.status_code == 200
