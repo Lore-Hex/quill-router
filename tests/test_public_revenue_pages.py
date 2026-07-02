@@ -103,6 +103,24 @@ def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> Non
         assert "trustedrouter-model-advisor" in response.text
 
 
+def test_model_advisor_skill_covers_privacy_region_filters_and_blog_context() -> None:
+    skill_root = Path("skills/trustedrouter-model-advisor")
+    skill_text = (skill_root / "SKILL.md").read_text()
+    reference_text = (skill_root / "references/model-selection.md").read_text()
+
+    combined = f"{skill_text}\n{reference_text}"
+    for marker in [
+        "provider.data_collection",
+        "provider.jurisdiction",
+        "provider.only",
+        "trustedrouter/e2e",
+        "trustedrouter/eu",
+        "https://trustedrouter.com/blog",
+        "Combo models are model containers",
+    ]:
+        assert marker in combined
+
+
 def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     response = client.get("/choose")
 

@@ -77,7 +77,7 @@ Reusable prompt for any agent:
 
 ```text
 Read the TrustedRouter model advisor playbook, then choose a model for this task.
-Consider speed, cost, AI IQ, privacy, context length, prompt caching, and recent provider health.
+Consider speed, cost, AI IQ, privacy level, E2E/ZDR/region filters, context length, prompt caching, and recent provider health.
 Estimate cost before making billable calls.
 Playbook: https://raw.githubusercontent.com/Lore-Hex/quill-router/main/skills/trustedrouter-model-advisor/SKILL.md
 ```
@@ -125,13 +125,25 @@ AI IQ provides public model, benchmark, ranking, chart, and methodology data.
 
 Use AI IQ to ground quality recommendations in IQ, dimension scores, benchmark rankings, and cost-quality tradeoffs. Do not treat AI IQ as the canonical TrustedRouter price or provider-health source; use TrustedRouter catalog/provider data for those.
 
+## Use The Blog As Product Context
+
+Read `https://trustedrouter.com/blog` when the recommendation depends on TrustedRouter's current product thesis, eval findings, or named combo models. Use blog claims as context, then verify current availability, prices, provider health, and privacy posture from MCP/catalog data.
+
+Current blog themes to apply:
+
+- Open source + attestation: prefer routes whose trust boundary and provider posture can be explained.
+- Smart, cheap, fast is task-dependent: use one fast/cheap model for routine work and orchestration only when the task justifies fanout.
+- Combo models are model containers: Synth, Socrates, advisor, selector, mapreduce, and subagent routes can hide multiple calls behind one model id, so estimate subcall cost and privacy exposure.
+- Open-weight models can be first-class choices: consider Prometheus/open-weight routes for strong quality at lower cost when the user's privacy and license needs fit.
+- Provider behavior matters as much as model weights: censorship, refusal, uptime, and empty-response patterns can be endpoint-specific, so use leaderboard/provider data before pinning.
+
 ## Model Selection Rules
 
 Read `references/model-selection.md` when the task needs a careful recommendation, a cost estimate, or a privacy/speed/quality tradeoff. For simple setup questions, the core workflow above is enough.
 
 Default heuristics:
 
-- Sensitive legal, healthcare, enterprise, or customer data: start with `trustedrouter/zdr`; consider `trustedrouter/e2e` when end-to-end encrypted providers are required; consider `trustedrouter/eu` for Europe-focused workloads.
+- Sensitive legal, healthcare, enterprise, or customer data: start with `trustedrouter/zdr`; add `provider.data_collection = "deny"` for an explicit ZDR filter; consider `trustedrouter/e2e` when end-to-end encrypted providers are required; use `trustedrouter/eu` plus the EU regional base URL for Europe-focused workloads; use `provider.jurisdiction = "us"` when the user requires US-based providers.
 - Maximum uptime and broad fallback: use `trustedrouter/auto` or an explicit model with multiple healthy provider endpoints.
 - Cheap experimentation: start with `trustedrouter/cheap`, then compare one stronger candidate if the task matters.
 - Fast small tasks: start with `trustedrouter/fast` or a directly fast provider endpoint from the live catalog.
@@ -139,6 +151,29 @@ Default heuristics:
 - Hard coding, agentic terminal work, or evals: compare a code-focused Synth preset and a strong single model. Use AI IQ production-engineering and computer-use dimensions when available.
 - High-stakes synthesis or research: consider `trustedrouter/synth`, `trustedrouter/prometheus-1.0`, `trustedrouter/zeus-1.0`, or `trustedrouter/socrates-1.1`, but estimate cost first because orchestration can make multiple subcalls.
 - User-created custom models: `trustedrouter/user-*` aliases are unlisted and callable by id. Do not assume their hidden prompt, provider route, or privacy class without inspecting owner-visible metadata.
+
+## Privacy And Region Filter Shapes
+
+Use aliases for easy defaults and provider filters for hard requirements:
+
+```json
+{
+  "model": "trustedrouter/zdr",
+  "provider": {
+    "data_collection": "deny",
+    "jurisdiction": "us",
+    "only": ["anthropic", "openai"],
+    "allow_fallbacks": true
+  }
+}
+```
+
+- `trustedrouter/zdr`: zero-retention providers first.
+- `trustedrouter/e2e`: provider-side confidential or end-to-end encrypted routes.
+- `trustedrouter/eu`: EU-focused route pool; pair with `https://api-europe-west4.quillrouter.com/v1` when the gateway region matters.
+- `provider.data_collection = "deny"`: explicit ZDR filter.
+- `provider.jurisdiction = "us"`: US-based provider filter. Do not invent `jurisdiction = "eu"`; use `trustedrouter/eu`, the EU regional base URL, and explicit `provider.only` allowlists instead.
+- `provider.only`, `provider.ignore`, `provider.order`, `provider.sort`, and `allow_fallbacks` narrow or rank eligible endpoints. Tell the user if filters reduce fallback reliability.
 
 ## Cost And Speed Estimate
 
