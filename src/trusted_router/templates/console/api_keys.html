@@ -38,6 +38,7 @@
 <section class="panel">
   <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} total</span></div>
   <div class="panel-body">
+    <div class="table-scroll">
     <table class="keys-table">
       <thead><tr><th>Name</th><th>Label</th><th>Budgets</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
@@ -84,6 +85,7 @@
         {% endif %}
       </tbody>
     </table>
+    </div>
   </div>
 </section>
 {% endblock %}

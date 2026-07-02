@@ -12,8 +12,12 @@ body.console {
   background: var(--top);
   border-bottom: 1px solid var(--line);
   display: flex;
+  /* Wrap at any width: at full desktop nothing wraps; at intermediate widths
+     the workspace selector / user cluster drop to a second row instead of
+     painting over each other (rigid label/select content can't shrink). */
+  flex-wrap: wrap;
   align-items: center;
-  gap: 24px;
+  gap: 12px 24px;
   padding: 12px 24px;
   backdrop-filter: blur(12px);
 }
@@ -39,10 +43,15 @@ body.console {
   align-items: center;
   gap: 12px;
   font-size: 13px;
+  min-width: 0;
 }
 
 .console-user-email {
   color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .console-user .inline-form {
@@ -53,12 +62,19 @@ body.console {
   display: flex;
   align-items: end;
   gap: 8px;
-  min-width: 210px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.workspace-selector select {
+  min-width: 0;
+  max-width: 240px;
 }
 
 .workspace-selector label {
   gap: 4px;
-  min-width: 170px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .workspace-selector label span {
@@ -212,6 +228,14 @@ body.console {
 
 .copy-status.error {
   color: var(--red);
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.keys-table {
+  min-width: 860px;
 }
 
 .key-budget-form {
@@ -447,9 +471,19 @@ body.console {
   .secret-row {
     grid-template-columns: 1fr;
   }
+  /* Topbar: children (brand / workspace selector / user cluster) overflow a
+     phone width when forced onto one line — wrap into rows instead of
+     clipping the workspace Switch control off-screen. */
+  .console-topbar {
+    flex-wrap: wrap;
+    gap: 10px 16px;
+  }
   /* Keys table -> stacked cards: each row becomes a bordered block, each cell
      a labeled line (data-col drives the label), so budgets/actions stay usable
      on a phone instead of overflowing horizontally. */
+  .keys-table {
+    min-width: 0;
+  }
   .keys-table thead {
     display: none;
   }
