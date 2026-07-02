@@ -90,6 +90,9 @@ Point users at the official SDKs when they want typed errors, region pinning, re
   - GitHub: `https://github.com/Lore-Hex/trusted-router-js`
   - npm: `https://www.npmjs.com/package/@lore-hex/trusted-router`
   - Install: `npm install @lore-hex/trusted-router`
+- Swift SDK: `TrustedRouter`
+  - GitHub: `https://github.com/jperla/trusted-router-swift`
+  - Swift Package Manager: `.package(url: "https://github.com/jperla/trusted-router-swift.git", from: "0.4.1")`
 
 When recommending an SDK, also show the OpenAI-compatible fallback because many agents and apps already support a custom base URL.
 
@@ -154,7 +157,7 @@ If the user needs onboarding:
 4. Keep the key out of source control, logs, screenshots, and prompts.
 5. Prefer a secret manager, 1Password, direnv with a gitignored `.envrc`, or a local shell profile with restrictive permissions.
 6. Run a cheap PONG smoke test before changing application code.
-7. Link SDKs for native integrations: `https://github.com/Lore-Hex/trusted-router-py` and `https://github.com/Lore-Hex/trusted-router-js`.
+7. Link SDKs for native integrations: `https://github.com/Lore-Hex/trusted-router-py`, `https://github.com/Lore-Hex/trusted-router-js`, and `https://github.com/jperla/trusted-router-swift`.
 
 Smoke test:
 
