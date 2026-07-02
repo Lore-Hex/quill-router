@@ -84,6 +84,30 @@ def register(router: APIRouter) -> None:
             }
         }
 
+    @router.post("/internal/gateway/key")
+    async def gateway_key_info(
+        request: Request,
+        body: GatewayValidateRequest,
+        settings: SettingsDep,
+    ) -> dict[str, Any]:
+        """Key self-introspection for the enclave: the /v1/key passthrough.
+
+        The enclave NEVER forwards the raw bearer to the control plane (the
+        attested contract; authorize sends a lookup hash) — so agent budget
+        reads come through here keyed by the same lookup hash + internal
+        token. Deliberately no billing-pause gate: reading your own limits
+        while paused is a harmless, useful read."""
+        require_internal_gateway(request, settings)
+        api_key = _api_key_for_gateway_lookup(
+            api_key_hash=body.api_key_hash,
+            api_key_lookup_hash=body.api_key_lookup_hash,
+        )
+        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+        from trusted_router.routes.keys import _enriched_key_shape
+
+        return {"data": _enriched_key_shape(api_key)}
+
     @router.post("/internal/gateway/resolve-custom-model")
     async def gateway_resolve_custom_model(
         request: Request,
