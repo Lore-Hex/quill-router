@@ -121,19 +121,19 @@ def register(app: FastAPI) -> None:
 
     @app.post("/console/api-keys/{key_hash}/disable")
     async def console_disable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
-        _require_key(ctx, key_hash)
+        _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": True})
         return RedirectResponse(url="/console/api-keys?saved=disabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/enable")
     async def console_enable_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
-        _require_key(ctx, key_hash)
+        _require_key(ctx, key_hash, manage=True)
         STORE.update_key(key_hash, {"disabled": False})
         return RedirectResponse(url="/console/api-keys?saved=enabled", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/delete")
     async def console_delete_api_key(ctx: ConsoleDep, key_hash: str) -> Response:
-        key = _require_key(ctx, key_hash)
+        key = _require_key(ctx, key_hash, manage=True)
         # Disable-first, then delete: an ACTIVE key may have in-flight typed
         # holds; deleting it mid-flight strands them (issue #29). Disabling
         # stops new authorizes and the holds settle/drain, making the delete
@@ -144,10 +144,16 @@ def register(app: FastAPI) -> None:
         return RedirectResponse(url="/console/api-keys?saved=deleted", status_code=303)
 
 
-def _require_key(ctx: Any, key_hash: str) -> ApiKey:
+def _require_key(ctx: Any, key_hash: str, *, manage: bool = False) -> ApiKey:
+    """Ownership check for every mutating route; `manage=True` additionally
+    requires owner/manager role (codex #94: disable/enable/delete are
+    destructive — a plain workspace member must not kill another member's
+    keys; budget edits keep the console's pre-existing member-level access)."""
     key = STORE.get_key_by_hash(key_hash)
     if key is None or key.workspace_id != ctx.workspace.id:
         raise HTTPException(status_code=404, detail="API key not found")
+    if manage and not STORE.user_can_manage(ctx.user.id, ctx.workspace.id):
+        raise HTTPException(status_code=403, detail="Requires workspace manager role")
     return key
 
 

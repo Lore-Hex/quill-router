@@ -109,3 +109,20 @@ def test_cross_workspace_key_is_404(console: dict, client: TestClient) -> None:
             f"/console/api-keys/{other_key.hash}/{action}", follow_redirects=False
         )
         assert resp.status_code == 404
+
+
+def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClient) -> None:
+    """codex #94: disable/enable/delete are manager-only; a plain workspace
+    member gets 403 (budget edits keep pre-existing member-level access)."""
+    workspace, key = console["workspace"], console["key"]
+    member = STORE.add_members(workspace.id, ["member@example.com"], role="member")[0]
+    raw_session, _ = STORE.create_auth_session(
+        user_id=member.user_id, provider="test", label="m", ttl_seconds=3600,
+        workspace_id=workspace.id, state="active",
+    )
+    client.cookies.set("tr_session", raw_session)
+    for action in ("disable", "enable", "delete"):
+        resp = client.post(f"/console/api-keys/{key.hash}/{action}", follow_redirects=False)
+        assert resp.status_code == 403, (action, resp.status_code)
+    assert STORE.get_key_by_hash(key.hash) is not None
+    assert STORE.get_key_by_hash(key.hash).disabled is False
