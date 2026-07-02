@@ -35,6 +35,12 @@ from trusted_router.security import (
     new_key_id,
     verify_api_key,
 )
+from trusted_router.spend_windows import (
+    KeyWindowLimitExceeded,
+    key_window_limits,
+    utcnow,
+    window_floors,
+)
 from trusted_router.storage_models import (
     ApiKey,
     CreditAccount,
@@ -67,6 +73,10 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key: dict[str, str] = {}
         self.gateway_authorizations: dict[str, GatewayAuthorization] = {}
         self.gateway_authorization_id_by_idempotency_key: dict[str, str] = {}
+        # Per-key window usage: key_hash -> {window: [start_datetime, usage_micro]}.
+        # Same lazy fixed-UTC-window semantics as the typed tr_key_limit columns
+        # (spend_windows.py); lives beside the key so ApiKey stays a plain record.
+        self.window_usage: dict[str, dict[str, list]] = {}
 
     def reset(self) -> None:
         # Caller holds the parent lock during the global reset, so we
@@ -77,6 +87,7 @@ class InMemoryApiKeys:
         self.reservation_id_by_idempotency_key.clear()
         self.gateway_authorizations.clear()
         self.gateway_authorization_id_by_idempotency_key.clear()
+        self.window_usage.clear()
 
     # ── API key CRUD ────────────────────────────────────────────────────
     def create(
@@ -91,6 +102,9 @@ class InMemoryApiKeys:
         limit_reset: str | None = None,
         include_byok_in_limit: bool = True,
         expires_at: str | None = None,
+        limit_daily_microdollars: int | None = None,
+        limit_weekly_microdollars: int | None = None,
+        limit_monthly_microdollars: int | None = None,
     ) -> tuple[str, ApiKey]:
         with self._lock:
             key = raw_key or new_api_key()
@@ -112,6 +126,9 @@ class InMemoryApiKeys:
                 limit_reset=limit_reset,
                 include_byok_in_limit=include_byok_in_limit,
                 expires_at=expires_at,
+                limit_daily_microdollars=limit_daily_microdollars,
+                limit_weekly_microdollars=limit_weekly_microdollars,
+                limit_monthly_microdollars=limit_monthly_microdollars,
             )
             self.keys[key_id] = api_key
             self.key_ids_by_lookup_hash[lookup_hash] = key_id
@@ -168,12 +185,31 @@ class InMemoryApiKeys:
                 key.limit_microdollars = patch["limit_microdollars"]
             if "limit_reset" in patch:
                 key.limit_reset = patch["limit_reset"]
+            for window in ("daily", "weekly", "monthly"):
+                field = f"limit_{window}_microdollars"
+                if field in patch:
+                    setattr(key, field, patch[field])
             if "include_byok_in_limit" in patch:
                 key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
             key.updated_at = iso_now()
             return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────
+    def window_usage_snapshot(self, key_hash: str) -> dict[str, int]:
+        """Current-window usage per window (micro), lazily zeroing stale windows.
+        Mirrors what the typed tr_key_limit row reports for a Spanner store."""
+        with self._lock:
+            floors = window_floors(utcnow())
+            state = self.window_usage.get(key_hash, {})
+            out: dict[str, int] = {}
+            for window in ("daily", "weekly", "monthly"):
+                entry = state.get(window)
+                if entry is None or entry[0] < floors[window]:
+                    out[window] = 0
+                else:
+                    out[window] = int(entry[1])
+            return out
+
     def reserve_limit(
         self,
         key_hash: str,
@@ -183,9 +219,18 @@ class InMemoryApiKeys:
     ) -> None:
         with self._lock:
             key = self.keys[key_hash]
-            if key.limit_microdollars is None:
-                return
             if _is_byok(usage_type) and not key.include_byok_in_limit:
+                return  # BYOK excluded from this key's caps (lifetime AND windows)
+            # Window limits are independent of the lifetime cap: check first,
+            # approximately (in-flight reserved is deliberately not counted —
+            # same semantics as the typed authorize check).
+            window_limits = key_window_limits(key)
+            if window_limits:
+                used_by_window = self.window_usage_snapshot(key_hash)
+                for window, limit in window_limits.items():
+                    if used_by_window[window] + amount_microdollars > limit:
+                        raise KeyWindowLimitExceeded(window)
+            if key.limit_microdollars is None:
                 return
             used = key.usage_microdollars
             if key.include_byok_in_limit:
@@ -241,6 +286,19 @@ class InMemoryApiKeys:
                 key.byok_usage_microdollars += cost_microdollars
             else:
                 key.usage_microdollars += cost_microdollars
+            # Window counters book by the cap semantics (BYOK only when the
+            # key includes it), lazily resetting stale windows — the InMemory
+            # twin of the typed release_key window bump.
+            if is_byok and not key.include_byok_in_limit:
+                return
+            floors = window_floors(utcnow())
+            state = self.window_usage.setdefault(key_hash, {})
+            for window, floor in floors.items():
+                entry = state.get(window)
+                if entry is None or entry[0] < floor:
+                    state[window] = [floor, cost_microdollars]
+                else:
+                    entry[1] += cost_microdollars
 
     # ── Credit reservations ─────────────────────────────────────────────
     def reserve(

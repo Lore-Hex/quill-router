@@ -54,6 +54,9 @@ class SpannerApiKeys:
         limit_reset: str | None = None,
         include_byok_in_limit: bool = True,
         expires_at: str | None = None,
+        limit_daily_microdollars: int | None = None,
+        limit_weekly_microdollars: int | None = None,
+        limit_monthly_microdollars: int | None = None,
     ) -> tuple[str, ApiKey]:
         raw = raw_key or new_api_key()
         key_id = new_key_id()
@@ -73,6 +76,9 @@ class SpannerApiKeys:
             limit_reset=limit_reset,
             include_byok_in_limit=include_byok_in_limit,
             expires_at=expires_at,
+            limit_daily_microdollars=limit_daily_microdollars,
+            limit_weekly_microdollars=limit_weekly_microdollars,
+            limit_monthly_microdollars=limit_monthly_microdollars,
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)
@@ -141,6 +147,10 @@ class SpannerApiKeys:
             key.limit_microdollars = patch["limit_microdollars"]
         if "limit_reset" in patch:
             key.limit_reset = patch["limit_reset"]
+        for window in ("daily", "weekly", "monthly"):
+            field = f"limit_{window}_microdollars"
+            if field in patch:
+                setattr(key, field, patch[field])
         if "include_byok_in_limit" in patch:
             key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
         key.updated_at = iso_now()

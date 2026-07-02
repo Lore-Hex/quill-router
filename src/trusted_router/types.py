@@ -46,6 +46,7 @@ class ErrorType(StrEnum):
     CONFLICT = "conflict"
     ALREADY_REGISTERED = "already_registered"
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
+    KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"
     INSUFFICIENT_CREDITS = "insufficient_credits"
     MODEL_NOT_SUPPORTED = "model_not_supported"
     PROVIDER_AUTH_ERROR = "provider_auth_error"

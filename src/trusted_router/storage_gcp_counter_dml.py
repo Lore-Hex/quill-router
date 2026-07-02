@@ -149,6 +149,21 @@ def reserve_key(
     return KEY_INSUFFICIENT  # capped and over the cap
 
 
+# Lazy per-window bump, appended to the release UPDATE. `@wamt` is the amount
+# that counts toward the key's caps for this settle (0 for a BYOK settle on a
+# key that excludes BYOK — computed in SQL off the row's own include_byok so it
+# matches reserve semantics). A stale window (start < current floor) is
+# replaced, not added to — that IS the reset; no cron ever runs.
+_WINDOW_BUMP_SQL = (
+    ", day_usage = IF(day_start IS NULL OR day_start < @day_floor, @wamt, day_usage + @wamt)"
+    ", day_start = IF(day_start IS NULL OR day_start < @day_floor, @day_floor, day_start)"
+    ", week_usage = IF(week_start IS NULL OR week_start < @week_floor, @wamt, week_usage + @wamt)"
+    ", week_start = IF(week_start IS NULL OR week_start < @week_floor, @week_floor, week_start)"
+    ", month_usage = IF(month_start IS NULL OR month_start < @month_floor, @wamt, month_usage + @wamt)"
+    ", month_start = IF(month_start IS NULL OR month_start < @month_floor, @month_floor, month_start)"
+)
+
+
 def release_key(
     transaction: Any,
     param_types: Any,
@@ -157,36 +172,51 @@ def release_key(
     actual: int,
     *,
     book_to_byok: bool,
+    window_floors: dict[str, Any],
     shard: int = UNSHARDED,
 ) -> int:
-    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage.
+    """Release the EXACT recorded key hold and book `actual` to usage/byok_usage,
+    and bump the lazy per-window counters in the same statement.
 
     `hold` is the exact amount taken at reserve (0 if no hold was taken — uncapped
     or BYOK-excluded); `book_to_byok` selects the usage column by the SETTLED
-    usage type. Refund = actual 0. The `reserved >= @hold` guard makes a
+    usage type. Refund = actual 0 (window bump is then +0 — a no-op that still
+    lazily rolls the window forward, which is harmless). `window_floors` is
+    spend_windows.window_floors(now). The `reserved >= @hold` guard makes a
     stale/double release a 0-row no-op rather than driving reserved negative.
     Returns the modified-row count (caller asserts == 1).
     """
-    if book_to_byok:
-        sql = (
-            "UPDATE tr_key_limit "
-            "SET reserved = reserved - @hold, byok_usage = byok_usage + @actual "
-            "WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
-        )
-    else:
-        sql = (
-            "UPDATE tr_key_limit "
-            "SET reserved = reserved - @hold, usage = usage + @actual "
-            "WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
-        )
+    usage_col = "byok_usage" if book_to_byok else "usage"
+    # BYOK settles count toward the caps (incl. windows) only when the key's own
+    # include_byok says so — gated in SQL so it matches reserve semantics. On an
+    # excluded settle the bump is +0, but a stale window still rolls forward.
+    wamt = "IF(include_byok, @actual, 0)" if book_to_byok else "@actual"
+    # usage_col/wamt are compile-time constants picked by a bool; values bind as params.
+    sql = (
+        "UPDATE tr_key_limit "  # noqa: S608
+        f"SET reserved = reserved - @hold, {usage_col} = {usage_col} + @actual"
+        + _WINDOW_BUMP_SQL.replace("@wamt", wamt)
+        + " WHERE key_hash=@kh AND shard=@shard AND reserved >= @hold"
+    )
     return transaction.execute_update(
         sql,
-        params={"hold": int(hold), "actual": int(actual), "kh": key_hash, "shard": shard},
+        params={
+            "hold": int(hold),
+            "actual": int(actual),
+            "kh": key_hash,
+            "shard": shard,
+            "day_floor": window_floors["daily"],
+            "week_floor": window_floors["weekly"],
+            "month_floor": window_floors["monthly"],
+        },
         param_types={
             "hold": param_types.INT64,
             "actual": param_types.INT64,
             "kh": param_types.STRING,
             "shard": param_types.INT64,
+            "day_floor": param_types.TIMESTAMP,
+            "week_floor": param_types.TIMESTAMP,
+            "month_floor": param_types.TIMESTAMP,
         },
     )
 

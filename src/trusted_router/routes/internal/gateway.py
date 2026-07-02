@@ -290,11 +290,21 @@ def register(router: APIRouter) -> None:
         if _typed_authz is not None and _typed_cohort:
             import datetime as _dt
 
+            from trusted_router.spend_windows import key_window_limits, utcnow, window_resets_at
             from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 
             # expires_at = generous execution deadline (> max stream + settle
             # retry window) so the reaper only reclaims genuinely-abandoned holds.
             expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=7200)
+            # Per-window key caps (approximate). Omitted entirely for a BYOK
+            # request on a key that excludes BYOK from its caps — same rule the
+            # lifetime cap applies (authorize_atomic's window_limits contract).
+            is_byok_request = not has_credit_candidate
+            window_limits = (
+                {}
+                if is_byok_request and not api_key.include_byok_in_limit
+                else key_window_limits(api_key)
+            )
             outcome, authorization = _typed_authz(
                 workspace_id=workspace.id,
                 key_hash=api_key.hash,
@@ -313,9 +323,22 @@ def register(router: APIRouter) -> None:
                 custom_model_id=custom_model.id if custom_model else None,
                 custom_model_revision=custom_model.revision if custom_model else None,
                 expires_at=expires_at,
+                window_limits=window_limits or None,
             )
             if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
                 raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+            if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
+                _, _, window = outcome.partition(":")
+                window = window or "daily"
+                resets_at = window_resets_at(window, utcnow())
+                retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+                raise api_error(
+                    429,
+                    f"API key {window} spend limit exceeded; resets at "
+                    f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                    ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                    headers={"Retry-After": str(retry_after)},
+                )
             if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
                 raise api_error(
                     402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
@@ -333,8 +356,25 @@ def register(router: APIRouter) -> None:
                 return _replay_response(authorization)
             credit_reservation_id = authorization.credit_reservation_id
         else:
+            from trusted_router.spend_windows import (
+                KeyWindowLimitExceeded,
+                utcnow,
+                window_resets_at,
+            )
+
             try:
                 STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+            except KeyWindowLimitExceeded as exc:
+                # InMemory twin of the typed window rejection (same 429 shape).
+                resets_at = window_resets_at(exc.window, utcnow())
+                retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+                raise api_error(
+                    429,
+                    f"API key {exc.window} spend limit exceeded; resets at "
+                    f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                    ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                    headers={"Retry-After": str(retry_after)},
+                ) from exc
             except ValueError as exc:
                 raise api_error(
                     402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED

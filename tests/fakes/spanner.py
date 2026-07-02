@@ -26,6 +26,17 @@ _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
         "byok_usage": 0,
         "reserved": 0,
         "include_byok": True,
+        # Window spend limits (config, nullable) + lazy window state (DDL:
+        # usage NOT NULL DEFAULT 0, start nullable).
+        "day_limit_micro": None,
+        "week_limit_micro": None,
+        "month_limit_micro": None,
+        "day_usage": 0,
+        "day_start": None,
+        "week_usage": 0,
+        "week_start": None,
+        "month_usage": 0,
+        "month_start": None,
     },
 }
 
@@ -308,9 +319,27 @@ class _FakeTransaction:
             rec = self._typed_current("tr_key_limit", pk)
             if rec is None or rec["reserved"] < p["hold"]:
                 return 0
-            col = "byok_usage" if "byok_usage = byok_usage + @actual" in sql else "usage"
+            byok_settle = "byok_usage = byok_usage + @actual" in sql
+            col = "byok_usage" if byok_settle else "usage"
             new = dict(rec, reserved=rec["reserved"] - p["hold"])
             new[col] = rec[col] + p["actual"]
+            # Lazy window bump, mirroring release_key's IF() SQL: a stale window
+            # (start < floor) is replaced, a fresh one accumulates. BYOK settles
+            # count only when the row's include_byok says so (wamt gate).
+            if "day_usage = IF(" in sql:
+                wamt = p["actual"]
+                if byok_settle and not rec.get("include_byok", True):
+                    wamt = 0
+                for window, floor_param in (
+                    ("day", "day_floor"), ("week", "week_floor"), ("month", "month_floor"),
+                ):
+                    floor = p[floor_param]
+                    start = rec.get(f"{window}_start")
+                    if start is None or start < floor:
+                        new[f"{window}_usage"] = wamt
+                        new[f"{window}_start"] = floor
+                    else:
+                        new[f"{window}_usage"] = rec.get(f"{window}_usage", 0) + wamt
             self.pending_writes.append(("update_typed", "tr_key_limit", pk, new))
             return 1
         if sql.startswith("INSERT INTO tr_reservation"):
@@ -578,7 +607,9 @@ def _execute_sql(
     # Typed key-limit point-read (reserve_key 0-row classification). Honors the
     # WHERE, so it must precede the full-scan branch below.
     if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
-        pk = (params["kh"], params["shard"])
+        # `shard` may be a literal 0 in the SQL (window/typed-usage point reads)
+        # rather than a bound param (reserve_key classification).
+        pk = (params["kh"], params.get("shard", 0))
         rec = (
             txn._typed_current("tr_key_limit", pk)
             if txn is not None

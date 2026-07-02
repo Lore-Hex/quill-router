@@ -26,6 +26,7 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
+from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
@@ -46,13 +47,15 @@ class AuthorizeOutcome:
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
+    KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
 class _Reject(Exception):
     """Roll the authorize transaction back with a terminal outcome (not retried)."""
 
-    def __init__(self, outcome: str) -> None:
+    def __init__(self, outcome: str, window: str | None = None) -> None:
         self.outcome = outcome
+        self.window = window  # which window blocked, for KEY_WINDOW_LIMIT_EXCEEDED
 
 
 def authorize_atomic(
@@ -68,13 +71,22 @@ def authorize_atomic(
     idempotency_fingerprint: str | None,
     expires_at: Any,
     build_auth_body: Callable[[str, str], str],
+    window_limits: dict[str, int] | None = None,
 ) -> dict:
-    """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
+    """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?,
+    window?}.
 
     `build_auth_body(authorization_id, reservation_id) -> json str` lets the caller
     construct the gateway_authorization body once the ids are known.
     `reservation_usage_type` is the HOLD usage type (Credits if any credit
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
+
+    `window_limits` ({"daily"|"weekly"|"monthly": limit_micro}) enables the
+    APPROXIMATE per-window check: one point-read of the key's lazy window
+    counters, rejected in Python before any hold is taken. In-flight reserved is
+    deliberately not counted (accepted overshoot ≈ concurrency × estimate). The
+    CALLER must omit windows that don't apply (e.g. a BYOK request on a key that
+    excludes BYOK from its caps).
     """
     pt = param_types
     is_byok = not has_credit_candidate
@@ -96,6 +108,31 @@ def authorize_atomic(
                 if existing["idempotency_fingerprint"] != idempotency_fingerprint:
                     raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
                 return _replay(existing)
+
+        if window_limits:
+            # Approximate per-window check (one point-read; lazy window math in
+            # Python — a stale start means the window has rolled over = zero).
+            floors = window_floors(utcnow())
+            rows = list(transaction.execute_sql(
+                "SELECT day_usage, day_start, week_usage, week_start, "
+                "month_usage, month_start FROM tr_key_limit "
+                "WHERE key_hash=@kh AND shard=0",
+                params={"kh": key_hash},
+                param_types={"kh": pt.STRING},
+            ))
+            if not rows:
+                raise _Reject(AuthorizeOutcome.KEY_MISSING)
+            day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
+            current = {
+                "daily": int(day_u) if day_s is not None and day_s >= floors["daily"] else 0,
+                "weekly": int(week_u) if week_s is not None and week_s >= floors["weekly"] else 0,
+                "monthly": (
+                    int(month_u) if month_s is not None and month_s >= floors["monthly"] else 0
+                ),
+            }
+            for window, limit in window_limits.items():
+                if current[window] + estimate > limit:
+                    raise _Reject(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED, window=window)
 
         key_result = reserve_key(transaction, pt, key_hash, estimate, is_byok=is_byok)
         if key_result == KEY_INSUFFICIENT:
@@ -132,7 +169,10 @@ def authorize_atomic(
     try:
         return run_in_transaction_with_retry(database, txn)
     except _Reject as reject:
-        return {"outcome": reject.outcome}
+        result = {"outcome": reject.outcome}
+        if reject.window is not None:
+            result["window"] = reject.window
+        return result
     except AlreadyExists:
         # Concurrent first-call lost the unique-idempotency-index race: the winner
         # committed; re-read and replay (codex Step-3 #4) — never a second debit.
@@ -212,7 +252,7 @@ def settle_atomic(
         key_actual = book_actual  # key usage counts under both Credits and BYOK
         key_count = release_key(
             transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            key_actual, book_to_byok=book_to_byok,
+            key_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
         )
         # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
         # may 0-row and is tolerated (best-effort usage tracking).
@@ -329,7 +369,7 @@ def typed_finalize_atomic(
 
         key_count = release_key(
             transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            book_actual, book_to_byok=book_to_byok,
+            book_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
         )
         if res["key_reserved_micro"] > 0 and key_count != 1:
             raise _SettleError("key release row-count != 1")
