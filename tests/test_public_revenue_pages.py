@@ -91,34 +91,25 @@ def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> Non
 
     for path in ["/docs", "/docs/agent-setup"]:
         response = client.get(path)
-        assert (
-            "https://github.com/Lore-Hex/quill-router/tree/main/skills/"
-            "trustedrouter-model-advisor"
-        ) in response.text
+        assert "https://github.com/Lore-Hex/LLM-advisor" in response.text
+        assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in response.text
 
     for path in ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"]:
         response = client.get(path)
         assert response.status_code == 200
         assert "Agent model-advisor skill/playbook" in response.text
         assert "trustedrouter-model-advisor" in response.text
+        assert "https://github.com/Lore-Hex/LLM-advisor" in response.text
 
 
 def test_model_advisor_skill_covers_privacy_region_filters_and_blog_context() -> None:
     skill_root = Path("skills/trustedrouter-model-advisor")
     skill_text = (skill_root / "SKILL.md").read_text()
-    reference_text = (skill_root / "references/model-selection.md").read_text()
 
-    combined = f"{skill_text}\n{reference_text}"
-    for marker in [
-        "provider.data_collection",
-        "provider.jurisdiction",
-        "provider.only",
-        "trustedrouter/e2e",
-        "trustedrouter/eu",
-        "https://trustedrouter.com/blog",
-        "Combo models are model containers",
-    ]:
-        assert marker in combined
+    assert "https://github.com/Lore-Hex/LLM-advisor" in skill_text
+    assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in skill_text
+    assert not (skill_root / "references/model-selection.md").exists()
+    assert not (skill_root / "agents/openai.yaml").exists()
 
 
 def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
