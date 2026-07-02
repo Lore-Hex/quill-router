@@ -437,3 +437,63 @@ class Store(Protocol):
         limit: int,
         window_seconds: int,
     ) -> RateLimitHit: ...
+
+
+@runtime_checkable
+class TypedBillingStore(Protocol):
+    """Optional capability: a store backed by the typed Spanner counter tables
+    (tr_credit_balance / tr_key_limit) with the conditional-DML authorize/finalize
+    path (the deadlock-fix billing cutover). The Spanner store implements it;
+    InMemoryStore does not.
+
+    Callers guard with ``isinstance(store, TypedBillingStore)`` instead of
+    ``getattr(store, "authorize_gateway_typed", None)`` — the capability check
+    mypy also understands (it narrows the type so the typed calls are statically
+    verified), turning a stringly-typed probe on the authorization path back
+    into a compile-time contract. These methods are deliberately NOT on the base
+    ``Store`` protocol: they only exist on the typed backend, and the base
+    surface must stay backend-symmetric.
+    """
+
+    def authorize_gateway_typed(
+        self,
+        *,
+        workspace_id: str,
+        key_hash: str,
+        estimate: int,
+        has_credit_candidate: bool,
+        reservation_usage_type: UsageType | str,
+        model_id: str,
+        provider: str,
+        requested_model_id: str | None,
+        candidate_model_ids: list[str],
+        region: str | None,
+        endpoint_id: str | None,
+        candidate_endpoint_ids: list[str],
+        idempotency_key: str | None,
+        idempotency_fingerprint: str | None,
+        custom_model_id: str | None = ...,
+        custom_model_revision: int | None = ...,
+        expires_at: Any = ...,
+        window_limits: dict[str, int] | None = ...,
+    ) -> tuple[str, GatewayAuthorization | None]: ...
+
+    def typed_finalize_gateway_authorization(
+        self,
+        authorization_id: str,
+        *,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None = ...,
+    ) -> bool: ...
+
+    def is_typed_reservation(
+        self, reservation_id: str | None, authorization_id: str
+    ) -> bool: ...
+
+    def get_typed_authorization_by_idempotency(
+        self, workspace_id: str, key_hash: str, idempotency_key: str
+    ) -> GatewayAuthorization | None: ...
+
+    def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None: ...

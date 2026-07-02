@@ -1054,7 +1054,10 @@ class _StoreProxy:
         return getattr(self.target, name)
 
 
-from trusted_router.store_protocol import Store  # noqa: E402 - forward dep on Store Protocol.
+from trusted_router.store_protocol import (  # noqa: E402 - forward dep on Store protocols.
+    Store,
+    TypedBillingStore,
+)
 
 _STORE_PROXY = _StoreProxy()
 STORE: Store = cast(Store, _STORE_PROXY)
@@ -1062,6 +1065,22 @@ STORE: Store = cast(Store, _STORE_PROXY)
 
 def configure_store(target: Store) -> None:
     _STORE_PROXY._configure(target)
+
+
+def typed_billing_store(store: Any = None) -> TypedBillingStore | None:
+    """The live store (or the given `store`) as a TypedBillingStore, or None
+    when the backend lacks the typed-Spanner capability.
+
+    MUST be used instead of ``isinstance(STORE, TypedBillingStore)``: the module
+    STORE is a ``_StoreProxy`` and ``isinstance`` against a runtime_checkable
+    Protocol does NOT see methods that are only reachable through the proxy's
+    ``__getattr__`` — so the guard would read False even for a typed Spanner
+    backend and silently route every typed authorize/settle down the legacy
+    path (codex #97). Unwrap the proxy to its real target and check that."""
+    target = _STORE_PROXY.target if store is None else store
+    if isinstance(target, _StoreProxy):
+        target = target.target
+    return target if isinstance(target, TypedBillingStore) else None
 
 
 def create_store(settings: Any) -> Store:

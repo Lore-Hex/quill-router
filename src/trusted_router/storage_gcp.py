@@ -1190,6 +1190,25 @@ class SpannerBigtableStore:
             },
         }
 
+    def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
+        """One point-read of the authoritative typed tr_credit_balance row:
+        (total_credits, total_usage, reserved) microdollars, or None when the
+        typed tables are off or the row isn't seeded. Lets typed-aware balance
+        reads use the Store contract instead of reaching into `_database`."""
+        if not getattr(self, "_counter_mirror_enabled", False):
+            return None
+        pt = self._param_types
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(
+                "SELECT total_credits, total_usage, reserved FROM tr_credit_balance "
+                "WHERE workspace_id=@pk AND shard=0",
+                params={"pk": workspace_id},
+                param_types={"pk": pt.STRING},
+            ))
+        if not rows:
+            return None
+        return (int(rows[0][0]), int(rows[0][1]), int(rows[0][2]))
+
     def is_typed_reservation(self, reservation_id: str | None, authorization_id: str) -> bool:
         """Settle/refund origin detection (codex 3e): typed iff a tr_reservation
         row exists for this reservation id AND its authorization_id matches — so a
