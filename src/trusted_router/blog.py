@@ -31,7 +31,7 @@ class BlogPost:
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug="trustedrouter-mcp-llm-advisor-ai-iq",
-        title="Your agent should know which model to use",
+        title="Introducing LLM advisor: which model do i choose for my problem?",
         description=(
             "TrustedRouter MCP and the open source LLM-advisor skill give agents live "
             "model, price, privacy, provider, and AI IQ context before they choose a model."

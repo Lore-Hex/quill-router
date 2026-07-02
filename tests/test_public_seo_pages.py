@@ -220,7 +220,7 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     advisor_blog = client.get("/blog/trustedrouter-mcp-llm-advisor-ai-iq")
     assert advisor_blog.status_code == 200
     advisor_payload = _json_ld(advisor_blog.text)
-    assert "Your agent should know which model to use" in json.dumps(advisor_payload)
+    assert "Introducing LLM advisor: which model do i choose for my problem?" in json.dumps(advisor_payload)
     assert "/docs/mcp" in advisor_blog.text
     assert "https://github.com/Lore-Hex/LLM-advisor" in advisor_blog.text
     assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in advisor_blog.text
