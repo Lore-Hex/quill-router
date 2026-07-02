@@ -86,7 +86,7 @@ def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> Non
     for path in ["/", "/docs", "/docs/agent-setup"]:
         response = client.get(path)
         assert response.status_code == 200
-        assert "Codex skill" in response.text
+        assert "Agent skill" in response.text or "model advisor playbook" in response.text
         assert "codex-skill" in response.text
 
     for path in ["/docs", "/docs/agent-setup"]:
@@ -99,7 +99,7 @@ def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> Non
     for path in ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"]:
         response = client.get(path)
         assert response.status_code == 200
-        assert "Codex model-advisor skill" in response.text
+        assert "Agent model-advisor skill/playbook" in response.text
         assert "trustedrouter-model-advisor" in response.text
 
 

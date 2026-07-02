@@ -64,6 +64,24 @@ TrustedRouter MCP tools to use:
 - `docs-search`: search TrustedRouter docs.
 - `chat-send`: send one short billable test prompt through the attested API. Ask first unless the user already approved test spend.
 
+## Use In Codex, Claude Code, Hermes, And Other Agents
+
+This folder is a native Codex skill, but the instructions are intentionally agent-neutral. Use the same workflow in any coding agent that can read a URL, load a Markdown playbook, or connect to MCP.
+
+- Codex: invoke `$trustedrouter-model-advisor` when available, or point Codex at the skill folder.
+- Claude Code: connect the TrustedRouter MCP server with the command above, then ask Claude Code to read and follow the raw `SKILL.md`.
+- Hermes and other OpenAI-compatible coding agents: use the raw `SKILL.md` as a model-selection playbook, set `OPENAI_BASE_URL=https://api.trustedrouter.com/v1`, and use MCP when the agent supports remote MCP.
+- Agents without MCP: use `https://trustedrouter.com/llms.txt`, `https://trustedrouter.com/docs/llms-full.txt`, and the public model/provider pages as live context.
+
+Reusable prompt for any agent:
+
+```text
+Read the TrustedRouter model advisor playbook, then choose a model for this task.
+Consider speed, cost, AI IQ, privacy, context length, prompt caching, and recent provider health.
+Estimate cost before making billable calls.
+Playbook: https://raw.githubusercontent.com/Lore-Hex/quill-router/main/skills/trustedrouter-model-advisor/SKILL.md
+```
+
 Production app traffic should still use the API directly:
 
 ```bash

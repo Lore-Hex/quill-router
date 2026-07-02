@@ -108,12 +108,16 @@ Run a PONG smoke test before editing app code.</code></pre>
   </div>
 
   <div class="panel" id="codex-skill">
-    <div class="panel-head"><h2>Codex skill</h2><span class="pill good">model advisor</span></div>
+    <div class="panel-head"><h2>Agent skill</h2><span class="pill good">model advisor</span></div>
     <div class="panel-body">
-      <p>Use the <span class="mono">trustedrouter-model-advisor</span> skill when an agent needs to choose a model, estimate cost and speed, weigh privacy tiers, connect MCP, or decide whether prompt caching makes one stable model cheaper than broad routing.</p>
-      <pre><code>Use $trustedrouter-model-advisor to choose the best TrustedRouter model for this task.
+      <p>Use the <span class="mono">trustedrouter-model-advisor</span> playbook when Codex, Claude Code, Hermes, Cursor, or another coding agent needs to choose a model, estimate cost and speed, weigh privacy tiers, connect MCP, or decide whether prompt caching makes one stable model cheaper than broad routing.</p>
+      <pre><code># Codex native skill
+Use $trustedrouter-model-advisor to choose the best TrustedRouter model for this task.
+
+# Claude Code, Hermes, Cursor, or any agent that can read a URL
+Read https://raw.githubusercontent.com/Lore-Hex/quill-router/main/skills/trustedrouter-model-advisor/SKILL.md and follow it.
 Consider speed, cost, AI IQ, privacy, context length, prompt caching, and recent provider health before making calls.</code></pre>
-      <p class="muted">Skill source: <a href="https://github.com/Lore-Hex/quill-router/tree/main/skills/trustedrouter-model-advisor">GitHub folder</a>. Raw instructions for agents: <a href="https://raw.githubusercontent.com/Lore-Hex/quill-router/main/skills/trustedrouter-model-advisor/SKILL.md">SKILL.md</a>.</p>
+      <p class="muted">Skill source: <a href="https://github.com/Lore-Hex/quill-router/tree/main/skills/trustedrouter-model-advisor">GitHub folder</a>. Raw instructions for any agent: <a href="https://raw.githubusercontent.com/Lore-Hex/quill-router/main/skills/trustedrouter-model-advisor/SKILL.md">SKILL.md</a>.</p>
     </div>
   </div>
 
@@ -144,7 +148,7 @@ Read the full behavior at https://trustedrouter.com/docs/synth.</code></pre>
     <div class="sdk-links">
       <a class="pill" href="/docs/llms.txt">llms.txt</a>
       <a class="pill" href="/docs/llms-full.txt">llms-full.txt</a>
-      <a class="pill" href="#codex-skill">Codex skill</a>
+      <a class="pill" href="#codex-skill">Agent skill</a>
       <a class="pill" href="/docs/synth">Synth</a>
       <a class="pill" href="/models">Models</a>
       <a class="pill" href="/providers">Providers</a>
