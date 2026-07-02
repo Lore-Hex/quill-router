@@ -82,6 +82,27 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert slash_response.status_code == 200
 
 
+def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
+    for path in ["/", "/docs", "/docs/agent-setup"]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "Codex skill" in response.text
+        assert "codex-skill" in response.text
+
+    for path in ["/docs", "/docs/agent-setup"]:
+        response = client.get(path)
+        assert (
+            "https://github.com/Lore-Hex/quill-router/tree/main/skills/"
+            "trustedrouter-model-advisor"
+        ) in response.text
+
+    for path in ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"]:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert "Codex model-advisor skill" in response.text
+        assert "trustedrouter-model-advisor" in response.text
+
+
 def test_choose_page_embeds_the_triangle_app(client: TestClient) -> None:
     response = client.get("/choose")
 
