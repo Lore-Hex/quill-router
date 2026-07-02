@@ -30,6 +30,29 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="open-source-open-source-open-source",
+        title="Open Source Open Source Open Source: How TrustedRouter is totally open source",
+        description=(
+            "TrustedRouter is open source where it matters: the frontend, the backend, "
+            "the attested gateway, the SDKs, and the Terraform infrastructure are all "
+            "published so developers can inspect, run, and verify the system."
+        ),
+        published_date="2026-07-01",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<p>I love open source because it replaces a weird social contract with a normal engineering one.</p>
+<p>Without source, every AI router eventually asks you to believe a sentence on a website. We do not log prompts. We do not inspect outputs. We route fairly. We keep your keys safe. Maybe all of that is true. Maybe it is not. You cannot tell. You are buying a promise from a black box.</p>
+<p>TrustedRouter is built the other way. The <a href="https://github.com/Lore-Hex/quill-router">frontend and control plane</a> are open source. The <a href="https://github.com/Lore-Hex/quill-cloud-proxy">attested prompt gateway</a> is open source. The <a href="https://github.com/Lore-Hex/quill-cloud-infra">Terraform and cloud infrastructure</a> are open source. The <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a> and <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a> are open source. The eval harnesses we publish are open source. The docs and trust pages are open source.</p>
+<p>That does not mean every secret is public. API keys, customer data, payment records, and private operational credentials are not public, because that would be insane. The machinery is public. The code path is public. The infrastructure shape is public. The thing you need to audit is not hidden.</p>
+<p>This matters most in the prompt path. A router sees the thing you are asking the model, and often that thing is valuable: source code, legal work, financial analysis, product plans, medical context, private documents. If the router is closed, your real security model is "trust the router company." That is not good enough.</p>
+<p>So the prompt path is designed to be checked. The hosted gateway publishes attestation evidence at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>. You can compare the running image and source commit against the open repos. The point is not that you should trust me harder. The point is that you should have less trusting to do.</p>
+<p>I also think open source is the right cultural choice for AI infrastructure. Models are becoming more powerful, more centralized, and more expensive. The routing layer should push the other way. It should make models easier to swap, easier to benchmark, easier to self-host, easier to inspect, and easier to hold accountable.</p>
+<p>That is the whole posture: open source frontend, open source backend, open source gateway, open source Terraform, open source SDKs, open source evals.</p>
+<p>Open source, open source, open source.</p>
+""",
+    ),
+    BlogPost(
         slug="frontier-smart-cheap-fast-pick-3-open-source",
         title="Frontier Smart, Cheap, Fast: Pick 3 with Open Source",
         description=(

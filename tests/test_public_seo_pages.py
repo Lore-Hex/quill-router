@@ -41,6 +41,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/open-source-open-source-open-source</loc>" in core.text
     assert (
         "<loc>https://trustedrouter.com/blog/frontier-smart-cheap-fast-pick-3-open-source</loc>"
         in core.text
@@ -214,6 +215,16 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "/blog/the-best-open-models-arent-on-your-leaderboard" in pick3_blog.text
     assert "/blog/openpatcher-s1-exploitbench-cve-2024-2887" in pick3_blog.text
     assert "Pick 3" in pick3_blog.text
+
+    open_source_blog = client.get("/blog/open-source-open-source-open-source")
+    assert open_source_blog.status_code == 200
+    open_source_payload = _json_ld(open_source_blog.text)
+    assert "Open Source Open Source Open Source" in json.dumps(open_source_payload)
+    assert "https://github.com/Lore-Hex/quill-router" in open_source_blog.text
+    assert "https://github.com/Lore-Hex/quill-cloud-proxy" in open_source_blog.text
+    assert "https://github.com/Lore-Hex/quill-cloud-infra" in open_source_blog.text
+    assert "https://trust.trustedrouter.com" in open_source_blog.text
+    assert "open source Terraform" in open_source_blog.text
 
     openpatcher_blog = client.get("/blog/openpatcher-s1-exploitbench-cve-2024-2887")
     assert openpatcher_blog.status_code == 200
