@@ -22,9 +22,9 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from trusted_router.storage import typed_billing_store
 from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace
 from trusted_router.storage_models import CreditAccount
-from trusted_router.store_protocol import TypedBillingStore
 
 
 def _typed_enabled(workspace_id: str, settings: Any) -> bool:
@@ -49,11 +49,12 @@ def typed_aware_credit_account(
     handles — the reason isinstance(store, TypedBillingStore) replaced the old
     hasattr(_database) probe (#39)."""
     account = store.get_credit_account(workspace_id)
-    if account is None or not isinstance(store, TypedBillingStore):
+    typed_store = typed_billing_store(store)
+    if account is None or typed_store is None:
         return account
     if not _typed_enabled(workspace_id, settings):
         return account
-    typed = store.typed_credit_snapshot(workspace_id)
+    typed = typed_store.typed_credit_snapshot(workspace_id)
     if typed is None:
         return account  # typed enforcement on but row not seeded yet — JSON is the best estimate
     return dataclasses.replace(

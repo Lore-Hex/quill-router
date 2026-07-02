@@ -146,3 +146,31 @@ def test_in_memory_store_is_not_a_typed_billing_store() -> None:
     from trusted_router.store_protocol import TypedBillingStore
 
     assert not isinstance(InMemoryStore(), TypedBillingStore)
+
+
+def test_typed_billing_store_helper_unwraps_the_module_proxy() -> None:
+    """isinstance against a runtime_checkable Protocol does NOT see methods
+    reached via _StoreProxy.__getattr__ — so isinstance(STORE, TypedBillingStore)
+    reads False even for a typed backend and would silently route typed
+    billing to the legacy path (codex #97). typed_billing_store() must unwrap
+    the proxy target and check THAT."""
+    from trusted_router.storage import _StoreProxy, typed_billing_store
+    from trusted_router.store_protocol import TypedBillingStore
+
+    class FakeTyped:
+        def authorize_gateway_typed(self, **k: object) -> None: ...
+        def typed_finalize_gateway_authorization(self, *a: object, **k: object) -> None: ...
+        def is_typed_reservation(self, *a: object) -> None: ...
+        def get_typed_authorization_by_idempotency(self, *a: object) -> None: ...
+        def typed_credit_snapshot(self, w: object) -> None: ...
+
+    proxy = _StoreProxy()
+    proxy._configure(FakeTyped())  # type: ignore[arg-type]
+    # The trap: naive isinstance through the proxy is False despite the target...
+    assert not isinstance(proxy, TypedBillingStore)
+    # ...but the helper unwraps and returns the typed target.
+    assert typed_billing_store(proxy) is proxy.target
+    # A non-typed backend (InMemory) -> None, through the proxy or direct.
+    proxy._configure(InMemoryStore())
+    assert typed_billing_store(proxy) is None
+    assert typed_billing_store(InMemoryStore()) is None
