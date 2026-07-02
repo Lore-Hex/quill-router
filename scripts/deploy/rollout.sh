@@ -72,6 +72,7 @@ add_secret_env_if_exists "TR_PAYPAL_CLIENT_ID" "trustedrouter-paypal-client-id"
 add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-secret"
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
 add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
+add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 ENV_VARS=(
