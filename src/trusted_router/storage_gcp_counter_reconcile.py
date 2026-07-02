@@ -496,7 +496,9 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
         if b.get("workspace_id") == workspace_id
     ]
     workspace = store.get_workspace(workspace_id)
-    with store._database.snapshot() as snap:
+    # multi_use: two reads on one snapshot (a single-use snapshot raises on the
+    # second read on real Spanner — the fa9f5d4 class the fake now models).
+    with store._database.snapshot(multi_use=True) as snap:
         open_holds = list(snap.execute_sql(
             open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]

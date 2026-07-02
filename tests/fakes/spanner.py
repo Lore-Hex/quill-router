@@ -206,9 +206,12 @@ class FakeSpannerDatabase:
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
             return True
 
-    def snapshot(self, **_kwargs: Any) -> _FakeSnapshot:
-        # accepts multi_use=True etc.; the fake allows repeated reads regardless
-        return _FakeSnapshot(self)
+    def snapshot(self, *, multi_use: bool = False, **_kwargs: Any) -> _FakeSnapshot:
+        # Models real Spanner: a single-use snapshot (the default) permits exactly
+        # ONE read; a second read on it raises. Only multi_use=True allows many.
+        # Prod bug fa9f5d4 was a single-use snapshot that grew a second read and
+        # faulted live — the old fake "allowed repeated reads regardless" and hid it.
+        return _FakeSnapshot(self, multi_use=multi_use)
 
     def batch(self) -> _FakeBatch:
         return _FakeBatch(self)
@@ -430,8 +433,10 @@ class _FakeTransaction:
 
 
 class _FakeSnapshot:
-    def __init__(self, db: FakeSpannerDatabase) -> None:
+    def __init__(self, db: FakeSpannerDatabase, *, multi_use: bool = False) -> None:
         self.db = db
+        self._multi_use = multi_use
+        self._reads = 0
 
     def __enter__(self) -> _FakeSnapshot:
         return self
@@ -446,6 +451,13 @@ class _FakeSnapshot:
         params: dict[str, Any] | None = None,
         param_types: Any = None,
     ) -> list[list[str]]:
+        self._reads += 1
+        if not self._multi_use and self._reads > 1:
+            raise RuntimeError(
+                "single-use snapshot allows only one read; use "
+                "database.snapshot(multi_use=True) for multiple reads "
+                "(models real Spanner — see prod fix fa9f5d4)"
+            )
         return _execute_sql(self.db, None, sql, params or {})
 
 
