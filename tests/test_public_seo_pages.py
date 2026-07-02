@@ -41,6 +41,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/blog/trustedrouter-mcp-llm-advisor-ai-iq</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog/open-source-open-source-open-source</loc>" in core.text
     assert (
         "<loc>https://trustedrouter.com/blog/frontier-smart-cheap-fast-pick-3-open-source</loc>"
@@ -215,6 +216,16 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     assert "/blog/the-best-open-models-arent-on-your-leaderboard" in pick3_blog.text
     assert "/blog/openpatcher-s1-exploitbench-cve-2024-2887" in pick3_blog.text
     assert "Pick 3" in pick3_blog.text
+
+    advisor_blog = client.get("/blog/trustedrouter-mcp-llm-advisor-ai-iq")
+    assert advisor_blog.status_code == 200
+    advisor_payload = _json_ld(advisor_blog.text)
+    assert "Your agent should know which model to use" in json.dumps(advisor_payload)
+    assert "/docs/mcp" in advisor_blog.text
+    assert "https://github.com/Lore-Hex/LLM-advisor" in advisor_blog.text
+    assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in advisor_blog.text
+    assert "https://aiiq.org" in advisor_blog.text
+    assert "TRUSTEDROUTER_API_KEY" in advisor_blog.text
 
     open_source_blog = client.get("/blog/open-source-open-source-open-source")
     assert open_source_blog.status_code == 200

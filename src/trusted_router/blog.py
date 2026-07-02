@@ -30,6 +30,33 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="trustedrouter-mcp-llm-advisor-ai-iq",
+        title="Your agent should know which model to use",
+        description=(
+            "TrustedRouter MCP and the open source LLM-advisor skill give agents live "
+            "model, price, privacy, provider, and AI IQ context before they choose a model."
+        ),
+        published_date="2026-07-02",
+        source_label="LLM-advisor on GitHub",
+        source_url="https://github.com/Lore-Hex/LLM-advisor",
+        body_html="""
+<p>A strange thing about coding agents is that they are often smart enough to refactor your backend, but they still pick models like it is a guessing game.</p>
+<p>They know the prompt in front of them. They do not automatically know which model is fast today, which provider has the right privacy posture, which route is cheap enough for an eval loop, which model has the best public quality signal, or whether a stable long-context task should use prompt caching instead of broad routing. So they fall back to habit: use the most famous model, the cheapest model, or whatever the developer last pasted into an environment variable.</p>
+<p>That is not good enough. Model choice is now part of the work.</p>
+<p>So today we are launching the <a href="/docs/mcp">TrustedRouter MCP server</a> and the open source <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a>. Together they let an agent ask the router what is actually true before it spends tokens: live models, prices, providers, privacy tiers, credits, docs, generation metadata, and short test calls through the attested API gateway.</p>
+<p>The skill is deliberately agent-neutral. Codex can load it as a native skill. Claude Code can read the raw <a href="https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md">SKILL.md</a>. Hermes, Cursor, and any agent that can read a URL can use the same playbook. If the agent supports MCP, it can connect directly:</p>
+<pre><code>claude mcp add --transport http trustedrouter https://trustedrouter.com/mcp \
+  --header "Authorization: Bearer $TRUSTEDROUTER_API_KEY"</code></pre>
+<p>The useful part is not the command. The useful part is the habit it creates. Before a billable call, the agent estimates cost. Before a sensitive prompt, it checks privacy posture. Before a speed-sensitive task, it looks at recent provider health. Before a research or coding recommendation, it can use public quality data instead of vibes.</p>
+<p>This is where the <a href="https://aiiq.org">AI IQ</a> partnership matters. AI IQ gives public model, benchmark, ranking, chart, and methodology data. TrustedRouter gives live provider, price, routing, privacy, credit, and attestation context. The advisor sits between them and turns that into a concrete recommendation an agent can use: not "try a good model," but "use this model for this task, for this reason, at about this cost, with this privacy boundary."</p>
+<p>I love this because it makes the agent less magical and more accountable. A good engineer does not pick infrastructure from memory. They look at the current state of the system. Agents should do the same.</p>
+<p>For a legal task, the advisor should start with <span class="mono">trustedrouter/zdr</span>, check zero-retention provider posture, and say when fallbacks reduce or improve the trust story. For a cheap eval loop, it should start with cheap open models and estimate the whole run before it starts. For a hard coding task, it should compare a strong single model with a combo model and explain the tradeoff. For a repeated long-context agent, it should notice prompt caching instead of rotating models and throwing the cache away.</p>
+<p>The deeper point is simple: agents should not only call models. They should know how to choose models.</p>
+<p>TrustedRouter already exposes hundreds of models through one API. The MCP server makes that catalog agent-readable. The LLM-advisor skill makes the decision process agent-readable. AI IQ makes the quality evidence public. The attested gateway makes the prompt path verifiable. Put together, that is the shape I want AI infrastructure to have: open, inspectable, measurable, and useful in the exact moment an agent is about to act.</p>
+<p>Start here: <a href="/docs/mcp">connect the MCP server</a>, then give your agent the <a href="https://github.com/Lore-Hex/LLM-advisor">LLM-advisor skill</a>.</p>
+""",
+    ),
+    BlogPost(
         slug="open-source-open-source-open-source",
         title="Open Source Open Source Open Source: How TrustedRouter is totally open source",
         description=(
