@@ -447,6 +447,9 @@
             uptime_pct: ext.uptime_pct || null,
             capabilities: allCaps,
             free: pricing && Number(pricing.prompt) === 0,
+            open_weights: !!ext.open_weights,
+            us_provider_available: !!ext.us_provider_available,
+            eu_focused_provider_available: !!ext.eu_focused_provider_available,
             total_per_m: (inPerM || 0) + (outPerM || 0),
             // Internal-only routing pools (trustedrouter/monitor) leak
             // through some catalog snapshots; track the flag so the
@@ -2083,7 +2086,14 @@
     // "cheap" replaces the old "free" chip — TR has no truly free
     // models, so the chip would always be empty. Cheap sorts the
     // visible list by ascending total price ($/M in + out).
-    const PICKER_FILTERS = { cheap: false, vision: false, tools: false };
+    const PICKER_FILTERS = {
+        cheap: false,
+        vision: false,
+        tools: false,
+        open: false,
+        us: false,
+        eu: false,
+    };
 
     function renderModelPicker() {
         if (!pickerEl) return;
@@ -2111,6 +2121,9 @@
                 !caps.includes("tool_use")
             )
                 return false;
+            if (PICKER_FILTERS.open && !m.open_weights) return false;
+            if (PICKER_FILTERS.us && !m.us_provider_available) return false;
+            if (PICKER_FILTERS.eu && !m.eu_focused_provider_available) return false;
             return true;
         });
         // "Cheap" filter — sort ascending by total $/M and cap to the
@@ -2134,14 +2147,24 @@
             const nameMatch = (m.name || "").toLowerCase().includes(q);
             return idMatch || nameMatch;
         });
-        const counts = { cheap: queryMatched.length, vision: 0, tools: 0 };
+        const counts = {
+            cheap: queryMatched.length,
+            vision: 0,
+            tools: 0,
+            open: 0,
+            us: 0,
+            eu: 0,
+        };
         for (const m of queryMatched) {
             const caps = m.capabilities || [];
             if (caps.includes("vision")) counts.vision++;
             if (caps.includes("tools") || caps.includes("tool_use")) counts.tools++;
+            if (m.open_weights) counts.open++;
+            if (m.us_provider_available) counts.us++;
+            if (m.eu_focused_provider_available) counts.eu++;
         }
         if (pickerEl) {
-            for (const k of ["cheap", "vision", "tools"]) {
+            for (const k of ["cheap", "vision", "tools", "open", "us", "eu"]) {
                 const el = pickerEl.querySelector('[data-count="' + k + '"]');
                 const chip = pickerEl.querySelector(
                     '.chat-picker-filter[data-filter="' + k + '"]',
@@ -2197,7 +2220,10 @@
                 } else if (
                     !PICKER_FILTERS.cheap &&
                     !PICKER_FILTERS.vision &&
-                    !PICKER_FILTERS.tools
+                    !PICKER_FILTERS.tools &&
+                    !PICKER_FILTERS.open &&
+                    !PICKER_FILTERS.us &&
+                    !PICKER_FILTERS.eu
                 ) {
                     // Catalog hasn't loaded (or doesn't include this id
                     // yet). Synthesize a stub so the user still sees
@@ -2208,6 +2234,9 @@
                         name: prettifyModelId(id),
                         capabilities: [],
                         free: false,
+                        open_weights: false,
+                        us_provider_available: false,
+                        eu_focused_provider_available: false,
                         _stub: true,
                     });
                 }
@@ -2308,6 +2337,8 @@
                 ${m.context_length ? `<span>${(m.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
                 ${m.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
                 ${m.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
+                ${m.us_provider_available ? '<span class="chat-tag chat-tag-region">US</span>' : ""}
+                ${m.eu_focused_provider_available ? '<span class="chat-tag chat-tag-region">EU</span>' : ""}
                 ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
                 ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
                 ${activeIds && activeIds.has(m.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}
@@ -2470,6 +2501,9 @@
                     <button type="button" class="chat-picker-filter" data-filter="cheap" title="Sort ascending by price (top 30 cheapest)">Cheap <span class="chat-picker-filter-count" data-count="cheap"></span></button>
                     <button type="button" class="chat-picker-filter" data-filter="vision" title="Models with image-input support">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
                     <button type="button" class="chat-picker-filter" data-filter="tools" title="Models with tool/function-call support">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="open" title="Pure open-weight model or orchestration">Open weights <span class="chat-picker-filter-count" data-count="open"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="us" title="Models with at least one US-based provider route">US <span class="chat-picker-filter-count" data-count="us"></span></button>
+                    <button type="button" class="chat-picker-filter" data-filter="eu" title="Models with at least one EU-focused provider route">EU <span class="chat-picker-filter-count" data-count="eu"></span></button>
                 </div>
                 <div class="chat-model-picker-list"></div>
                 <div class="chat-model-picker-footer">

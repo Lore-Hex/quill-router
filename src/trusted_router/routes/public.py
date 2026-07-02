@@ -316,7 +316,9 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/blog/{slug}")
     async def blog_post(slug: str) -> Any:
         if slug in {"zeus-terminal-bench-hard-72", "socrates-pro-plus-terminal-bench-hard-72"}:
-            return RedirectResponse(url="/blog/socrates-1.1-terminal-bench-hard-72", status_code=301)
+            return RedirectResponse(
+                url="/blog/socrates-1.1-terminal-bench-hard-72", status_code=301
+            )
         html = public_blog_post_html(settings, slug)
         if html is None:
             return HTMLResponse(public_page_html(settings, "docs"), status_code=404)
@@ -567,15 +569,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         )
 
     @public_html_route("/models")
-    async def models() -> str:
-        return public_models_html(settings)
+    async def models(request: Request) -> str:
+        return public_models_html(settings, model_filter=request.query_params.get("filter", "all"))
 
     @public_html_route("/providers")
     async def providers(request: Request) -> Response:
         if _wants_html(request):
             return HTMLResponse(public_providers_html(settings))
         return JSONResponse(
-            {"data": [provider_to_openrouter_shape(provider) for provider in providers_for_display()]}
+            {
+                "data": [
+                    provider_to_openrouter_shape(provider) for provider in providers_for_display()
+                ]
+            }
         )
 
     @public_html_route("/providers/{provider_slug}/performance")
@@ -957,7 +963,9 @@ def _status_samples(*, hours: int = 48) -> list[Any]:
         return STORE.synthetic_probe_samples(limit=STATUS_LIVE_SAMPLE_LIMIT)
     samples = []
     for date in _dates_covering_recent_hours(hours=hours):
-        samples.extend(STORE.synthetic_probe_samples(date=date, limit=STATUS_RAW_SAMPLE_LIMIT_PER_DAY))
+        samples.extend(
+            STORE.synthetic_probe_samples(date=date, limit=STATUS_RAW_SAMPLE_LIMIT_PER_DAY)
+        )
     deduped = {sample.id: sample for sample in samples}
     return sorted(deduped.values(), key=lambda sample: sample.created_at, reverse=True)
 

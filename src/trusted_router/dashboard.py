@@ -31,7 +31,9 @@ from trusted_router.catalog import (
     canonical_orchestration_model_id,
     endpoints_for_model,
     meta_candidate_models,
+    model_eu_focused_provider_available,
     model_open_weights,
+    model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
     providers_for_display,
@@ -649,22 +651,26 @@ def dashboard_html(settings: Settings) -> str:
     }
     map_regions = region_map_payload(settings)
     api_region_count = len(configured_regions(settings))
-    return _env().get_template("dashboard.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{domain}/",
-        og_image=f"https://{domain}/og.png",
-        og_title=OG_TITLE,
-        og_description=OG_DESCRIPTION,
-        og_image_width=OG_IMAGE_WIDTH,
-        og_image_height=OG_IMAGE_HEIGHT,
-        tr_config=json.dumps(tr_config),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        paypal_enabled=settings.paypal_enabled,
-        map_regions=map_regions,
-        api_region_count=api_region_count,
-        primary_region=settings.primary_region,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("dashboard.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{domain}/",
+            og_image=f"https://{domain}/og.png",
+            og_title=OG_TITLE,
+            og_description=OG_DESCRIPTION,
+            og_image_width=OG_IMAGE_WIDTH,
+            og_image_height=OG_IMAGE_HEIGHT,
+            tr_config=json.dumps(tr_config),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            paypal_enabled=settings.paypal_enabled,
+            map_regions=map_regions,
+            api_region_count=api_region_count,
+            primary_region=settings.primary_region,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -673,17 +679,21 @@ def public_apps_html(settings: Settings, *, apps: dict[str, object]) -> str:
     Reuses the PUBLIC_PAGES["apps"] metadata (title/description/OG) and injects
     the privacy-safe ranked app list (see trusted_router.apps.aggregate_apps)."""
     page = PUBLIC_PAGES["apps"]
-    return _env().get_template(page.template).render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/apps",
-        title=f"{page.title} | TrustedRouter",
-        heading=page.title,
-        description=page.description,
-        og_image=_og_image_url(settings, page.og_card),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
-        apps=apps,
+    return (
+        _env()
+        .get_template(page.template)
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/apps",
+            title=f"{page.title} | TrustedRouter",
+            heading=page.title,
+            description=page.description,
+            og_image=_og_image_url(settings, page.og_card),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+            apps=apps,
+        )
     )
 
 
@@ -735,7 +745,9 @@ def _blog_og_image(settings: Settings, post: BlogPost) -> str:
 
 
 def _blog_index_posts(settings: Settings) -> tuple[BlogIndexPost, ...]:
-    return tuple(BlogIndexPost(post=post, image=_blog_og_image(settings, post)) for post in BLOG_POSTS)
+    return tuple(
+        BlogIndexPost(post=post, image=_blog_og_image(settings, post)) for post in BLOG_POSTS
+    )
 
 
 def _json_ld_graph(*nodes: dict[str, object] | None) -> str:
@@ -872,46 +884,54 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
     page = PUBLIC_PAGES[page_key]
     path = f"/{page_key}"
     resolved_site_url = site_url or f"https://{settings.trusted_domain}{path}"
-    return _env().get_template(page.template).render(
-        api_base_url=settings.api_base_url,
-        control_plane_api_base_url=f"https://{settings.trusted_domain}/v1",
-        site_url=resolved_site_url,
-        title=f"{page.title} | TrustedRouter",
-        heading=page.title,
-        description=page.description,
-        # Absolute, environment-correct card URL so link unfurls work in
-        # staging/preview too. Uses the page's tailored card only once the
-        # PNG actually exists on disk — so we can declare og_card now and
-        # each card auto-activates the moment its image is generated into
-        # static/og/, with zero risk of a 404 unfurl in the meantime.
-        og_image=_og_image_url(settings, page.og_card),
-        faq_items=page.faq_items,
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
-            _faq_node(page.faq_items),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template(page.template)
+        .render(
+            api_base_url=settings.api_base_url,
+            control_plane_api_base_url=f"https://{settings.trusted_domain}/v1",
+            site_url=resolved_site_url,
+            title=f"{page.title} | TrustedRouter",
+            heading=page.title,
+            description=page.description,
+            # Absolute, environment-correct card URL so link unfurls work in
+            # staging/preview too. Uses the page's tailored card only once the
+            # PNG actually exists on disk — so we can declare og_card now and
+            # each card auto-activates the moment its image is generated into
+            # static/og/, with zero risk of a 404 unfurl in the meantime.
+            og_image=_og_image_url(settings, page.og_card),
+            faq_items=page.faq_items,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(settings, (("Home", "/"), (page.title, path))),
+                _faq_node(page.faq_items),
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_blog_index_html(settings: Settings) -> str:
     site_url = f"https://{settings.trusted_domain}/blog"
-    return _env().get_template("public/blog_index.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=site_url,
-        title="Blog | TrustedRouter",
-        heading="TrustedRouter blog",
-        description=(
-            "Engineering notes on attested AI routing, Synth evals, provider privacy, "
-            "and open source model routing."
-        ),
-        posts=_blog_index_posts(settings),
-        json_ld_blob=_blog_index_json_ld(settings),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/blog_index.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=site_url,
+            title="Blog | TrustedRouter",
+            heading="TrustedRouter blog",
+            description=(
+                "Engineering notes on attested AI routing, Synth evals, provider privacy, "
+                "and open source model routing."
+            ),
+            posts=_blog_index_posts(settings),
+            json_ld_blob=_blog_index_json_ld(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -920,125 +940,151 @@ def public_blog_post_html(settings: Settings, slug: str) -> str | None:
     if post is None:
         return None
     site_url = f"https://{settings.trusted_domain}{post.href}"
-    return _env().get_template("public/blog_post.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=site_url,
-        title=f"{post.title} | TrustedRouter",
-        heading=post.title,
-        description=post.description,
-        post=post,
-        og_image=_blog_og_image(settings, post),
-        og_image_alt=post.title,
-        json_ld_blob=_blog_post_json_ld(settings, post),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/blog_post.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=site_url,
+            title=f"{post.title} | TrustedRouter",
+            heading=post.title,
+            description=post.description,
+            post=post,
+            og_image=_blog_og_image(settings, post),
+            og_image_alt=post.title,
+            json_ld_blob=_blog_post_json_ld(settings, post),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_legal_html(settings: Settings) -> str:
     packet = procurement_packet(settings)
-    return _env().get_template("public/legal.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal",
-        title="Legal And Procurement Packet | TrustedRouter",
-        heading="Legal and procurement packet",
-        description=(
-            "Read-only procurement packet for legal teams reviewing TrustedRouter for sensitive work."
-        ),
-        packet=packet,
-        entity=legal_entity(settings),
-        subprocessors=subprocessor_packet(),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal",
+            title="Legal And Procurement Packet | TrustedRouter",
+            heading="Legal and procurement packet",
+            description=(
+                "Read-only procurement packet for legal teams reviewing TrustedRouter for sensitive work."
+            ),
+            packet=packet,
+            entity=legal_entity(settings),
+            subprocessors=subprocessor_packet(),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_dpa_html(settings: Settings) -> str:
-    return _env().get_template("public/legal_dpa.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal/dpa",
-        title="DPA Draft | TrustedRouter",
-        heading="Data Processing Addendum draft",
-        description=(
-            "Draft DPA terms for customer counsel review. Production legal workloads require a signed agreement or written exception."
-        ),
-        entity=legal_entity(settings),
-        subprocessors=subprocessor_packet(),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal_dpa.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal/dpa",
+            title="DPA Draft | TrustedRouter",
+            heading="Data Processing Addendum draft",
+            description=(
+                "Draft DPA terms for customer counsel review. Production legal workloads require a signed agreement or written exception."
+            ),
+            entity=legal_entity(settings),
+            subprocessors=subprocessor_packet(),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_baa_html(settings: Settings) -> str:
-    return _env().get_template("public/legal_baa.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal/baa",
-        title="BAA Draft | TrustedRouter",
-        heading="Business Associate Agreement draft",
-        description=(
-            "Draft BAA terms for HIPAA review. PHI workloads require a signed BAA and route restrictions."
-        ),
-        entity=legal_entity(settings),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal_baa.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal/baa",
+            title="BAA Draft | TrustedRouter",
+            heading="Business Associate Agreement draft",
+            description=(
+                "Draft BAA terms for HIPAA review. PHI workloads require a signed BAA and route restrictions."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_soc2_readiness_html(settings: Settings) -> str:
     packet = soc2_readiness_packet(settings)
-    return _env().get_template("public/legal_soc2_readiness.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal/soc2-readiness",
-        title="SOC 2 Readiness | TrustedRouter",
-        heading="SOC 2 readiness",
-        description=(
-            "SOC 2 Type I readiness package for auditor and procurement review. No SOC 2 report has been obtained yet."
-        ),
-        entity=legal_entity(settings),
-        packet=packet,
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal_soc2_readiness.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal/soc2-readiness",
+            title="SOC 2 Readiness | TrustedRouter",
+            heading="SOC 2 readiness",
+            description=(
+                "SOC 2 Type I readiness package for auditor and procurement review. No SOC 2 report has been obtained yet."
+            ),
+            entity=legal_entity(settings),
+            packet=packet,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_hipaa_readiness_html(settings: Settings) -> str:
     packet = hipaa_readiness_packet(settings)
-    return _env().get_template("public/legal_hipaa_readiness.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal/hipaa-readiness",
-        title="HIPAA Readiness | TrustedRouter",
-        heading="HIPAA readiness",
-        description=(
-            "HIPAA readiness package for covered-entity and business-associate review. PHI requires a signed BAA."
-        ),
-        entity=legal_entity(settings),
-        packet=packet,
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal_hipaa_readiness.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal/hipaa-readiness",
+            title="HIPAA Readiness | TrustedRouter",
+            heading="HIPAA readiness",
+            description=(
+                "HIPAA readiness package for covered-entity and business-associate review. PHI requires a signed BAA."
+            ),
+            entity=legal_entity(settings),
+            packet=packet,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_subprocessors_html(settings: Settings) -> str:
-    return _env().get_template("public/legal_subprocessors.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/legal/subprocessors",
-        title="Subprocessors | TrustedRouter",
-        heading="Subprocessors",
-        description=(
-            "Platform vendors and downstream model providers used by TrustedRouter."
-        ),
-        entity=legal_entity(settings),
-        subprocessors=subprocessor_packet(),
-        provider_subprocessors=provider_subprocessor_rows(),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/legal_subprocessors.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/legal/subprocessors",
+            title="Subprocessors | TrustedRouter",
+            heading="Subprocessors",
+            description=("Platform vendors and downstream model providers used by TrustedRouter."),
+            entity=legal_entity(settings),
+            subprocessors=subprocessor_packet(),
+            provider_subprocessors=provider_subprocessor_rows(),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1058,9 +1104,18 @@ def subprocessors_json(settings: Settings) -> str:
     return json.dumps(subprocessor_packet(), sort_keys=True, indent=2)
 
 
-def public_models_html(settings: Settings) -> str:
+def public_models_html(settings: Settings, *, model_filter: str = "all") -> str:
     test_mode = settings.environment == "test"
     models = [_model_view(model, test_mode=test_mode) for model in MODELS.values()]
+    normalized_filter = model_filter.strip().lower()
+    if normalized_filter == "open":
+        models = [model for model in models if model.get("open_weights")]
+    elif normalized_filter == "us":
+        models = [model for model in models if model.get("us_provider_available")]
+    elif normalized_filter == "eu":
+        models = [model for model in models if model.get("eu_focused_provider_available")]
+    else:
+        normalized_filter = "all"
     item_list_rows: list[dict[str, object]] = []
     for model in models:
         if not model.get("detail_href"):
@@ -1071,43 +1126,58 @@ def public_models_html(settings: Settings) -> str:
         }
         item_list_rows.append(item_list_row)
     item_list_rows = item_list_rows[:200]
-    return _env().get_template("public/models.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/models",
-        title="Models | TrustedRouter",
-        heading="Models",
-        description="Hundreds of models with provider routes, prices, status, and policy notes.",
-        models=models,
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(settings, (("Home", "/"), ("Models", "/models"))),
-            _item_list_node(
-                name="TrustedRouter model catalog",
-                items=item_list_rows,
+    return (
+        _env()
+        .get_template("public/models.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/models",
+            title="Models | TrustedRouter",
+            heading="Models",
+            description="Hundreds of models with provider routes, prices, status, and policy notes.",
+            models=models,
+            active_filter=normalized_filter,
+            model_filters=[
+                {"id": "all", "label": "All", "href": "/models"},
+                {"id": "open", "label": "Open weights", "href": "/models?filter=open"},
+                {"id": "us", "label": "US providers", "href": "/models?filter=us"},
+                {"id": "eu", "label": "EU-focused", "href": "/models?filter=eu"},
+            ],
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(settings, (("Home", "/"), ("Models", "/models"))),
+                _item_list_node(
+                    name="TrustedRouter model catalog",
+                    items=item_list_rows,
+                ),
             ),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_benchmarks_html(settings: Settings) -> str:
     test_mode = settings.environment == "test"
-    return _env().get_template("public/seo_index.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/benchmarks",
-        title="Benchmarks | TrustedRouter",
-        heading="Benchmarks",
-        description=(
-            "Model benchmark entry points, route measurements, and independent sources."
-        ),
-        page_kind="benchmarks",
-        models=_seo_model_rows(test_mode=test_mode),
-        providers=[_provider_view(provider) for provider in providers_for_display()],
-        benchmark_links=list(_BENCHMARK_INDEX_LINKS),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/seo_index.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/benchmarks",
+            title="Benchmarks | TrustedRouter",
+            heading="Benchmarks",
+            description=(
+                "Model benchmark entry points, route measurements, and independent sources."
+            ),
+            page_kind="benchmarks",
+            models=_seo_model_rows(test_mode=test_mode),
+            providers=[_provider_view(provider) for provider in providers_for_display()],
+            benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1117,53 +1187,61 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
     `snapshot` is the output of `aggregate_leaderboard()` plus a `generated_at`
     timestamp — built (and cached) by the route so this stays render-only.
     """
-    return _env().get_template("public/leaderboard.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/leaderboard",
-        title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
-        heading="Provider & model performance",
-        description=(
-            "Measured time-to-first-token, time-to-first-byte, throughput, and "
-            "uptime for every LLM provider and model TrustedRouter routes to — "
-            "continuously sampled, not vendor-claimed."
-        ),
-        page_kind="leaderboard",
-        snapshot=snapshot,
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(settings, (("Home", "/"), ("Leaderboard", "/leaderboard"))),
-            _dataset_node(
-                name="TrustedRouter LLM provider and model speed leaderboard",
-                description=(
-                    "Metadata-only measurements for provider TTFT, TTFB, throughput, "
-                    "success rate, and excluded probe configuration rows."
-                ),
-                url=f"https://{settings.trusted_domain}/leaderboard",
-                keywords=("LLM latency", "provider benchmarks", "time to first token"),
+    return (
+        _env()
+        .get_template("public/leaderboard.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/leaderboard",
+            title="LLM Provider & Model Speed Leaderboard | TrustedRouter",
+            heading="Provider & model performance",
+            description=(
+                "Measured time-to-first-token, time-to-first-byte, throughput, and "
+                "uptime for every LLM provider and model TrustedRouter routes to — "
+                "continuously sampled, not vendor-claimed."
             ),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            page_kind="leaderboard",
+            snapshot=snapshot,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(settings, (("Home", "/"), ("Leaderboard", "/leaderboard"))),
+                _dataset_node(
+                    name="TrustedRouter LLM provider and model speed leaderboard",
+                    description=(
+                        "Metadata-only measurements for provider TTFT, TTFB, throughput, "
+                        "success rate, and excluded probe configuration rows."
+                    ),
+                    url=f"https://{settings.trusted_domain}/leaderboard",
+                    keywords=("LLM latency", "provider benchmarks", "time to first token"),
+                ),
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_rankings_html(settings: Settings) -> str:
     test_mode = settings.environment == "test"
-    return _env().get_template("public/seo_index.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/rankings",
-        title="Model Rankings | TrustedRouter",
-        heading="Model Rankings",
-        description=(
-            "Rank models by route count, provider diversity, price, and policy posture."
-        ),
-        page_kind="rankings",
-        models=_seo_model_rows(test_mode=test_mode),
-        providers=[_provider_view(provider) for provider in providers_for_display()],
-        benchmark_links=list(_BENCHMARK_INDEX_LINKS),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/seo_index.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/rankings",
+            title="Model Rankings | TrustedRouter",
+            heading="Model Rankings",
+            description=(
+                "Rank models by route count, provider diversity, price, and policy posture."
+            ),
+            page_kind="rankings",
+            models=_seo_model_rows(test_mode=test_mode),
+            providers=[_provider_view(provider) for provider in providers_for_display()],
+            benchmark_links=list(_BENCHMARK_INDEX_LINKS),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1189,77 +1267,88 @@ def public_chat_html(
         storage_key = "tr_user_chat_state_" + "".join(
             ch if ch.isalnum() else "_" for ch in locked_model_id.lower()
         )
-    return _env().get_template("public/chat.html").render(
-        # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
-        # streaming pipe in routes/chat_proxy.py) to forward to
-        # api.trustedrouter.com. Direct browser fetch to api.trustedrouter.com
-        # is blocked by CORS (the attested gateway 401s preflight
-        # with no ACAO headers). The proxy pipes raw bytes without
-        # inspecting / logging them — privacy posture matches the
-        # attested gateway itself. Same-origin also means x-trustedrouter-
-        # provider response headers are visible without any CORS
-        # expose-headers work, so "via {provider}" lights up.
-        api_base_url="/chat-proxy/v1",
-        site_url=f"https://{settings.trusted_domain}/chat",
-        title="Chat | TrustedRouter",
-        heading="Chat",
-        description=(
-            "Try any model and compare up to four at once. Zero "
-            "tokens spent until you sign in."
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
-        storage_key=storage_key,
-        locked_model_id=locked_model_id,
-        locked_model_label=locked_model_label,
+    return (
+        _env()
+        .get_template("public/chat.html")
+        .render(
+            # CRITICAL: chat playground uses /chat-proxy/v1 (same-origin
+            # streaming pipe in routes/chat_proxy.py) to forward to
+            # api.trustedrouter.com. Direct browser fetch to api.trustedrouter.com
+            # is blocked by CORS (the attested gateway 401s preflight
+            # with no ACAO headers). The proxy pipes raw bytes without
+            # inspecting / logging them — privacy posture matches the
+            # attested gateway itself. Same-origin also means x-trustedrouter-
+            # provider response headers are visible without any CORS
+            # expose-headers work, so "via {provider}" lights up.
+            api_base_url="/chat-proxy/v1",
+            site_url=f"https://{settings.trusted_domain}/chat",
+            title="Chat | TrustedRouter",
+            heading="Chat",
+            description=(
+                "Try any model and compare up to four at once. Zero tokens spent until you sign in."
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+            storage_key=storage_key,
+            locked_model_id=locked_model_id,
+            locked_model_label=locked_model_label,
+        )
     )
 
 
 def public_fusion_html(settings: Settings) -> str:
-    return _env().get_template("public/fusion_playground.html").render(
-        api_base_url="/chat-proxy/v1",
-        site_url=f"https://{settings.trusted_domain}/synth",
-        title="Synth | TrustedRouter",
-        heading="Synth",
-        description=(
-            "Try trustedrouter/synth with a model panel, fallback judges, and a final synthesizer."
-        ),
-        og_image=_og_image_url(settings, "synth.png"),
-        og_image_alt="TrustedRouter Synth compares a model panel and returns one answer",
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/fusion_playground.html")
+        .render(
+            api_base_url="/chat-proxy/v1",
+            site_url=f"https://{settings.trusted_domain}/synth",
+            title="Synth | TrustedRouter",
+            heading="Synth",
+            description=(
+                "Try trustedrouter/synth with a model panel, fallback judges, and a final synthesizer."
+            ),
+            og_image=_og_image_url(settings, "synth.png"),
+            og_image_alt="TrustedRouter Synth compares a model panel and returns one answer",
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
 def public_providers_html(settings: Settings) -> str:
     providers = [_provider_view(provider) for provider in providers_for_display()]
-    return _env().get_template("public/providers.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/providers",
-        title="Providers | TrustedRouter",
-        heading="Providers",
-        description=(
-            "Provider transparency for model compute, retention, confidential compute, and encrypted routes."
-        ),
-        providers=providers,
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(settings, (("Home", "/"), ("Providers", "/providers"))),
-            _item_list_node(
-                name="TrustedRouter provider catalog",
-                items=[
-                    {
-                        "name": str(provider["name"]),
-                        "url": f"https://{settings.trusted_domain}{provider['detail_href']}",
-                    }
-                    for provider in providers
-                ],
+    return (
+        _env()
+        .get_template("public/providers.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/providers",
+            title="Providers | TrustedRouter",
+            heading="Providers",
+            description=(
+                "Provider transparency for model compute, retention, confidential compute, and encrypted routes."
             ),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            providers=providers,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(settings, (("Home", "/"), ("Providers", "/providers"))),
+                _item_list_node(
+                    name="TrustedRouter provider catalog",
+                    items=[
+                        {
+                            "name": str(provider["name"]),
+                            "url": f"https://{settings.trusted_domain}{provider['detail_href']}",
+                        }
+                        for provider in providers
+                    ],
+                ),
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1269,36 +1358,44 @@ def public_provider_detail_html(settings: Settings, provider_slug: str) -> str |
         return None
     test_mode = settings.environment == "test"
     served_models = _provider_model_rows(provider_slug, test_mode=test_mode)
-    return _env().get_template("public/provider_detail.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
-        title=f"{provider.name} Models | TrustedRouter",
-        heading=provider.name,
-        description=(
-            f"{provider.name} models on TrustedRouter with prices, routes, policy notes, and source links."
-        ),
-        provider=_provider_detail_view(provider, served_models=served_models),
-        served_models=served_models,
-        measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(
-                settings,
-                (("Home", "/"), ("Providers", "/providers"), (provider.name, f"/providers/{provider.slug}")),
+    return (
+        _env()
+        .get_template("public/provider_detail.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/providers/{provider.slug}",
+            title=f"{provider.name} Models | TrustedRouter",
+            heading=provider.name,
+            description=(
+                f"{provider.name} models on TrustedRouter with prices, routes, policy notes, and source links."
             ),
-            _item_list_node(
-                name=f"{provider.name} models on TrustedRouter",
-                items=[
-                    {
-                        "name": str(model["name"]),
-                        "url": f"https://{settings.trusted_domain}{model['detail_href']}",
-                    }
-                    for model in served_models[:200]
-                ],
+            provider=_provider_detail_view(provider, served_models=served_models),
+            served_models=served_models,
+            measured=measured_for_provider(provider.slug, test_mode=settings.environment == "test"),
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (
+                        ("Home", "/"),
+                        ("Providers", "/providers"),
+                        (provider.name, f"/providers/{provider.slug}"),
+                    ),
+                ),
+                _item_list_node(
+                    name=f"{provider.name} models on TrustedRouter",
+                    items=[
+                        {
+                            "name": str(model["name"]),
+                            "url": f"https://{settings.trusted_domain}{model['detail_href']}",
+                        }
+                        for model in served_models[:200]
+                    ],
+                ),
             ),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1311,50 +1408,54 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
     sample_count = int(provider_row.get("sample_count") or 0) if provider_row else 0
     indexable = sample_count >= PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES
     site_path = f"/providers/{provider.slug}/performance"
-    return _env().get_template("public/provider_performance.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=(
-            f"https://{settings.trusted_domain}{site_path}"
-            if indexable
-            else f"https://{settings.trusted_domain}/providers/{provider.slug}"
-        ),
-        robots_meta=None if indexable else "noindex,follow",
-        title=f"{provider.name} Performance | TrustedRouter",
-        heading=f"{provider.name} performance",
-        description=(
-            f"Measured TTFT, TTFB, throughput, uptime, and sampled model routes for {provider.name}."
-        ),
-        provider=_provider_detail_view(
-            provider,
-            served_models=_provider_model_rows(
-                provider_slug,
-                test_mode=settings.environment == "test",
+    return (
+        _env()
+        .get_template("public/provider_performance.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=(
+                f"https://{settings.trusted_domain}{site_path}"
+                if indexable
+                else f"https://{settings.trusted_domain}/providers/{provider.slug}"
             ),
-        ),
-        measured=measured,
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(
-                settings,
-                (
-                    ("Home", "/"),
-                    ("Providers", "/providers"),
-                    (provider.name, f"/providers/{provider.slug}"),
-                    ("Performance", site_path),
+            robots_meta=None if indexable else "noindex,follow",
+            title=f"{provider.name} Performance | TrustedRouter",
+            heading=f"{provider.name} performance",
+            description=(
+                f"Measured TTFT, TTFB, throughput, uptime, and sampled model routes for {provider.name}."
+            ),
+            provider=_provider_detail_view(
+                provider,
+                served_models=_provider_model_rows(
+                    provider_slug,
+                    test_mode=settings.environment == "test",
                 ),
             ),
-            _dataset_node(
-                name=f"{provider.name} TrustedRouter performance measurements",
-                description=(
-                    f"Measured latency, throughput, and uptime for {provider.name} routes "
-                    "through TrustedRouter."
+            measured=measured,
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (
+                        ("Home", "/"),
+                        ("Providers", "/providers"),
+                        (provider.name, f"/providers/{provider.slug}"),
+                        ("Performance", site_path),
+                    ),
                 ),
-                url=f"https://{settings.trusted_domain}{site_path}",
-                keywords=("LLM latency", provider.name, "provider performance"),
+                _dataset_node(
+                    name=f"{provider.name} TrustedRouter performance measurements",
+                    description=(
+                        f"Measured latency, throughput, and uptime for {provider.name} routes "
+                        "through TrustedRouter."
+                    ),
+                    url=f"https://{settings.trusted_domain}{site_path}",
+                    keywords=("LLM latency", provider.name, "provider performance"),
+                ),
             ),
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1367,21 +1468,25 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
         return None
     test_mode = settings.environment == "test"
     site_url = f"https://{settings.trusted_domain}/models/{model_id}"
-    return _env().get_template("public/model_detail.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=site_url,
-        title=f"{model.name} | TrustedRouter",
-        heading=model.name,
-        description=f"All providers serving {model.name} via TrustedRouter.",
-        model=_model_detail_view(model, test_mode=test_mode),
-        # Service/Offer JSON-LD. The page sells API access to a hosted
-        # routing service, not a retail product with customer ratings.
-        # Avoid Product schema so Search Console doesn't expect review
-        # or aggregateRating fields that we cannot honestly provide yet.
-        json_ld_blob=_model_json_ld(settings, model, site_url),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/model_detail.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=site_url,
+            title=f"{model.name} | TrustedRouter",
+            heading=model.name,
+            description=f"All providers serving {model.name} via TrustedRouter.",
+            model=_model_detail_view(model, test_mode=test_mode),
+            # Service/Offer JSON-LD. The page sells API access to a hosted
+            # routing service, not a retail product with customer ratings.
+            # Avoid Product schema so Search Console doesn't expect review
+            # or aggregateRating fields that we cannot honestly provide yet.
+            json_ld_blob=_model_json_ld(settings, model, site_url),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1398,31 +1503,35 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
         return None
     test_mode = settings.environment == "test"
     site_path = f"/compare/models/{left.id}/vs/{right.id}"
-    return _env().get_template("public/model_compare.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}{site_path}",
-        title=f"{left.name} vs {right.name} | TrustedRouter",
-        heading=f"{left.name} vs {right.name}",
-        description=(
-            f"Compare {left.name} and {right.name} by providers, context, price, "
-            "and TrustedRouter route support."
-        ),
-        left=_model_detail_view(left, test_mode=test_mode),
-        right=_model_detail_view(right, test_mode=test_mode),
-        comparison=_comparison_view(left, right),
-        json_ld_blob=_json_ld_graph(
-            _breadcrumb_node(
-                settings,
-                (
-                    ("Home", "/"),
-                    ("Models", "/models"),
-                    (f"{left.name} vs {right.name}", site_path),
-                ),
-            )
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/model_compare.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}{site_path}",
+            title=f"{left.name} vs {right.name} | TrustedRouter",
+            heading=f"{left.name} vs {right.name}",
+            description=(
+                f"Compare {left.name} and {right.name} by providers, context, price, "
+                "and TrustedRouter route support."
+            ),
+            left=_model_detail_view(left, test_mode=test_mode),
+            right=_model_detail_view(right, test_mode=test_mode),
+            comparison=_comparison_view(left, right),
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (
+                        ("Home", "/"),
+                        ("Models", "/models"),
+                        (f"{left.name} vs {right.name}", site_path),
+                    ),
+                )
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1437,30 +1546,34 @@ def public_model_section_html(settings: Settings, model_id: str, section: str) -
     label = MODEL_SEO_SECTION_LABELS[section]
     measured = measured_for_model(model.id, test_mode=settings.environment == "test")
     section_indexable = _model_section_indexable(model, section, measured)
-    return _env().get_template("public/model_section.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=section_url if section_indexable else base_model_url,
-        robots_meta=None if section_indexable else "noindex,follow",
-        title=f"{model.name} {label} | TrustedRouter",
-        heading=f"{model.name} {label}",
-        description=_model_section_description(model, section),
-        model=_model_detail_view(model, active_section=section, test_mode=test_mode),
-        section=section,
-        section_label=label,
-        benchmark_links=_benchmark_links(model, test_mode=test_mode),
-        benchmark_scores=scores_for_model(model.id),
-        measured=measured,
-        json_ld_blob=_model_section_json_ld(
-            settings,
-            model,
+    return (
+        _env()
+        .get_template("public/model_section.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=section_url if section_indexable else base_model_url,
+            robots_meta=None if section_indexable else "noindex,follow",
+            title=f"{model.name} {label} | TrustedRouter",
+            heading=f"{model.name} {label}",
+            description=_model_section_description(model, section),
+            model=_model_detail_view(model, active_section=section, test_mode=test_mode),
             section=section,
-            section_url=section_url,
-            base_model_url=base_model_url,
+            section_label=label,
+            benchmark_links=_benchmark_links(model, test_mode=test_mode),
+            benchmark_scores=scores_for_model(model.id),
             measured=measured,
-        ),
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+            json_ld_blob=_model_section_json_ld(
+                settings,
+                model,
+                section=section,
+                section_url=section_url,
+                base_model_url=base_model_url,
+                measured=measured,
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1468,16 +1581,20 @@ def public_model_not_found_html(settings: Settings, model_id: str) -> str:
     """Styled HTML 404 for `/models/{nonexistent}` — keeps the visitor
     inside the marketing chrome instead of dumping FastAPI's default
     JSON error body."""
-    return _env().get_template("public/model_not_found.html").render(
-        api_base_url=settings.api_base_url,
-        site_url=f"https://{settings.trusted_domain}/models",
-        title="Model not found | TrustedRouter",
-        heading="Model not found",
-        description=f"No model with id {model_id} is in the TrustedRouter catalog.",
-        requested_model_id=model_id,
-        google_enabled=settings.google_oauth_enabled,
-        github_enabled=settings.github_oauth_enabled,
-        static_version=_static_version(settings),
+    return (
+        _env()
+        .get_template("public/model_not_found.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/models",
+            title="Model not found | TrustedRouter",
+            heading="Model not found",
+            description=f"No model with id {model_id} is in the TrustedRouter catalog.",
+            requested_model_id=model_id,
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
     )
 
 
@@ -1536,13 +1653,15 @@ def sitemap_core_xml(settings: Settings) -> str:
 def sitemap_providers_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
     paths = [
-        (f"/providers/{provider.slug}", "weekly", "0.7")
-        for provider in providers_for_display()
+        (f"/providers/{provider.slug}", "weekly", "0.7") for provider in providers_for_display()
     ]
     for provider in providers_for_display():
         measured = measured_for_provider(provider.slug, test_mode=settings.environment == "test")
         provider_row = measured.get("provider_row")
-        if provider_row and int(provider_row.get("sample_count") or 0) >= PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES:
+        if (
+            provider_row
+            and int(provider_row.get("sample_count") or 0) >= PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES
+        ):
             paths.append((f"/providers/{provider.slug}/performance", "daily", "0.7"))
     return _sitemap_urlset(domain, paths)
 
@@ -1857,14 +1976,18 @@ def docs_llms_full_txt(settings: Settings) -> str:
 def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     endpoints = endpoints_for_model(model.id) if model.id not in META_MODEL_IDS else []
-    ai_iq = ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
+    ai_iq = (
+        ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
+    )
     if model.id in META_MODEL_IDS:
         candidates = meta_candidate_models(model.id)
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
         completion = _price_range(candidates, "completion_price_microdollars_per_million_tokens")
     elif endpoints:
         prompt = _endpoint_price_range(endpoints, "prompt_price_microdollars_per_million_tokens")
-        completion = _endpoint_price_range(endpoints, "completion_price_microdollars_per_million_tokens")
+        completion = _endpoint_price_range(
+            endpoints, "completion_price_microdollars_per_million_tokens"
+        )
     else:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
@@ -1897,6 +2020,8 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "providers": providers,
         "provider_count": len(providers),
         "ai_iq": ai_iq,
+        "us_provider_available": model_us_provider_available(model),
+        "eu_focused_provider_available": model_eu_focused_provider_available(model),
         "detail_href": f"/models/{model.id}",
         "benchmarks_href": (
             f"/models/{model.id}/benchmarks" if model.id not in META_MODEL_IDS else None
@@ -1991,32 +2116,37 @@ def _model_detail_view(
     candidate_models = []
     if not model.hidden_public_metadata:
         candidate_models = [
-            _model_view(candidate, test_mode=test_mode) for candidate in meta_candidate_models(model.id)
+            _model_view(candidate, test_mode=test_mode)
+            for candidate in meta_candidate_models(model.id)
         ]
     endpoint_views: list[dict[str, object]] = []
     for endpoint in endpoints:
         ep_provider = PROVIDERS.get(endpoint.provider)
-        endpoint_views.append({
-            "provider": ep_provider.name if ep_provider else endpoint.provider,
-            "provider_slug": endpoint.provider,
-            "provider_href": f"/providers/{endpoint.provider}",
-            "usage_type": endpoint.usage_type,
-            "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
-            "completion_price": _price(endpoint.completion_price_microdollars_per_million_tokens),
-            "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
-            "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
-            "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
-            "stores_content": ep_provider.stores_content if ep_provider else False,
-            "provider_zero_data_retention": (
-                ep_provider.provider_zero_data_retention if ep_provider else None
-            ),
-            "provider_confidential_compute": (
-                ep_provider.provider_confidential_compute if ep_provider else None
-            ),
-            "provider_e2ee": ep_provider.provider_e2ee if ep_provider else None,
-            "provider_policy": ep_provider.provider_policy if ep_provider else "",
-            "endpoint_id": endpoint.id,
-        })
+        endpoint_views.append(
+            {
+                "provider": ep_provider.name if ep_provider else endpoint.provider,
+                "provider_slug": endpoint.provider,
+                "provider_href": f"/providers/{endpoint.provider}",
+                "usage_type": endpoint.usage_type,
+                "prompt_price": _price(endpoint.prompt_price_microdollars_per_million_tokens),
+                "completion_price": _price(
+                    endpoint.completion_price_microdollars_per_million_tokens
+                ),
+                "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
+                "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
+                "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
+                "stores_content": ep_provider.stores_content if ep_provider else False,
+                "provider_zero_data_retention": (
+                    ep_provider.provider_zero_data_retention if ep_provider else None
+                ),
+                "provider_confidential_compute": (
+                    ep_provider.provider_confidential_compute if ep_provider else None
+                ),
+                "provider_e2ee": ep_provider.provider_e2ee if ep_provider else None,
+                "provider_policy": ep_provider.provider_policy if ep_provider else "",
+                "endpoint_id": endpoint.id,
+            }
+        )
     # Sort cheapest-first by total prompt+completion price; ties broken by
     # provider name. Click-to-sort JS in the template lets visitors flip
     # to throughput / latency / context views.
@@ -2046,6 +2176,8 @@ def _model_detail_view(
         "is_meta": is_meta,
         "configuration_hidden": model.hidden_public_metadata,
         "open_weights": model_open_weights(model),
+        "us_provider_available": model_us_provider_available(model),
+        "eu_focused_provider_available": model_eu_focused_provider_available(model),
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),
         "canonical_model_id": canonical_orchestration_model_id(model.id),
@@ -2326,7 +2458,11 @@ def _privacy_summary(model: Model) -> str:
 def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for model in _public_models_for_seo():
-        endpoints = [endpoint for endpoint in endpoints_for_model(model.id) if endpoint.provider == provider_slug]
+        endpoints = [
+            endpoint
+            for endpoint in endpoints_for_model(model.id)
+            if endpoint.provider == provider_slug
+        ]
         if not endpoints:
             continue
         rows.append(

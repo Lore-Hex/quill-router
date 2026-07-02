@@ -39,16 +39,27 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert "<loc>https://trustedrouter.com/llm-provider-latency-benchmarks</loc>" in core.text
     assert "<loc>https://trustedrouter.com/blog</loc>" in core.text
     assert "<loc>https://trustedrouter.com/llms.txt</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
+    assert (
+        "<loc>https://trustedrouter.com/blog/frontier-fusion-mythos-target</loc>" not in core.text
+    )
     assert "<loc>https://trustedrouter.com/blog/fusion-evals-open-source</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/blog/keep-doing-biology-with-prometheus</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/blog/trustedrouter-mcp-llm-advisor-ai-iq</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/blog/open-source-open-source-open-source</loc>" in core.text
+    assert (
+        "<loc>https://trustedrouter.com/blog/keep-doing-biology-with-prometheus</loc>" in core.text
+    )
+    assert (
+        "<loc>https://trustedrouter.com/blog/trustedrouter-mcp-llm-advisor-ai-iq</loc>" in core.text
+    )
+    assert (
+        "<loc>https://trustedrouter.com/blog/open-source-open-source-open-source</loc>" in core.text
+    )
     assert (
         "<loc>https://trustedrouter.com/blog/frontier-smart-cheap-fast-pick-3-open-source</loc>"
         in core.text
     )
-    assert "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>" in core.text
+    assert (
+        "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>"
+        in core.text
+    )
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
 
@@ -57,10 +68,14 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     assert models.text.count("<url>") >= 200
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3</loc>" in models.text
     # minimax-m3 now has cited benchmark scores, so its /benchmarks page is indexed.
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" in models.text
+    assert (
+        "<loc>https://trustedrouter.com/models/minimax/minimax-m3/benchmarks</loc>" in models.text
+    )
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/providers</loc>" in models.text
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/pricing</loc>" in models.text
-    assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in models.text
+    assert (
+        "<loc>https://trustedrouter.com/models/minimax/minimax-m3/uptime</loc>" not in models.text
+    )
     assert "<loc>https://trustedrouter.com/models/minimax/minimax-m3/api</loc>" not in models.text
 
     providers = client.get("/sitemap-providers.xml")
@@ -147,6 +162,15 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     models_payload = _json_ld(models.text)
     models_types = {item["@type"] for item in models_payload["@graph"]}
     assert {"BreadcrumbList", "ItemList"}.issubset(models_types)
+    assert 'href="/models?filter=open"' in models.text
+    assert 'href="/models?filter=us"' in models.text
+    assert 'href="/models?filter=eu"' in models.text
+    assert "open weights" in models.text
+    assert "US providers" in models.text
+    assert "EU-focused" in models.text
+    open_models = client.get("/models?filter=open")
+    assert open_models.status_code == 200
+    assert "TrustedRouter Zeus 1.0" not in open_models.text
 
     leaderboard = client.get("/leaderboard")
     assert leaderboard.status_code == 200
@@ -238,10 +262,14 @@ def test_public_structured_data_covers_lists_datasets_and_faqs(client: TestClien
     advisor_blog = client.get("/blog/trustedrouter-mcp-llm-advisor-ai-iq")
     assert advisor_blog.status_code == 200
     advisor_payload = _json_ld(advisor_blog.text)
-    assert "Introducing LLM advisor: which model do i choose for my problem?" in json.dumps(advisor_payload)
+    assert "Introducing LLM advisor: which model do i choose for my problem?" in json.dumps(
+        advisor_payload
+    )
     assert "/docs/mcp" in advisor_blog.text
     assert "https://github.com/Lore-Hex/LLM-advisor" in advisor_blog.text
-    assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in advisor_blog.text
+    assert (
+        "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in advisor_blog.text
+    )
     assert "https://aiiq.org" in advisor_blog.text
     assert "TRUSTEDROUTER_API_KEY" in advisor_blog.text
 
@@ -356,7 +384,9 @@ def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) 
     assert data["checkpoint"]["DPA"]["obtained_for_production"] is False
     assert data["checkpoint"]["SOC_2"]["status"] == "not_obtained"
     assert data["checkpoint"]["SOC_2"]["obtained_for_production"] is False
-    assert data["checkpoint"]["HIPAA"]["status"] == "readiness_package_available_requires_signed_baa"
+    assert (
+        data["checkpoint"]["HIPAA"]["status"] == "readiness_package_available_requires_signed_baa"
+    )
     assert data["checkpoint"]["HIPAA"]["obtained_for_production"] is False
     assert "Do not send privileged attorney work product" in data["production_recommendation"]
 
@@ -395,7 +425,9 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
     assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
     assert {"Anthropic", "OpenAI", "Gemini"}.issubset(model_names)
-    anthropic = next(row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic")
+    anthropic = next(
+        row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"
+    )
     assert anthropic["zdr"] is True
 
 
@@ -535,7 +567,9 @@ def test_first_body_image_picks_first_in_document_order() -> None:
 
 def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) -> None:
     socrates = client.get("/blog/socrates-1.1-terminal-bench-hard-72")
-    socrates_card = "https://trustedrouter.com/static/og/blog/socrates-1.1-terminal-bench-hard-72.png"
+    socrates_card = (
+        "https://trustedrouter.com/static/og/blog/socrates-1.1-terminal-bench-hard-72.png"
+    )
     assert f'property="og:image" content="{socrates_card}"' in socrates.text
     assert f'name="twitter:image" content="{socrates_card}"' in socrates.text
     assert client.get("/static/og/blog/socrates-1.1-terminal-bench-hard-72.png").status_code == 200
@@ -550,7 +584,10 @@ def test_blog_post_og_image_uses_first_image_else_default(client: TestClient) ->
     assert "static/og/blog/fusion-evals-open-source.png" in json.dumps(_json_ld(sota.text))
     assert client.get("/static/og/blog/fusion-evals-open-source.png").status_code == 200
     # the card alt is the post title, not the generic brand alt
-    assert 'property="og:image:alt" content="New SOTA: TrustedRouter Synth beats Fable and Frontier"' in sota.text
+    assert (
+        'property="og:image:alt" content="New SOTA: TrustedRouter Synth beats Fable and Frontier"'
+        in sota.text
+    )
 
     # The diagram sweep gave every post an OG diagram, so each post now uses its
     # OWN rasterized card (the imageless -> default brand-card path is covered by

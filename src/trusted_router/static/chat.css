@@ -2663,6 +2663,11 @@
     color: var(--chat-tag-open-ink);
 }
 
+.chat-tag-region {
+    background: color-mix(in srgb, var(--chat-primary) 12%, transparent);
+    color: var(--chat-primary);
+}
+
 .chat-tag-active {
     background: color-mix(in srgb, var(--chat-primary) 18%, transparent);
     color: var(--chat-primary);

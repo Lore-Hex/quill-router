@@ -52,8 +52,10 @@ from trusted_router.catalog import (
     endpoint_privacy_tier,
     endpoints_for_model,
     meta_candidate_models,
+    model_eu_focused_provider_available,
     model_open_weights,
     model_to_openrouter_shape,
+    model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
     provider_privacy_tier,
@@ -579,6 +581,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "anthropic/claude-opus-4.8",
             "openai/gpt-5.5",
             "google/gemini-3.1-pro-preview",
+            "google/gemini-3.5-flash",
             "minimax/minimax-m3",
             "z-ai/glm-5.2",
             "xiaomi/mimo-v2.5-pro",
@@ -589,6 +592,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "anthropic/claude-opus-4.8",
             "openai/gpt-5.5",
             "google/gemini-3.1-pro-preview",
+            "google/gemini-3.5-flash",
             "minimax/minimax-m3",
             "z-ai/glm-5.2",
             "xiaomi/mimo-v2.5-pro",
@@ -691,11 +695,15 @@ def test_zeus_1_0_and_mini_have_expected_panels() -> None:
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
         "google/gemini-3.1-pro-preview",
+        "google/gemini-3.5-flash",
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro",
     ]
+    zeus_shape = model_to_openrouter_shape(MODELS[ZEUS_1_0_MODEL_ID])
+    assert zeus_shape["trustedrouter"]["us_provider_available"] is True
+    assert zeus_shape["trustedrouter"]["eu_focused_provider_available"] is True
     assert [model.id for model in meta_candidate_models(ZEUS_1_0_MINI_MODEL_ID)] == [
         "google/gemini-3.5-flash",
         "minimax/minimax-m3",
@@ -703,6 +711,8 @@ def test_zeus_1_0_and_mini_have_expected_panels() -> None:
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro",
     ]
+    assert model_us_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
+    assert model_eu_focused_provider_available(MODELS[ZEUS_1_0_MINI_MODEL_ID]) is True
 
 
 def test_openpatcher_s1_is_cataloged_as_custom_synth_preset() -> None:

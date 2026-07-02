@@ -1267,6 +1267,7 @@ SYNTH_FRONTIER_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
     "openai/gpt-5.5",
     "google/gemini-3.1-pro-preview",
+    "google/gemini-3.5-flash",
     "minimax/minimax-m3",
     "z-ai/glm-5.2",
     "xiaomi/mimo-v2.5-pro",
@@ -3249,6 +3250,56 @@ def model_open_weights(model: Model, *, _seen: frozenset[str] = frozenset()) -> 
     )
 
 
+def _route_provider_slugs(
+    model: Model,
+    endpoints: list[ModelEndpoint],
+    *,
+    _seen: frozenset[str] = frozenset(),
+) -> set[str]:
+    """Serving provider slugs reachable for this model.
+
+    For public orchestration aliases, recurse into their component models so
+    badges/filters describe the actual route pool. For hidden orchestration
+    presets, stop at TrustedRouter so we do not reveal private configuration.
+    """
+    if model.hidden_public_metadata:
+        return {model.provider}
+    if model.id in _seen:
+        return set()
+    if model.id in META_MODEL_IDS:
+        next_seen = frozenset((*_seen, model.id))
+        providers: set[str] = set()
+        for candidate in meta_candidate_models(model.id):
+            providers.update(
+                _route_provider_slugs(
+                    candidate,
+                    endpoints_for_model(candidate.id),
+                    _seen=next_seen,
+                )
+            )
+        return providers
+    providers = {endpoint.provider for endpoint in endpoints}
+    if not providers and model.provider in PROVIDERS:
+        providers.add(model.provider)
+    return providers
+
+
+def model_us_provider_available(model: Model) -> bool:
+    provider_slugs = _route_provider_slugs(model, endpoints_for_model(model.id))
+    return any(
+        PROVIDERS[slug].provider_headquarters_country == PROVIDER_JURISDICTION_US
+        for slug in provider_slugs
+        if slug in PROVIDERS
+    )
+
+
+def model_eu_focused_provider_available(model: Model) -> bool:
+    provider_slugs = _route_provider_slugs(model, endpoints_for_model(model.id))
+    return model.id == EU_MODEL_ID or any(
+        slug in EU_FOCUSED_PROVIDER_ORDER for slug in provider_slugs
+    )
+
+
 def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -3328,6 +3379,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "provider_policy_url": model_provider_policy_url(model.id, model.provider),
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
+        "us_provider_available": model_us_provider_available(model),
+        "eu_focused_provider_available": model_eu_focused_provider_available(model),
         "required_provider_jurisdiction": (
             PROVIDER_JURISDICTION_US if model.id in US_PROVIDER_ONLY_MODEL_IDS else None
         ),
@@ -3384,6 +3437,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 ].provider_headquarters_country,
                 "provider_us_based": PROVIDERS[endpoint.provider].provider_headquarters_country
                 == PROVIDER_JURISDICTION_US,
+                "provider_eu_focused": endpoint.provider in EU_FOCUSED_PROVIDER_ORDER,
             }
             for endpoint in endpoints
         ],

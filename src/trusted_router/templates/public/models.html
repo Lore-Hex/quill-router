@@ -19,6 +19,11 @@
     </div>
     <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
   </div>
+  <div class="model-filter-row" aria-label="Model filters">
+    {% for item in model_filters %}
+    <a class="pill {% if active_filter == item.id %}good{% endif %}" href="{{ item.href }}">{{ item.label }}</a>
+    {% endfor %}
+  </div>
   <div class="model-table-wrap">
     <table>
       <thead>
@@ -40,7 +45,11 @@
           <td>
             {% if model.detail_href %}<a href="{{ model.detail_href }}"><code>{{ model.id }}</code></a>{% else %}<code>{{ model.id }}</code>{% endif %}
             <br>{{ model.name }}
-            {% if model.open_weights %}<div class="mini-links"><span class="pill good">open weights</span></div>{% endif %}
+            <div class="mini-links">
+              {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+              {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
+              {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
+            </div>
             {% if model.benchmarks_href %}
             <div class="mini-links">
               <a href="{{ model.benchmarks_href }}">benchmarks</a>

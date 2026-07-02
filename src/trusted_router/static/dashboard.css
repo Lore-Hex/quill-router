@@ -236,6 +236,7 @@ blockquote { margin:0 0 12px; padding-left:14px; border-left:3px solid var(--gre
 .model-catalog-head { display:grid; grid-template-columns:minmax(0,1fr) minmax(220px,.56fr); gap:18px; align-items:end; padding:24px; border-bottom:1px solid var(--line2); }
 .model-catalog-head h2 { margin-bottom:0; }
 .model-catalog-head p { margin:0; }
+.model-filter-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:14px 24px; border-bottom:1px solid var(--line2); }
 .model-table-wrap { overflow:auto; }
 .provider-chip-list { display:flex; flex-wrap:wrap; gap:5px; min-width:160px; max-width:320px; }
 .provider-chip-list .pill { max-width:160px; overflow:hidden; text-overflow:ellipsis; }

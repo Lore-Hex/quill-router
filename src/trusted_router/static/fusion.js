@@ -29,7 +29,14 @@
     judges: DEFAULT_JUDGES.slice(),
     finals: DEFAULT_FINALS.slice(),
   };
-  const PICKER_FILTERS = { cheap: false, vision: false, tools: false };
+  const PICKER_FILTERS = {
+    cheap: false,
+    vision: false,
+    tools: false,
+    open: false,
+    us: false,
+    eu: false,
+  };
   let MODELS = [];
   let MODELS_LOADING = false;
   let pickerEl = null;
@@ -324,6 +331,9 @@
       const caps = model.capabilities || [];
       if (PICKER_FILTERS.vision && !caps.includes("vision")) return false;
       if (PICKER_FILTERS.tools && !caps.includes("tools") && !caps.includes("tool_use")) return false;
+      if (PICKER_FILTERS.open && !model.open_weights) return false;
+      if (PICKER_FILTERS.us && !model.us_provider_available) return false;
+      if (PICKER_FILTERS.eu && !model.eu_focused_provider_available) return false;
       return true;
     });
     if (PICKER_FILTERS.cheap) {
@@ -340,13 +350,16 @@
       if (!q) return true;
       return model.id.toLowerCase().includes(q) || (model.name || "").toLowerCase().includes(q);
     });
-    const counts = { cheap: queryMatched.length, vision: 0, tools: 0 };
+    const counts = { cheap: queryMatched.length, vision: 0, tools: 0, open: 0, us: 0, eu: 0 };
     queryMatched.forEach((model) => {
       const caps = model.capabilities || [];
       if (caps.includes("vision")) counts.vision++;
       if (caps.includes("tools") || caps.includes("tool_use")) counts.tools++;
+      if (model.open_weights) counts.open++;
+      if (model.us_provider_available) counts.us++;
+      if (model.eu_focused_provider_available) counts.eu++;
     });
-    for (const key of ["cheap", "vision", "tools"]) {
+    for (const key of ["cheap", "vision", "tools", "open", "us", "eu"]) {
       const count = pickerEl.querySelector(`[data-count="${key}"]`);
       const chip = pickerEl.querySelector(`.chat-picker-filter[data-filter="${key}"]`);
       if (count) count.textContent = counts[key] > 0 ? `(${counts[key]})` : "";
@@ -362,7 +375,14 @@
         const real = findModel(id);
         if (real && filtered.includes(real)) {
           popularRows.push(real);
-        } else if (!PICKER_FILTERS.cheap && !PICKER_FILTERS.vision && !PICKER_FILTERS.tools) {
+        } else if (
+          !PICKER_FILTERS.cheap &&
+          !PICKER_FILTERS.vision &&
+          !PICKER_FILTERS.tools &&
+          !PICKER_FILTERS.open &&
+          !PICKER_FILTERS.us &&
+          !PICKER_FILTERS.eu
+        ) {
           popularRows.push({ id, name: prettifyModelId(id), capabilities: [], free: false, _stub: true });
         }
       }
@@ -425,6 +445,8 @@
         ${model.context_length ? `<span>${(model.context_length / 1000).toFixed(0)}k ctx</span>` : ""}
         ${model.free ? '<span class="chat-tag chat-tag-free">Free</span>' : ""}
         ${model.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
+        ${model.us_provider_available ? '<span class="chat-tag chat-tag-region">US</span>' : ""}
+        ${model.eu_focused_provider_available ? '<span class="chat-tag chat-tag-region">EU</span>' : ""}
         ${(model.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">Vision</span>' : ""}
         ${(model.capabilities || []).includes("tools") || (model.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">Tools</span>' : ""}
         ${activeIds.has(model.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}
@@ -455,6 +477,9 @@
           <button type="button" class="chat-picker-filter" data-filter="cheap" title="Sort ascending by price">Cheap <span class="chat-picker-filter-count" data-count="cheap"></span></button>
           <button type="button" class="chat-picker-filter" data-filter="vision" title="Models with image-input support">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
           <button type="button" class="chat-picker-filter" data-filter="tools" title="Models with tool/function-call support">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
+          <button type="button" class="chat-picker-filter" data-filter="open" title="Pure open-weight model or orchestration">Open weights <span class="chat-picker-filter-count" data-count="open"></span></button>
+          <button type="button" class="chat-picker-filter" data-filter="us" title="Models with at least one US-based provider route">US <span class="chat-picker-filter-count" data-count="us"></span></button>
+          <button type="button" class="chat-picker-filter" data-filter="eu" title="Models with at least one EU-focused provider route">EU <span class="chat-picker-filter-count" data-count="eu"></span></button>
         </div>
         <div class="chat-model-picker-list"></div>
         <div class="chat-model-picker-footer">

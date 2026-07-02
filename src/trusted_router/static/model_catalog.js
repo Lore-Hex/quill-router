@@ -50,6 +50,8 @@
       capabilities: allCaps,
       free: pricing && Number(pricing.prompt) === 0,
       open_weights: !!ext.open_weights,
+      us_provider_available: !!ext.us_provider_available,
+      eu_focused_provider_available: !!ext.eu_focused_provider_available,
       total_per_m: (inputPerM || 0) + (outputPerM || 0),
       internal_only: !!ext.internal_only,
       route_kind: ext.route_kind || "model",
@@ -101,6 +103,8 @@
     return [
       model.free ? '<span class="chat-tag chat-tag-free">Free</span>' : "",
       model.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : "",
+      model.us_provider_available ? '<span class="chat-tag chat-tag-region">US</span>' : "",
+      model.eu_focused_provider_available ? '<span class="chat-tag chat-tag-region">EU</span>' : "",
       caps.includes("vision") ? '<span class="chat-tag chat-tag-vision">Vision</span>' : "",
       caps.includes("tools") || caps.includes("tool_use")
         ? '<span class="chat-tag chat-tag-tools">Tools</span>'
@@ -142,7 +146,10 @@
     const allowModel = (options && options.allowModel) || (() => true);
     const onSelect = (options && options.onSelect) || (() => {});
     const activeIds = new Set((options && options.activeIds) || []);
-    const state = { query: "", filters: { cheap: false, vision: false, tools: false, open: false } };
+    const state = {
+      query: "",
+      filters: { cheap: false, vision: false, tools: false, open: false, us: false, eu: false },
+    };
     const picker = document.createElement("div");
     picker.className = "chat-model-picker";
     picker.innerHTML = `
@@ -154,6 +161,8 @@
           <button type="button" class="chat-picker-filter" data-filter="vision" title="Models with image-input support">Vision <span class="chat-picker-filter-count" data-count="vision"></span></button>
           <button type="button" class="chat-picker-filter" data-filter="tools" title="Models with tool-use support">Tools <span class="chat-picker-filter-count" data-count="tools"></span></button>
           <button type="button" class="chat-picker-filter" data-filter="open" title="Pure open-weight model or orchestration">Open weights <span class="chat-picker-filter-count" data-count="open"></span></button>
+          <button type="button" class="chat-picker-filter" data-filter="us" title="Models with at least one US-based provider route">US <span class="chat-picker-filter-count" data-count="us"></span></button>
+          <button type="button" class="chat-picker-filter" data-filter="eu" title="Models with at least one EU-focused provider route">EU <span class="chat-picker-filter-count" data-count="eu"></span></button>
         </div>
         <div class="chat-model-picker-list"></div>
         <div class="chat-model-picker-footer">
@@ -200,6 +209,8 @@
           return false;
         }
         if (state.filters.open && !model.open_weights) return false;
+        if (state.filters.us && !model.us_provider_available) return false;
+        if (state.filters.eu && !model.eu_focused_provider_available) return false;
         return true;
       });
       if (state.filters.cheap) {
@@ -218,14 +229,16 @@
       if (!list) return;
       list.innerHTML = "";
       const queryMatched = countMatches(state.query);
-      const counts = { cheap: queryMatched.length, vision: 0, tools: 0, open: 0 };
+      const counts = { cheap: queryMatched.length, vision: 0, tools: 0, open: 0, us: 0, eu: 0 };
       for (const model of queryMatched) {
         const caps = model.capabilities || [];
         if (caps.includes("vision")) counts.vision += 1;
         if (caps.includes("tools") || caps.includes("tool_use")) counts.tools += 1;
         if (model.open_weights) counts.open += 1;
+        if (model.us_provider_available) counts.us += 1;
+        if (model.eu_focused_provider_available) counts.eu += 1;
       }
-      for (const key of ["cheap", "vision", "tools", "open"]) {
+      for (const key of ["cheap", "vision", "tools", "open", "us", "eu"]) {
         const count = picker.querySelector(`[data-count="${key}"]`);
         const chip = picker.querySelector(`.chat-picker-filter[data-filter="${key}"]`);
         if (count) count.textContent = counts[key] > 0 ? `(${counts[key]})` : "";
@@ -247,7 +260,9 @@
             !state.filters.cheap &&
             !state.filters.vision &&
             !state.filters.tools &&
-            !state.filters.open
+            !state.filters.open &&
+            !state.filters.us &&
+            !state.filters.eu
           ) {
             suggested.push({ id, name: prettifyModelId(id), capabilities: [], free: false });
           }

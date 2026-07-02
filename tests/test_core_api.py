@@ -724,6 +724,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "anthropic/claude-opus-4.8",
         "openai/gpt-5.5",
         "google/gemini-3.1-pro-preview",
+        "google/gemini-3.5-flash",
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
         "xiaomi/mimo-v2.5-pro",
@@ -792,6 +793,28 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "z-ai/glm-5.2",
     }.issubset(model_ids)
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
+    open_weight_models = client.get("/v1/models", params={"open_weights": "true"})
+    assert open_weight_models.status_code == 200
+    open_weight_rows = open_weight_models.json()["data"]
+    assert open_weight_rows
+    assert all(row["trustedrouter"]["open_weights"] is True for row in open_weight_rows)
+    assert "trustedrouter/prometheus-1.0" in {row["id"] for row in open_weight_rows}
+    assert "trustedrouter/zeus-1.0" not in {row["id"] for row in open_weight_rows}
+    us_models = client.get("/v1/models", params={"provider[jurisdiction]": "us"})
+    assert us_models.status_code == 200
+    us_rows = us_models.json()["data"]
+    assert us_rows
+    assert all(row["trustedrouter"]["us_provider_available"] is True for row in us_rows)
+    assert "trustedrouter/athena" in {row["id"] for row in us_rows}
+    eu_models = client.get("/v1/models", params={"provider[region]": "eu"})
+    assert eu_models.status_code == 200
+    eu_rows = eu_models.json()["data"]
+    assert eu_rows
+    assert all(row["trustedrouter"]["eu_focused_provider_available"] is True for row in eu_rows)
+    assert "trustedrouter/eu" in {row["id"] for row in eu_rows}
+    assert client.get("/v1/models/count", params={"open_weights": "true"}).json()["data"][
+        "count"
+    ] == len(open_weight_rows)
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
     assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]

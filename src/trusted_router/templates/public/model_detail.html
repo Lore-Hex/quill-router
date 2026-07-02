@@ -5,6 +5,8 @@
     <h2><code>{{ model.id }}</code></h2>
     <div class="provider-chip-list">
       {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+      {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
+      {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
       <span class="pill good">{{ model.provider }}</span>
     </div>
   </div>
@@ -63,6 +65,8 @@
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}
           {% if model.supports_embeddings %}<span class="pill">embeddings</span>{% endif %}
           {% if model.open_weights %}<span class="pill good">open weights</span>{% endif %}
+          {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
+          {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
         </td></tr>
         <tr><th>Routes</th><td>
           {% if model.prepaid %}<span class="pill good">prepaid</span>{% endif %}
