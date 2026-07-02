@@ -1107,6 +1107,28 @@ class SpannerBigtableStore:
             )
             return _json_body(auth)
 
+        if window_limits:
+            # Lock-free snapshot check BEFORE the DML-only transaction (keeps
+            # the authorize txn free of shared reads on the hot row — the
+            # deadlock shape the typed migration removed). Replay-safe: an
+            # existing same-fingerprint reservation passes through to the txn.
+            from trusted_router.storage_gcp_authorize import check_key_window_limits
+
+            blocked = check_key_window_limits(
+                self._database,
+                self._param_types,
+                key_hash=key_hash,
+                estimate=estimate,
+                window_limits=window_limits,
+                idempotency_scope=scope,
+                idempotency_fingerprint=idempotency_fingerprint,
+            )
+            if blocked is not None:
+                # WHICH window rides as an outcome suffix so the
+                # (outcome, authorization) tuple shape stays unchanged; the
+                # gateway route splits on ':'.
+                return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
+
         result = authorize_atomic(
             self._database,
             self._param_types,
@@ -1119,14 +1141,8 @@ class SpannerBigtableStore:
             idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
             build_auth_body=build_body,
-            window_limits=window_limits,
         )
         outcome = result["outcome"]
-        # A window rejection carries WHICH window as an outcome suffix
-        # ("key_window_limit_exceeded:daily") so the (outcome, authorization)
-        # tuple shape stays unchanged; the gateway route splits on ':'.
-        if outcome == AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED and result.get("window"):
-            outcome = f"{outcome}:{result['window']}"
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
             authorization = self.get_gateway_authorization(result["authorization_id"])

@@ -153,13 +153,18 @@ def reserve_key(
 # that counts toward the key's caps for this settle (0 for a BYOK settle on a
 # key that excludes BYOK — computed in SQL off the row's own include_byok so it
 # matches reserve semantics). A stale window (start < current floor) is
-# replaced, not added to — that IS the reset; no cron ever runs.
+# replaced, not added to — that IS the reset; no cron ever runs. COALESCE:
+# rows that predate the window DDL read NULL usage until first touched
+# (Spanner can't ADD COLUMN NOT NULL on an existing table).
 _WINDOW_BUMP_SQL = (
-    ", day_usage = IF(day_start IS NULL OR day_start < @day_floor, @wamt, day_usage + @wamt)"
+    ", day_usage = IF(day_start IS NULL OR day_start < @day_floor,"
+    " @wamt, COALESCE(day_usage, 0) + @wamt)"
     ", day_start = IF(day_start IS NULL OR day_start < @day_floor, @day_floor, day_start)"
-    ", week_usage = IF(week_start IS NULL OR week_start < @week_floor, @wamt, week_usage + @wamt)"
+    ", week_usage = IF(week_start IS NULL OR week_start < @week_floor,"
+    " @wamt, COALESCE(week_usage, 0) + @wamt)"
     ", week_start = IF(week_start IS NULL OR week_start < @week_floor, @week_floor, week_start)"
-    ", month_usage = IF(month_start IS NULL OR month_start < @month_floor, @wamt, month_usage + @wamt)"
+    ", month_usage = IF(month_start IS NULL OR month_start < @month_floor,"
+    " @wamt, COALESCE(month_usage, 0) + @wamt)"
     ", month_start = IF(month_start IS NULL OR month_start < @month_floor, @month_floor, month_start)"
 )
 

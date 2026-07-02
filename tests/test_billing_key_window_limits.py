@@ -19,6 +19,7 @@ from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     authorize_atomic,
+    check_key_window_limits,
     settle_atomic,
 )
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
@@ -26,7 +27,7 @@ from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
 FLOORS = window_floors(utcnow())
 
 
-def _auth(store, ws: str, kh: str, estimate: int, *, window_limits=None, is_byok=False):
+def _auth(store, ws: str, kh: str, estimate: int, *, is_byok=False):
     return authorize_atomic(
         store._database, store._param_types,
         workspace_id=ws, key_hash=kh, estimate=estimate,
@@ -34,7 +35,14 @@ def _auth(store, ws: str, kh: str, estimate: int, *, window_limits=None, is_byok
         idempotency_scope=None, idempotency_fingerprint=None,
         expires_at=utcnow() + dt.timedelta(hours=2),
         build_auth_body=lambda a, r: "{}",
-        window_limits=window_limits,
+    )
+
+
+def _check(store, kh: str, estimate: int, window_limits):
+    """The lock-free snapshot window check (runs BEFORE authorize_atomic)."""
+    return check_key_window_limits(
+        store._database, store._param_types,
+        key_hash=kh, estimate=estimate, window_limits=window_limits,
     )
 
 
@@ -54,7 +62,8 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     key = _seed(store, db, "ws_w", limit_daily_microdollars=1_000)
 
     # Authorize + settle 700 — window counters land in the current windows.
-    res = _auth(store, "ws_w", key.hash, 700, window_limits={"daily": 1_000})
+    assert _check(store, key.hash, 700, {"daily": 1_000}) is None
+    res = _auth(store, "ws_w", key.hash, 700)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
     out = settle_atomic(
         store._database, store._param_types,
@@ -68,15 +77,14 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     assert row["month_usage"] == 700
     assert row["day_start"] == FLOORS["daily"]
 
-    # 700 + 400 > 1000 -> daily window blocks, carrying WHICH window.
-    res2 = _auth(store, "ws_w", key.hash, 400, window_limits={"daily": 1_000})
-    assert res2["outcome"] == AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED
-    assert res2["window"] == "daily"
+    # 700 + 400 > 1000 -> the snapshot check blocks, naming WHICH window.
+    assert _check(store, key.hash, 400, {"daily": 1_000}) == "daily"
 
     # Roll the stored day window back a day (simulate yesterday's usage):
     # the lazy math treats it as zero and the same request passes.
     row["day_start"] = FLOORS["daily"] - dt.timedelta(days=1)
-    res3 = _auth(store, "ws_w", key.hash, 400, window_limits={"daily": 1_000})
+    assert _check(store, key.hash, 400, {"daily": 1_000}) is None  # stale window = zero
+    res3 = _auth(store, "ws_w", key.hash, 400)
     assert res3["outcome"] == AuthorizeOutcome.ACCEPTED
     # ... and the next settle REPLACES the stale day counter instead of adding.
     out3 = settle_atomic(
@@ -94,22 +102,21 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
 def test_weekly_and_monthly_windows_block_independently() -> None:
     store, db, _ = make_fake_store()
     key = _seed(store, db, "ws_wm", limit_weekly_microdollars=500)
-    res = _auth(store, "ws_wm", key.hash, 300, window_limits={"weekly": 500})
+    res = _auth(store, "ws_wm", key.hash, 300)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
     settle_atomic(
         store._database, store._param_types,
         reservation_id=res["reservation_id"], actual_micro=300,
         settled_usage_type="Credits", success=True,
     )
-    res2 = _auth(store, "ws_wm", key.hash, 300, window_limits={"weekly": 500})
-    assert res2["outcome"] == AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED
-    assert res2["window"] == "weekly"
+    assert _check(store, key.hash, 300, {"weekly": 500}) == "weekly"
+    assert _check(store, key.hash, 100, {"weekly": 500}) is None  # under the cap passes
 
 
 def test_refund_and_reaper_do_not_book_window_usage() -> None:
     store, db, _ = make_fake_store()
     key = _seed(store, db, "ws_rf", limit_daily_microdollars=1_000)
-    res = _auth(store, "ws_rf", key.hash, 900, window_limits={"daily": 1_000})
+    res = _auth(store, "ws_rf", key.hash, 900)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
     # Refund (success=False books nothing).
     out = settle_atomic(
@@ -127,7 +134,7 @@ def test_byok_settle_counts_only_when_key_includes_byok() -> None:
     store, db, _ = make_fake_store()
     # include_byok=True: BYOK settles count toward windows.
     key_inc = _seed(store, db, "ws_bi", limit_daily_microdollars=10_000)
-    res = _auth(store, "ws_bi", key_inc.hash, 600, window_limits={"daily": 10_000}, is_byok=True)
+    res = _auth(store, "ws_bi", key_inc.hash, 600, is_byok=True)
     assert res["outcome"] == AuthorizeOutcome.ACCEPTED
     settle_atomic(
         store._database, store._param_types,
@@ -142,7 +149,7 @@ def test_byok_settle_counts_only_when_key_includes_byok() -> None:
         store, db, "ws_be",
         limit_daily_microdollars=10_000, include_byok_in_limit=False,
     )
-    res2 = _auth(store, "ws_be", key_exc.hash, 600, window_limits=None, is_byok=True)
+    res2 = _auth(store, "ws_be", key_exc.hash, 600, is_byok=True)
     assert res2["outcome"] == AuthorizeOutcome.ACCEPTED
     settle_atomic(
         store._database, store._param_types,
@@ -224,3 +231,55 @@ def test_inmemory_window_enforcement_and_snapshot() -> None:
         assert exc.window == "daily"
     # Under the limit passes (window check is approximate: usage only).
     STORE.reserve_key_limit(key.hash, 100, usage_type="Credits")
+
+
+def test_window_check_passes_through_idempotent_replay() -> None:
+    """A retry of an ALREADY-COMMITTED authorize must replay, never 429 — the
+    snapshot check defers to the txn when a same-fingerprint reservation exists."""
+    store, db, _ = make_fake_store()
+    key = _seed(store, db, "ws_replay", limit_daily_microdollars=1_000)
+    # First authorize commits with an idempotency scope.
+    res = authorize_atomic(
+        store._database, store._param_types,
+        workspace_id="ws_replay", key_hash=key.hash, estimate=900,
+        has_credit_candidate=True, reservation_usage_type="Credits",
+        idempotency_scope="scope-1", idempotency_fingerprint="fp-1",
+        expires_at=utcnow() + dt.timedelta(hours=2),
+        build_auth_body=lambda a, r: "{}",
+    )
+    assert res["outcome"] == AuthorizeOutcome.ACCEPTED
+    # The window is now effectively exhausted for a NEW request...
+    blocked = check_key_window_limits(
+        store._database, store._param_types,
+        key_hash=key.hash, estimate=900, window_limits={"daily": 1_000},
+    )
+    assert blocked is None  # reserved isn't counted; settle first
+    settle_atomic(
+        store._database, store._param_types,
+        reservation_id=res["reservation_id"], actual_micro=900,
+        settled_usage_type="Credits", success=True,
+    )
+    assert check_key_window_limits(
+        store._database, store._param_types,
+        key_hash=key.hash, estimate=900, window_limits={"daily": 1_000},
+    ) == "daily"  # a new request IS blocked
+    # ...but the same-scope same-fingerprint retry passes through to replay.
+    assert check_key_window_limits(
+        store._database, store._param_types,
+        key_hash=key.hash, estimate=900, window_limits={"daily": 1_000},
+        idempotency_scope="scope-1", idempotency_fingerprint="fp-1",
+    ) is None
+
+
+def test_drift_comparator_covers_window_limit_config() -> None:
+    """The exact-mirror gate must catch a broken window-limit mirror (codex #93)."""
+    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
+    from trusted_router.storage_gcp_counters import key_drift
+
+    store, db, _ = make_fake_store()
+    key = _seed(store, db, "ws_drift", limit_daily_microdollars=5_000)
+    json_body = {"limit_daily_microdollars": 5_000, "include_byok_in_limit": True}
+    typed_row = dict(db.typed[KLT][(key.hash, 0)])
+    assert key_drift(json_body, typed_row) == {}  # mirrored -> no drift
+    typed_row["day_limit_micro"] = 999  # simulate a broken mirror
+    assert "day_limit_micro" in key_drift(json_body, typed_row)

@@ -161,14 +161,18 @@ ensure_column() {
   fi
 }
 
+# NOTE: Spanner forbids ADD COLUMN ... NOT NULL on an existing table, so the
+# usage columns are added NULLABLE with DEFAULT (0) (future writes default; old
+# rows read NULL until first touched — all readers COALESCE/None-guard). The
+# fresh CREATE TABLE above keeps them NOT NULL.
 ensure_column tr_key_limit day_limit_micro   "INT64"
 ensure_column tr_key_limit week_limit_micro  "INT64"
 ensure_column tr_key_limit month_limit_micro "INT64"
-ensure_column tr_key_limit day_usage   "INT64 NOT NULL DEFAULT (0)"
+ensure_column tr_key_limit day_usage   "INT64 DEFAULT (0)"
 ensure_column tr_key_limit day_start   "TIMESTAMP"
-ensure_column tr_key_limit week_usage  "INT64 NOT NULL DEFAULT (0)"
+ensure_column tr_key_limit week_usage  "INT64 DEFAULT (0)"
 ensure_column tr_key_limit week_start  "TIMESTAMP"
-ensure_column tr_key_limit month_usage "INT64 NOT NULL DEFAULT (0)"
+ensure_column tr_key_limit month_usage "INT64 DEFAULT (0)"
 ensure_column tr_key_limit month_start "TIMESTAMP"
 
 log "done"

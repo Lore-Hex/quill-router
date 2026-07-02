@@ -166,6 +166,9 @@ CREDIT_DRIFT_FIELDS = (
 )
 KEY_DRIFT_FIELDS = (
     ("limit_microdollars", "limit_micro", None),
+    ("limit_daily_microdollars", "day_limit_micro", None),
+    ("limit_weekly_microdollars", "week_limit_micro", None),
+    ("limit_monthly_microdollars", "month_limit_micro", None),
     ("include_byok_in_limit", "include_byok", True),
 )
 

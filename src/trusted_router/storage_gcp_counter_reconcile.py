@@ -35,7 +35,8 @@ _CREDIT_TYPED_SCAN = (
     "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
 )
 _KEY_TYPED_SCAN = (
-    "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok "
+    "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok, "
+    "day_limit_micro, week_limit_micro, month_limit_micro "
     "FROM tr_key_limit"
 )
 
@@ -103,6 +104,8 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
             r[0]: {
                 "limit_micro": r[1], "usage": r[2], "byok_usage": r[3],
                 "reserved": r[4], "include_byok": r[5],
+                "day_limit_micro": r[6], "week_limit_micro": r[7],
+                "month_limit_micro": r[8],
             }
             for r in snapshot.execute_sql(_KEY_TYPED_SCAN)
         }

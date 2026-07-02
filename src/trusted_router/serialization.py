@@ -27,7 +27,12 @@ def key_shape(key: ApiKey, *, window_usage: dict[str, int] | None = None) -> dic
     """`window_usage` ({"daily"|"weekly"|"monthly": micro}) carries the key's
     CURRENT-window spend when the caller has it (typed point-read or the
     InMemory snapshot). Without it, the per-window fields fall back to the
-    lifetime value (the pre-window OpenRouter-compat placeholder behavior)."""
+    lifetime value (the pre-window OpenRouter-compat placeholder behavior).
+
+    Semantics note: `usage_daily/weekly/monthly` report CAP-WINDOW spend — the
+    amount counted against the key's limits, which includes BYOK when
+    include_byok_in_limit is true. Lifetime `usage` remains credits-only with
+    BYOK broken out separately (`byok_usage`)."""
     limit_microdollars = key.limit_microdollars
     has_limit = limit_microdollars is not None
     limit_used = key.usage_microdollars + (
