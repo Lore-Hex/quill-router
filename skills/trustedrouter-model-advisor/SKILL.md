@@ -19,6 +19,7 @@ description: Choose and configure TrustedRouter models for a user task. Use when
    - expected speed or latency class
    - estimated cost for the user's task
    - privacy posture and provider caveats
+   - prompt-cache fit when the workload repeats a long prefix or agent context
 4. If a call is billable or could be expensive, estimate first and ask before running it unless the user already opted into automatic spend.
 5. After the user chooses, give the exact environment variables, SDK config, curl, or MCP setup command.
 
@@ -116,6 +117,7 @@ Default heuristics:
 - Maximum uptime and broad fallback: use `trustedrouter/auto` or an explicit model with multiple healthy provider endpoints.
 - Cheap experimentation: start with `trustedrouter/cheap`, then compare one stronger candidate if the task matters.
 - Fast small tasks: start with `trustedrouter/fast` or a directly fast provider endpoint from the live catalog.
+- Repeated long-context tasks: prefer one cache-friendly model/provider so prompt caching can compound. Do not rotate models casually if the stable context is large and cache hit rates matter.
 - Hard coding, agentic terminal work, or evals: compare a code-focused Synth preset and a strong single model. Use AI IQ production-engineering and computer-use dimensions when available.
 - High-stakes synthesis or research: consider `trustedrouter/synth`, `trustedrouter/prometheus-1.0`, `trustedrouter/zeus-1.0`, or `trustedrouter/socrates-1.1`, but estimate cost first because orchestration can make multiple subcalls.
 - User-created custom models: `trustedrouter/user-*` aliases are unlisted and callable by id. Do not assume their hidden prompt, provider route, or privacy class without inspecting owner-visible metadata.
@@ -139,6 +141,13 @@ For orchestration models, multiply by the expected number of subcalls:
 - MapReduce/selector/subagent: depends on configured workers or subagents
 
 Report estimates as ranges when route fallback or orchestration depth makes exact cost unknown. State which assumptions drive the estimate.
+
+For prompt caching:
+
+- Consider cache economics when the same system prompt, repo context, legal record, retrieved corpus, or agent transcript prefix repeats across calls.
+- Recommend sticking with one model/provider when cache savings outweigh marginal quality or uptime gains from routing broadly.
+- Include cached-read and cache-write assumptions separately from uncached input tokens when the catalog exposes cached-token pricing.
+- Remind users to monitor cached-read rates in generation metadata, analytics, or provider billing. Low cached reads mean the expected savings are not actually happening.
 
 For speed, prefer live TrustedRouter provider health and recent benchmark/leaderboard data. Distinguish:
 

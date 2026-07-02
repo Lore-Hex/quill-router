@@ -42,7 +42,7 @@ Do not use memory as the source of truth for current prices, provider health, mo
 | Cheap tests and eval sweeps | low output price, provider health, acceptable IQ | `trustedrouter/cheap`, direct cheap models |
 | Low-latency agent turns | TTFT, output tokens/sec, health | `trustedrouter/fast`, direct fast endpoints |
 | Hard coding or terminal tasks | AI IQ production-engineering and computer-use, recent evals, context | code Synth presets, Socrates, strong direct coding models |
-| Long-context analysis | context window, input price, retrieval need, privacy | direct long-context models, 1M-context presets |
+| Long-context analysis | context window, input price, prompt-cache fit, retrieval need, privacy | direct long-context models, 1M-context presets |
 | Summarization/extraction | input cost, context, reliability | cheap long-context model first, stronger fallback if needed |
 | Creative writing | style, long output price, speed | compare one frontier model and one cheap open model |
 | High-stakes answer synthesis | benchmark IQ, reliability, multiple perspectives | `trustedrouter/synth`, Prometheus/Zeus/Socrates, estimate first |
@@ -69,7 +69,14 @@ output_cost = output_tokens * output_price_per_1m / 1_000_000
 total = input_cost + output_cost
 ```
 
-For cached-token pricing, include it only if the user explicitly says caching applies. Otherwise use uncached pricing.
+For cached-token pricing, include it only when the workload has a stable repeated prefix or when the user explicitly says caching applies. Otherwise use uncached pricing.
+
+Prompt caching guidance:
+
+- Caching usually rewards consistency: a stable system prompt, tool spec, repo context, legal matter, or retrieved corpus should often stay on one model/provider so cached reads accumulate.
+- Broad routing can lower uptime risk, but it can also fragment cache hits across providers. Call out that tradeoff before recommending `trustedrouter/auto`, Synth, or frequent model switching for repeated long-context work.
+- Estimate cached reads, cache writes, and uncached input separately when the catalog exposes those prices.
+- After launch, verify cached-read rates continuously in generation metadata, analytics, or provider billing. If cached reads stay low, revise the model choice or prompt layout instead of assuming the savings.
 
 For orchestration:
 
@@ -129,6 +136,8 @@ Recommend a short model set:
 ### Agent coding
 
 Recommend testing a cheap/fast model for routine turns and a stronger advisor or Synth route for stuck turns. If the agent supports model switching, propose a two-tier policy instead of one expensive default.
+
+For agents with a large stable repo or tool context, consider keeping routine turns on one cache-friendly model. Switching models for every turn can erase prompt-cache savings even when the headline token price looks cheaper.
 
 ### Legal team
 
