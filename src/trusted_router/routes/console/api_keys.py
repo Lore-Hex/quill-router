@@ -78,12 +78,9 @@ def register(app: FastAPI) -> None:
     ) -> Response:
         try:
             limit_microdollars = _parse_limit(limit)
-            window_micro = {
-                f"limit_{window}_microdollars": _parse_limit(value)
-                for window, value in (
-                    ("daily", limit_daily), ("weekly", limit_weekly), ("monthly", limit_monthly),
-                )
-            }
+            daily_micro = _parse_limit(limit_daily)
+            weekly_micro = _parse_limit(limit_weekly)
+            monthly_micro = _parse_limit(limit_monthly)
         except ValueError:
             return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
         assert_workspace_billing_active(ctx.workspace)  # quiesce: no new keys while paused
@@ -93,7 +90,9 @@ def register(app: FastAPI) -> None:
             creator_user_id=ctx.user.id,
             management=False,
             limit_microdollars=limit_microdollars,
-            **window_micro,
+            limit_daily_microdollars=daily_micro,
+            limit_weekly_microdollars=weekly_micro,
+            limit_monthly_microdollars=monthly_micro,
         )
         return _render_page(ctx, settings, created_key=raw)
 
