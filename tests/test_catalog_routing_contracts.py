@@ -26,6 +26,7 @@ from trusted_router.catalog import (
     PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
+    PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
@@ -48,6 +49,7 @@ from trusted_router.catalog import (
     InvalidAutoModelOrder,
     auto_candidate_models,
     canonical_orchestration_model_id,
+    endpoint_privacy_tier,
     endpoints_for_model,
     meta_candidate_models,
     model_open_weights,
@@ -1049,14 +1051,34 @@ def test_crusoe_provider_models_present_and_routable() -> None:
         assert credits[0].prompt_price_microdollars_per_million_tokens > 0
 
 
-def test_anthropic_claude_fable_5_is_blocked_and_not_zdr_routable() -> None:
-    """Claude Fable 5 is blocked and is not a ZDR route. It must not appear
-    in the public catalog, endpoint list, or privacy-filtered candidate pools."""
-    assert "anthropic/claude-fable-5" not in MODELS
-    assert endpoints_for_model("anthropic/claude-fable-5") == []
+def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
+    """Claude Fable 5 is available again, but it is not a ZDR route."""
+    model = MODELS["anthropic/claude-fable-5"]
+    endpoints = endpoints_for_model(model.id)
+    assert endpoints
+    assert {endpoint.provider for endpoint in endpoints} == {"anthropic"}
+    assert all(endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD for endpoint in endpoints)
+
+    shape = model_to_openrouter_shape(model)
+    meta = shape["trustedrouter"]
+    assert meta["provider_zero_data_retention"] is False
+    assert meta["privacy_tier"] == PRIVACY_TIER_STANDARD
+    assert "not tracked as ZDR" in str(meta["provider_policy"])
+    assert all(endpoint["provider_zero_data_retention"] is False for endpoint in meta["endpoints"])
     assert "anthropic/claude-fable-5" not in {
         model.id for model in meta_candidate_models(ZDR_MODEL_ID)
     }
+    with pytest.raises(Exception) as exc:
+        chat_route_endpoint_candidates(
+            {
+                "model": "anthropic/claude-fable-5",
+                "messages": [{"role": "user", "content": "pong"}],
+                "provider": {"min_privacy": "zdr"},
+            },
+            Settings(environment="test"),
+        )
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "No route candidates match" in str(exc.value)
 
 
 def test_glm_52_supplements_publish_current_model_across_providers() -> None:

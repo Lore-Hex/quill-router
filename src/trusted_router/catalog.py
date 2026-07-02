@@ -95,6 +95,63 @@ def provider_privacy_tier(provider: Provider) -> int:
 
 
 @dataclass(frozen=True)
+class ModelProviderPrivacyOverride:
+    privacy_tier: int
+    provider_zero_data_retention: bool | None = None
+    provider_policy: str | None = None
+    provider_policy_url: str | None = None
+
+
+_MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
+    (
+        "anthropic/claude-fable-5",
+        "anthropic",
+    ): ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_STANDARD,
+        provider_zero_data_retention=False,
+        provider_policy=(
+            "Claude Fable 5 is available on the Anthropic route, but it is not "
+            "tracked as ZDR for TrustedRouter. It is excluded from "
+            "trustedrouter/zdr and provider.min_privacy=zdr routing."
+        ),
+        provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
+    ),
+}
+
+
+def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    if override is not None:
+        return override.privacy_tier
+    return provider_privacy_tier(PROVIDERS[provider_slug])
+
+
+def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
+    return model_provider_privacy_tier(endpoint.model_id, endpoint.provider)
+
+
+def model_provider_zero_data_retention(model_id: str, provider_slug: str) -> bool | None:
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    if override is not None and override.provider_zero_data_retention is not None:
+        return override.provider_zero_data_retention
+    return PROVIDERS[provider_slug].provider_zero_data_retention
+
+
+def model_provider_policy(model_id: str, provider_slug: str) -> str:
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    if override is not None and override.provider_policy is not None:
+        return override.provider_policy
+    return PROVIDERS[provider_slug].provider_policy
+
+
+def model_provider_policy_url(model_id: str, provider_slug: str) -> str | None:
+    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    if override is not None and override.provider_policy_url is not None:
+        return override.provider_policy_url
+    return PROVIDERS[provider_slug].provider_policy_url
+
+
+@dataclass(frozen=True)
 class PriceTier:
     """One tier of context-conditional pricing. A request whose prompt
     token count is ≤ `max_prompt_tokens` uses this tier's rates. The
@@ -1146,6 +1203,7 @@ def orchestration_role(model_id: str) -> str | None:
         return "named_preset"
     return "routing_pool"
 
+
 # EU-focused routing is a provider policy, not a hard data-residency promise.
 # It keeps traffic on the EU regional attested gateway when the caller uses
 # that base URL, then prefers European / EU-regionable / privacy-forward
@@ -1869,10 +1927,6 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
-    # Fable was briefly added as an Anthropic supplement, then blocked. It is
-    # also not tracked as a ZDR-capable route, so keep it out of the public
-    # catalog and authorization path even if a future snapshot carries it.
-    "anthropic": frozenset({"anthropic/claude-fable-5"}),
     # Nebius notified customers that these Token Factory model APIs / UI
     # entries will be disabled on 2026-06-22. This is provider-scoped:
     # equivalent model families on MiniMax, Kimi, Z.AI, Cerebras, etc. remain
@@ -2917,7 +2971,7 @@ def _privacy_candidate_models(
             or model is None
             or not _is_regular_chat_model(model)
             or model.id.endswith(":free")
-            or provider_privacy_tier(provider) < min_tier
+            or endpoint_privacy_tier(endpoint) < min_tier
         ):
             continue
         if allowed_providers is not None and endpoint.provider not in allowed_providers:
@@ -3136,15 +3190,15 @@ def _model_max_privacy_tier(model: Model, endpoints: list[ModelEndpoint]) -> int
     pool — NOT the 'trustedrouter' pseudo-provider, which would falsely
     claim confidential for Auto. For regular models, the max across the
     model's own provider plus any serving endpoints."""
-    providers: set[str] = set()
+    tiers: list[int] = []
     if model.id in META_MODEL_IDS:
         for candidate in meta_candidate_models(model.id):
-            providers.add(candidate.provider)
+            tiers.append(model_max_privacy_tier(candidate))
     else:
-        providers.add(model.provider)
         for endpoint in endpoints:
-            providers.add(endpoint.provider)
-    tiers = [provider_privacy_tier(PROVIDERS[p]) for p in providers if p in PROVIDERS]
+            tiers.append(endpoint_privacy_tier(endpoint))
+        if not tiers and model.provider in PROVIDERS:
+            tiers.append(model_provider_privacy_tier(model.id, model.provider))
     return max(tiers) if tiers else PRIVACY_TIER_STANDARD
 
 
@@ -3265,11 +3319,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # retain prompt/output content. Upstream provider retention still
         # varies and is exposed per endpoint below plus provider_* fields.
         "stores_content": False,
-        "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "provider_zero_data_retention": model_provider_zero_data_retention(
+            model.id, model.provider
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
-        "provider_policy": provider.provider_policy,
-        "provider_policy_url": provider.provider_policy_url,
+        "provider_policy": model_provider_policy(model.id, model.provider),
+        "provider_policy_url": model_provider_policy_url(model.id, model.provider),
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
         "required_provider_jurisdiction": (
@@ -3312,15 +3368,17 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "upstream_id": endpoint.upstream_id,
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": PROVIDERS[endpoint.provider].stores_content,
-                "provider_zero_data_retention": PROVIDERS[
-                    endpoint.provider
-                ].provider_zero_data_retention,
+                "provider_zero_data_retention": model_provider_zero_data_retention(
+                    endpoint.model_id, endpoint.provider
+                ),
                 "provider_confidential_compute": PROVIDERS[
                     endpoint.provider
                 ].provider_confidential_compute,
                 "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
-                "provider_policy": PROVIDERS[endpoint.provider].provider_policy,
-                "provider_policy_url": PROVIDERS[endpoint.provider].provider_policy_url,
+                "provider_policy": model_provider_policy(endpoint.model_id, endpoint.provider),
+                "provider_policy_url": model_provider_policy_url(
+                    endpoint.model_id, endpoint.provider
+                ),
                 "provider_headquarters_country": PROVIDERS[
                     endpoint.provider
                 ].provider_headquarters_country,

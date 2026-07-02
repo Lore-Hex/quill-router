@@ -8,7 +8,9 @@ from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
 from trusted_router.storage import STORE
 
 
-def test_key_create_list_and_one_time_reveal(client: TestClient, user_headers: dict[str, str]) -> None:
+def test_key_create_list_and_one_time_reveal(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
     create = client.post("/v1/keys", headers=user_headers, json={"name": "alpha"})
     assert create.status_code == 201
     data = create.json()
@@ -28,7 +30,9 @@ def test_key_create_list_and_one_time_reveal(client: TestClient, user_headers: d
     assert isinstance(credit_data["available_microdollars"], int)
 
 
-def test_inference_key_cannot_call_management_api(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_inference_key_cannot_call_management_api(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     resp = client.get("/v1/keys", headers=inference_headers)
     assert resp.status_code == 403
     assert resp.json()["error"]["type"] == "forbidden"
@@ -380,7 +384,9 @@ def test_anthropic_messages_stream_uses_provider_stream_without_materializing(
     assert generations[0].finish_reason == "end_turn"
 
 
-def test_embeddings_and_model_endpoints(client: TestClient, inference_headers: dict[str, str]) -> None:
+def test_embeddings_and_model_endpoints(
+    client: TestClient, inference_headers: dict[str, str]
+) -> None:
     # A chat-only model is not a valid embeddings target.
     not_embeddings = client.post(
         "/v1/embeddings",
@@ -597,7 +603,12 @@ def test_disabled_deleted_and_expired_keys_reject(
     created = client.post("/v1/keys", headers=user_headers, json={"name": "disabled"}).json()
     key_hash = created["data"]["hash"]
     headers = {"authorization": f"Bearer {created['key']}"}
-    assert client.patch(f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}).status_code == 200
+    assert (
+        client.patch(
+            f"/v1/keys/{key_hash}", headers=user_headers, json={"disabled": True}
+        ).status_code
+        == 200
+    )
     disabled = client.post(
         "/v1/chat/completions",
         headers=headers,
@@ -718,9 +729,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro",
     ]
-    assert models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"] == zeus_meta[
-        "auto_candidates"
-    ]
+    assert (
+        models_by_id["trustedrouter/zeus-1.0"]["trustedrouter"]["auto_candidates"]
+        == zeus_meta["auto_candidates"]
+    )
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
         "google/gemini-3.5-flash",
         "minimax/minimax-m3",
@@ -739,8 +751,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "trustedrouter/zeus-1.0",
     ]
-    assert models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"] == (
-        socrates_pro_plus_meta["auto_candidates"]
+    assert (
+        models_by_id["trustedrouter/socrates-1.1"]["trustedrouter"]["auto_candidates"]
+        == (socrates_pro_plus_meta["auto_candidates"])
     )
     openpatcher_g1_meta = models_by_id["trustedrouter/openpatcher-g1"]["trustedrouter"]
     assert openpatcher_g1_meta["route_kind"] == "advisor_orchestration"
@@ -771,13 +784,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "anthropic/claude-opus-4.7",
         "openai/gpt-5.4-nano",
         "google/gemini-2.5-flash",
+        "anthropic/claude-fable-5",
         "deepseek/deepseek-v4-flash",
         "moonshotai/kimi-k2.6",
         "mistralai/mistral-small-2603",
         "z-ai/glm-4.6",
         "z-ai/glm-5.2",
     }.issubset(model_ids)
-    assert "anthropic/claude-fable-5" not in model_ids
     assert client.get("/v1/models/count").json()["data"]["count"] >= 5
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
@@ -830,8 +843,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
         "alibaba": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
         "deepseek": (
-            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html"
-            "?locale=en_US"
+            "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US"
         ),
     }
     for provider, source in expected_policy_sources.items():
@@ -881,19 +893,26 @@ def test_byok_provider_config_never_stores_or_returns_raw_key(
     assert payload["secret_storage"] == "envelope"  # noqa: S105 - storage kind, not a secret.
     assert raw_key not in str(payload)
     assert raw_key not in str(STORE.byok_store.providers)
-    config = STORE.get_byok_provider(payload["workspace_id"], "cerebras") if "workspace_id" in payload else None
+    config = (
+        STORE.get_byok_provider(payload["workspace_id"], "cerebras")
+        if "workspace_id" in payload
+        else None
+    )
     if config is None:
         workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
         config = STORE.get_byok_provider(workspace_id, "cerebras")
     assert config is not None
     assert config.encrypted_secret is not None
     assert config.secret_ref == payload["secret_ref"]
-    assert decrypt_byok_secret(
-        config.encrypted_secret,
-        test_settings,
-        workspace_id=config.workspace_id,
-        provider=config.provider,
-    ) == raw_key
+    assert (
+        decrypt_byok_secret(
+            config.encrypted_secret,
+            test_settings,
+            workspace_id=config.workspace_id,
+            provider=config.provider,
+        )
+        == raw_key
+    )
 
     listed = client.get("/v1/byok/providers", headers=user_headers)
     assert listed.status_code == 200
@@ -939,9 +958,7 @@ def test_byok_registration_refused_when_disabled_on_replica() -> None:
     from trusted_router.config import Settings
     from trusted_router.main import create_app
 
-    replica = TestClient(
-        create_app(Settings(environment="test", byok_registration_enabled=False))
-    )
+    replica = TestClient(create_app(Settings(environment="test", byok_registration_enabled=False)))
     resp = replica.put(
         "/v1/byok/providers/cerebras",
         headers={"x-trustedrouter-user": "alice@example.com"},

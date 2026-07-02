@@ -27,10 +27,10 @@ from trusted_router.catalog import (
     Model,
     ModelEndpoint,
     auto_candidate_models,
+    endpoint_privacy_tier,
     endpoints_for_model,
     meta_candidate_models,
     model_max_privacy_tier,
-    provider_privacy_tier,
 )
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -517,7 +517,7 @@ def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) ->
         # stores_content=True default, are correctly kept.
         if (
             prefs.data_collection == "deny"
-            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+            and model_max_privacy_tier(model) < PRIVACY_TIER_NO_STORE
         ):
             continue
         # Keep a model if ANY provider that serves it can meet the
@@ -575,10 +575,10 @@ def _apply_endpoint_provider_filters(
         # stores_content=True default, are correctly kept.
         if (
             prefs.data_collection == "deny"
-            and provider_privacy_tier(provider) < PRIVACY_TIER_NO_STORE
+            and endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
         ):
             continue
-        if prefs.min_privacy_rank and provider_privacy_tier(provider) < prefs.min_privacy_rank:
+        if prefs.min_privacy_rank and endpoint_privacy_tier(endpoint) < prefs.min_privacy_rank:
             continue
         if prefs.usage_type is not None and endpoint.usage_type != prefs.usage_type:
             continue
