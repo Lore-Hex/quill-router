@@ -24,7 +24,12 @@ from trusted_router.storage_gcp_authorize import (
 )
 from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE
 
-FLOORS = window_floors(utcnow())
+
+def _floors() -> dict:
+    # Recompute at call time, not module import — comparing an import-time
+    # capture against settle-time floors flakes across a UTC day/week/month
+    # boundary crossed mid-suite (audit finding).
+    return window_floors(utcnow())
 
 
 def _auth(store, ws: str, kh: str, estimate: int, *, is_byok=False):
@@ -75,14 +80,14 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     assert row["day_usage"] == 700
     assert row["week_usage"] == 700
     assert row["month_usage"] == 700
-    assert row["day_start"] == FLOORS["daily"]
+    assert row["day_start"] == _floors()["daily"]
 
     # 700 + 400 > 1000 -> the snapshot check blocks, naming WHICH window.
     assert _check(store, key.hash, 400, {"daily": 1_000}) == "daily"
 
     # Roll the stored day window back a day (simulate yesterday's usage):
     # the lazy math treats it as zero and the same request passes.
-    row["day_start"] = FLOORS["daily"] - dt.timedelta(days=1)
+    row["day_start"] = _floors()["daily"] - dt.timedelta(days=1)
     assert _check(store, key.hash, 400, {"daily": 1_000}) is None  # stale window = zero
     res3 = _auth(store, "ws_w", key.hash, 400)
     assert res3["outcome"] == AuthorizeOutcome.ACCEPTED
@@ -95,7 +100,7 @@ def test_settle_bumps_windows_and_authorize_blocks_then_rolls_over() -> None:
     assert out3["outcome"] == "settled"
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     assert row["day_usage"] == 400  # replaced (lazy reset), not 1100
-    assert row["day_start"] == FLOORS["daily"]
+    assert row["day_start"] == _floors()["daily"]
     assert row["week_usage"] == 1_100  # same week -> accumulated
 
 
@@ -171,14 +176,14 @@ def test_mirror_writes_window_limits_but_never_window_usage() -> None:
 
     # Live typed window state (as if settles happened).
     row["day_usage"] = 4_999
-    row["day_start"] = FLOORS["daily"]
+    row["day_start"] = _floors()["daily"]
 
     # Any JSON write to the key re-fires the mirror (e.g. a rename + new limit).
     store.update_key(key.hash, {"name": "renamed", "limit_daily_microdollars": 7_000})
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     assert row["day_limit_micro"] == 7_000  # config updated
     assert row["day_usage"] == 4_999  # typed-owned state SURVIVES the mirror
-    assert row["day_start"] == FLOORS["daily"]
+    assert row["day_start"] == _floors()["daily"]
 
 
 def test_window_resets_at_is_the_next_boundary() -> None:
