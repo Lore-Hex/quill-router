@@ -19,6 +19,21 @@ import datetime as dt
 # Window names, in the order they appear everywhere (columns, API fields).
 WINDOWS = ("daily", "weekly", "monthly")
 
+# Suggested per-window budgets, OFFERED (not applied) in the console when a user
+# opts into spend limits. Anchored to the $200/mo plan; the ratios keep the
+# windows coherent: weekly ~= half the monthly, daily ~= a fifth of the weekly.
+# These are hints only — a key has no window limits unless the user sets them.
+SUGGESTED_MONTHLY_MICRODOLLARS = 200_000_000  # $200/mo — matches the plan
+
+
+def suggested_window_limits() -> dict[str, int]:
+    """Suggested {window: microdollars} anchored to the monthly plan amount:
+    weekly = monthly // 2, daily = weekly // 5 (=> $200 / $100 / $20)."""
+    monthly = SUGGESTED_MONTHLY_MICRODOLLARS
+    weekly = monthly // 2
+    daily = weekly // 5
+    return {"daily": daily, "weekly": weekly, "monthly": monthly}
+
 
 class KeyWindowLimitExceeded(ValueError):
     """A per-window key spend limit blocked the request. Carries which window

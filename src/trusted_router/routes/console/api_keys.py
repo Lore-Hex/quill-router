@@ -16,7 +16,7 @@ from trusted_router.auth import SettingsDep
 from trusted_router.errors import assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars, microdollars_to_decimal
 from trusted_router.routes.console._shared import ConsoleDep, money, render
-from trusted_router.spend_windows import WINDOWS
+from trusted_router.spend_windows import WINDOWS, suggested_window_limits
 from trusted_router.storage import STORE, ApiKey
 
 _FLASH = {
@@ -44,6 +44,13 @@ def register(app: FastAPI) -> None:
             flash = _FLASH.get(f"saved:{saved}")
         elif error:
             flash = _FLASH.get(f"error:{error}")
+        # Suggested (not applied) window budgets, shown as input placeholders so
+        # users who opt in start from coherent values ($20/$100/$200); empty
+        # inputs still mean "no limit".
+        suggested = {
+            window: microdollars_to_decimal(micro)
+            for window, micro in suggested_window_limits().items()
+        }
         return HTMLResponse(render(
             "console/api_keys.html",
             settings=settings,
@@ -54,6 +61,7 @@ def register(app: FastAPI) -> None:
             keys=keys,
             created_key=created_key,
             flash=flash,
+            suggested=suggested,
             api_base_url=settings.api_base_url,
         ))
 
