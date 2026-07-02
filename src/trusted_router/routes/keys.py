@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter
@@ -14,15 +15,34 @@ from trusted_router.storage import STORE, ApiKey
 from trusted_router.types import ErrorType
 
 
+def _enriched_key_shape(key: ApiKey) -> dict[str, Any]:
+    """key_shape backed by the typed counters when available: live lifetime
+    usage/reserved (the JSON copies froze at the typed flip) + real current-
+    window spend. Falls back to the JSON values (typed off / row missing)."""
+    typed = getattr(STORE, "typed_key_usage", None)
+    usage = typed(key.hash) if typed is not None else None
+    if usage is None:
+        return key_shape(key)
+    key = replace(
+        key,
+        usage_microdollars=usage["usage"],
+        byok_usage_microdollars=usage["byok_usage"],
+        reserved_microdollars=usage["reserved"],
+    )
+    return key_shape(key, window_usage=usage["windows"])
+
+
 def register_key_routes(router: APIRouter) -> None:
     @router.get("/key")
     async def key(principal: InferencePrincipal) -> dict[str, Any]:
         assert principal.api_key is not None
-        return {"data": key_shape(principal.api_key)}
+        return {"data": _enriched_key_shape(principal.api_key)}
 
     @router.get("/keys")
     async def keys(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
-        return {"data": [key_shape(k) for k in STORE.list_keys(principal.workspace.id)]}
+        return {
+            "data": [_enriched_key_shape(k) for k in STORE.list_keys(principal.workspace.id)]
+        }
 
     @router.post("/keys")
     async def create_key(body: CreateKeyRequest, principal: ManagementPrincipal) -> JSONResponse:
@@ -45,12 +65,21 @@ def register_key_routes(router: APIRouter) -> None:
             limit_reset=body.limit_reset,
             include_byok_in_limit=body.include_byok_in_limit,
             expires_at=body.expires_at,
+            limit_daily_microdollars=(
+                None if body.limit_daily is None else dollars_to_microdollars(body.limit_daily)
+            ),
+            limit_weekly_microdollars=(
+                None if body.limit_weekly is None else dollars_to_microdollars(body.limit_weekly)
+            ),
+            limit_monthly_microdollars=(
+                None if body.limit_monthly is None else dollars_to_microdollars(body.limit_monthly)
+            ),
         )
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
     @router.get("/keys/{hash}")
     async def get_key(hash: str, principal: ManagementPrincipal) -> dict[str, Any]:  # noqa: A002
-        return {"data": key_shape(_require_key_in_workspace(hash, principal))}
+        return {"data": _enriched_key_shape(_require_key_in_workspace(hash, principal))}
 
     @router.patch("/keys/{hash}")
     async def patch_key(
@@ -65,6 +94,12 @@ def register_key_routes(router: APIRouter) -> None:
             if limit_microdollars < 0:
                 raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
             patch["limit_microdollars"] = limit_microdollars
+        for window in ("daily", "weekly", "monthly"):
+            if f"limit_{window}" in patch:
+                micro = dollars_to_microdollars(patch.pop(f"limit_{window}"))
+                if micro < 0:
+                    raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
+                patch[f"limit_{window}_microdollars"] = micro
         updated = STORE.update_key(hash, patch)
         if updated is None:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)

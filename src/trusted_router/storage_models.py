@@ -96,6 +96,13 @@ class ApiKey:
     management: bool = False
     limit_microdollars: int | None = None
     limit_reset: str | None = None
+    # Optional per-window spend limits (fixed UTC calendar windows, lazily
+    # reset — see spend_windows.py). NULL = window unlimited. JSON-owned config
+    # mirrored to tr_key_limit *_limit_micro; the window USAGE counters are
+    # typed-DML-owned and live only on the typed row.
+    limit_daily_microdollars: int | None = None
+    limit_weekly_microdollars: int | None = None
+    limit_monthly_microdollars: int | None = None
     include_byok_in_limit: bool = True
     usage_microdollars: int = 0
     byok_usage_microdollars: int = 0

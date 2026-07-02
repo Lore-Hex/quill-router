@@ -1,0 +1,73 @@
+"""Fixed UTC calendar spend windows for per-key daily/weekly/monthly limits.
+
+The windows are deliberately FIXED and LAZY (docs/design: key window limits):
+- daily   = UTC midnight to midnight
+- weekly  = ISO week, Monday 00:00 UTC
+- monthly = 1st of the month 00:00 UTC
+
+Counters live on the hot `tr_key_limit` row and are reset lazily: the settle
+UPDATE (release_key) and the authorize check both compare the stored window
+start against the current floor and treat an older window as zero. No cron, no
+background jobs, no scans — approximate by design (in-flight holds are not
+counted; a window boundary mid-request books to the window the settle lands in).
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+# Window names, in the order they appear everywhere (columns, API fields).
+WINDOWS = ("daily", "weekly", "monthly")
+
+
+class KeyWindowLimitExceeded(ValueError):
+    """A per-window key spend limit blocked the request. Carries which window
+    so callers can compute Retry-After from the window's reset time."""
+
+    def __init__(self, window: str) -> None:
+        super().__init__(f"key {window} spend limit exceeded")
+        self.window = window
+
+
+def utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+# ApiKey JSON config field per window (mirrored to tr_key_limit *_limit_micro).
+LIMIT_FIELDS = {
+    "daily": "limit_daily_microdollars",
+    "weekly": "limit_weekly_microdollars",
+    "monthly": "limit_monthly_microdollars",
+}
+
+
+def window_floors(now: dt.datetime) -> dict[str, dt.datetime]:
+    """The current window start (UTC) for each window, given tz-aware `now`."""
+    now = now.astimezone(dt.UTC)
+    day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week = day - dt.timedelta(days=now.weekday())  # ISO: Monday
+    month = day.replace(day=1)
+    return {"daily": day, "weekly": week, "monthly": month}
+
+
+def window_resets_at(window: str, now: dt.datetime) -> dt.datetime:
+    """When the given window next resets (UTC): the start of the next window."""
+    floors = window_floors(now)
+    if window == "daily":
+        return floors["daily"] + dt.timedelta(days=1)
+    if window == "weekly":
+        return floors["weekly"] + dt.timedelta(days=7)
+    if window == "monthly":
+        start = floors["monthly"]
+        return (start + dt.timedelta(days=32)).replace(day=1)
+    raise ValueError(f"unknown window {window!r}")
+
+
+def key_window_limits(key: object) -> dict[str, int]:
+    """The window limits configured on an ApiKey (micro-dollars), omitting unset
+    windows. Empty dict = no window limits = zero-cost fast path."""
+    out: dict[str, int] = {}
+    for window, field in LIMIT_FIELDS.items():
+        value = getattr(key, field, None)
+        if value is not None:
+            out[window] = int(value)
+    return out

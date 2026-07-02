@@ -26,6 +26,7 @@ from typing import Any
 
 from google.api_core.exceptions import AlreadyExists
 
+from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
@@ -46,6 +47,7 @@ class AuthorizeOutcome:
     KEY_LIMIT_EXCEEDED = "key_limit_exceeded"
     KEY_MISSING = "key_missing"  # typed key row absent -> fail closed
     IDEMPOTENCY_MISMATCH = "idempotency_mismatch"  # same key, different request body
+    KEY_WINDOW_LIMIT_EXCEEDED = "key_window_limit_exceeded"  # a daily/weekly/monthly cap
 
 
 class _Reject(Exception):
@@ -53,6 +55,70 @@ class _Reject(Exception):
 
     def __init__(self, outcome: str) -> None:
         self.outcome = outcome
+
+
+def check_key_window_limits(
+    database: Any,
+    param_types: Any,
+    *,
+    key_hash: str,
+    estimate: int,
+    window_limits: dict[str, int],
+    idempotency_scope: str | None = None,
+    idempotency_fingerprint: str | None = None,
+) -> str | None:
+    """APPROXIMATE per-window key-cap check. Returns the blocking window name
+    ("daily"/"weekly"/"monthly") or None to proceed.
+
+    Runs on a lock-free SNAPSHOT, deliberately OUTSIDE the authorize read-write
+    transaction: an in-txn shared read of tr_key_limit before reserve_key's
+    conditional UPDATE would reintroduce the read-lock-upgrade deadlock surface
+    the typed migration removed (codex #93). The wider race window this opens is
+    within the accepted approximation (in-flight reserved is not counted either).
+
+    Idempotent-replay preservation: a retry of an ALREADY-COMMITTED authorize
+    must REPLAY, never 429 — so an existing same-fingerprint reservation makes
+    this check a pass-through (the in-txn idempotency read stays the final
+    authority). A missing typed row also passes through: reserve_key's in-txn
+    classification fail-closes it as KEY_MISSING.
+
+    The CALLER must omit windows that don't apply (e.g. a BYOK request on a key
+    that excludes BYOK from its caps).
+    """
+    pt = param_types
+    with database.snapshot(multi_use=True) as snapshot:
+        if idempotency_scope is not None:
+            existing = read_reservation_by_idempotency(snapshot, pt, idempotency_scope)
+            if (
+                existing is not None
+                and existing["idempotency_fingerprint"] == idempotency_fingerprint
+            ):
+                return None  # replayable — let the transaction replay it
+        rows = list(snapshot.execute_sql(
+            "SELECT day_usage, day_start, week_usage, week_start, "
+            "month_usage, month_start FROM tr_key_limit "
+            "WHERE key_hash=@kh AND shard=0",
+            params={"kh": key_hash},
+            param_types={"kh": pt.STRING},
+        ))
+    if not rows:
+        return None  # no typed row -> reserve_key fail-closes as KEY_MISSING
+    floors = window_floors(utcnow())
+    day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
+    # Pre-DDL rows read NULL usage; a NULL/stale start means the window rolled
+    # over (or never started) = zero spend this window.
+    current = {
+        "daily": int(day_u or 0) if day_s is not None and day_s >= floors["daily"] else 0,
+        "weekly": int(week_u or 0) if week_s is not None and week_s >= floors["weekly"] else 0,
+        "monthly": (
+            int(month_u or 0) if month_s is not None and month_s >= floors["monthly"] else 0
+        ),
+    }
+    for window in ("daily", "weekly", "monthly"):
+        limit = window_limits.get(window)
+        if limit is not None and current[window] + estimate > limit:
+            return window
+    return None
 
 
 def authorize_atomic(
@@ -75,6 +141,12 @@ def authorize_atomic(
     construct the gateway_authorization body once the ids are known.
     `reservation_usage_type` is the HOLD usage type (Credits if any credit
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
+
+    Per-window key caps are checked by the CALLER via check_key_window_limits on
+    a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
+    shared read of tr_key_limit followed by reserve_key's conditional UPDATE on
+    the same row would reintroduce the read-lock-upgrade surface this DML-only
+    transaction exists to eliminate (codex #93 review).
     """
     pt = param_types
     is_byok = not has_credit_candidate
@@ -212,7 +284,7 @@ def settle_atomic(
         key_actual = book_actual  # key usage counts under both Credits and BYOK
         key_count = release_key(
             transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            key_actual, book_to_byok=book_to_byok,
+            key_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
         )
         # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
         # may 0-row and is tolerated (best-effort usage tracking).
@@ -329,7 +401,7 @@ def typed_finalize_atomic(
 
         key_count = release_key(
             transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            book_actual, book_to_byok=book_to_byok,
+            book_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
         )
         if res["key_reserved_micro"] > 0 and key_count != 1:
             raise _SettleError("key release row-count != 1")

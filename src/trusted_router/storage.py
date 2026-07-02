@@ -367,6 +367,9 @@ class InMemoryStore:
         limit_reset: str | None = None,
         include_byok_in_limit: bool = True,
         expires_at: str | None = None,
+        limit_daily_microdollars: int | None = None,
+        limit_weekly_microdollars: int | None = None,
+        limit_monthly_microdollars: int | None = None,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -378,10 +381,26 @@ class InMemoryStore:
             limit_reset=limit_reset,
             include_byok_in_limit=include_byok_in_limit,
             expires_at=expires_at,
+            limit_daily_microdollars=limit_daily_microdollars,
+            limit_weekly_microdollars=limit_weekly_microdollars,
+            limit_monthly_microdollars=limit_monthly_microdollars,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_hash(key_hash)
+
+    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+        """InMemory twin of the Spanner typed point-read: lifetime counters are
+        already live on the ApiKey; windows come from the lazy snapshot."""
+        key = self.api_keys.get_by_hash(key_hash)
+        if key is None:
+            return None
+        return {
+            "usage": key.usage_microdollars,
+            "byok_usage": key.byok_usage_microdollars,
+            "reserved": key.reserved_microdollars,
+            "windows": self.api_keys.window_usage_snapshot(key_hash),
+        }
 
     def get_key_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
         return self.api_keys.get_by_lookup_hash(lookup_hash)

@@ -35,7 +35,8 @@ _CREDIT_TYPED_SCAN = (
     "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
 )
 _KEY_TYPED_SCAN = (
-    "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok "
+    "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok, "
+    "day_limit_micro, week_limit_micro, month_limit_micro "
     "FROM tr_key_limit"
 )
 
@@ -103,6 +104,8 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
             r[0]: {
                 "limit_micro": r[1], "usage": r[2], "byok_usage": r[3],
                 "reserved": r[4], "include_byok": r[5],
+                "day_limit_micro": r[6], "week_limit_micro": r[7],
+                "month_limit_micro": r[8],
             }
             for r in snapshot.execute_sql(_KEY_TYPED_SCAN)
         }
@@ -200,7 +203,8 @@ _CREDIT_SEED_COLUMNS = (
 )
 _KEY_SEED_COLUMNS = (
     "key_hash", "shard", "limit_micro", "usage", "byok_usage", "reserved",
-    "include_byok", "source_updated_at", "updated_at",
+    "include_byok", "day_limit_micro", "week_limit_micro", "month_limit_micro",
+    "source_updated_at", "updated_at",
 )
 
 
@@ -308,6 +312,9 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
         # All predicates hold — now issue every upsert (no partial seed possible).
         for kb in fresh_keys:
             limit = kb.get("limit_microdollars")
+            day = kb.get("limit_daily_microdollars")
+            week = kb.get("limit_weekly_microdollars")
+            month = kb.get("limit_monthly_microdollars")
             transaction.insert_or_update(
                 table="tr_key_limit",
                 columns=_KEY_SEED_COLUMNS,
@@ -318,6 +325,9 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
                     int(kb.get("byok_usage_microdollars", 0)),
                     0,
                     bool(kb.get("include_byok_in_limit", True)),
+                    None if day is None else int(day),
+                    None if week is None else int(week),
+                    None if month is None else int(month),
                     cts, cts,
                 )],
             )

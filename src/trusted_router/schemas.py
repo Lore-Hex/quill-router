@@ -93,12 +93,16 @@ class CreateKeyRequest(_Lenient):
     name: str = Field(default="API key", max_length=120)
     limit: Decimal | None = None
     limit_reset: str | None = None
+    # Optional per-window spend limits (USD; fixed UTC calendar windows).
+    limit_daily: Decimal | None = None
+    limit_weekly: Decimal | None = None
+    limit_monthly: Decimal | None = None
     include_byok_in_limit: bool = True
     expires_at: str | None = None
     workspace_id: str | None = None
     management: bool = False
 
-    @field_validator("limit", mode="before")
+    @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
     def _check_limit(cls, value: Any) -> Decimal | None:
         return _validate_dollars(value)
@@ -109,9 +113,12 @@ class PatchKeyRequest(_Lenient):
     disabled: bool | None = None
     limit: Decimal | None = None
     limit_reset: str | None = None
+    limit_daily: Decimal | None = None
+    limit_weekly: Decimal | None = None
+    limit_monthly: Decimal | None = None
     include_byok_in_limit: bool | None = None
 
-    @field_validator("limit", mode="before")
+    @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
     def _check_limit(cls, value: Any) -> Decimal | None:
         return _validate_dollars(value)

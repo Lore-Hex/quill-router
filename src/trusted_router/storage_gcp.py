@@ -547,6 +547,9 @@ class SpannerBigtableStore:
         limit_reset: str | None = None,
         include_byok_in_limit: bool = True,
         expires_at: str | None = None,
+        limit_daily_microdollars: int | None = None,
+        limit_weekly_microdollars: int | None = None,
+        limit_monthly_microdollars: int | None = None,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -558,6 +561,9 @@ class SpannerBigtableStore:
             limit_reset=limit_reset,
             include_byok_in_limit=include_byok_in_limit,
             expires_at=expires_at,
+            limit_daily_microdollars=limit_daily_microdollars,
+            limit_weekly_microdollars=limit_weekly_microdollars,
+            limit_monthly_microdollars=limit_monthly_microdollars,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -1059,11 +1065,14 @@ class SpannerBigtableStore:
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         expires_at: Any = None,
+        window_limits: dict[str, int] | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
         """Route-facing typed authorize. Runs the atomic conditional-DML authorize
         (holds + reservation + gateway_authorization DML-insert) and returns
         (outcome, authorization). outcome in accepted/replay/insufficient_credits/
-        key_limit_exceeded/key_missing/idempotency_mismatch."""
+        key_limit_exceeded/key_missing/idempotency_mismatch, or
+        "key_window_limit_exceeded:<daily|weekly|monthly>" when a per-window cap
+        blocked (see authorize_atomic's window_limits contract)."""
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome, authorize_atomic
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
@@ -1098,6 +1107,28 @@ class SpannerBigtableStore:
             )
             return _json_body(auth)
 
+        if window_limits:
+            # Lock-free snapshot check BEFORE the DML-only transaction (keeps
+            # the authorize txn free of shared reads on the hot row — the
+            # deadlock shape the typed migration removed). Replay-safe: an
+            # existing same-fingerprint reservation passes through to the txn.
+            from trusted_router.storage_gcp_authorize import check_key_window_limits
+
+            blocked = check_key_window_limits(
+                self._database,
+                self._param_types,
+                key_hash=key_hash,
+                estimate=estimate,
+                window_limits=window_limits,
+                idempotency_scope=scope,
+                idempotency_fingerprint=idempotency_fingerprint,
+            )
+            if blocked is not None:
+                # WHICH window rides as an outcome suffix so the
+                # (outcome, authorization) tuple shape stays unchanged; the
+                # gateway route splits on ':'.
+                return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
+
         result = authorize_atomic(
             self._database,
             self._param_types,
@@ -1123,6 +1154,41 @@ class SpannerBigtableStore:
         )
 
         return _reap(self._database, self._param_types, now=now, limit=limit)
+
+    def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
+        """One point-read of the typed tr_key_limit row: live lifetime counters
+        (post-flip the JSON api_key copies are frozen/stale) + the lazy window
+        usage (stale windows read as zero). None when the typed tables are off
+        or the row is missing — callers fall back to the JSON values."""
+        if not getattr(self, "_counter_mirror_enabled", False):
+            return None
+        from trusted_router.spend_windows import utcnow, window_floors
+
+        pt = self._param_types
+        with self._database.snapshot() as snapshot:
+            rows = list(snapshot.execute_sql(
+                "SELECT usage, byok_usage, reserved, day_usage, day_start, "
+                "week_usage, week_start, month_usage, month_start "
+                "FROM tr_key_limit WHERE key_hash=@kh AND shard=0",
+                params={"kh": key_hash},
+                param_types={"kh": pt.STRING},
+            ))
+        if not rows:
+            return None
+        usage, byok, reserved, day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
+        floors = window_floors(utcnow())
+        return {
+            "usage": int(usage),
+            "byok_usage": int(byok),
+            "reserved": int(reserved),
+            "windows": {
+                "daily": int(day_u) if day_s is not None and day_s >= floors["daily"] else 0,
+                "weekly": int(week_u) if week_s is not None and week_s >= floors["weekly"] else 0,
+                "monthly": (
+                    int(month_u) if month_s is not None and month_s >= floors["monthly"] else 0
+                ),
+            },
+        }
 
     def is_typed_reservation(self, reservation_id: str | None, authorization_id: str) -> bool:
         """Settle/refund origin detection (codex 3e): typed iff a tr_reservation

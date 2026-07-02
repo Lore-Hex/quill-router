@@ -43,12 +43,17 @@ CREDIT_BALANCE_COLUMNS = (
     "updated_at",
 )
 
-# Same split for keys: JSON owns config (limit_micro, include_byok); the typed
-# DML owns usage / byok_usage / reserved. Mirror config only.
+# Same split for keys: JSON owns config (limit_micro, the per-window
+# *_limit_micro caps, include_byok); the typed DML owns usage / byok_usage /
+# reserved AND the window usage state (day/week/month usage + starts). Mirror
+# config only — mirroring a window counter would re-create the #79 clobber.
 KEY_LIMIT_COLUMNS = (
     "key_hash",
     "shard",
     "limit_micro",
+    "day_limit_micro",
+    "week_limit_micro",
+    "month_limit_micro",
     "include_byok",
     "source_updated_at",
     "updated_at",
@@ -76,14 +81,21 @@ def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> 
 
 
 def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:
-    """Mirror the JSON-owned config (limit_micro, include_byok) of an `api_key`
-    row into tr_key_limit. usage / byok_usage / reserved are typed-DML-owned and
-    are deliberately NOT mirrored (see KEY_LIMIT_COLUMNS)."""
+    """Mirror the JSON-owned config (limit_micro, window *_limit_micro,
+    include_byok) of an `api_key` row into tr_key_limit. usage / byok_usage /
+    reserved and the window usage state are typed-DML-owned and are
+    deliberately NOT mirrored (see KEY_LIMIT_COLUMNS)."""
     limit = _field(value, "limit_microdollars", None)
+    day = _field(value, "limit_daily_microdollars", None)
+    week = _field(value, "limit_weekly_microdollars", None)
+    month = _field(value, "limit_monthly_microdollars", None)
     return (
         key_hash,
         UNSHARDED,
         None if limit is None else int(limit),
+        None if day is None else int(day),
+        None if week is None else int(week),
+        None if month is None else int(month),
         bool(_field(value, "include_byok_in_limit", True)),
         commit_ts,
         commit_ts,
@@ -154,6 +166,9 @@ CREDIT_DRIFT_FIELDS = (
 )
 KEY_DRIFT_FIELDS = (
     ("limit_microdollars", "limit_micro", None),
+    ("limit_daily_microdollars", "day_limit_micro", None),
+    ("limit_weekly_microdollars", "week_limit_micro", None),
+    ("limit_monthly_microdollars", "month_limit_micro", None),
     ("include_byok_in_limit", "include_byok", True),
 )
 

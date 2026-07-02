@@ -87,6 +87,15 @@ if table_exists tr_key_limit; then log "tr_key_limit exists, skip"; else
     byok_usage INT64 NOT NULL DEFAULT (0),
     reserved INT64 NOT NULL DEFAULT (0),
     include_byok BOOL NOT NULL DEFAULT (true),
+    day_limit_micro INT64,
+    week_limit_micro INT64,
+    month_limit_micro INT64,
+    day_usage INT64 NOT NULL DEFAULT (0),
+    day_start TIMESTAMP,
+    week_usage INT64 NOT NULL DEFAULT (0),
+    week_start TIMESTAMP,
+    month_usage INT64 NOT NULL DEFAULT (0),
+    month_start TIMESTAMP,
     source_updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     updated_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
   ) PRIMARY KEY (key_hash, shard)"
@@ -128,5 +137,42 @@ fi
 if index_exists tr_reservation_by_expiry; then log "tr_reservation_by_expiry exists, skip"; else
   apply_ddl "CREATE INDEX tr_reservation_by_expiry ON tr_reservation (settled, expires_at)"
 fi
+
+# ── Per-key window spend limits (daily/weekly/monthly) ──────────────────────
+# Config columns (*_limit_micro) are JSON-owned and mirrored from the api_key
+# row; the window usage/state columns are typed-DML-owned (bumped lazily by
+# release_key, NEVER mirrored — mirroring them would re-create the #79 clobber).
+column_exists() {
+  local table="$1" col="$2" n
+  n=$(gcloud spanner databases execute-sql "$DATABASE" \
+        --instance="$INSTANCE" "${PROJECT_ARG[@]}" \
+        --sql="SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE table_name='${table}' AND column_name='${col}'" \
+        --format='value(rows[0])' 2>/dev/null || echo 0)
+  [ "${n:-0}" != "0" ]
+}
+
+ensure_column() {
+  local table="$1" col="$2" ddl="$3"
+  if column_exists "$table" "$col"; then
+    log "${table}.${col} exists, skip"
+  else
+    apply_ddl "ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}"
+  fi
+}
+
+# NOTE: Spanner forbids ADD COLUMN ... NOT NULL on an existing table, so the
+# usage columns are added NULLABLE with DEFAULT (0) (future writes default; old
+# rows read NULL until first touched — all readers COALESCE/None-guard). The
+# fresh CREATE TABLE above keeps them NOT NULL.
+ensure_column tr_key_limit day_limit_micro   "INT64"
+ensure_column tr_key_limit week_limit_micro  "INT64"
+ensure_column tr_key_limit month_limit_micro "INT64"
+ensure_column tr_key_limit day_usage   "INT64 DEFAULT (0)"
+ensure_column tr_key_limit day_start   "TIMESTAMP"
+ensure_column tr_key_limit week_usage  "INT64 DEFAULT (0)"
+ensure_column tr_key_limit week_start  "TIMESTAMP"
+ensure_column tr_key_limit month_usage "INT64 DEFAULT (0)"
+ensure_column tr_key_limit month_start "TIMESTAMP"
 
 log "done"
