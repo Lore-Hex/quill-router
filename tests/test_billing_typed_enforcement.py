@@ -22,7 +22,11 @@ from trusted_router.storage import CreditAccount
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
-_FLOORS = window_floors(utcnow())
+
+def _floors() -> dict:
+    # Recompute at call time (see test_billing_key_window_limits) — no
+    # module-import capture that flakes across a UTC window boundary.
+    return window_floors(utcnow())
 
 
 def _seed_credit(store, ws: str, total: int) -> None:
@@ -260,7 +264,7 @@ def test_release_key_settles_usage_and_byok() -> None:
     ) == KEY_ACCEPTED
     # settle as Credits usage
     count = store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 500_000, 480_000, window_floors=_FLOORS, book_to_byok=False)
+        lambda t: release_key(t, pt, key.hash, 500_000, 480_000, window_floors=_floors(), book_to_byok=False)
     )
     assert count == 1
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
@@ -296,7 +300,7 @@ def test_release_key_book_to_byok_and_underflow() -> None:
     ) == KEY_ACCEPTED
     # settle as BYOK usage -> books byok_usage, not usage
     assert store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 300_000, 250_000, window_floors=_FLOORS, book_to_byok=True)
+        lambda t: release_key(t, pt, key.hash, 300_000, 250_000, window_floors=_floors(), book_to_byok=True)
     ) == 1
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     assert row["reserved"] == 0
@@ -304,7 +308,7 @@ def test_release_key_book_to_byok_and_underflow() -> None:
     assert row["usage"] == 0
     # underflow: releasing more than held is a 0-row no-op (never negative)
     assert store._database.run_in_transaction(
-        lambda t: release_key(t, pt, key.hash, 500_000, 0, window_floors=_FLOORS, book_to_byok=False)
+        lambda t: release_key(t, pt, key.hash, 500_000, 0, window_floors=_floors(), book_to_byok=False)
     ) == 0
     assert db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]["reserved"] == 0
 
