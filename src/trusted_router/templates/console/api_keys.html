@@ -1,5 +1,8 @@
 {% extends "console/_layout.html" %}
 {% block body %}
+{% if flash %}
+<div class="console-flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>
+{% endif %}
 {% if created_key %}
 <section class="panel">
   <div class="panel-head"><h2>Save this key. It will not be shown again</h2><span class="pill warn">one time reveal</span></div>
@@ -20,34 +23,64 @@
     <form class="form" method="post" action="/console/api-keys">
       <div class="row">
         <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-        <label>Budget (USD, optional)<input name="limit" type="number" min="0" step="0.000001" placeholder="e.g. 100"></label>
+        <label>Total budget (USD, optional)<input name="limit" type="number" min="0" step="0.000001" placeholder="e.g. 100"></label>
       </div>
+      <div class="row key-window-row">
+        <label>Daily limit (USD, optional)<input name="limit_daily" type="number" min="0" step="0.000001" placeholder="e.g. 5"></label>
+        <label>Weekly limit (USD, optional)<input name="limit_weekly" type="number" min="0" step="0.000001" placeholder="e.g. 25"></label>
+        <label>Monthly limit (USD, optional)<input name="limit_monthly" type="number" min="0" step="0.000001" placeholder="e.g. 80"></label>
+      </div>
+      <p class="key-window-note">Window limits reset at UTC midnight / Monday / the 1st. Enforcement is approximate: a burst of in-flight requests can slightly overshoot. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
       <button class="btn primary" type="submit">Create key</button>
     </form>
   </div>
 </section>
 <section class="panel">
-  <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} active</span></div>
+  <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} total</span></div>
   <div class="panel-body">
-    <table>
-      <thead><tr><th>Name</th><th>Label</th><th>Budget</th><th>Status</th></tr></thead>
+    <table class="keys-table">
+      <thead><tr><th>Name</th><th>Label</th><th>Budgets</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
         {% for k in keys %}
-        <tr>
-          <td>{{ k.name }}</td>
-          <td><code>{{ k.label }}</code></td>
-          <td>
+        <tr class="key-row{% if k.disabled %} key-row-disabled{% endif %}">
+          <td data-col="Name">{{ k.name }}</td>
+          <td data-col="Label"><code>{{ k.label }}</code></td>
+          <td data-col="Budgets">
             <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
-              <input name="limit" type="number" min="0" step="0.000001" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Budget for {{ k.name }}">
+              <div class="key-budget-grid">
+                <label>Total<input name="limit" type="number" min="0" step="0.000001" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
+                {% for w in k.windows %}
+                <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="number" min="0" step="0.000001" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
+                {% endfor %}
+              </div>
               <button class="btn" type="submit">Save</button>
             </form>
-            <div class="key-budget-current">Current: {{ k.limit_display }}</div>
+            <div class="key-budget-current">
+              Used {{ k.usage_display }}{% if k.limit_display != 'none' %} of {{ k.limit_display }}{% endif %}
+              {%- for w in k.windows if w.limit_display %} · {{ w.name }} {{ w.used_display }} / {{ w.limit_display }}{% endfor %}
+            </div>
           </td>
-          <td>{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
+          <td data-col="Status">{% if k.disabled %}<span class="pill warn">disabled</span>{% else %}<span class="pill good">active</span>{% endif %}</td>
+          <td data-col="Actions">
+            <div class="key-actions">
+              {% if k.disabled %}
+              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/enable">
+                <button class="btn" type="submit">Enable</button>
+              </form>
+              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/delete">
+                <button class="btn danger" type="submit" title="Permanently delete this key">Delete</button>
+              </form>
+              {% else %}
+              <form class="inline-form" method="post" action="/console/api-keys/{{ k.hash }}/disable">
+                <button class="btn" type="submit" title="Stop this key from authorizing requests. Disable first to delete.">Disable</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
         </tr>
         {% endfor %}
         {% if not keys %}
-        <tr><td class="empty" colspan="4">No keys yet. Create one above.</td></tr>
+        <tr><td class="empty" colspan="5">No keys yet. Create one above.</td></tr>
         {% endif %}
       </tbody>
     </table>

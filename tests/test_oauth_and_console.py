@@ -780,7 +780,7 @@ def test_console_api_key_budget_can_be_edited_and_cleared(
 
     updated_page = client.get("/console/api-keys")
     assert 'value="25.123456"' in updated_page.text
-    assert "Current: $25.12" in updated_page.text
+    assert "of $25.12" in updated_page.text  # "Used $X of $25.12" budget line
 
     cleared = client.post(
         f"/console/api-keys/{key.hash}/limit",

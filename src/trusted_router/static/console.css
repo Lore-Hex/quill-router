@@ -216,10 +216,29 @@ body.console {
 
 .key-budget-form {
   display: grid;
-  grid-template-columns: minmax(110px, 1fr) auto;
+  grid-template-columns: 1fr auto;
   gap: 8px;
-  align-items: center;
-  max-width: 260px;
+  align-items: end;
+  max-width: 520px;
+}
+
+.key-budget-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(84px, 1fr));
+  gap: 8px;
+}
+
+.key-budget-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.key-budget-grid input {
+  width: 100%;
+  min-width: 0;
 }
 
 .key-budget-form .btn {
@@ -231,6 +250,22 @@ body.console {
   margin-top: 5px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.key-window-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 2px 0 12px;
+}
+
+.key-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.key-row-disabled td {
+  opacity: 0.75;
 }
 
 .warning-note {
@@ -411,5 +446,49 @@ body.console {
   }
   .secret-row {
     grid-template-columns: 1fr;
+  }
+  /* Keys table -> stacked cards: each row becomes a bordered block, each cell
+     a labeled line (data-col drives the label), so budgets/actions stay usable
+     on a phone instead of overflowing horizontally. */
+  .keys-table thead {
+    display: none;
+  }
+  .keys-table,
+  .keys-table tbody,
+  .keys-table tr,
+  .keys-table td {
+    display: block;
+    width: 100%;
+  }
+  .keys-table tr {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .keys-table td {
+    border-bottom: 0;
+    padding: 6px 0;
+  }
+  .keys-table td[data-col]::before {
+    content: attr(data-col);
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+  .key-budget-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .key-budget-form {
+    grid-template-columns: 1fr;
+    max-width: none;
+  }
+  .key-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }
