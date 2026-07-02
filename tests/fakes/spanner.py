@@ -453,7 +453,7 @@ class _FakeSnapshot:
     ) -> list[list[str]]:
         self._reads += 1
         if not self._multi_use and self._reads > 1:
-            raise RuntimeError(
+            raise ValueError(
                 "single-use snapshot allows only one read; use "
                 "database.snapshot(multi_use=True) for multiple reads "
                 "(models real Spanner — see prod fix fa9f5d4)"

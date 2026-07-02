@@ -20,7 +20,7 @@ def test_single_use_snapshot_raises_on_second_read() -> None:
     with db.snapshot() as snap:
         snap.execute_sql("SELECT total_credits FROM tr_credit_balance WHERE workspace_id=@pk",
                          params={"pk": "ws_x"})
-        with pytest.raises(RuntimeError, match="single-use snapshot"):
+        with pytest.raises(ValueError, match="single-use snapshot"):
             snap.execute_sql("SELECT total_credits FROM tr_credit_balance WHERE workspace_id=@pk",
                              params={"pk": "ws_x"})
 

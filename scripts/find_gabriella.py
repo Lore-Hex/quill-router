@@ -37,7 +37,7 @@ from trusted_router.storage import create_store
 def main() -> int:
     store = create_store(Settings())
     db = store._database  # noqa: SLF001
-    with db.snapshot() as snap:
+    with db.snapshot(multi_use=True) as snap:  # 3 reads on one snapshot
         print("=== workspaces created in last 6h ===")
         rows = snap.execute_sql(
             "SELECT id, body, updated_at FROM tr_entities "
