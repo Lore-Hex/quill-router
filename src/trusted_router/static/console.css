@@ -526,3 +526,20 @@ body.console {
     justify-content: center;
   }
 }
+
+.budget-action-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.budget-action-check input[type="checkbox"] {
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--blue);
+}

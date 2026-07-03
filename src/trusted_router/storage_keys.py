@@ -37,7 +37,7 @@ from trusted_router.security import (
 )
 from trusted_router.spend_windows import (
     KeyWindowLimitExceeded,
-    key_window_limits,
+    enforced_window_limits,
     utcnow,
     window_floors,
 )
@@ -105,6 +105,7 @@ class InMemoryApiKeys:
         limit_daily_microdollars: int | None = None,
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
+        budget_alert_only: bool = True,
     ) -> tuple[str, ApiKey]:
         with self._lock:
             key = raw_key or new_api_key()
@@ -129,6 +130,7 @@ class InMemoryApiKeys:
                 limit_daily_microdollars=limit_daily_microdollars,
                 limit_weekly_microdollars=limit_weekly_microdollars,
                 limit_monthly_microdollars=limit_monthly_microdollars,
+                budget_alert_only=budget_alert_only,
             )
             self.keys[key_id] = api_key
             self.key_ids_by_lookup_hash[lookup_hash] = key_id
@@ -191,6 +193,10 @@ class InMemoryApiKeys:
                     setattr(key, field, patch[field])
             if "include_byok_in_limit" in patch:
                 key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
+            if patch.get("budget_alert_only") is not None:
+                key.budget_alert_only = bool(patch["budget_alert_only"])
+            if "budget_alerted" in patch:
+                key.budget_alerted = dict(patch["budget_alerted"] or {})
             key.updated_at = iso_now()
             return key
 
@@ -224,7 +230,7 @@ class InMemoryApiKeys:
             # Window limits are independent of the lifetime cap: check first,
             # approximately (in-flight reserved is deliberately not counted —
             # same semantics as the typed authorize check).
-            window_limits = key_window_limits(key)
+            window_limits = enforced_window_limits(key)  # {} in alert mode → never blocks
             if window_limits:
                 used_by_window = self.window_usage_snapshot(key_hash)
                 for window, limit in window_limits.items():

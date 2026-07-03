@@ -370,6 +370,7 @@ class InMemoryStore:
         limit_daily_microdollars: int | None = None,
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
+        budget_alert_only: bool = True,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -384,6 +385,7 @@ class InMemoryStore:
             limit_daily_microdollars=limit_daily_microdollars,
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
+            budget_alert_only=budget_alert_only,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:

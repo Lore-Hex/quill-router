@@ -78,11 +78,22 @@ def window_resets_at(window: str, now: dt.datetime) -> dt.datetime:
 
 
 def key_window_limits(key: object) -> dict[str, int]:
-    """The window limits configured on an ApiKey (micro-dollars), omitting unset
-    windows. Empty dict = no window limits = zero-cost fast path."""
+    """The window limits CONFIGURED on an ApiKey (micro-dollars), omitting unset
+    windows. Empty dict = no window limits. Used for alert-threshold reads AND,
+    via enforced_window_limits, for blocking."""
     out: dict[str, int] = {}
     for window, field in LIMIT_FIELDS.items():
         value = getattr(key, field, None)
         if value is not None:
             out[window] = int(value)
     return out
+
+
+def enforced_window_limits(key: object) -> dict[str, int]:
+    """The window limits that BLOCK (429). Empty when the key is in alert mode
+    (`budget_alert_only`) — alert-mode budgets never stop a working app; they
+    email at settle instead (services/budget_alerts.py). Limit-mode keys enforce
+    their configured windows."""
+    if getattr(key, "budget_alert_only", False):
+        return {}
+    return key_window_limits(key)

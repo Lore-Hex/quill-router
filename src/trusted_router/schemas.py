@@ -97,6 +97,8 @@ class CreateKeyRequest(_Lenient):
     limit_daily: Decimal | None = None
     limit_weekly: Decimal | None = None
     limit_monthly: Decimal | None = None
+    # True = window budgets ALERT (email, don't block); False = hard-limit (429).
+    budget_alert_only: bool = True
     include_byok_in_limit: bool = True
     expires_at: str | None = None
     workspace_id: str | None = None
@@ -116,6 +118,7 @@ class PatchKeyRequest(_Lenient):
     limit_daily: Decimal | None = None
     limit_weekly: Decimal | None = None
     limit_monthly: Decimal | None = None
+    budget_alert_only: bool | None = None
     include_byok_in_limit: bool | None = None
 
     @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")

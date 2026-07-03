@@ -126,3 +126,30 @@ def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClien
         assert resp.status_code == 403, (action, resp.status_code)
     assert STORE.get_key_by_hash(key.hash) is not None
     assert STORE.get_key_by_hash(key.hash).disabled is False
+
+
+def test_create_form_budget_alert_only_checkbox(console: dict) -> None:
+    client, workspace = console["client"], console["workspace"]
+    # Rendered-checked "Alert only" box submits as 'on' -> alert mode.
+    client.post("/console/api-keys", data={"name": "alerted", "budget_alert_only": "on"})
+    alerted = next(k for k in STORE.list_keys(workspace.id) if k.name == "alerted")
+    assert alerted.budget_alert_only is True
+    # Unchecked (field omitted) -> hard limit.
+    client.post("/console/api-keys", data={"name": "hardlimit"})
+    hard = next(k for k in STORE.list_keys(workspace.id) if k.name == "hardlimit")
+    assert hard.budget_alert_only is False
+
+
+def test_limit_form_toggles_alert_vs_limit(console: dict) -> None:
+    client, key = console["client"], console["key"]
+    # Uncheck Alert only (field omitted) -> hard limit.
+    client.post(f"/console/api-keys/{key.hash}/limit", data={"limit": ""}, follow_redirects=False)
+    assert STORE.get_key_by_hash(key.hash).budget_alert_only is False
+    # Check it back -> alert mode.
+    client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "", "budget_alert_only": "on"}, follow_redirects=False,
+    )
+    assert STORE.get_key_by_hash(key.hash).budget_alert_only is True
+    # The checkbox renders on the page.
+    assert "Alert only" in client.get("/console/api-keys").text
