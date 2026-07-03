@@ -93,6 +93,8 @@ PROVIDER_SLUGS = [
     "baseten",
     "wafer",
     "crusoe",
+    "alibaba",
+    "makora",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails
@@ -695,6 +697,31 @@ def _write_snapshot(snapshot: dict[str, Any]) -> None:
     SNAPSHOT_PATH.write_text(text, encoding="utf-8")
 
 
+def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list[str]:
+    """Let provider adapters update supplemental provider model manifests.
+
+    Most providers are fully represented by the OpenRouter-shaped snapshot.
+    Providers such as Makora use `data/provider_models/<slug>.json` at runtime
+    because their live API is ahead of OpenRouter's endpoint feed or needs
+    provider-native upstream IDs. A provider module can expose
+    `write_provider_manifest(result) -> list[str]` to keep that manifest
+    hourly refreshed without making the shared merger know provider-specific
+    JSON shape details.
+    """
+
+    notes: list[str] = []
+    for slug, result in sorted(results.items()):
+        module = _import_provider(slug)
+        hook = getattr(module, "write_provider_manifest", None)
+        if not callable(hook):
+            continue
+        raw_notes = hook(result)
+        if raw_notes is None:
+            continue
+        notes.extend(str(note) for note in raw_notes)
+    return notes
+
+
 def _summary_lines(
     results: dict[str, ProviderPricingResult],
     healed: list[str],
@@ -786,8 +813,10 @@ def main(argv: list[str] | None = None) -> int:
 
     merged = _merge_snapshot(or_snapshot, provider_index, set(healed))
 
+    manifest_notes: list[str] = []
     if not args.summary_only:
         _write_snapshot(merged)
+        manifest_notes = _write_provider_manifests(results)
         log.info("pricing.refresh.wrote path=%s models=%d", SNAPSHOT_PATH, merged["model_count"])
 
     summary = _summary_lines(results, healed, failures, disagreements, id_mismatches)
@@ -802,6 +831,11 @@ def main(argv: list[str] | None = None) -> int:
     print()
     for line in summary:
         print(line)
+    if manifest_notes:
+        print()
+        print("Supplemental provider manifests:")
+        for note in manifest_notes:
+            print(f"  {note}")
     return 0
 
 

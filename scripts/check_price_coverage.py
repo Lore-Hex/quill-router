@@ -150,6 +150,27 @@ def _crusoe_model_id(native_id: str) -> str | None:
     return _CRUSOE_MODEL_IDS.get(value, _identity_model_id(value))
 
 
+_MAKORA_MODEL_IDS = {
+    "deepseek-ai/DeepSeek-V4-Flash": "deepseek/deepseek-v4-flash",
+    "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
+    "google/gemma-4-26B-A4B": "google/gemma-4-26b-a4b-it",
+    "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",
+    "zai-org/GLM-5.2-NVFP4": "z-ai/glm-5.2-nvfp4",
+    "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
+    "amd/Llama-3.3-70B-Instruct-FP8-KV": "amd/llama-3.3-70b-instruct-fp8-kv",
+    "meta-llama/Llama-3.3-70B-Instruct": "meta-llama/llama-3.3-70b-instruct",
+    "unsloth/Qwen3.6-27B-NVFP4": "qwen/qwen3.6-27b",
+    "unsloth/Qwen3.6-35B-A3B-NVFP4": "qwen/qwen3.6-35b-a3b",
+}
+
+
+def _makora_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _MAKORA_MODEL_IDS.get(value, _identity_model_id(value))
+
+
 def _alibaba_model_id(native_id: str) -> str | None:
     value = native_id.strip()
     if not value:
@@ -230,6 +251,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://api.inference.crusoecloud.com/v1/models",
         ("CRUSOE_API_KEY",),
         _crusoe_model_id,
+    ),
+    (
+        "makora",
+        "https://inference.makora.com/v1/models",
+        ("MAKORA_API_KEY", "MAKORA_OPTIMIZE_TOKEN"),
+        _makora_model_id,
     ),
     (
         "alibaba",
