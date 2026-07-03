@@ -14,6 +14,7 @@ from tests.fakes.spanner import _execute_settle_outbox_sql, _FakeTransaction, ma
 from trusted_router.storage_gcp_settle_outbox import (
     ENQ_EXISTS_TERMINAL,
     ENQ_INSERTED,
+    ENQ_LEASED,
     ENQ_REFRESHED,
     SpannerSettleOutbox,
 )
@@ -135,7 +136,7 @@ def test_enqueue_refresh_does_not_overwrite_an_actively_leased_row() -> None:
     ob.enqueue(_row("gwa-11", cost=1000))
     [job] = ob.claim(lease_seconds=300)  # a drain worker now owns it
     # The enclave re-delivers with corrected actuals while the drain holds the lease.
-    assert ob.enqueue(_row("gwa-11", cost=8888)) == ENQ_EXISTS_TERMINAL  # no-op
+    assert ob.enqueue(_row("gwa-11", cost=8888)) == ENQ_LEASED  # deferred, not terminal
     got = ob.get("gwa-11", "settle")
     assert got.actual_cost_micro == 1000  # unchanged under the active lease
     assert got.lease_owner == job.lease_owner
@@ -160,6 +161,16 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
             "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
             "AND status='pending'",  # dropped the leased_until fence
             params={"owner": "x", "lease": "z", "now": "z", "aid": "gwa-12", "kind": "settle"},
+        )
+    # A mark query missing the PK key predicate must FAIL — real Spanner would
+    # update every matching pending row, not the single pk (codex #113 re-review).
+    with pytest.raises(AssertionError, match="mark"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET status=@status, attempts=@attempts, "
+            "last_error=@err, next_attempt_at=@next_at, lease_owner=NULL, "
+            "leased_until=NULL, updated_at=@now WHERE status='pending'",  # dropped the PK
+            params={"status": "done", "attempts": 1, "err": None, "next_at": None,
+                    "now": "z", "aid": "gwa-12", "kind": "settle"},
         )
 
 

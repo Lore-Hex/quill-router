@@ -431,8 +431,11 @@ class _FakeTransaction:
             self.pending_writes.append(("insert_settle_outbox", pk, dict(p)))
             return 1
         if sql.startswith("UPDATE tr_settle_outbox SET settle_origin="):  # enqueue refresh
-            # SQL-SENSITIVE (codex #113 finding 1): only enforce the fence the real
-            # query actually carries, so dropping a predicate FAILS a test.
+            # SQL-SENSITIVE (codex #113 finding 1): assert every load-bearing
+            # predicate — including the PK key — is present, so a dropped predicate
+            # FAILS a test (real Spanner would update every matching row, not the
+            # single pk the fake derives from params).
+            _require_pred(sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh")
             _require_pred(sql, "status='pending'", "refresh")
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
             pk = (p["authorization_id"], p["intent_kind"])
@@ -452,6 +455,7 @@ class _FakeTransaction:
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
         if sql.startswith("UPDATE tr_settle_outbox SET lease_owner=@owner"):  # claim
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "claim")
             _require_pred(sql, "status='pending'", "claim")
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "claim")
             pk = (p["aid"], p["kind"])
@@ -465,6 +469,7 @@ class _FakeTransaction:
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
             _require_pred(sql, "status='pending'", "mark")
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)

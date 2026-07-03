@@ -54,6 +54,7 @@ GUARD_STATUSES = ("pending", "dead")
 ENQ_INSERTED = "inserted"          # new pending row
 ENQ_REFRESHED = "refreshed"        # existing pending row's frozen inputs updated
 ENQ_EXISTS_TERMINAL = "terminal"   # existing done/dead/release_approved row — left as is
+ENQ_LEASED = "leased"              # existing pending row is actively leased by a drain — deferred
 
 
 def _iso_now() -> str:
@@ -206,7 +207,15 @@ class SpannerSettleOutbox:
             )
 
         refreshed = self._database.run_in_transaction(refresh_txn)
-        return ENQ_REFRESHED if refreshed == 1 else ENQ_EXISTS_TERMINAL
+        if refreshed == 1:
+            return ENQ_REFRESHED
+        # 0-row: classify for accurate observability (codex #113) — a still-pending
+        # row means the refresh was fenced out by an active lease (a drain holds
+        # it), distinct from a genuinely terminal (done/dead/release_approved) row.
+        existing = self.get(row.authorization_id, row.intent_kind)
+        if existing is not None and existing.status == "pending":
+            return ENQ_LEASED
+        return ENQ_EXISTS_TERMINAL
 
     # ── due / claim / mark ───────────────────────────────────────────────────
     def due(self, *, limit: int = 100) -> list[SettleOutboxRow]:
