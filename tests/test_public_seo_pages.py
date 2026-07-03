@@ -428,7 +428,10 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     anthropic = next(
         row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"
     )
-    assert anthropic["zdr"] is True
+    # anthropic was downgraded from ZDR to standard in 4faa10d ("excluded from
+    # trustedrouter/zdr until that posture is reverified") — the subprocessor
+    # page must reflect that honestly.
+    assert anthropic["zdr"] is False
 
 
 def test_public_soc2_and_hipaa_readiness_pages_are_explicitly_not_reports(
