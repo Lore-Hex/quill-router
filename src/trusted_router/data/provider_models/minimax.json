@@ -1,7 +1,7 @@
 {
   "provider": "minimax",
-  "source": "https://api.minimax.io/v1/models",
-  "generated_at": "2026-06-02T00:00:00Z",
+  "source": "https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise",
+  "generated_at": "2026-07-03T22:35:56Z",
   "model_count": 8,
   "models": [
     {
@@ -12,20 +12,20 @@
       "created": 1780185600,
       "context_length": 1000000,
       "max_output_tokens": 1000000,
-      "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 2400000,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
       "price_tiers": [
         {
           "max_prompt_tokens": 512000,
-          "input_token_price_per_m": 600000,
-          "output_token_price_per_m": 2400000,
-          "cached_input_token_price_per_m": 120000
+          "input_token_price_per_m": 300000,
+          "output_token_price_per_m": 1200000,
+          "cached_input_token_price_per_m": 60000
         },
         {
           "max_prompt_tokens": null,
-          "input_token_price_per_m": 1200000,
-          "output_token_price_per_m": 4800000,
-          "cached_input_token_price_per_m": 240000
+          "input_token_price_per_m": 600000,
+          "output_token_price_per_m": 2400000,
+          "cached_input_token_price_per_m": 120000
         }
       ],
       "model_type": "chat",

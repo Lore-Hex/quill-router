@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+from scripts.pricing.parsers import minimax as minimax_parser
+from scripts.pricing.parsers import xiaomi as xiaomi_parser
+from scripts.pricing.providers import nebius
+
+
+def test_minimax_parser_reads_official_token_plan_tiers() -> None:
+    html = """
+    MiniMax-M3 Context ≤ 512K Permanent 50% off $0.6$0.3 $2.4$1.2 $0.12$0.06
+    MiniMax-M3 Context 512K ~ 1M Permanent 50% off $1.2$0.6 $4.8$2.4 $0.24$0.12
+    MiniMax-M2.7 $0.3/ M tokens $1.2/ M tokens $0.06/ M tokens $0.375/ M tokens
+    MiniMax-M2.7-highspeed $0.6/ M tokens $2.4/ M tokens $0.06/ M tokens $0.375/ M tokens
+    """
+
+    prices = minimax_parser.parse(html)
+
+    assert prices["minimax/minimax-m3"] == {
+        "tiers": [
+            {
+                "max_prompt_tokens": 512_000,
+                "prompt_micro_per_m": 300_000,
+                "completion_micro_per_m": 1_200_000,
+                "prompt_cached_micro_per_m": 60_000,
+            },
+            {
+                "max_prompt_tokens": None,
+                "prompt_micro_per_m": 600_000,
+                "completion_micro_per_m": 2_400_000,
+                "prompt_cached_micro_per_m": 120_000,
+            },
+        ]
+    }
+    assert prices["minimax/minimax-m2.7-highspeed"] == {
+        "prompt_micro_per_m": 600_000,
+        "completion_micro_per_m": 2_400_000,
+        "prompt_cached_micro_per_m": 60_000,
+    }
+
+
+def test_xiaomi_parser_reads_official_mimo_payg_prices() -> None:
+    html = """
+    #### MiMo-V2.5-Pro
+    Input (cache hit)$0.0036 / MTok Input (cache miss)$0.435 / MTok Output$0.87 / MTok
+    #### MiMo-V2.5-Pro-UltraSpeed
+    Input (cache hit)$0.0108 / MTok Input (cache miss)$1.305 / MTok Output$2.61 / MTok
+    #### MiMo-V2.5
+    Input (cache hit)$0.0028 / MTok Input (cache miss)$0.14 / MTok Output$0.28 / MTok
+    """
+
+    prices = xiaomi_parser.parse(html)
+
+    assert prices["xiaomi/mimo-v2.5-pro"] == {
+        "prompt_micro_per_m": 435_000,
+        "completion_micro_per_m": 870_000,
+        "prompt_cached_micro_per_m": 3_600,
+    }
+    assert prices["xiaomi/mimo-v2.5-pro-ultraspeed"] == {
+        "prompt_micro_per_m": 1_305_000,
+        "completion_micro_per_m": 2_610_000,
+        "prompt_cached_micro_per_m": 10_800,
+    }
+    assert prices["xiaomi/mimo-v2.5"] == {
+        "prompt_micro_per_m": 140_000,
+        "completion_micro_per_m": 280_000,
+        "prompt_cached_micro_per_m": 2_800,
+    }
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(monkeypatch) -> None:  # noqa: ANN001
+    payload = {
+        "data": [
+            {
+                "id": "openai/gpt-oss-120b",
+                "name": "gpt-oss-120b",
+                "created": 1,
+                "context_length": 131072,
+                "architecture": {"modality": "text->text"},
+                "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+            },
+            {
+                "id": "deepseek-ai/DeepSeek-V4-Pro",
+                "name": "DeepSeek-V4-Pro",
+                "created": 1,
+                "context_length": 1048576,
+                "architecture": {"modality": "text->text"},
+                "pricing": {"prompt": "0.00000175", "completion": "0.0000035"},
+            },
+            {
+                "id": "zai-org/GLM-5.1",
+                "name": "GLM-5.1",
+                "created": 1,
+                "context_length": 202752,
+                "architecture": {"modality": "text->text"},
+                "pricing": {"prompt": "0.0000014", "completion": "0.0000044"},
+            },
+            {
+                "id": "Qwen/Qwen3-Embedding-8B",
+                "name": "Qwen3-Embedding-8B",
+                "created": 1,
+                "context_length": 40960,
+                "architecture": {"modality": "text->embedding"},
+                "pricing": {"prompt": "0.00000001", "completion": "0"},
+            },
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> _FakeResponse:  # noqa: ANN002, ANN003
+            return _FakeResponse(payload)
+
+    monkeypatch.setattr(nebius.httpx, "Client", FakeClient)
+
+    result = nebius.fetch()
+
+    assert result.prices["openai/gpt-oss-120b"].prompt_micro_per_m == 150_000
+    assert result.prices["deepseek-ai/DeepSeek-V4-Pro"].completion_micro_per_m == 3_500_000
+    assert "Qwen/Qwen3-Embedding-8B" not in result.prices

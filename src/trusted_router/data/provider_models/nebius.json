@@ -1,8 +1,8 @@
 {
   "provider": "nebius",
-  "source": "https://api.tokenfactory.nebius.com/v1/models",
-  "generated_at": "2026-05-15T09:14:49Z",
-  "model_count": 31,
+  "source": "https://api.tokenfactory.nebius.com/v1/models?verbose=true",
+  "generated_at": "2026-07-03T22:37:49Z",
+  "model_count": 37,
   "models": [
     {
       "id": "meta-llama/Meta-Llama-3.1-8B-Instruct",
@@ -162,8 +162,8 @@
       "created": 1778836486,
       "context_length": 98304,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 119000,
-      "output_token_price_per_m": 200000,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -188,8 +188,8 @@
       "created": 1778836484,
       "context_length": 32768,
       "max_output_tokens": 32768,
-      "input_token_price_per_m": 200000,
-      "output_token_price_per_m": 700000,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 750000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -315,7 +315,7 @@
       "context_length": 131072,
       "max_output_tokens": 65536,
       "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 1500000,
+      "output_token_price_per_m": 1200000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -364,8 +364,8 @@
       "created": 1778836486,
       "context_length": 131072,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 300000,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 240000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -389,8 +389,8 @@
       "created": 1778836484,
       "context_length": 131072,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 150000,
-      "output_token_price_per_m": 450000,
+      "input_token_price_per_m": 60000,
+      "output_token_price_per_m": 240000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -641,8 +641,8 @@
       "created": 1778836480,
       "context_length": 131072,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 1800000,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 900000,
       "model_type": "chat",
       "features": [
         "serverless"
@@ -767,11 +767,169 @@
       "created": 1778836477,
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "input_token_price_per_m": 1690000,
-      "output_token_price_per_m": 3380000,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 3500000,
       "model_type": "chat",
       "features": [
         "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/Kimi-K2.6",
+      "upstream_id": "moonshotai/Kimi-K2.6",
+      "display_name": "Kimi-K2.6",
+      "title": "moonshotai/Kimi-K2.6",
+      "created": 1783118261,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/Kimi-K2.7-Code",
+      "upstream_id": "moonshotai/Kimi-K2.7-Code",
+      "display_name": "Kimi-K2.7-Code",
+      "title": "moonshotai/Kimi-K2.7-Code",
+      "created": 1783118258,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/Cosmos3-Super-Reasoner",
+      "upstream_id": "nvidia/Cosmos3-Super-Reasoner",
+      "display_name": "Cosmos3-Super-Reasoner",
+      "title": "nvidia/Cosmos3-Super-Reasoner",
+      "created": 1783118266,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 300000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "nvidia/Nemotron-3-Ultra-550b-a55b",
+      "upstream_id": "nvidia/Nemotron-3-Ultra-550b-a55b",
+      "display_name": "Nemotron-3-Ultra-550b-a55b",
+      "title": "nvidia/Nemotron-3-Ultra-550b-a55b",
+      "created": 1783118261,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "openbmb/MiniCPM-V-4_5",
+      "upstream_id": "openbmb/MiniCPM-V-4_5",
+      "display_name": "openbmb/MiniCPM-V-4_5",
+      "title": "openbmb/MiniCPM-V-4_5",
+      "created": 1783118266,
+      "context_length": 8000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 658000,
+      "output_token_price_per_m": 1110000,
+      "model_type": "chat",
+      "features": [
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "zai-org/GLM-5.2",
+      "upstream_id": "zai-org/GLM-5.2",
+      "display_name": "GLM-5.2",
+      "title": "zai-org/GLM-5.2",
+      "created": 1783118260,
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "model_type": "chat",
+      "features": [
+        "serverless",
+        "function-calling"
       ],
       "input_modalities": [
         "text"

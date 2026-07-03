@@ -219,13 +219,7 @@ def test_makora_provider_updates_supplemental_manifest(
 
 
 def test_provider_model_manifests_have_hourly_refresh_path() -> None:
-    legacy_manual = {
-        # These existed before the hourly provider-adapter rule and should be
-        # converted separately. New provider manifests must not expand this set.
-        "minimax",
-        "nebius",
-        "xiaomi",
-    }
+    legacy_manual: set[str] = set()
     manifest_slugs = {
         path.stem
         for path in (Path("src/trusted_router/data/provider_models")).glob("*.json")

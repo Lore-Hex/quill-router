@@ -93,6 +93,9 @@ PROVIDER_SLUGS = [
     "baseten",
     "wafer",
     "crusoe",
+    "minimax",
+    "nebius",
+    "xiaomi",
     "alibaba",
     "makora",
 ]
