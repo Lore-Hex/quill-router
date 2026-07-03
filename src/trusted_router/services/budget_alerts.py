@@ -6,10 +6,15 @@ workspace owner instead ("know when weird shit is happening" without stopping a
 working app). Called from the gateway settle path AFTER the window usage is
 booked, off the hot path via BackgroundTasks.
 
-Dedup: at most one email per window per window-instance. The key carries a JSON
-`budget_alerted` marker ({window: window_start_iso}); we mark before sending so a
-concurrent/retried settle doesn't re-notify for the same window. A window reset
-(new floor) re-arms the alert automatically.
+Dedup: at most one email per window per window-instance in the common case. The
+key carries a JSON `budget_alerted` marker ({window: window_start_iso}); we mark
+before sending so a sequential retry doesn't re-notify, and a window reset (new
+floor) re-arms the alert. The marker read+write is NOT transactional, so two
+settles crossing the same window in the same instant can both send a duplicate
+alert. Accepted BY DESIGN (Joseph): an occasional extra "heads up" email is
+harmless (no money effect — the enforcement gate is unaffected) and strict
+at-most-once would need a conditional/transactional claim on the hot money-path
+key row, not worth the complexity for an alert.
 """
 
 from __future__ import annotations
@@ -59,7 +64,8 @@ def maybe_send_budget_alerts(
         alerted[window] = floor_iso
     if not crossings:
         return
-    # Mark before sending so a concurrent/retried settle doesn't re-notify.
+    # Mark before sending so a sequential retry doesn't re-notify. Not
+    # transactional -> a rare concurrent duplicate is accepted (see module docstring).
     STORE.update_key(api_key_hash, {"budget_alerted": alerted})
     _deliver(api_key_hash, key.name, workspace_id, crossings, settings)
 
