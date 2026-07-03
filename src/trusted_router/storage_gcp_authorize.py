@@ -438,9 +438,19 @@ def typed_billing_enabled_for_workspace(
 ) -> bool:
     """Cohort gate for the typed AUTHORIZE path. Default-off; the denylist is an
     emergency kill switch that always wins; "*" in the allowlist = all. Settle/
-    refund route by reservation ORIGIN, not this gate (codex 3e)."""
+    refund route by reservation ORIGIN, not this gate (codex 3e).
+
+    Fast global kill-switch: "*" in the DENYLIST disables typed enforcement for
+    every workspace at once (deny always wins, so it beats an "*" allowlist).
+    Flip it with `gcloud run services update --update-env-vars
+    TR_TYPED_BILLING_WORKSPACE_DENYLIST=*` — takes effect on the next request
+    across the region without a code deploy, and reverting is just clearing the
+    var. Every typed path (authorize + the typed-aware balance reads) funnels
+    through this one predicate, so the kill is comprehensive. When killed,
+    authorize/settle fall back to the legacy JSON path, which is fail-safe (the
+    app keeps working; billing is approximate until re-enabled)."""
     deny = {w.strip() for w in denylist_csv.split(",") if w.strip()}
-    if workspace_id in deny:
+    if "*" in deny or workspace_id in deny:
         return False
     allow = {w.strip() for w in allowlist_csv.split(",") if w.strip()}
     return "*" in allow or workspace_id in allow

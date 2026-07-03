@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     # Per-workspace allowlist (CSV) that authorize uses the typed conditional-DML
     # path for; settle/refund route by reservation ORIGIN, not this flag. Default
     # empty = legacy path everywhere (zero behavior change). "*" = all workspaces.
-    # The denylist is an emergency kill switch that always wins.
+    # The denylist is an emergency kill switch that always wins; "*" in the
+    # DENYLIST is the FAST GLOBAL kill-switch — it disables typed enforcement for
+    # every workspace on the next request (no deploy), falling back to the
+    # fail-safe legacy path. Flip via TR_TYPED_BILLING_WORKSPACE_DENYLIST=*.
     typed_billing_workspace_ids: str = ""
     typed_billing_workspace_denylist: str = ""
 

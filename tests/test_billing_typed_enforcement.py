@@ -916,6 +916,20 @@ def test_cohort_gate_allowlist_denylist_wildcard() -> None:
     assert f("ws1", allowlist_csv="", denylist_csv="") is False  # default off
 
 
+def test_cohort_gate_denylist_wildcard_is_global_kill_switch() -> None:
+    """"*" in the denylist = fast global kill: typed enforcement off for EVERY
+    workspace, beating even an "*" allowlist (deny always wins)."""
+    f = typed_billing_enabled_for_workspace
+    # Kills a workspace that would otherwise be allowed by an explicit allowlist…
+    assert f("ws1", allowlist_csv="ws1,ws2", denylist_csv="*") is False
+    # …and one allowed by the "*" allowlist (the "everyone on" cutover state).
+    assert f("ws9", allowlist_csv="*", denylist_csv="*") is False
+    # Works alongside specific denies, and any workspace is killed.
+    assert f("anything", allowlist_csv="*", denylist_csv="ws1, *") is False
+    # Sanity: without the wildcard, a specific deny only kills that workspace.
+    assert f("ws2", allowlist_csv="*", denylist_csv="ws1") is True
+
+
 def test_store_authorize_wrapper_and_origin_detection() -> None:
     store, _db, _ = make_fake_store()
     ws = "ws_wrap"
