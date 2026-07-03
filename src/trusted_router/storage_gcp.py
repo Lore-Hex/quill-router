@@ -35,7 +35,6 @@ from trusted_router.storage import (
 )
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
 from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
-from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_gcp_byok import SpannerByok
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
@@ -58,6 +57,7 @@ from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_ret
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
+from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_gcp_synthetic_index import (
     synthetic_probe_samples as _bt_synthetic_probe_samples,
 )
