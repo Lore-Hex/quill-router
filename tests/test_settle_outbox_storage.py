@@ -172,6 +172,27 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
             params={"status": "done", "attempts": 1, "err": None, "next_at": None,
                     "now": "z", "aid": "gwa-12", "kind": "settle"},
         )
+    # Symmetric coverage for the other two UPDATE handlers missing the PK filter.
+    with pytest.raises(AssertionError, match="refresh"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
+            "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
+            "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
+            "selected_usage_type=@selected_usage_type, settle_body=@settle_body, "
+            "updated_at=@now WHERE status='pending' "
+            "AND (leased_until IS NULL OR leased_until < @now)",  # dropped the PK
+            params={"settle_origin": "typed", "reservation_id": None,
+                    "actual_cost_micro": 1, "selected_endpoint_id": None, "model_id": None,
+                    "selected_usage_type": None, "settle_body": None, "now": "z",
+                    "authorization_id": "gwa-12", "intent_kind": "settle"},
+        )
+    with pytest.raises(AssertionError, match="claim"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET lease_owner=@owner, leased_until=@lease, "
+            "updated_at=@now WHERE status='pending' "
+            "AND (leased_until IS NULL OR leased_until < @now)",  # dropped the PK
+            params={"owner": "x", "lease": "z", "now": "z", "aid": "gwa-12", "kind": "settle"},
+        )
 
 
 def test_has_intent_freezes_on_pending_and_dead_only() -> None:
