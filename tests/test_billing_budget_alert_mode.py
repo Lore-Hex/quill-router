@@ -108,3 +108,38 @@ def test_build_budget_alert_email_content() -> None:
     assert "prod" in msg.subject and "daily" in msg.subject
     assert "still working" in msg.text_body.lower()
     assert "$5" in msg.text_body and "$1" in msg.text_body
+
+
+def _authorize(client, key_hash: str):
+    return client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-haiku-4.5",
+            "estimated_input_tokens": 100,
+            "max_output_tokens": 100,
+        },
+    )
+
+
+def test_route_alert_mode_over_budget_authorizes_but_limit_mode_429s(client) -> None:
+    """The strongest guarantee: a full /internal/gateway/authorize over an
+    already-crossed daily budget returns 200 in alert mode (app keeps working)
+    and 429 in limit mode."""
+    STORE.reset()
+    user = STORE.ensure_user("routealert@example.com")
+    ws = STORE.list_workspaces_for_user(user.id)[0]
+    STORE.credit_workspace_once(ws.id, 5_000_000, "seed-credits")
+    _raw, key = STORE.create_api_key(
+        workspace_id=ws.id, name="k", creator_user_id=user.id,
+        limit_daily_microdollars=1, budget_alert_only=True,  # alert mode
+    )
+    STORE.api_keys.add_usage(key.hash, 100_000, is_byok=False)  # daily usage >> 1 micro
+
+    alert = _authorize(client, key.hash)
+    assert alert.status_code == 200, alert.text  # alert mode never blocks
+
+    STORE.update_key(key.hash, {"budget_alert_only": False})  # flip to limit mode
+    limited = _authorize(client, key.hash)
+    assert limited.status_code == 429, limited.text
+    assert limited.json()["error"]["type"] == "key_window_limit_exceeded"
