@@ -531,6 +531,22 @@ def _execute_sql(
                 if len(out) >= limit:
                     break
         return out
+    # Usage reconcile: ledger = Σ settled-Credits actuals (shard 0); + nonzero-shard
+    # guard. Checked before the generic shard/count handlers (substring overlap).
+    if "SUM(actual_micro)" in sql and "settled_usage_type='Credits'" in sql and "ws_shard!=0" not in sql:
+        ws = params["ws"]
+        return [[sum(
+            (rec.get("actual_micro") or 0) for rec in db.reservations.values()
+            if rec.get("workspace_id") == ws and rec.get("settled")
+            and rec.get("settled_usage_type") == "Credits" and rec.get("ws_shard", 0) == 0
+        )]]
+    if "settled_usage_type='Credits' AND ws_shard!=0" in sql:
+        ws = params["ws"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("workspace_id") == ws and rec.get("settled")
+            and rec.get("settled_usage_type") == "Credits" and rec.get("ws_shard", 0) != 0
+        )]]
     # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
     # contains the generic count substrings below.)
     if "key_shard!=0" in sql:
