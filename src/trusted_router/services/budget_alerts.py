@@ -23,8 +23,6 @@ from trusted_router.spend_windows import key_window_limits, utcnow, window_floor
 
 log = logging.getLogger(__name__)
 
-_WINDOW_LABEL = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
-
 
 def maybe_send_budget_alerts(
     *, api_key_hash: str, workspace_id: str, settings: Settings
@@ -37,6 +35,8 @@ def maybe_send_budget_alerts(
     key = STORE.get_key_by_hash(api_key_hash)
     if key is None or not key.budget_alert_only:
         return
+    # Alert on the CONFIGURED thresholds (key_window_limits), NOT enforced_window_limits
+    # — enforced is {} in alert mode, but we still want to detect the crossing.
     limits = key_window_limits(key)  # {window: microdollars}; empty = nothing to alert on
     if not limits:
         return
@@ -86,7 +86,10 @@ def _deliver(
         workspace_name=workspace.name,
         crossings=crossings,
     )
-    get_email_service(settings).send(message)
+    try:
+        get_email_service(settings).send(message)
+    except Exception:  # best-effort: the window is already marked (at-most-once); make a drop observable
+        log.exception("budget_alert.delivery_failed key=%s ws=%s", api_key_hash, workspace_id)
 
 
 def _usd(micro: int) -> str:
@@ -101,7 +104,7 @@ def build_budget_alert_email(
     crossings: list[tuple[str, int, int]],
     from_name: str = "TrustedRouter",
 ) -> EmailMessage:
-    windows = ", ".join(_WINDOW_LABEL.get(w, w) for w, _, _ in crossings)
+    windows = ", ".join(w for w, _, _ in crossings)
     subject = f"[{from_name}] Budget alert: key “{key_name}” crossed its {windows} budget"
     lines = [
         f"Heads up — the API key “{key_name}” in workspace “{workspace_name}” has "
@@ -112,7 +115,7 @@ def build_budget_alert_email(
         "",
     ]
     for window, used, limit in crossings:
-        lines.append(f"  • {_WINDOW_LABEL.get(window, window)}: {_usd(used)} used of a {_usd(limit)} budget")
+        lines.append(f"  • {window}: {_usd(used)} used of a {_usd(limit)} budget")
     lines += [
         "",
         "To hard-stop this key when a budget is crossed, switch it to Limit mode "
@@ -120,8 +123,8 @@ def build_budget_alert_email(
     ]
     text = "\n".join(lines)
     html_rows = "".join(
-        f"<li>{_WINDOW_LABEL.get(w, w)}: <strong>{_usd(u)}</strong> used of a {_usd(l)} budget</li>"
-        for w, u, l in crossings
+        f"<li>{win}: <strong>{_usd(used)}</strong> used of a {_usd(lim)} budget</li>"
+        for win, used, lim in crossings
     )
     html = (
         f"<p>Heads up — the API key “<strong>{key_name}</strong>” in workspace "

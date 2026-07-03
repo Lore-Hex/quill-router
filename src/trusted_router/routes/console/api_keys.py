@@ -102,6 +102,9 @@ def register(app: FastAPI) -> None:
             limit_daily_microdollars=daily_micro,
             limit_weekly_microdollars=weekly_micro,
             limit_monthly_microdollars=monthly_micro,
+            # The model/API default is alert (True); here 'omitted checkbox' = False.
+            # That's safe ONLY because the create template renders the box checked —
+            # a browser always sends 'on' unless the user unchecks it (codex/reviewer note).
             budget_alert_only=_checkbox(budget_alert_only),
         )
         return _render_page(ctx, settings, created_key=raw)
