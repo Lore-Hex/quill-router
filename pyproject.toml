@@ -3,7 +3,7 @@ name = "trusted-router"
 version = "0.1.0"
 description = "TrustedRouter public alpha control plane and OpenRouter-compatible API."
 requires-python = ">=3.11"
-license = "Apache-2.0"
+license = "BUSL-1.1"
 dependencies = [
   "axiom-py>=0.9.0",
   "boto3>=1.35.0",

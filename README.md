@@ -7,7 +7,7 @@
 [![Verifiable trust](https://img.shields.io/website?url=https%3A%2F%2Ftrust.trustedrouter.com&label=trust)](https://trust.trustedrouter.com)
 [![JavaScript SDK](https://img.shields.io/npm/v/@lore-hex/trusted-router?label=JS%20SDK&logo=npm)](https://www.npmjs.com/package/@lore-hex/trusted-router)
 [![Python SDK](https://img.shields.io/pypi/v/trusted-router-py?label=Python%20SDK&logo=pypi)](https://pypi.org/project/trusted-router-py/)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License: BUSL-1.1](https://img.shields.io/badge/License-BUSL--1.1-blue.svg)](LICENSE)
 
 # End-to-end encrypted LLMs. One API. Provable privacy.
 
@@ -175,9 +175,14 @@ account Vertex permissions instead.
 
 ## License
 
-Apache License 2.0. This is the right default for TrustedRouter because it is
-commercially permissive, familiar to infrastructure buyers, and includes an
-explicit patent grant.
+Business Source License 1.1. The source is public so anyone can read, build,
+and verify the exact code behind TrustedRouter's privacy and attestation
+claims (https://trust.trustedrouter.com) — that is what it is here for.
+Non-production use (security review, audit, local evaluation) is free.
+Production use requires a commercial license from Lore Hex Corp:
+licensing@trustedrouter.com. Each version converts to the Apache License 2.0
+four years after publication. Code published before July 3, 2026 remains
+Apache-2.0.
 
 ## Security Defaults
 
