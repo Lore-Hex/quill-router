@@ -1,12 +1,12 @@
 # Durable settle outbox
 
-Status: **design v2 — hardened by adversarial review, not yet implemented.** The
-fast kill-switch half of #43/#33 shipped (#109/#110); this is the remaining
-half. **A multi-agent adversarial review of design v1 found 4 critical
-correctness defects** (v1 would have silently lost charges while reporting them
-"recovered"); this v2 folds in the 7 must-fix items. **Owner review required
-before implementation** — v2 changes the reaper's correctness model (not just an
-additive table), and the §6 enclave-scope + prod-enable decisions are still open.
+Status: **design v2 hardened + Increment 1 (storage) landed; Increments 2–4
+remain.** The fast kill-switch half of #43/#33 shipped (#109/#110). A multi-agent
+adversarial review of design v1 found 4 critical correctness defects (v1 would
+have silently lost charges while reporting them "recovered"); v2 folds in the 7
+must-fix items. Joseph approved building it in codex-gated increments; the
+prod-enable flag flip stays owner-gated. **See §11 for the implementation status
+& handoff — read that first if you are picking this up.**
 
 ## 1. Problem
 
@@ -252,3 +252,104 @@ healthy. The underlying mechanism (durable intent + idempotent claim-gated apply
 reaper guard) is sound; the corrections make the guard the sole in-transaction
 correctness authority, freeze cost+origin in the row, use a native INSERT-as-claim
 table, and make the fake actually model the guard.
+
+## 11. Implementation status & handoff (2026-07-03)
+
+Read this first if you are continuing the outbox build.
+
+### What is DONE and merged
+- **Design v2** (§1–§10) — hardened by a 6-critic adversarial review; the 4
+  critical + 3 other must-fix items are folded in. Trust §3–§4 as the correctness
+  spine: the reaper `NOT-EXISTS(pending|dead)` guard is the SOLE lost-charge
+  authority; drain cadence is latency only.
+- **Increment 1 — native-table storage (dormant)** = PR #113 (branch
+  `settle-outbox-storage`), codex **PASS** after 3 rounds, full suite 1216 green.
+  Adds:
+  - `tr_settle_outbox` DDL (PK `(authorization_id, intent_kind)` + `(status,
+    next_attempt_at)` index) in `scripts/deploy/migrate_typed_counters.sh`
+    (idempotent/guarded; NOT auto-applied — an operator runs it).
+  - `settle_outbox_enabled: bool = False` in `config.py`.
+  - `SettleOutboxRow` in `storage_models.py` (frozen inputs: `actual_cost_micro`,
+    `settle_origin`, `reservation_id`, `selected_endpoint_id`, `model_id`,
+    `selected_usage_type`).
+  - `SpannerSettleOutbox` in `storage_gcp_settle_outbox.py`: `enqueue`
+    (INSERT-as-claim, refresh-latest ONLY on an unclaimed pending row → returns
+    `ENQ_INSERTED|ENQ_REFRESHED|ENQ_LEASED|ENQ_EXISTS_TERMINAL`), `due`/`claim`
+    (lease-fenced), `mark` (backoff→`dead` at max_attempts), `has_intent`
+    (the reaper-guard predicate: freezes on `pending`/`dead`, NOT
+    `done`/`release_approved`), `get`.
+  - Wired as `self.settle_outbox` on `SpannerBigtableStore` only. **No live
+    caller yet** — dormant.
+  - Fake Spanner models the table AND asserts every load-bearing SQL predicate
+    (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).
+  - Tests: `tests/test_settle_outbox_storage.py` (11).
+
+### What REMAINS — Increments 2–4 (each its own codex-gated PR, default-off)
+2. **Reaper in-txn guard (MF1/MF2/MF3) — the correctness spine, the one live
+   change.** In `storage_gcp_authorize.py`:
+   - `settle_atomic` gains `guard_outbox: bool = False`. When True, INSIDE its
+     read-write txn after `read_reservation` (which returns `authorization_id` —
+     confirmed), do an in-txn `SELECT COUNT(*) FROM tr_settle_outbox WHERE
+     authorization_id=@aid AND status IN ('pending','dead')`; if > 0, ABORT the
+     free-release (return a new `SettleOutcome.OUTBOX_GUARDED`, do NOT claim). The
+     in-txn re-check is the interlock (a snapshot pre-filter alone has the MF2
+     TOCTOU).
+   - `reap_expired_reservations` must project `authorization_id` (today it
+     projects only `reservation_id`), advisory-skip candidates where
+     `settle_outbox.has_intent(aid)`, and call `settle_atomic(..., guard_outbox=True)`.
+   - INERT WHEN THE TABLE IS EMPTY → reaper is byte-identical to today when
+     disabled. Fake: the reaper query gains the guard subquery, so update the fake
+     reaper handler (`tests/fakes/spanner.py`, `"FROM tr_reservation WHERE
+     settled=false AND expires_at"` branch) to filter by the fake `settle_outbox`,
+     and add a `_require_pred` for the guard predicate (MF6 — a guard typo must
+     fail a test). Test both directions (row present → skipped; absent → reaped).
+3. **Frozen-cost finalize primitive + richer outcome (MF5/SF3/SF7).** A narrow
+   apply function (counter claim + gateway_authorization finalize + generation
+   write) that applies the STORED `actual_cost_micro` and returns
+   `settled_now | already_settled_with_charge | already_released_free |
+   reservation_missing` — NOT the full `_settle_gateway_authorization` handler
+   (which re-runs pricing + re-fires alerts/refill/broadcast). The drain marks
+   `done` on charged, `dead`+ALERT on `already_released_free` (reaper beat us —
+   never silently "recovered").
+4. **Enqueue-at-settle + drain endpoint.** In `_settle_gateway_authorization`
+   (`routes/internal/gateway.py`), gated on `settings.settle_outbox_enabled`:
+   enqueue BEFORE the inline finalize (capturing the resolved origin +
+   frozen cost the inline attempt computed), mark `done` after. Add
+   `POST /internal/gateway/settle-outbox/drain` (internal-token auth, mirror
+   `routes/internal/broadcast_queue.py`) that claims due rows and applies via the
+   Increment-3 primitive, routing on the STORED origin (MF4 — immune to a
+   `TR_TYPED_COUNTER_MIRROR` flip; PARK, don't dead-letter, if the typed store is
+   unavailable).
+
+### HARD constraints (do not violate)
+- **codex-review BEFORE merge on every billing PR. Do NOT arm auto-merge-on-green
+  in parallel with codex** — CI can merge before codex's verdict returns (this
+  happened once this session, PR #109; the merged code was dormant so no harm, but
+  gate the merge trigger on codex PASS).
+- **Default-off. The prod-enable flip (`settle_outbox_enabled=True`) is Joseph's
+  call** — same bar as the typed-enforcement cutover. Increments 2–4 must be inert
+  when off / when the table is empty.
+- `gh pr merge --squash` only; keep main green.
+- **CI runs `uv run ruff check .` and mypy REPO-WIDE** — run those (not just
+  file-targeted) before pushing (an unsorted import in `storage_gcp.py` red-failed
+  #113's CI even though targeted ruff passed).
+- Never raw-DML prod billing tables; DDL goes through the guarded migrate script.
+- Scope: **control-plane-only** (§9). The enclave-durability half is cross-repo
+  (`quill-cloud-proxy`, NO PRs) and needs Joseph's separate go — do not start it.
+
+### Gotchas learned this session
+- **Fake fidelity (MF6):** the fake is a substring SQL interpreter; adding a
+  predicate to an already-matched query is invisible unless the fake asserts it.
+  Always `_require_pred` load-bearing predicates (incl. the PK) so a typo fails.
+- **Live-lease races:** a claimed row stays `status='pending'`; any UPDATE that
+  should not touch an in-flight row must also fence on `(leased_until IS NULL OR
+  leased_until < @now)`.
+- **Test pollution:** never mutate `sys.modules` in a test (poisons later tests);
+  do fresh-import checks in a subprocess.
+- Branch hygiene: verify a clean working tree before `git rebase` (stash-juggling
+  left conflict cruft this session; `git reset --hard HEAD` recovered it).
+
+### Session ledger (all merged unless noted)
+#106 gateway_authorize extract · #107+#108 catalog split (1592→620) · #109
+kill-switch + #110 honesty · #111 design v1 + #112 design v2 · **#113 outbox
+Increment 1 (landing)** · #114 closed (dup of main's makora fix `2c03e20`).
