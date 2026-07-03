@@ -153,3 +153,34 @@ def test_limit_form_toggles_alert_vs_limit(console: dict) -> None:
     assert STORE.get_key_by_hash(key.hash).budget_alert_only is True
     # The checkbox renders on the page.
     assert "Alert only" in client.get("/console/api-keys").text
+
+
+def test_budget_can_be_cleared_back_to_undefined(console: dict) -> None:
+    """Blank inputs unset a budget (back to undefined) — the clear path."""
+    client, key = console["client"], console["key"]
+    # Set some budgets first.
+    client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "100", "limit_daily": "5", "limit_monthly": "80"},
+        follow_redirects=False,
+    )
+    k = STORE.get_key_by_hash(key.hash)
+    assert k.limit_microdollars and k.limit_daily_microdollars and k.limit_monthly_microdollars
+    # Now save with all budget fields blank -> everything back to undefined.
+    client.post(
+        f"/console/api-keys/{key.hash}/limit",
+        data={"limit": "", "limit_daily": "", "limit_weekly": "", "limit_monthly": ""},
+        follow_redirects=False,
+    )
+    k = STORE.get_key_by_hash(key.hash)
+    assert k.limit_microdollars is None
+    assert k.limit_daily_microdollars is None
+    assert k.limit_weekly_microdollars is None
+    assert k.limit_monthly_microdollars is None
+
+
+def test_budget_inputs_have_no_number_spinners(console: dict) -> None:
+    """The USD budget inputs are text/decimal — no up/down microdollar spinners."""
+    page = console["client"].get("/console/api-keys").text
+    assert 'type="number"' not in page  # spinners removed
+    assert 'inputmode="decimal"' in page
