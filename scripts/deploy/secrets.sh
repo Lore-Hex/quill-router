@@ -130,6 +130,7 @@ ensure_secret_from_env_file "MINIMAX_API_KEY" "trustedrouter-minimax-api-key" "M
 ensure_secret_from_env_file "BASETEN_API_KEY" "trustedrouter-baseten-api-key"
 ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
 ensure_secret_from_env_file "CRUSOE_API_KEY" "trustedrouter-crusoe-api-key"
+ensure_secret_from_env_file "MAKORA_API_KEY" "trustedrouter-makora-api-key" "MAKORA_OPTIMIZE_TOKEN"
 ensure_secret_from_env_file "ALIBABA_API_KEY" "trustedrouter-alibaba-api-key" "DASHSCOPE_API_KEY" "ALIYUN_API_KEY"
 
 SYNTH_PROMPTS_FILE="${TR_SYNTH_PROMPTS_FILE:-${HOME}/.trustedrouter_synth_prompts_v1.md}"

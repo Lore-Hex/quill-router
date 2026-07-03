@@ -63,6 +63,9 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),
     # Crusoe Managed Inference — OpenAI-compatible chat completions.
     "crusoe": (("CRUSOE_API_KEY",), "https://api.inference.crusoecloud.com/v1"),
+    # Makora Inference — OpenAI-compatible chat completions. Their tooling
+    # documents MAKORA_OPTIMIZE_TOKEN, so accept both names locally.
+    "makora": (("MAKORA_API_KEY", "MAKORA_OPTIMIZE_TOKEN"), "https://inference.makora.com/v1"),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
@@ -84,6 +87,7 @@ WAFER_ZDR_NATIVE_MODELS = frozenset(
 
 def _wafer_model_supports_zdr(model_id: str) -> bool:
     return model_id in WAFER_ZDR_NATIVE_MODELS
+
 
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",

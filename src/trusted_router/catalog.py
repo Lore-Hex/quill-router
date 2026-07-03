@@ -1296,6 +1296,7 @@ def model_max_privacy_tier(model: Model) -> int:
 
 
 _OPEN_WEIGHT_PREFIXES = (
+    "amd/",
     "deepseek/",
     "google/gemma",
     "meta-llama/",

@@ -14,6 +14,7 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
         "WAFER_API_KEY": "trustedrouter-wafer-api-key",
         "CRUSOE_API_KEY": "trustedrouter-crusoe-api-key",
+        "MAKORA_API_KEY": "trustedrouter-makora-api-key",
     }
     for env_name, secret_name in expected.items():
         assert f'add_secret_env_if_exists "{env_name}" "{secret_name}"' in rollout
@@ -30,6 +31,5 @@ def test_deploy_wires_athena_worker_prompt_secret() -> None:
         '"$ATHENA_PROMPTS_FILE" "Worker Prompt V1"'
     ) in secrets
     assert (
-        'add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" '
-        '"trustedrouter-athena-worker-prompt-v1"'
+        'add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"'
     ) in rollout

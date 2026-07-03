@@ -100,7 +100,10 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "parasail"),
         ("z-ai/glm-5.2", "friendli"),
         ("z-ai/glm-5.2", "crusoe"),
+        ("z-ai/glm-5.2", "makora"),
         ("deepseek/deepseek-v4-flash", "crusoe"),
+        ("deepseek/deepseek-v4-flash", "makora"),
+        ("moonshotai/kimi-k2.7-code", "makora"),
         ("moonshotai/kimi-k2.6", "crusoe"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
@@ -1080,6 +1083,48 @@ def test_crusoe_provider_models_present_and_routable() -> None:
         ]
         assert credits, f"{model_id} has no crusoe prepaid endpoint"
         assert byok, f"{model_id} has no crusoe BYOK endpoint"
+        assert credits[0].upstream_id == upstream
+        assert credits[0].prompt_price_microdollars_per_million_tokens > 0
+
+
+def test_makora_provider_models_present_and_routable() -> None:
+    """Makora onboarding: native ids from Makora's OpenAI-compatible catalog
+    load from the manifest and create prepaid + BYOK endpoints."""
+
+    assert "makora" in PROVIDERS
+    assert "makora" in GATEWAY_PREPAID_PROVIDER_SLUGS
+    expected = {
+        "deepseek/deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash",
+        "deepseek/deepseek-v4-pro": "deepseek-ai/DeepSeek-V4-Pro",
+        "google/gemma-4-26b-a4b-it": "google/gemma-4-26B-A4B",
+        "z-ai/glm-5.2": "zai-org/GLM-5.2-FP8",
+        "z-ai/glm-5.2-nvfp4": "zai-org/GLM-5.2-NVFP4",
+        "moonshotai/kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
+        "qwen/qwen3.6-27b": "unsloth/Qwen3.6-27B-NVFP4",
+        "qwen/qwen3.6-35b-a3b": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+        "amd/llama-3.3-70b-instruct-fp8-kv": "amd/Llama-3.3-70B-Instruct-FP8-KV",
+    }
+    makora_model_ids = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
+    }
+    assert len(makora_model_ids) >= 10
+    for model_id, upstream in expected.items():
+        model = MODELS.get(model_id)
+        assert model is not None, f"{model_id} missing from catalog"
+        credits = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "Credits" and e.provider == "makora"
+        ]
+        byok = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "BYOK" and e.provider == "makora"
+        ]
+        assert credits, f"{model_id} has no makora prepaid endpoint"
+        assert byok, f"{model_id} has no makora BYOK endpoint"
         assert credits[0].upstream_id == upstream
         assert credits[0].prompt_price_microdollars_per_million_tokens > 0
 

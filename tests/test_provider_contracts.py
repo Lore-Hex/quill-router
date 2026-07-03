@@ -245,6 +245,19 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
         ),
         (
             Model(
+                id="z-ai/glm-5.2",
+                name="GLM 5.2 on Makora",
+                provider="makora",
+                context_length=980000,
+                upstream_id="zai-org/GLM-5.2-FP8",
+            ),
+            "MAKORA_OPTIMIZE_TOKEN",
+            "makora-value",
+            "https://inference.makora.com/v1/chat/completions",
+            "zai-org/GLM-5.2-FP8",
+        ),
+        (
+            Model(
                 id="qwen/qwen3.7-plus",
                 name="Qwen3.7 Plus on Alibaba",
                 provider="alibaba",
@@ -375,9 +388,7 @@ async def test_wafer_live_adapter_requires_zdr_header(tmp_path, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(
-    tmp_path, monkeypatch
-) -> None:
+async def test_wafer_live_adapter_omits_zdr_header_for_non_zdr_model(tmp_path, monkeypatch) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("WAFER_API_KEY=wafer-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []

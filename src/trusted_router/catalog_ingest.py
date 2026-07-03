@@ -59,6 +59,7 @@ def _endpoint(
         published_completion_price_microdollars_per_million_tokens=model.published_completion_price_microdollars_per_million_tokens,
     )
 
+
 def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
     endpoints: dict[str, ModelEndpoint] = {}
     for model in models.values():
@@ -72,6 +73,7 @@ def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
             endpoint = _endpoint(model, usage_type="BYOK")
             endpoints[endpoint.id] = endpoint
     return endpoints
+
 
 _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
 
@@ -169,6 +171,7 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     "friendli": frozenset({"z-ai/glm-5", "zai-org/GLM-5"}),
 }
 
+
 def _is_provider_deprecated_model(
     provider_slug: str,
     model_id: str,
@@ -179,6 +182,7 @@ def _is_provider_deprecated_model(
         return False
     return model_id in deprecated or (upstream_id is not None and upstream_id in deprecated)
 
+
 def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | None:
     author = model_id.split("/", 1)[0].lower()
     if author in _AUTHOR_TO_PROVIDER_SLUG:
@@ -188,6 +192,7 @@ def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | No
         if isinstance(slug, str) and slug in PROVIDERS:
             return slug
     return None
+
 
 def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
@@ -321,6 +326,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
 
     return models, endpoints
 
+
 def _supplemental_provider_models_and_endpoints() -> tuple[
     dict[str, Model], dict[str, ModelEndpoint]
 ]:
@@ -358,6 +364,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "baseten",
         "wafer",
         "crusoe",
+        "makora",
         "zai",
         "tinfoil",
         "xiaomi",
@@ -470,6 +477,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 )
     return models, endpoints
 
+
 def _embedding_models() -> dict[str, Model]:
     """Seed the embedding-model catalog (input-only pricing)."""
     models: dict[str, Model] = {}
@@ -496,6 +504,7 @@ def _embedding_models() -> dict[str, Model]:
             published_price_tiers=_flat_tier(published_price, 0, None),
         )
     return models
+
 
 def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],

@@ -42,6 +42,7 @@ class Provider:
     provider_policy_url: str | None = None
     provider_headquarters_country: str | None = None
 
+
 PRIVACY_TIER_STANDARD = 0  # no tracked posture (would store content)
 
 PRIVACY_TIER_NO_STORE = 1  # does not store request/response content
@@ -74,12 +75,14 @@ PRIVACY_TIER_LABELS: dict[int, str] = {
 
 PROVIDER_JURISDICTION_US = "US"
 
+
 @dataclass(frozen=True)
 class ModelProviderPrivacyOverride:
     privacy_tier: int
     provider_zero_data_retention: bool | None = None
     provider_policy: str | None = None
     provider_policy_url: str | None = None
+
 
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
     (
@@ -96,6 +99,7 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
         provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
     ),
 }
+
 
 @dataclass(frozen=True)
 class Model:
@@ -123,6 +127,7 @@ class Model:
     published_price_tiers: tuple[PriceTier, ...] = ()
     hidden_public_metadata: bool = False
 
+
 @dataclass(frozen=True)
 class ModelEndpoint:
     id: str
@@ -140,6 +145,7 @@ class ModelEndpoint:
     @property
     def is_byok(self) -> bool:
         return self.usage_type.lower() == "byok"
+
 
 PROVIDERS: dict[str, Provider] = {
     "trustedrouter": Provider(
@@ -505,6 +511,23 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://docs.crusoecloud.com/managed-inference/overview/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    # Makora Inference — OpenAI-compatible API at inference.makora.com/v1.
+    # The public /v1/models feed exposes model IDs and context windows, but not
+    # prices, so TR carries provider-native IDs and provisional reviewable
+    # prices in data/provider_models/makora.json until a first-party pricing
+    # feed exists.
+    "makora": Provider(
+        slug="makora",
+        name="Makora",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Makora's inference and "
+            "privacy documentation are linked for users who need to review API "
+            "data handling."
+        ),
+        provider_policy_url="https://www.makora.com/privacy-policy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -671,6 +694,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "baseten",
         "wafer",
         "crusoe",
+        "makora",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
@@ -1102,6 +1126,7 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+
 class _EmbeddingSpec(TypedDict):
     id: str
     name: str
@@ -1109,6 +1134,7 @@ class _EmbeddingSpec(TypedDict):
     upstream_id: str
     context_length: int
     cost_dollars_per_million: str
+
 
 _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
     # OpenAI — api.openai.com/v1/embeddings (OpenAI-shaped)
