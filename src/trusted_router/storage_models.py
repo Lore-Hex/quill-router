@@ -199,6 +199,40 @@ class BroadcastDeliveryJob:
 
 
 @dataclass
+class SettleOutboxRow:
+    """A durable settle intent (docs/design/durable-settle-outbox.md).
+
+    Enqueued before the inline settle is attempted; recovered by the drain if the
+    inline attempt is lost. The FROZEN inputs (actual_cost_micro / selected_* /
+    model_id / settle_origin / reservation_id) are captured from the SAME decision
+    the inline attempt used, so a drain applies a deterministic amount and origin
+    no matter what pricing or the typed-mirror flag do afterward. The PK is
+    (authorization_id, intent_kind) so a settle and a refund never clobber.
+
+    status: pending -> done (charged, terminal) | dead (drain gave up, FREEZES the
+    hold — a human resolves) | release_approved (human ok'd freeing the hold).
+    """
+
+    authorization_id: str
+    intent_kind: str  # "settle" | "refund"
+    settle_origin: str  # "typed" | "legacy"
+    actual_cost_micro: int
+    reservation_id: str | None = None
+    selected_endpoint_id: str | None = None
+    model_id: str | None = None
+    selected_usage_type: str | None = None
+    settle_body: str | None = None  # raw GatewaySettleRequest JSON (audit/generation)
+    status: str = "pending"
+    attempts: int = 0
+    last_error: str | None = None
+    next_attempt_at: str | None = field(default_factory=iso_now)
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    created_at: str = field(default_factory=iso_now)
+    updated_at: str | None = None
+
+
+@dataclass
 class CreditAccount:
     workspace_id: str
     total_credits_microdollars: int = 0
