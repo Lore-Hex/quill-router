@@ -253,49 +253,6 @@ def model_provider_policy_url(model_id: str, provider_slug: str) -> str | None:
 # Code-tuned synth variant: same panel/synthesizers as synth, but judged by
 # kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
 # enclave, cmd/enclave/fusion.go).
-# Legacy compatibility aliases. Keep these working for existing customers.
-
-
-
-for _advisor_model_id in (
-    SOCRATES_1_0_MODEL_ID,
-    SOCRATES_1_1_MODEL_ID,
-    SOCRATES_MODEL_ID,
-    ARISTOTLE_1_0_MODEL_ID,
-    ARISTOTLE_MODEL_ID,
-    PLATO_1_0_MODEL_ID,
-    PLATO_MODEL_ID,
-    PLATO_PRO_1_0_MODEL_ID,
-    PLATO_PRO_MODEL_ID,
-    SOCRATES_PRO_1_0_MODEL_ID,
-    SOCRATES_PRO_MODEL_ID,
-    SOCRATES_PRO_PLUS_1_0_MODEL_ID,
-    SOCRATES_PRO_PLUS_MODEL_ID,
-    OPEN_PATCHER_A1_MODEL_ID,
-    OPEN_PATCHER_FAST1_MODEL_ID,
-    OPEN_PATCHER_G1_MODEL_ID,
-    ATHENA_MODEL_ID,
-):
-    ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
-
-for _synth_model_id in (
-    IRIS_MODEL_ID,
-    PROMETHEUS_MODEL_ID,
-    ZEUS_MODEL_ID,
-    IRIS_1_0_MODEL_ID,
-    PROMETHEUS_1_0_MODEL_ID,
-    PROMETHEUS_1_0_1M_MODEL_ID,
-    ZEUS_1_0_MODEL_ID,
-    ZEUS_1_0_MINI_MODEL_ID,
-    IRIS_CODE_MODEL_ID,
-    PROMETHEUS_CODE_MODEL_ID,
-    ZEUS_CODE_MODEL_ID,
-    IRIS_CODE_1_0_MODEL_ID,
-    PROMETHEUS_CODE_1_0_MODEL_ID,
-    ZEUS_CODE_1_0_MODEL_ID,
-    OPEN_PATCHER_S1_MODEL_ID,
-):
-    ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
 
 
 
