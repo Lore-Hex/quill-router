@@ -991,6 +991,7 @@ SYNTH_FRONTIER_MODEL_ORDER = (
 )
 
 SYNTH_FRONTIER_MINI_MODEL_ORDER = (
+    "google/gemini-3.1-pro-preview",
     "google/gemini-3.5-flash",
     "minimax/minimax-m3",
     "z-ai/glm-5.2",

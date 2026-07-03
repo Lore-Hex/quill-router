@@ -735,6 +735,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         == zeus_meta["auto_candidates"]
     )
     assert models_by_id["trustedrouter/zeus-1.0-mini"]["trustedrouter"]["auto_candidates"] == [
+        "google/gemini-3.1-pro-preview",
         "google/gemini-3.5-flash",
         "minimax/minimax-m3",
         "z-ai/glm-5.2",

@@ -729,6 +729,7 @@ def test_zeus_1_0_and_mini_have_expected_panels() -> None:
     assert zeus_shape["trustedrouter"]["us_provider_available"] is True
     assert zeus_shape["trustedrouter"]["eu_focused_provider_available"] is True
     assert [model.id for model in meta_candidate_models(ZEUS_1_0_MINI_MODEL_ID)] == [
+        "google/gemini-3.1-pro-preview",
         "google/gemini-3.5-flash",
         "minimax/minimax-m3",
         "z-ai/glm-5.2",
