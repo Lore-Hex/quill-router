@@ -5,6 +5,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from trusted_router.storage_gcp_settle_outbox import OUTBOX_COLUMNS
+
 
 class _ParamTypes:
     STRING = "STRING"
@@ -123,6 +125,9 @@ class FakeSpannerDatabase:
         self.reservations: dict[str, dict] = {}
         self.reservation_versions: dict[str, int] = {}
         self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
+        # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
+        self.settle_outbox: dict[tuple, dict] = {}
+        self.settle_outbox_versions: dict[tuple, int] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -159,6 +164,8 @@ class FakeSpannerDatabase:
                     # presence-based: a same-scope insert committed since our read
                     # flips this, aborting the loser so its retry raises ALREADY_EXISTS
                     current_version = 1 if key[1] in self.reservation_idemp else 0
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox":
+                    current_version = self.settle_outbox_versions.get(key[1], 0)
                 else:
                     current = self.rows.get(key)
                     current_version = current.version if current is not None else 0
@@ -194,6 +201,10 @@ class FakeSpannerDatabase:
                     scope = record.get("idempotency_scope")
                     if scope is not None:
                         self.reservation_idemp[scope] = rid
+                elif op[0] in ("insert_settle_outbox", "update_settle_outbox"):
+                    _, pk, record = op
+                    self.settle_outbox[pk] = record
+                    self.settle_outbox_versions[pk] = new_version
                 elif op[0] == "update_reservation":
                     _, rid, record = op
                     self.reservations[rid] = record
@@ -248,6 +259,17 @@ class _FakeTransaction:
         if version_key not in self.read_versions:
             self.read_versions[version_key] = self.db.reservation_versions.get(rid, 0)
         rec = self.db.reservations.get(rid)
+        return dict(rec) if rec is not None else None
+
+    def _settle_outbox_current(self, pk: tuple) -> dict | None:
+        """In-txn view of a settle-outbox row (read-your-writes) + read version."""
+        for op in reversed(self.pending_writes):
+            if op[0] in ("insert_settle_outbox", "update_settle_outbox") and op[1] == pk:
+                return dict(op[2])
+        version_key = ("outbox", pk)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = self.db.settle_outbox_versions.get(pk, 0)
+        rec = self.db.settle_outbox.get(pk)
         return dict(rec) if rec is not None else None
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
@@ -399,6 +421,67 @@ class _FakeTransaction:
                     return 0  # no such row
             self.pending_writes.append(("update_entity_dml", p["kind"], p["id"], p["body"]))
             return 1
+        if sql.startswith("INSERT INTO tr_settle_outbox"):
+            pk = (p["authorization_id"], p["intent_kind"])
+            if pk in self.db.settle_outbox:
+                raise FakeAlreadyExists(str(pk))  # duplicate PK
+            vkey = ("outbox", pk)
+            if vkey not in self.read_versions:
+                self.read_versions[vkey] = self.db.settle_outbox_versions.get(pk, 0)
+            self.pending_writes.append(("insert_settle_outbox", pk, dict(p)))
+            return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET settle_origin="):  # enqueue refresh
+            # SQL-SENSITIVE (codex #113 finding 1): assert every load-bearing
+            # predicate — including the PK key — is present, so a dropped predicate
+            # FAILS a test (real Spanner would update every matching row, not the
+            # single pk the fake derives from params).
+            _require_pred(sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh")
+            _require_pred(sql, "status='pending'", "refresh")
+            _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
+            pk = (p["authorization_id"], p["intent_kind"])
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec["status"] != "pending":
+                return 0
+            leased = rec.get("leased_until")
+            if leased is not None and leased >= p["now"]:
+                return 0  # actively leased -> refresh is a no-op (finding 2 fix)
+            new = dict(rec)
+            for col in (
+                "settle_origin", "reservation_id", "actual_cost_micro",
+                "selected_endpoint_id", "model_id", "selected_usage_type", "settle_body",
+            ):
+                new[col] = p[col]
+            new["updated_at"] = p["now"]
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET lease_owner=@owner"):  # claim
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "claim")
+            _require_pred(sql, "status='pending'", "claim")
+            _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "claim")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec["status"] != "pending":
+                return 0
+            leased = rec.get("leased_until")
+            if leased is not None and leased >= p["now"]:
+                return 0  # still held by a live lease
+            new = dict(rec, lease_owner=p["owner"], leased_until=p["lease"], updated_at=p["now"])
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
+            _require_pred(sql, "status='pending'", "mark")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec["status"] != "pending":
+                return 0
+            new = dict(
+                rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],
+                next_attempt_at=p["next_at"], lease_owner=None, leased_until=None,
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
         raise NotImplementedError(sql)
 
     def insert_or_update(
@@ -512,6 +595,60 @@ class _FakeBatch:
                 self.pending_writes.append(("delete_typed", table, (entry[0], entry[1])))
 
 
+def _require_pred(sql: str, needle: str, what: str) -> None:
+    """Fail loudly if a load-bearing predicate is missing from the real SQL, so a
+    predicate typo/drop FAILS a test instead of the fake silently enforcing the
+    intended behavior in Python (codex #113 finding 1 / design MF6)."""
+    if needle not in sql:
+        raise AssertionError(f"tr_settle_outbox {what} query missing predicate: {needle!r}")
+
+
+def _execute_settle_outbox_sql(
+    db: FakeSpannerDatabase,
+    txn: _FakeTransaction | None,
+    sql: str,
+    params: dict[str, Any],
+) -> list[list[Any]]:
+    """Model tr_settle_outbox reads. SQL-SENSITIVE: each branch asserts the
+    predicates it relies on are present in the real query, so a dropped guard/
+    status/key predicate fails a test rather than silently matching."""
+    p = params
+    if sql.startswith("SELECT attempts, lease_owner FROM tr_settle_outbox"):
+        _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark-read")
+        _require_pred(sql, "status='pending'", "mark-read")
+        pk = (p["aid"], p["kind"])
+        # Txn-aware read (finding 3): read-your-writes + register the read version
+        # exactly like the reservation path, instead of peeking committed state.
+        rec = txn._settle_outbox_current(pk) if txn is not None else db.settle_outbox.get(pk)
+        if rec is None or rec.get("status") != "pending":
+            return []
+        return [[rec.get("attempts", 0), rec.get("lease_owner")]]
+    if "WHERE status='pending' AND next_attempt_at <= @now" in sql:  # due scan
+        now = p["now"]
+        limit = int(p.get("limit", 100))
+        rows = [
+            rec for rec in db.settle_outbox.values()
+            if rec.get("status") == "pending"
+            and rec.get("next_attempt_at") is not None
+            and rec["next_attempt_at"] <= now
+        ]
+        rows.sort(key=lambda r: r.get("next_attempt_at") or "")
+        return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
+    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
+        _require_pred(sql, "authorization_id=@aid", "has_intent")
+        _require_pred(sql, "status IN ('pending', 'dead')", "has_intent")
+        aid = p["aid"]
+        n = sum(
+            1 for rec in db.settle_outbox.values()
+            if rec.get("authorization_id") == aid and rec.get("status") in ("pending", "dead")
+        )
+        return [[n]]
+    if "WHERE authorization_id=@aid AND intent_kind=@kind" in sql:  # get by PK
+        rec = db.settle_outbox.get((p["aid"], p["kind"]))
+        return [[rec.get(c) for c in OUTBOX_COLUMNS]] if rec is not None else []
+    raise NotImplementedError(sql)
+
+
 def _execute_sql(
     db: FakeSpannerDatabase,
     txn: _FakeTransaction | None,
@@ -519,6 +656,11 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # tr_settle_outbox (durable settle outbox) — modeled explicitly so a guard/
+    # column/status typo makes a test FAIL rather than silently matching a
+    # generic branch (the substring-collision hazard the design flags).
+    if "tr_settle_outbox" in sql:
+        return _execute_settle_outbox_sql(db, txn, sql, params)
     # Reaper scan: expired unsettled reservations.
     if "FROM tr_reservation WHERE settled=false AND expires_at" in sql:
         now = params["now"]

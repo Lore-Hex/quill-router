@@ -152,6 +152,14 @@ class Settings(BaseSettings):
     # TR_READ_ONLY=1` per region during a planned cutover. See the
     # multi-region expansion plan for the cutover sequence.
     read_only: bool = False
+    # Durable settle outbox (docs/design/durable-settle-outbox.md). Default OFF:
+    # the settle path is byte-identical and nothing is enqueued. When True, the
+    # settle handler durably records each settle intent before applying it, and
+    # the /internal/gateway/settle-outbox/drain worker recovers any that were
+    # lost so the reaper never releases a completed request for free. Enabling is
+    # a billing prod-behavior change — flip deliberately, per the design's
+    # rollout section, after the shadow metrics are clean.
+    settle_outbox_enabled: bool = False
     # Bigtable application profile name. The default profile uses
     # single-cluster routing; `tr-multi` enables
     # multi-cluster-routing-use-any once we have ≥3 BT clusters

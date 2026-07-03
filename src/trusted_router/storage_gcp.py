@@ -57,6 +57,7 @@ from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_ret
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
+from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_gcp_synthetic_index import (
     synthetic_probe_samples as _bt_synthetic_probe_samples,
 )
@@ -208,6 +209,11 @@ class SpannerBigtableStore:
         self.byok_store = SpannerByok(io)
         self.custom_model_store = SpannerCustomModels(io)
         self.broadcast_store = SpannerBroadcastDestinations(io)
+        # Durable settle outbox (docs/design/durable-settle-outbox.md). Native
+        # table, so it takes the raw database + param_types like the counter DML
+        # rather than the entity IO. Dormant until settle_outbox_enabled + the
+        # later increments wire enqueue/drain/reaper-guard to it.
+        self.settle_outbox = SpannerSettleOutbox(self._database, self._param_types)
         self.auth_session_store = SpannerAuthSessions(io)
         self.oauth_code_store = SpannerOAuthCodes(io)
         self.rate_limit_store = SpannerRateLimits(io)

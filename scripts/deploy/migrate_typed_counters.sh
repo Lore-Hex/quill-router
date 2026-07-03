@@ -175,4 +175,40 @@ ensure_column tr_key_limit week_start  "TIMESTAMP"
 ensure_column tr_key_limit month_usage "INT64 DEFAULT (0)"
 ensure_column tr_key_limit month_start "TIMESTAMP"
 
+# ── Durable settle outbox (docs/design/durable-settle-outbox.md) ────────────
+# Recovers completed-but-settle-lost charges. Additive + guarded; safe to apply
+# before the code reads it (the mechanism is gated off by settle_outbox_enabled).
+# PK is (authorization_id, intent_kind) so a settle and a refund on one
+# authorization never clobber each other. Frozen settle inputs (actual_cost_micro,
+# selected_endpoint_id, model_id, selected_usage_type, settle_origin,
+# reservation_id) are captured at enqueue so a drain replays a deterministic
+# amount+origin regardless of any later pricing/mirror-flag change.
+if table_exists tr_settle_outbox; then log "tr_settle_outbox exists, skip"; else
+  apply_ddl "CREATE TABLE tr_settle_outbox (
+    authorization_id STRING(64) NOT NULL,
+    intent_kind STRING(16) NOT NULL,
+    settle_origin STRING(16) NOT NULL,
+    reservation_id STRING(64),
+    actual_cost_micro INT64 NOT NULL,
+    selected_endpoint_id STRING(128),
+    model_id STRING(128),
+    selected_usage_type STRING(16),
+    settle_body STRING(MAX),
+    status STRING(24) NOT NULL DEFAULT ('pending'),
+    attempts INT64 NOT NULL DEFAULT (0),
+    last_error STRING(MAX),
+    next_attempt_at TIMESTAMP,
+    lease_owner STRING(64),
+    leased_until TIMESTAMP,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+  ) PRIMARY KEY (authorization_id, intent_kind)"
+fi
+
+# Due-scan index: the drain reads pending rows whose next_attempt_at has passed.
+# Without it the whale-burst backlog the feature exists for would full-scan.
+if index_exists tr_settle_outbox_due; then log "tr_settle_outbox_due exists, skip"; else
+  apply_ddl "CREATE INDEX tr_settle_outbox_due ON tr_settle_outbox (status, next_attempt_at)"
+fi
+
 log "done"
