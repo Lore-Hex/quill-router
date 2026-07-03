@@ -319,7 +319,11 @@ def register(router: APIRouter) -> None:
         if _typed_store is not None and _typed_cohort:
             import datetime as _dt
 
-            from trusted_router.spend_windows import key_window_limits, utcnow, window_resets_at
+            from trusted_router.spend_windows import (
+                enforced_window_limits,
+                utcnow,
+                window_resets_at,
+            )
             from trusted_router.storage_gcp_authorize import AuthorizeOutcome
 
             # expires_at = generous execution deadline (> max stream + settle
@@ -332,7 +336,7 @@ def register(router: APIRouter) -> None:
             window_limits = (
                 {}
                 if is_byok_request and not api_key.include_byok_in_limit
-                else key_window_limits(api_key)
+                else enforced_window_limits(api_key)  # {} in alert mode → never blocks
             )
             outcome, authorization = _typed_store.authorize_gateway_typed(
                 workspace_id=workspace.id,
@@ -794,6 +798,25 @@ def _settle_gateway_authorization(
 
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
+    if success:
+        # Alert-mode budgets: email the owner when a window is crossed (never
+        # blocks — the block happens at authorize for limit-mode keys). Off the
+        # hot path; best-effort.
+        from trusted_router.services.budget_alerts import maybe_send_budget_alerts
+
+        if background_tasks is not None:
+            background_tasks.add_task(
+                maybe_send_budget_alerts,
+                api_key_hash=authorization.key_hash,
+                workspace_id=authorization.workspace_id,
+                settings=settings,
+            )
+        else:
+            maybe_send_budget_alerts(
+                api_key_hash=authorization.key_hash,
+                workspace_id=authorization.workspace_id,
+                settings=settings,
+            )
     if success and generation is not None:
         settle_body = body.model_dump(exclude_none=True)
         enqueue_metadata_broadcast(generation, settle_body=settle_body)

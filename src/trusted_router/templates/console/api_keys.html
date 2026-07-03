@@ -23,14 +23,15 @@
     <form class="form" method="post" action="/console/api-keys">
       <div class="row">
         <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-        <label>Total budget (USD, optional)<input name="limit" type="number" min="0" step="0.000001" placeholder="e.g. 100"></label>
+        <label>Total budget (USD, optional)<input name="limit" type="text" inputmode="decimal" placeholder="e.g. 100"></label>
       </div>
       <div class="row key-window-row">
-        <label>Daily limit (USD, optional)<input name="limit_daily" type="number" min="0" step="0.000001" placeholder="e.g. {{ suggested.daily }}"></label>
-        <label>Weekly limit (USD, optional)<input name="limit_weekly" type="number" min="0" step="0.000001" placeholder="e.g. {{ suggested.weekly }}"></label>
-        <label>Monthly limit (USD, optional)<input name="limit_monthly" type="number" min="0" step="0.000001" placeholder="e.g. {{ suggested.monthly }}"></label>
+        <label>Daily limit (USD, optional)<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
+        <label>Weekly limit (USD, optional)<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
+        <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
       </div>
-      <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate (a burst of in-flight requests can slightly overshoot). Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
+      <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" checked> <span>Alert only — email me when a budget is crossed, don’t block the app</span></label>
+      <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Uncheck “Alert only” to hard-stop (429) at the budget instead. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
       <button class="btn primary" type="submit">Create key</button>
     </form>
   </div>
@@ -49,11 +50,12 @@
           <td data-col="Budgets">
             <form class="key-budget-form" method="post" action="/console/api-keys/{{ k.hash }}/limit">
               <div class="key-budget-grid">
-                <label>Total<input name="limit" type="number" min="0" step="0.000001" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
+                <label>Total<input name="limit" type="text" inputmode="decimal" placeholder="unlimited" value="{{ k.limit_input }}" aria-label="Total budget for {{ k.name }}"></label>
                 {% for w in k.windows %}
-                <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="number" min="0" step="0.000001" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
+                <label>{{ w.name|capitalize }}<input name="limit_{{ w.name }}" type="text" inputmode="decimal" placeholder="off" value="{{ w.input }}" aria-label="{{ w.name|capitalize }} limit for {{ k.name }}"></label>
                 {% endfor %}
               </div>
+              <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" {% if k.budget_alert_only %}checked{% endif %} aria-label="Alert only for {{ k.name }}"> <span>Alert only (email, don’t block)</span></label>
               <button class="btn" type="submit">Save</button>
             </form>
             <div class="key-budget-current">

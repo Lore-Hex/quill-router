@@ -224,7 +224,7 @@ def test_inmemory_window_enforcement_and_snapshot() -> None:
     ws = STORE.list_workspaces_for_user(user.id)[0]
     _raw, key = STORE.create_api_key(
         workspace_id=ws.id, name="k", creator_user_id=user.id,
-        limit_daily_microdollars=1_000,
+        limit_daily_microdollars=1_000, budget_alert_only=False,  # limit mode: window blocks
     )
     # Book usage via the InMemory settle path, then the window blocks.
     STORE.api_keys.add_usage(key.hash, 800, is_byok=False)

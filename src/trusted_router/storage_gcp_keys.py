@@ -57,6 +57,7 @@ class SpannerApiKeys:
         limit_daily_microdollars: int | None = None,
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
+        budget_alert_only: bool = True,
     ) -> tuple[str, ApiKey]:
         raw = raw_key or new_api_key()
         key_id = new_key_id()
@@ -79,6 +80,7 @@ class SpannerApiKeys:
             limit_daily_microdollars=limit_daily_microdollars,
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
+            budget_alert_only=budget_alert_only,
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)
@@ -153,6 +155,10 @@ class SpannerApiKeys:
                 setattr(key, field, patch[field])
         if "include_byok_in_limit" in patch:
             key.include_byok_in_limit = bool(patch["include_byok_in_limit"])
+        if patch.get("budget_alert_only") is not None:
+            key.budget_alert_only = bool(patch["budget_alert_only"])
+        if "budget_alerted" in patch:
+            key.budget_alerted = dict(patch["budget_alerted"] or {})
         key.updated_at = iso_now()
         self._io.write_entity("api_key", key.hash, key)
         return key

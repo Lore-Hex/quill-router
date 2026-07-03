@@ -73,6 +73,7 @@ def register_key_routes(router: APIRouter) -> None:
             limit_monthly_microdollars=(
                 None if body.limit_monthly is None else dollars_to_microdollars(body.limit_monthly)
             ),
+            budget_alert_only=body.budget_alert_only,
         )
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 

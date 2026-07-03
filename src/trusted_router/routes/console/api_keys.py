@@ -83,6 +83,7 @@ def register(app: FastAPI) -> None:
         limit_daily: str = Form(""),
         limit_weekly: str = Form(""),
         limit_monthly: str = Form(""),
+        budget_alert_only: str = Form(""),
     ) -> Response:
         try:
             limit_microdollars = _parse_limit(limit)
@@ -101,6 +102,10 @@ def register(app: FastAPI) -> None:
             limit_daily_microdollars=daily_micro,
             limit_weekly_microdollars=weekly_micro,
             limit_monthly_microdollars=monthly_micro,
+            # The model/API default is alert (True); here 'omitted checkbox' = False.
+            # That's safe ONLY because the create template renders the box checked —
+            # a browser always sends 'on' unless the user unchecks it (codex/reviewer note).
+            budget_alert_only=_checkbox(budget_alert_only),
         )
         return _render_page(ctx, settings, created_key=raw)
 
@@ -112,10 +117,14 @@ def register(app: FastAPI) -> None:
         limit_daily: str = Form(""),
         limit_weekly: str = Form(""),
         limit_monthly: str = Form(""),
+        budget_alert_only: str = Form(""),
     ) -> Response:
         _require_key(ctx, key_hash)
         try:
-            patch: dict[str, Any] = {"limit_microdollars": _parse_limit(limit)}
+            patch: dict[str, Any] = {
+                "limit_microdollars": _parse_limit(limit),
+                "budget_alert_only": _checkbox(budget_alert_only),
+            }
             for window, value in (
                 ("daily", limit_daily), ("weekly", limit_weekly), ("monthly", limit_monthly),
             ):
@@ -175,6 +184,13 @@ def _parse_limit(value: str) -> int | None:
     return micro
 
 
+def _checkbox(value: str) -> bool:
+    """An HTML checkbox posts 'on' when checked, nothing when cleared. The
+    budget forms render the Alert-only box checked by default, so a submitted
+    form carries 'on' (alert) unless the user unchecks it (hard limit)."""
+    return value == "on"
+
+
 def _key_view(key: ApiKey) -> dict[str, Any]:
     limit_display = "none" if key.limit_microdollars is None else money(key.limit_microdollars)
     # One typed point-read for live usage + current window spend (falls back to
@@ -202,5 +218,6 @@ def _key_view(key: ApiKey) -> dict[str, Any]:
         ),
         "usage_display": money(lifetime_used),
         "windows": window_views,
+        "budget_alert_only": key.budget_alert_only,
         "disabled": key.disabled,
     }
