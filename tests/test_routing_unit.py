@@ -358,9 +358,11 @@ def test_min_privacy_too_high_for_model_raises() -> None:
 def test_model_shape_exposes_privacy_tier() -> None:
     from trusted_router.catalog import MODELS, model_to_openrouter_shape
 
-    # Anthropic is zero-retention → tier label present and >= ZDR.
-    anth = next(m for m in MODELS.values() if m.provider == "anthropic")
-    shape = model_to_openrouter_shape(anth)
+    # A model served by a zero-retention+ provider (deepseek via phala/tinfoil)
+    # exposes the tier label and >= ZDR. (anthropic/openai/google were downgraded
+    # from ZDR to standard in 4faa10d, so they no longer clear tier 2.)
+    zdr_model = MODELS["deepseek/deepseek-v3.2"]
+    shape = model_to_openrouter_shape(zdr_model)
     tr = shape["trustedrouter"]
     assert "privacy_tier" in tr
     assert "privacy_tier_label" in tr
@@ -368,13 +370,15 @@ def test_model_shape_exposes_privacy_tier() -> None:
 
 
 def test_data_collection_deny_keeps_zdr_drops_standard() -> None:
-    # deny == "no data collection" → require >= no-store tier. ZDR
-    # providers (anthropic) carry the conservative stores_content=True
-    # default but must NOT be dropped; standard providers must be.
+    # deny == "no data collection" → require >= no-store tier. A model on a
+    # no-store+ provider (deepseek via phala/tinfoil) must be KEPT; a model only
+    # on standard providers must be dropped. NOTE: anthropic/openai/google were
+    # downgraded from ZDR to standard in 4faa10d ("excluded from trustedrouter/zdr
+    # until reverified"), so they are no longer the ZDR example.
     from trusted_router.catalog import PRIVACY_TIER_NO_STORE, model_max_privacy_tier
 
     kept = chat_route_candidates(
-        {"model": "anthropic/claude-sonnet-4.6", "provider": {"data_collection": "deny"}},
+        {"model": "deepseek/deepseek-v3.2", "provider": {"data_collection": "deny"}},
         _settings(),
     )
     assert kept and all(model_max_privacy_tier(m) >= PRIVACY_TIER_NO_STORE for m in kept)
