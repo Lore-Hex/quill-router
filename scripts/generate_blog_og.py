@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from trusted_router.blog import BLOG_POSTS  # noqa: E402
+from trusted_router.content.blog import BLOG_POSTS  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "src" / "trusted_router" / "static" / "og" / "blog"
 W, H, PAD = 1200, 630, 28
