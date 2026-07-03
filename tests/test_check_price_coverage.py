@@ -31,6 +31,11 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "zai/GLM-5.2"}]}
     if "maas.aliyuncs.com" in url:
         return {"data": [{"id": "glm-5.2"}]}
+    if "inference.makora.com" in url:
+        # Makora serves the GLM flagship as a quantized native id (see
+        # _MAKORA_MODEL_IDS); mirror the other GLM providers' mock so discovery
+        # matches instead of warning "returned no model ids".
+        return {"data": [{"id": "zai-org/GLM-5.2-FP8"}]}
     return {"data": []}
 
 
