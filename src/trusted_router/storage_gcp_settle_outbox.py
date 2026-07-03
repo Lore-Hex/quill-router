@@ -168,7 +168,13 @@ class SpannerSettleOutbox:
             if not _is_already_exists(exc):
                 raise
 
-        # Refresh the frozen inputs iff the existing row is still pending.
+        # Refresh the frozen inputs iff the existing row is still pending AND not
+        # actively leased. A claimed row stays status='pending' while a drain
+        # worker applies it, so refreshing on status alone could overwrite
+        # actual_cost_micro / body out from under an in-flight apply (codex #113
+        # finding 2). The lease fence makes a retry-enqueue a no-op while a drain
+        # holds the row; once the lease lapses (or the drain fails back to
+        # pending) a later enqueue can refresh again.
         def refresh_txn(transaction: Any) -> int:
             return transaction.execute_update(
                 "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
@@ -176,7 +182,8 @@ class SpannerSettleOutbox:
                 "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
                 "selected_usage_type=@selected_usage_type, settle_body=@settle_body, "
                 "updated_at=@now WHERE authorization_id=@authorization_id "
-                "AND intent_kind=@intent_kind AND status='pending'",
+                "AND intent_kind=@intent_kind AND status='pending' "
+                "AND (leased_until IS NULL OR leased_until < @now)",
                 params={
                     "settle_origin": row.settle_origin,
                     "reservation_id": row.reservation_id,

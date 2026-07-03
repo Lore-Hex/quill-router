@@ -8,7 +8,9 @@ drain worker, and frozen-cost finalize primitive land in later increments.
 
 from __future__ import annotations
 
-from tests.fakes.spanner import make_fake_store
+import pytest
+
+from tests.fakes.spanner import _execute_settle_outbox_sql, _FakeTransaction, make_fake_store
 from trusted_router.storage_gcp_settle_outbox import (
     ENQ_EXISTS_TERMINAL,
     ENQ_INSERTED,
@@ -123,6 +125,42 @@ def test_mark_rejects_a_lost_lease() -> None:
     # Worker B (wrong owner) cannot mark it.
     assert ob.mark("gwa-8", "settle", done=True, lease_owner="soworker_intruder") is None
     assert ob.get("gwa-8", "settle").status == "pending"
+
+
+def test_enqueue_refresh_does_not_overwrite_an_actively_leased_row() -> None:
+    """codex #113 finding 2: a claimed row stays status='pending' while a drain
+    applies it, so a retry-enqueue must NOT overwrite its frozen inputs mid-drain."""
+    store, _db, _ = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-11", cost=1000))
+    [job] = ob.claim(lease_seconds=300)  # a drain worker now owns it
+    # The enclave re-delivers with corrected actuals while the drain holds the lease.
+    assert ob.enqueue(_row("gwa-11", cost=8888)) == ENQ_EXISTS_TERMINAL  # no-op
+    got = ob.get("gwa-11", "settle")
+    assert got.actual_cost_micro == 1000  # unchanged under the active lease
+    assert got.lease_owner == job.lease_owner
+
+
+def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
+    """MF6 / codex #113 finding 1: the fake must FAIL when a load-bearing SQL
+    predicate is dropped, not silently enforce the intended behavior in Python."""
+    store, db, _ = make_fake_store()
+    _outbox(store).enqueue(_row("gwa-12"))
+    # A has_intent query missing `authorization_id=@aid` must FAIL (not count).
+    with pytest.raises(AssertionError, match="has_intent"):
+        _execute_settle_outbox_sql(
+            db, None,
+            "SELECT COUNT(*) FROM tr_settle_outbox WHERE status IN ('pending', 'dead')",
+            {"aid": "gwa-12"},
+        )
+    # A claim query missing its `leased_until` lease fence must likewise FAIL.
+    with pytest.raises(AssertionError, match="claim"):
+        _FakeTransaction(db).execute_update(
+            "UPDATE tr_settle_outbox SET lease_owner=@owner, leased_until=@lease, "
+            "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
+            "AND status='pending'",  # dropped the leased_until fence
+            params={"owner": "x", "lease": "z", "now": "z", "aid": "gwa-12", "kind": "settle"},
+        )
 
 
 def test_has_intent_freezes_on_pending_and_dead_only() -> None:
