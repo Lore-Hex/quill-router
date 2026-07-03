@@ -123,14 +123,8 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     select_price_tier,
 )
 
-# Privacy-posture tiers, lowest → highest. A request can demand a minimum
-# tier (provider.min_privacy in the routing prefs); the router then only
-# considers providers whose posture clears that bar. The tiers are nested:
-# every confidential provider is also zero-retention; every zero-retention
-# provider is also no-store.
-
-# Friendly names a client can pass as provider.min_privacy. All map to a
-# minimum tier rank above. "standard"/"any" is the default (no filter).
+# Privacy-posture tier logic (the PRIVACY_TIER_* ranks + aliases these read now
+# live in catalog_data; these functions apply them).
 
 
 
@@ -248,13 +242,6 @@ def model_provider_policy_url(model_id: str, provider_slug: str) -> str | None:
 # keyed provider, but Credits endpoints must stay in sync with this set so
 # the control plane cannot authorize a prepaid route the enclave cannot
 # dispatch.
-
-
-# Code-tuned synth variant: same panel/synthesizers as synth, but judged by
-# kimi-k2.7-code instead of the general kimi-k2.6 (the judge swap lives in the
-# enclave, cmd/enclave/fusion.go).
-
-
 
 
 def orchestration_primitive(model_id: str) -> str | None:
