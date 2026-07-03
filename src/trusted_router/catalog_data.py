@@ -513,9 +513,8 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # Makora Inference — OpenAI-compatible API at inference.makora.com/v1.
     # The public /v1/models feed exposes model IDs and context windows, but not
-    # prices, so TR carries provider-native IDs and provisional reviewable
-    # prices in data/provider_models/makora.json until a first-party pricing
-    # feed exists.
+    # prices. TR carries provider-native IDs in data/provider_models/makora.json
+    # and sources prices from Makora's public homepage lineup where published.
     "makora": Provider(
         slug="makora",
         name="Makora",

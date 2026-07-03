@@ -1129,6 +1129,37 @@ def test_makora_provider_models_present_and_routable() -> None:
         assert credits[0].prompt_price_microdollars_per_million_tokens > 0
 
 
+def test_makora_provider_prices_follow_published_lineup() -> None:
+    """Makora publishes per-token model prices on its homepage lineup.
+
+    The provider manifest stores raw upstream cost in microdollars/M; the
+    catalog applies the standard 10% customer markup at load time.
+    """
+
+    expected_prices = {
+        "deepseek/deepseek-v4-flash": (124_740, 307_010, 93_610),
+        "deepseek/deepseek-v4-pro": (1_449_800, 2_899_710, 1_087_350),
+        "z-ai/glm-5.2": (1_485_000, 4_389_000, 264_000),
+        "moonshotai/kimi-k2.7-code": (836_000, 4_152_390, 633_270),
+        "meta-llama/llama-3.3-70b-instruct": (198_000, 440_000, 165_000),
+        "qwen/qwen3.6-35b-a3b": (189_200, 1_320_220, 141_900),
+    }
+
+    for model_id, (prompt, completion, cached_prompt) in expected_prices.items():
+        credits = [
+            e
+            for e in endpoints_for_model(model_id)
+            if str(e.usage_type) == "Credits" and e.provider == "makora"
+        ]
+        assert credits, f"{model_id} has no makora prepaid endpoint"
+        endpoint = credits[0]
+        assert endpoint.prompt_price_microdollars_per_million_tokens == prompt
+        assert endpoint.completion_price_microdollars_per_million_tokens == completion
+        assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == (
+            cached_prompt
+        )
+
+
 def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
     """Claude Fable 5 is available again, but it is not a ZDR route."""
     model = MODELS["anthropic/claude-fable-5"]
