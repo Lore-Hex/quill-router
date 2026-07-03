@@ -221,6 +221,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def eu() -> str:
         return public_page_html(settings, "eu")
 
+    @public_html_route("/trustedos")
+    async def trustedos() -> str:
+        return public_page_html(settings, "trustedos")
+
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a
     # self-contained sales surface (see PUBLIC_PAGES in dashboard.py).

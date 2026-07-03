@@ -122,7 +122,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
     <p><strong>Same model catalog?</strong> Yes — every OpenRouter model id resolves on TR, plus 30+ providers including DeepSeek, Kimi, MiniMax, GLM, and Together.</p>
     <p><strong>Pricing?</strong> Provider cost + 10% markup, $0.01/M floor. Published per-model on every catalog page. No hidden margin on inference.</p>
     <p><strong>BYOK?</strong> Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p>
-    <p><strong>Self-host?</strong> The full control plane and gateway are open source. Run it yourself; the attestation story still works because the image hash you build is the hash your enclave reports.</p>
+    <p><strong>Self-host?</strong> The full control plane and gateway are source-available (BUSL-1.1) — read, build, and verify every line; the attestation story works because the image hash you build is the hash the enclave reports. Production self-hosting runs under a commercial license.</p>
     <p><strong>Why build this?</strong> The full argument is in the essay <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
   </div>
 </section>

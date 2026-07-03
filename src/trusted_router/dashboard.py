@@ -86,6 +86,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/status",
     "/security",
     "/eu",
+    "/trustedos",
     "/legal",
     "/legal/dpa",
     "/legal/baa",
@@ -371,6 +372,54 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "EU-focused LLM routing through the Europe West attested gateway, "
             "with European and privacy-forward provider choices."
+        ),
+    ),
+    "trustedos": PublicPage(
+        template="public/trustedos.html",
+        title="TrustedOS: The OS for AI Clouds",
+        description=(
+            "Dynamo and vLLM schedule your GPUs. TrustedOS runs your inference "
+            "business: attested capacity, objective routing, metering, and "
+            "high-margin composite models on your hardware."
+        ),
+        faq_items=(
+            (
+                "Isn't NVIDIA Dynamo already the 'inference OS'?",
+                "Keep Dynamo — and vLLM, SGLang, llm-d. They schedule GPUs inside "
+                "your cluster: batching, KV cache, disaggregation. TrustedOS is the "
+                "layer above: objective routing across capacity, composite models, "
+                "metering, trust tiers, and demand. They compose; they don't compete.",
+            ),
+            (
+                "We run custom silicon, not GPUs. Does this apply?",
+                "Yes — but differently. Wafer-scale and dataflow architectures have "
+                "no CUDA-style kernels, so we don't pitch kernel optimization there. "
+                "For non-GPU fleets TrustedOS brings objective routing, fast model "
+                "onboarding, and composite-model demand that fans inner calls onto "
+                "your capacity.",
+            ),
+            (
+                "What's real today versus roadmap?",
+                "Shipped: objective routing (price/throughput/latency with fallbacks), "
+                "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
+                "prepaid metering with per-key budgets, BYOK, and multi-region "
+                "attested gateways on two clouds. Roadmap: self-hosted TrustedOS, "
+                "marketplace payouts, and per-model kernels (private beta). The page "
+                "labels each — we don't ship claims before code.",
+            ),
+            (
+                "Is the code open?",
+                "Source-available under BUSL-1.1: anyone can read, build, and verify "
+                "the exact code behind the attestation claims — the hash you compute "
+                "is the hash the enclave reports. Production deployment runs under a "
+                "commercial license from Lore Hex Corp.",
+            ),
+            (
+                "How do we start?",
+                "Email licensing@trustedrouter.com. A design-partner pilot picks one "
+                "rung — host composite models under your brand, or qualify capacity "
+                "for the attested trust tier — and scopes a proof-of-value in weeks.",
+            ),
         ),
     ),
     "security": PublicPage(
@@ -1738,6 +1787,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Models: https://{domain}/models",
         f"- Providers: https://{domain}/providers",
         f"- EU routing: https://{domain}/eu",
+        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Benchmarks: https://{domain}/benchmarks",
         f"- Rankings: https://{domain}/rankings",
         "- Status: https://status.trustedrouter.com/",
@@ -1839,6 +1889,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Model catalog: https://{domain}/models",
             f"- Provider transparency: https://{domain}/providers",
             f"- EU routing: https://{domain}/eu",
+        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
             "- Public status: https://status.trustedrouter.com/",
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
@@ -1913,6 +1964,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
+        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Compact LLM docs: https://{domain}/docs/llms.txt",
         f"- Full LLM docs: https://{domain}/docs/llms-full.txt",
         f"- MCP server: https://{domain}/docs/mcp",
