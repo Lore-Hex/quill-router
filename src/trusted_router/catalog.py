@@ -10,6 +10,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ADVISOR_CATALOG_MODEL_ORDERS,
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_MODEL_ID,
     ATHENA_MODEL_ID,
     AUTO_MODEL_ID,

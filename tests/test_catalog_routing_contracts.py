@@ -5,6 +5,7 @@ import pytest
 from trusted_router.catalog import (
     ADVISOR_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_MODEL_ID,
     ATHENA_MODEL_ID,
     AUTO_MODEL_ID,
@@ -541,6 +542,17 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
         MAPREDUCE_MODEL_ID: ("mapreduce", "primitive", MAPREDUCE_MODEL_ID),
         SOCRATES_MODEL_ID: ("advisor", "rolling_alias", SOCRATES_1_1_MODEL_ID),
         SOCRATES_1_1_MODEL_ID: ("advisor", "named_preset", SOCRATES_1_1_MODEL_ID),
+        ARISTOTLE_MODEL_ID: ("advisor", "rolling_alias", ARISTOTLE_1_1_MODEL_ID),
+        ARISTOTLE_1_1_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            ARISTOTLE_1_1_MODEL_ID,
+        ),
+        ARISTOTLE_1_0_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            ARISTOTLE_1_0_MODEL_ID,
+        ),
         PLATO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_1_0_MODEL_ID),
         PLATO_1_0_MODEL_ID: ("advisor", "named_preset", PLATO_1_0_MODEL_ID),
         PLATO_PRO_MODEL_ID: ("advisor", "rolling_alias", PLATO_PRO_1_0_MODEL_ID),
@@ -591,6 +603,7 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         ZEUS_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ARISTOTLE_MODEL_ID,
+        ARISTOTLE_1_1_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
     ]
     for model_id in closed_ids:
@@ -611,16 +624,15 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "xiaomi/mimo-v2.5-pro",
             "deepseek/deepseek-v4-pro",
         ],
-        ARISTOTLE_MODEL_ID: [
-            "deepseek/deepseek-v4-flash",
-            "anthropic/claude-opus-4.8",
-            "openai/gpt-5.5",
-            "google/gemini-3.1-pro-preview",
-            "google/gemini-3.5-flash",
-            "minimax/minimax-m3",
+        ARISTOTLE_1_1_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
             "z-ai/glm-5.2",
-            "xiaomi/mimo-v2.5-pro",
-            "deepseek/deepseek-v4-pro",
+            "trustedrouter/zeus-1.0",
+        ],
+        ARISTOTLE_MODEL_ID: [
+            "z-ai/glm-5.2-fast",
+            "z-ai/glm-5.2",
+            "trustedrouter/zeus-1.0",
         ],
         PLATO_1_0_MODEL_ID: [
             "deepseek/deepseek-v4-flash",
@@ -689,6 +701,8 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[PLATO_PRO_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_MODEL_ID].context_length == 1_048_576
     assert MODELS[OPEN_PATCHER_G1_MODEL_ID].context_length == 1_048_576
+    assert MODELS[ARISTOTLE_1_1_MODEL_ID].context_length == 1_048_576
+    assert MODELS[ARISTOTLE_MODEL_ID].context_length == 1_048_576
 
 
 def test_athena_catalog_hides_orchestration_configuration() -> None:

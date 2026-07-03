@@ -663,6 +663,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/zeus",
         "trustedrouter/aristotle",
         "trustedrouter/aristotle-1.0",
+        "trustedrouter/aristotle-1.1",
         "trustedrouter/plato",
         "trustedrouter/plato-1.0",
         "trustedrouter/plato-pro",
@@ -742,12 +743,23 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "xiaomi/mimo-v2.5-pro",
         "deepseek/deepseek-v4-pro",
     ]
-    aristotle_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
-    assert aristotle_meta["route_kind"] == "advisor_orchestration"
-    assert aristotle_meta["auto_candidates"][:2] == [
+    aristotle_10_meta = models_by_id["trustedrouter/aristotle-1.0"]["trustedrouter"]
+    aristotle_11_meta = models_by_id["trustedrouter/aristotle-1.1"]["trustedrouter"]
+    aristotle_meta = models_by_id["trustedrouter/aristotle"]["trustedrouter"]
+    assert aristotle_10_meta["route_kind"] == "advisor_orchestration"
+    assert aristotle_10_meta["auto_candidates"][:2] == [
         "deepseek/deepseek-v4-flash",
         "anthropic/claude-opus-4.8",
     ]
+    assert models_by_id["trustedrouter/aristotle-1.1"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/aristotle"]["context_length"] == 1_048_576
+    assert aristotle_meta["canonical_model_id"] == "trustedrouter/aristotle-1.1"
+    assert aristotle_11_meta["auto_candidates"] == [
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        "trustedrouter/zeus-1.0",
+    ]
+    assert aristotle_meta["auto_candidates"] == aristotle_11_meta["auto_candidates"]
     socrates_pro_plus_meta = models_by_id["trustedrouter/socrates-pro-plus-1.0"]["trustedrouter"]
     assert socrates_pro_plus_meta["auto_candidates"] == [
         "xiaomi/mimo-v2.5-pro-ultraspeed",

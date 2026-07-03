@@ -733,6 +733,8 @@ SUBAGENT_MODEL_ID = "trustedrouter/subagent"
 
 ARISTOTLE_1_0_MODEL_ID = "trustedrouter/aristotle-1.0"
 
+ARISTOTLE_1_1_MODEL_ID = "trustedrouter/aristotle-1.1"
+
 ARISTOTLE_MODEL_ID = "trustedrouter/aristotle"
 
 PLATO_1_0_MODEL_ID = "trustedrouter/plato-1.0"
@@ -827,6 +829,7 @@ META_MODEL_IDS = frozenset(
         ADVISOR_MODEL_ID,
         SUBAGENT_MODEL_ID,
         ARISTOTLE_1_0_MODEL_ID,
+        ARISTOTLE_1_1_MODEL_ID,
         ARISTOTLE_MODEL_ID,
         PLATO_1_0_MODEL_ID,
         PLATO_MODEL_ID,
@@ -887,7 +890,7 @@ ORCHESTRATION_PRIMITIVE_BY_MODEL_ID: dict[str, str] = {
 
 CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
     SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
-    ARISTOTLE_MODEL_ID: ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_MODEL_ID: ARISTOTLE_1_1_MODEL_ID,
     PLATO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
     PLATO_PRO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
@@ -1066,9 +1069,15 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "deepseek/deepseek-v4-flash",
         *SYNTH_FRONTIER_MODEL_ORDER,
     ),
+    ARISTOTLE_1_1_MODEL_ID: (
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_1_0_MODEL_ID,
+    ),
     ARISTOTLE_MODEL_ID: (
-        "deepseek/deepseek-v4-flash",
-        *SYNTH_FRONTIER_MODEL_ORDER,
+        "z-ai/glm-5.2-fast",
+        "z-ai/glm-5.2",
+        ZEUS_1_0_MODEL_ID,
     ),
     PLATO_1_0_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
@@ -1372,6 +1381,7 @@ for _advisor_model_id in (
     SOCRATES_1_1_MODEL_ID,
     SOCRATES_MODEL_ID,
     ARISTOTLE_1_0_MODEL_ID,
+    ARISTOTLE_1_1_MODEL_ID,
     ARISTOTLE_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
