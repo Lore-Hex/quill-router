@@ -86,7 +86,7 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     assert all(model.id.endswith(":free") for model in free)
     assert len({model.provider for model in cheap}) >= 2
     assert eu and eu[0].provider == "mistral"
-    assert zdr and zdr[0].provider == "anthropic"
+    assert zdr
     assert e2e and any(model.provider == "deepseek" for model in e2e)
     assert len({model.provider for model in monitor}) >= 2
     assert all(not model.id.endswith(":free") for model in cheap + monitor)

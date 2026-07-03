@@ -14,7 +14,7 @@ manually:
   * Scoped: we don't want the chat page to use the user's management
     key (way too broad). The chat-browser key is bounded:
       - `limit_microdollars = 5_000_000` ($5/day) — if the key leaks
-        via XSS, devtools sharing, or sessionStorage exfil, the blast
+        via XSS, devtools sharing, or browser-storage exfil, the blast
         radius is bounded to $5/day until the next rotation.
       - `expires_at = NOW + 30d` — auto-rotates; long-term exposure
         bounded.
@@ -26,10 +26,11 @@ the redirect and pops the sign-in modal).
 
 Each call creates a NEW key — we do not cache raw keys server-side
 (would violate the "we only ever store hashes" invariant). Client
-preserves continuity across page refreshes via sessionStorage + a
-one-shot `tr_chat_key` cookie that JS reads + clears on page load.
-So this endpoint is only called when both client-side caches are
-empty (cold first Send, or first Send after tab close).
+preserves continuity across page refreshes and browser restarts via a
+scoped localStorage key plus a one-shot `tr_chat_key` cookie that JS
+reads + clears on page load. So this endpoint is only called when the
+current user/workspace has no reusable browser key or when a cached key
+is rejected and must rotate.
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ from trusted_router.storage import STORE
 # bounded enough that an exfiltrated key isn't a financial disaster.
 CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS = 5_000_000
 
-# 30 days. The chat client sees this via sessionStorage; when it expires
+# 30 days. The chat client sees this via browser storage; when it expires
 # the next Send pops a fresh `/internal/chat/issue-browser-key` call.
 CHAT_BROWSER_KEY_TTL_DAYS = 30
 
@@ -63,7 +64,7 @@ CHAT_BROWSER_KEY_TTL_DAYS = 30
 #     it (in practice, milliseconds), but bounded if the user closes
 #     the tab and reopens later
 #   * Client clears the cookie immediately after reading + copies the
-#     value into sessionStorage (gone on tab close)
+#     value into scoped browser storage
 CHAT_BROWSER_KEY_COOKIE_NAME = "tr_chat_key"
 CHAT_BROWSER_KEY_COOKIE_MAX_AGE = 60 * 60 * 24  # 24h
 

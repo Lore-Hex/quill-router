@@ -154,7 +154,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
     )
     assert openai_endpoint["stores_content"] is True
-    assert openai_endpoint["provider_zero_data_retention"] is True
+    assert openai_endpoint["provider_zero_data_retention"] is False
 
 
 @pytest.mark.parametrize(
@@ -398,9 +398,6 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert e2e
     assert eu
     assert eu[0].provider == "mistral"
-    assert zdr[0].provider == "anthropic"
-    assert any(model.provider == "openai" for model in zdr)
-    assert any(model.provider == "gemini" for model in zdr)
     assert all(model.supports_chat for model in zdr + e2e)
 
     zdr_shape = model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])
@@ -412,6 +409,30 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert zdr_shape["trustedrouter"]["auto_candidates"]
     assert e2e_shape["trustedrouter"]["auto_candidates"]
     assert eu_shape["trustedrouter"]["auto_candidates"]
+
+
+def test_reverification_required_providers_are_not_marked_zdr() -> None:
+    """Keep public ZDR claims fail-closed for major closed providers.
+
+    If Amazon/Bedrock or Google/Vertex are added as explicit providers later,
+    they should remain outside trustedrouter/zdr until reviewed again.
+    """
+    provider_slugs_requiring_reverification = {
+        "amazon",
+        "anthropic",
+        "aws",
+        "bedrock",
+        "gemini",
+        "google",
+        "openai",
+        "vertex",
+    }
+    configured = provider_slugs_requiring_reverification & set(PROVIDERS)
+
+    assert {"anthropic", "gemini", "openai"} <= configured
+    for provider in sorted(configured):
+        assert PROVIDERS[provider].provider_zero_data_retention is not True
+        assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
 
 
 def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
@@ -858,8 +879,10 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
 
     assert zdr_endpoints
     assert e2e_endpoints
-    assert zdr_endpoints[0][1].provider == "anthropic"
     assert e2e_endpoints[0][1].provider == "tinfoil"
+    assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
+    assert "gemini" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
+    assert "openai" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
         provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in zdr_endpoints

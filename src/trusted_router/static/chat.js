@@ -15,7 +15,7 @@
  *   * Browser-side API key auto-issued via
  *     POST /internal/chat/issue-browser-key on first signed-in Send.
  *     Server returns the raw key in a one-shot tr_chat_key cookie;
- *     we copy it to sessionStorage and clear the cookie.
+ *     we copy it to scoped browser storage and clear the cookie.
  *   * SSE streaming via fetch + getReader. Standard OpenAI delta
  *     protocol — `data: {json}\n\n` chunks, `data: [DONE]` terminator.
  *   * Markdown rendered with marked + highlight.js, sanitized with
@@ -29,7 +29,7 @@
     const LOCKED_MODEL_ID = (CHAT_CONFIG.lockedModelId || "").trim();
     const LOCKED_MODEL_LABEL = (CHAT_CONFIG.lockedModelLabel || "Custom model").trim();
     const STORAGE_KEY = CHAT_CONFIG.storageKey || "tr_chat_state_v1";
-    const KEY_SESSION_STORAGE = "tr_chat_key";
+    const KEY_STORAGE_PREFIX = "tr_chat_key";
     const KEY_COOKIE =
         CHAT_CONFIG.keyCookieName || "tr_chat_key";
     // Inference endpoints (chat/completions, messages, responses) go
@@ -49,6 +49,9 @@
     const ISSUE_KEY_PATH =
         CHAT_CONFIG.issueKeyPath ||
         "/internal/chat/issue-browser-key";
+    const AUTH_SESSION_PATH =
+        CHAT_CONFIG.authSessionPath ||
+        "/auth/session";
     const URL_MODEL_ID = LOCKED_MODEL_ID ? "" : queryModelId();
     const DEFAULT_MODEL_ID = LOCKED_MODEL_ID || URL_MODEL_ID || "trustedrouter/plato";
     const MAX_MODELS_PER_CHAT = 4; // matches OpenRouter's apparent cap
@@ -138,6 +141,8 @@
     let MODELS_LOADING = false;
     /** @type {Map<string, AbortController>} active stream cancellation handles */
     const STREAMS = new Map();
+    let AUTH_SCOPE_PROMISE = null;
+    let BOOTSTRAP_RAW_KEY = null;
 
     function loadState() {
         try {
@@ -324,28 +329,91 @@
             .find((c) => c.startsWith(KEY_COOKIE + "="));
         if (!match) return;
         const raw = decodeURIComponent(match.slice(KEY_COOKIE.length + 1));
-        try {
-            sessionStorage.setItem(KEY_SESSION_STORAGE, raw);
-        } catch (_) {}
+        BOOTSTRAP_RAW_KEY = raw;
         // Clear cookie immediately (one-shot pattern).
         document.cookie =
             KEY_COOKIE + "=; path=/chat; expires=Thu, 01 Jan 1970 00:00:00 GMT";
     }
 
+    async function browserKeyScope() {
+        if (!isSignedIn()) return null;
+        if (AUTH_SCOPE_PROMISE) return AUTH_SCOPE_PROMISE;
+        AUTH_SCOPE_PROMISE = (async function () {
+            try {
+                const resp = await fetch(AUTH_SESSION_PATH, {
+                    method: "GET",
+                    credentials: "same-origin",
+                    headers: { accept: "application/json" },
+                });
+                if (!resp.ok) return null;
+                const json = await resp.json();
+                const data = json && json.data ? json.data : {};
+                const workspaceId = data.workspace && data.workspace.id;
+                const userId = data.user && data.user.id ? data.user.id : "api-key";
+                if (!workspaceId) return null;
+                return "u:" + userId + ":w:" + workspaceId;
+            } catch (_) {
+                return null;
+            }
+        })();
+        return AUTH_SCOPE_PROMISE;
+    }
+
+    function scopedBrowserKeyStorage(scope) {
+        return KEY_STORAGE_PREFIX + ":" + scope;
+    }
+
+    function readStoredBrowserKey(scope) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try {
+            const persistent = localStorage.getItem(storageKey);
+            if (persistent) return persistent;
+        } catch (_) {}
+        try {
+            const sessionOnly = sessionStorage.getItem(storageKey);
+            if (sessionOnly) return sessionOnly;
+        } catch (_) {}
+        return null;
+    }
+
+    function storeBrowserKey(scope, raw) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try { localStorage.setItem(storageKey, raw); } catch (_) {}
+        try { sessionStorage.setItem(storageKey, raw); } catch (_) {}
+    }
+
+    function clearStoredBrowserKey(scope) {
+        const storageKey = scopedBrowserKeyStorage(scope);
+        try { localStorage.removeItem(storageKey); } catch (_) {}
+        try { sessionStorage.removeItem(storageKey); } catch (_) {}
+        try { sessionStorage.removeItem(KEY_STORAGE_PREFIX); } catch (_) {}
+    }
+
     /** Returns the raw browser-API key. Fetches a new one if missing. */
     async function ensureBrowserKey(opts) {
         const forceRefresh = !!(opts && opts.forceRefresh);
+        const scope = await browserKeyScope();
+        if (!scope) {
+            AUTH_SCOPE_PROMISE = null;
+            openSigninModal();
+            throw new Error("not signed in");
+        }
         let key = null;
         if (!forceRefresh) {
-            try {
-                key = sessionStorage.getItem(KEY_SESSION_STORAGE);
-            } catch (_) {}
+            if (BOOTSTRAP_RAW_KEY) {
+                key = BOOTSTRAP_RAW_KEY;
+                BOOTSTRAP_RAW_KEY = null;
+                storeBrowserKey(scope, key);
+            } else {
+                key = readStoredBrowserKey(scope);
+            }
             if (key) return key;
         } else {
             // Caller hit a 401 — the cached key is stale. Drop it before
             // asking for a fresh one so we don't accidentally reuse it
             // on the next call.
-            try { sessionStorage.removeItem(KEY_SESSION_STORAGE); } catch (_) {}
+            BOOTSTRAP_RAW_KEY = null;
+            clearStoredBrowserKey(scope);
         }
 
         // POST to the issue-key endpoint. Same-origin (trustedrouter.com)
@@ -357,6 +425,7 @@
         if (resp.status === 302 || resp.status === 401) {
             // Server-side gate said "not signed in" — JS shouldn't have
             // called us. Pop the modal and bail.
+            AUTH_SCOPE_PROMISE = null;
             openSigninModal();
             throw new Error("not signed in");
         }
@@ -369,9 +438,7 @@
         const json = await resp.json();
         const raw = (json && json.data && json.data.raw_key) || null;
         if (!raw) throw new Error("issue-key returned no raw_key");
-        try {
-            sessionStorage.setItem(KEY_SESSION_STORAGE, raw);
-        } catch (_) {}
+        storeBrowserKey(scope, raw);
         document.cookie =
             KEY_COOKIE + "=; path=/chat; expires=Thu, 01 Jan 1970 00:00:00 GMT";
         return raw;

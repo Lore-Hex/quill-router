@@ -168,14 +168,11 @@ PROVIDERS: dict[str, Provider] = {
         name="Anthropic",
         supports_messages=True,
         supports_prepaid=True,
-        provider_zero_data_retention=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "Marked ZDR via TrustedRouter's arrangement — zero retention is NOT "
-            "Anthropic's public default; it applies to contracted / approved API "
-            "usage, which TrustedRouter's deployed account is configured for. "
-            "Anthropic does not train on API content. (Flagged content may be "
-            "retained longer for Usage-Policy enforcement; non-Messages features "
-            "may differ.)"
+            "Not currently marked ZDR in TrustedRouter. Anthropic may offer "
+            "contracted or account-specific data-retention terms, but this provider "
+            "is excluded from trustedrouter/zdr until that posture is reverified."
         ),
         provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -185,11 +182,11 @@ PROVIDERS: dict[str, Provider] = {
         name="OpenAI",
         supports_embeddings=True,
         supports_prepaid=True,
-        provider_zero_data_retention=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "Marked ZDR for TrustedRouter's configured OpenAI / ChatGPT API account. "
-            "This is not the public OpenAI API default for every account or endpoint; "
-            "ZDR depends on eligible endpoint usage and account configuration."
+            "Not currently marked ZDR in TrustedRouter. OpenAI may offer endpoint- "
+            "or account-specific data-retention controls, but this provider is "
+            "excluded from trustedrouter/zdr until that posture is reverified."
         ),
         provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -199,11 +196,12 @@ PROVIDERS: dict[str, Provider] = {
         name="Gemini",
         supports_embeddings=True,
         supports_prepaid=True,
-        provider_zero_data_retention=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "Marked ZDR for TrustedRouter's Google Gemini / Vertex generative-AI "
-            "routes under Google's data-governance commitments for customer prompts "
-            "and outputs."
+            "Not currently marked ZDR in TrustedRouter. Google Gemini / Vertex "
+            "routes may have account- or product-specific data-governance terms, "
+            "but this provider is excluded from trustedrouter/zdr until that "
+            "posture is reverified."
         ),
         provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,

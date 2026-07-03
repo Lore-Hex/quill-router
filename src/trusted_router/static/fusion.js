@@ -5,8 +5,9 @@
   const API_BASE = CONFIG.apiBaseUrl || "/chat-proxy/v1";
   const CATALOG_BASE = CONFIG.catalogBaseUrl || "/v1";
   const ISSUE_KEY_PATH = CONFIG.issueKeyPath || "/internal/chat/issue-browser-key";
+  const AUTH_SESSION_PATH = CONFIG.authSessionPath || "/auth/session";
   const KEY_COOKIE = CONFIG.keyCookieName || "tr_chat_key";
-  const KEY_STORAGE = "tr_chat_key";
+  const KEY_STORAGE_PREFIX = "tr_chat_key";
   const HISTORY_KEY = "tr_fusion_runs_v1";
   const DETAIL_LAYOUT_KEY = "tr_fusion_detail_layout_v1";
 
@@ -43,6 +44,7 @@
   let pickerTargetSet = "panel";
   let pickerQuery = "";
   let detailLayout = "stacked";
+  let authScopePromise = null;
 
   const els = {
     form: document.querySelector("[data-fusion-form]"),
@@ -114,17 +116,27 @@
 
   async function ensureBrowserKey(forceRefresh) {
     if (isLocalDemo()) return "sk-tr-local-demo";
+    const scope = await browserKeyScope();
+    if (!scope) {
+      authScopePromise = null;
+      openSigninModal();
+      throw new Error("Sign in to run Synth.");
+    }
+    const storageKey = scopedBrowserKeyStorage(scope);
     if (!forceRefresh) {
       try {
-        const existing = sessionStorage.getItem(KEY_STORAGE);
+        const existing = localStorage.getItem(storageKey) || sessionStorage.getItem(storageKey);
         if (existing) return existing;
       } catch (_) {}
     } else {
-      try { sessionStorage.removeItem(KEY_STORAGE); } catch (_) {}
+      try { localStorage.removeItem(storageKey); } catch (_) {}
+      try { sessionStorage.removeItem(storageKey); } catch (_) {}
+      try { sessionStorage.removeItem(KEY_STORAGE_PREFIX); } catch (_) {}
     }
 
     const resp = await fetch(ISSUE_KEY_PATH, { method: "POST", credentials: "same-origin" });
     if (resp.status === 302 || resp.status === 401) {
+      authScopePromise = null;
       openSigninModal();
       throw new Error("Sign in to run Synth.");
     }
@@ -132,9 +144,37 @@
     const json = await resp.json();
     const raw = json?.data?.raw_key;
     if (!raw) throw new Error("Browser API key response was missing raw_key.");
-    try { sessionStorage.setItem(KEY_STORAGE, raw); } catch (_) {}
+    try { localStorage.setItem(storageKey, raw); } catch (_) {}
+    try { sessionStorage.setItem(storageKey, raw); } catch (_) {}
     clearKeyCookie();
     return raw;
+  }
+
+  async function browserKeyScope() {
+    if (authScopePromise) return authScopePromise;
+    authScopePromise = (async function () {
+      try {
+        const resp = await fetch(AUTH_SESSION_PATH, {
+          method: "GET",
+          credentials: "same-origin",
+          headers: { accept: "application/json" },
+        });
+        if (!resp.ok) return null;
+        const json = await resp.json();
+        const data = json && json.data ? json.data : {};
+        const workspaceId = data.workspace && data.workspace.id;
+        const userId = data.user && data.user.id ? data.user.id : "api-key";
+        if (!workspaceId) return null;
+        return `u:${userId}:w:${workspaceId}`;
+      } catch (_) {
+        return null;
+      }
+    })();
+    return authScopePromise;
+  }
+
+  function scopedBrowserKeyStorage(scope) {
+    return `${KEY_STORAGE_PREFIX}:${scope}`;
   }
 
   function clearKeyCookie() {

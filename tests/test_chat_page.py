@@ -54,6 +54,8 @@ def test_chat_page_renders_without_auth() -> None:
     # Inline runtime config that chat.js reads
     assert "window.__TR_CHAT__" in body
     assert "issueKeyPath" in body
+    assert "authSessionPath" in body
+    assert "/auth/session" in body
     assert "/internal/chat/issue-browser-key" in body
     assert "tr_chat_key" in body  # keyCookieName
 
@@ -157,6 +159,24 @@ def test_chat_js_signed_out_send_shows_local_notice_without_request() -> None:
     assert "if (m.local_notice) continue;" in js
     assert "stateForStorage" in js
     assert "filter((m) => !m.local_notice)" in js
+
+
+def test_chat_and_synth_reuse_scoped_browser_keys() -> None:
+    """Browser-issued chat keys should persist for the current user/workspace
+    instead of creating a fresh API key on every page/tab open."""
+    chat_js = Path("src/trusted_router/static/chat.js").read_text()
+    fusion_js = Path("src/trusted_router/static/fusion.js").read_text()
+
+    for js in (chat_js, fusion_js):
+        assert '"/auth/session"' in js
+        assert "workspace.id" in js
+        assert "data.user && data.user.id" in js
+        assert "localStorage.getItem(storageKey)" in js
+        assert "localStorage.setItem(storageKey, raw)" in js
+        assert "sessionStorage.getItem(KEY_STORAGE_PREFIX)" not in js
+        assert "sessionStorage.getItem(KEY_SESSION_STORAGE)" not in js
+
+    assert "BOOTSTRAP_RAW_KEY" in chat_js
 
 
 def test_synth_page_renders_raw_thinking_hooks_and_valid_defaults(client: TestClient) -> None:

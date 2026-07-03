@@ -225,12 +225,12 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     tinfoil = next(item for item in provider_rows if item["id"] == "tinfoil")
     assert tinfoil["provider_e2ee"] is True
     openai = next(item for item in provider_rows if item["id"] == "openai")
-    assert openai["provider_zero_data_retention"] is True
+    assert openai["provider_zero_data_retention"] is False
     assert openai["provider_confidential_compute"] is None
     gemini = next(item for item in provider_rows if item["id"] == "gemini")
-    assert gemini["provider_zero_data_retention"] is True
+    assert gemini["provider_zero_data_retention"] is False
     anthropic = next(item for item in provider_rows if item["id"] == "anthropic")
-    assert anthropic["provider_zero_data_retention"] is True
+    assert anthropic["provider_zero_data_retention"] is False
     together = next(item for item in provider_rows if item["id"] == "together")
     assert together["provider_zero_data_retention"] is True
     nebius = next(item for item in provider_rows if item["id"] == "nebius")

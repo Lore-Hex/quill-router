@@ -141,9 +141,10 @@ def test_issue_chat_browser_key_expires_at_is_30_days_out() -> None:
 def test_issue_chat_browser_key_multiple_calls_produce_distinct_keys() -> None:
     """Each call creates a fresh key — we don't cache raw keys server-
     side (would violate the "we only ever store hashes" invariant). The
-    client preserves continuity across page refreshes via sessionStorage
-    + cookie, so this endpoint is only called when both client caches
-    are empty (cold first Send, or first Send after tab close)."""
+    client preserves continuity across page refreshes via scoped
+    browser storage + cookie, so this endpoint is only called when the
+    current user/workspace has no reusable browser key or when a stale
+    key rotates."""
     client, _, workspace_id = _console_client()
     resp1 = client.post("/internal/chat/issue-browser-key")
     resp2 = client.post("/internal/chat/issue-browser-key")

@@ -164,6 +164,7 @@
   window.__TR_CHAT__ = {
     apiBaseUrl: {{ api_base_url|tojson }},
     issueKeyPath: "/internal/chat/issue-browser-key",
+    authSessionPath: "/auth/session",
     keyCookieName: "tr_chat_key",
     storageKey: {{ storage_key|default('tr_chat_state_v1')|tojson }},
     lockedModelId: {{ locked_model_id|default('')|tojson }},

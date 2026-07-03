@@ -837,7 +837,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["zai"]["supports_byok"] is True
     assert provider_flags["tinfoil"]["provider_e2ee"] is True
     assert provider_flags["phala"]["provider_confidential_compute"] is True
-    assert provider_flags["anthropic"]["provider_zero_data_retention"] is True
+    assert provider_flags["anthropic"]["provider_zero_data_retention"] is False
     assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
     assert provider_flags["together"]["provider_zero_data_retention"] is True
     assert provider_flags["nebius"]["provider_zero_data_retention"] is True
@@ -847,8 +847,11 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["venice"]["provider_e2ee"] is True
     # DeepInfra is memory-only / no-training — earns ZDR with a citation.
     assert provider_flags["deepinfra"]["provider_zero_data_retention"] is True
-    assert provider_flags["openai"]["provider_zero_data_retention"] is True
-    assert provider_flags["gemini"]["provider_zero_data_retention"] is True
+    assert provider_flags["openai"]["provider_zero_data_retention"] is False
+    assert provider_flags["gemini"]["provider_zero_data_retention"] is False
+    assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
+    assert "Not currently marked ZDR" in provider_flags["openai"]["provider_policy"]
+    assert "Not currently marked ZDR" in provider_flags["gemini"]["provider_policy"]
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
@@ -876,17 +879,17 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     zdr_providers = {item["provider"] for item in zdr}
     assert {
         "trustedrouter",
-        "anthropic",
         "cerebras",
-        "gemini",
         "deepinfra",
         "nebius",
-        "openai",
         "phala",
         "tinfoil",
         "together",
         "venice",
     }.issubset(zdr_providers)
+    assert "anthropic" not in zdr_providers
+    assert "gemini" not in zdr_providers
+    assert "openai" not in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
     credits = client.get("/v1/credits", headers=user_headers)
