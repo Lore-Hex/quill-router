@@ -63,6 +63,340 @@ from trusted_router.storage_custom_models import is_custom_model_id, normalize_c
 from trusted_router.types import ErrorType, UsageType
 
 
+async def authorize_gateway(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Core gateway-authorize logic, extracted from the route closure so it is a
+    named, directly unit-testable function (#40). The registered route handler is
+    a thin wrapper; behavior is byte-identical to the prior inline handler."""
+    require_internal_gateway(request, settings)
+    api_key = _api_key_for_gateway_authorization(body)
+    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+    workspace = STORE.get_workspace(api_key.workspace_id)
+    if workspace is None:
+        raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+    assert_workspace_billing_active(workspace)
+    body_dict = body.model_dump(exclude_none=True)
+    _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
+    requested_model_id = body.model
+    if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
+        raise api_error(
+            400,
+            "Custom models cannot be used with models fallback arrays in v1",
+            ErrorType.BAD_REQUEST,
+        )
+    custom_model = None
+    if is_custom_model_id(requested_model_id):
+        custom_model = STORE.get_custom_model(normalize_custom_model_id(requested_model_id))
+        if custom_model is None or not custom_model.enabled:
+            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+        body_dict["model"] = custom_model.base_model_id
+        body_dict.pop("models", None)
+        body_dict["custom_model_id"] = custom_model.id
+        body_dict["custom_model_revision"] = custom_model.revision
+        _force_custom_model_credit_routes(body_dict)
+    # Embedding-only models can't go through the chat resolver (it
+    # rejects supports_chat=False). Route them to the embeddings
+    # resolver so the attested enclave can authorize + bill an
+    # embeddings call exactly like a chat one.
+    route_model_id = str(body_dict.get("model") or body.model)
+    requested_model = MODELS.get(route_model_id) if route_model_id else None
+    is_embeddings_request = (
+        requested_model is not None
+        and requested_model.supports_embeddings
+        and not requested_model.supports_chat
+    )
+    if is_embeddings_request:
+        endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
+        if not endpoint_candidates:
+            raise api_error(
+                400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED
+            )
+    else:
+        endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
+        if not endpoint_candidates:
+            raise api_error(
+                400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
+            )
+    endpoint_candidates = _eligible_gateway_endpoint_candidates(
+        endpoint_candidates, workspace.id
+    )
+    if not endpoint_candidates:
+        raise api_error(
+            400,
+            "No authorized route candidates are available for this workspace",
+            ErrorType.PROVIDER_NOT_SUPPORTED,
+        )
+    model, endpoint = endpoint_candidates[0]
+    region = choose_region(settings, body.region or None)
+
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
+    output_tokens = body.output_estimate
+    estimate = max(
+        _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
+        for _candidate_model, candidate_endpoint in endpoint_candidates
+    )
+    model_usage_type = UsageType.for_endpoint(endpoint)
+    has_credit_candidate = any(
+        UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+        for _candidate_model, candidate_endpoint in endpoint_candidates
+    )
+    reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
+    request_idempotency_key = _gateway_idempotency_key(request, body) or str(
+        uuid.uuid4()
+    )
+    request_fingerprint = _gateway_authorize_fingerprint(
+        workspace_id=workspace.id,
+        key_hash=api_key.hash,
+        body=body_dict,
+    )
+    def _replay_response(existing_authorization: Any) -> dict[str, Any]:
+        # Build the replay response from the STORED authorization (NOT current
+        # routing), so a replay across catalog/pricing/BYOK drift advertises
+        # the endpoint that was actually authorized (codex 3e route review #1).
+        existing_candidates = _authorization_endpoint_candidates(
+            existing_authorization, endpoint_candidates
+        )
+        existing_model, existing_endpoint = existing_candidates[0]
+        existing_usage_type = UsageType.for_endpoint(existing_endpoint)
+        byok_config = (
+            STORE.get_byok_provider(workspace.id, existing_endpoint.provider)
+            if existing_usage_type.is_byok()
+            else None
+        )
+        broadcast_destinations = [
+            payload
+            for destination in STORE.list_broadcast_destinations(workspace.id)
+            if (payload := gateway_destination_payload(destination)) is not None
+        ]
+        return _gateway_authorize_response(
+            authorization=existing_authorization,
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            model=existing_model,
+            endpoint=existing_endpoint,
+            requested_model_id=requested_model_id,
+            model_usage_type=existing_usage_type,
+            limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
+            estimate=existing_authorization.estimated_microdollars,
+            credit_reservation_id=existing_authorization.credit_reservation_id,
+            byok_config=byok_config,
+            region=existing_authorization.region or region,
+            settings=settings,
+            broadcast_destinations=broadcast_destinations,
+            endpoint_candidates=existing_candidates,
+            idempotent_replay=True,
+            custom_model=custom_model,
+        )
+
+    existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
+        workspace.id, api_key.hash, request_idempotency_key
+    )
+    if existing_authorization is None:
+        # Typed authorizations have no JSON idempotency index; look them up
+        # INDEPENDENT of the cohort flag so a retry after a cohort flag-off /
+        # denylist rollback still replays (codex 3e route review #2).
+        _typed_store = typed_billing_store()
+        if _typed_store is not None:
+            existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
+                workspace.id, api_key.hash, request_idempotency_key
+            )
+    if existing_authorization is not None:
+        if existing_authorization.idempotency_fingerprint != request_fingerprint:
+            raise api_error(
+                409,
+                "Idempotency key was already used for a different gateway request",
+                ErrorType.CONFLICT,
+            )
+        return _replay_response(existing_authorization)
+    credit_reservation_id: str | None = None
+    idempotent_replay = False
+    # Typed-column billing cutover: when this workspace is in the cohort AND
+    # the store supports it (Spanner), authorize via the atomic conditional-DML
+    # path (the deadlock fix). Default-off -> the legacy path below, unchanged.
+    _typed_store = typed_billing_store()
+    _typed_cohort = False
+    if _typed_store is not None:
+        from trusted_router.storage_gcp_authorize import (
+            typed_billing_enabled_for_workspace,
+        )
+
+        _typed_cohort = typed_billing_enabled_for_workspace(
+            workspace.id,
+            allowlist_csv=settings.typed_billing_workspace_ids,
+            denylist_csv=settings.typed_billing_workspace_denylist,
+        )
+    if _typed_store is not None and _typed_cohort:
+        import datetime as _dt
+
+        from trusted_router.spend_windows import (
+            enforced_window_limits,
+            utcnow,
+            window_resets_at,
+        )
+        from trusted_router.storage_gcp_authorize import AuthorizeOutcome
+
+        # expires_at = generous execution deadline (> max stream + settle
+        # retry window) so the reaper only reclaims genuinely-abandoned holds.
+        expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=7200)
+        # Per-window key caps (approximate). Omitted entirely for a BYOK
+        # request on a key that excludes BYOK from its caps — same rule the
+        # lifetime cap applies (authorize_atomic's window_limits contract).
+        is_byok_request = not has_credit_candidate
+        window_limits = (
+            {}
+            if is_byok_request and not api_key.include_byok_in_limit
+            else enforced_window_limits(api_key)  # {} in alert mode → never blocks
+        )
+        outcome, authorization = _typed_store.authorize_gateway_typed(
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            estimate=estimate,
+            has_credit_candidate=has_credit_candidate,
+            reservation_usage_type=reservation_usage_type,
+            model_id=model.id,
+            provider=endpoint.provider,
+            requested_model_id=requested_model_id,
+            candidate_model_ids=[m.id for m, _e in endpoint_candidates],
+            region=region,
+            endpoint_id=endpoint.id,
+            candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
+            idempotency_key=request_idempotency_key,
+            idempotency_fingerprint=request_fingerprint,
+            custom_model_id=custom_model.id if custom_model else None,
+            custom_model_revision=custom_model.revision if custom_model else None,
+            expires_at=expires_at,
+            window_limits=window_limits or None,
+        )
+        if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
+            raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
+        if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
+            _, _, window = outcome.partition(":")
+            window = window or "daily"
+            resets_at = window_resets_at(window, utcnow())
+            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+            raise api_error(
+                429,
+                f"API key {window} spend limit exceeded; resets at "
+                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                headers={"Retry-After": str(retry_after)},
+            )
+        if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+            )
+        if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
+            raise api_error(
+                409,
+                "Idempotency key was already used for a different gateway request",
+                ErrorType.CONFLICT,
+            )
+        if authorization is None:
+            raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
+        if outcome == AuthorizeOutcome.REPLAY:
+            # concurrent-race replay: respond from the STORED authorization
+            return _replay_response(authorization)
+        credit_reservation_id = authorization.credit_reservation_id
+    else:
+        from trusted_router.spend_windows import (
+            KeyWindowLimitExceeded,
+            utcnow,
+            window_resets_at,
+        )
+
+        try:
+            STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+        except KeyWindowLimitExceeded as exc:
+            # InMemory twin of the typed window rejection (same 429 shape).
+            resets_at = window_resets_at(exc.window, utcnow())
+            retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
+            raise api_error(
+                429,
+                f"API key {exc.window} spend limit exceeded; resets at "
+                f"{resets_at.isoformat().replace('+00:00', 'Z')}",
+                ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
+                headers={"Retry-After": str(retry_after)},
+            ) from exc
+        except ValueError as exc:
+            raise api_error(
+                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
+            ) from exc
+
+        if has_credit_candidate:
+            try:
+                credit_reservation = STORE.reserve(
+                    workspace.id,
+                    api_key.hash,
+                    estimate,
+                    idempotency_key=request_idempotency_key,
+                )
+                credit_reservation_id = credit_reservation.id
+            except ValueError as exc:
+                STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
+                raise api_error(
+                    402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
+                ) from exc
+
+        authorization = STORE.create_gateway_authorization(
+            workspace_id=workspace.id,
+            key_hash=api_key.hash,
+            model_id=model.id,
+            provider=endpoint.provider,
+            usage_type=reservation_usage_type,
+            estimated_microdollars=estimate,
+            credit_reservation_id=credit_reservation_id,
+            requested_model_id=requested_model_id,
+            candidate_model_ids=[
+                candidate_model.id for candidate_model, _endpoint in endpoint_candidates
+            ],
+            region=region,
+            endpoint_id=endpoint.id,
+            candidate_endpoint_ids=[
+                candidate_endpoint.id
+                for _candidate_model, candidate_endpoint in endpoint_candidates
+            ],
+            idempotency_key=request_idempotency_key,
+            idempotency_fingerprint=request_fingerprint,
+            custom_model_id=custom_model.id if custom_model else None,
+            custom_model_revision=custom_model.revision if custom_model else None,
+        )
+    byok_config = (
+        STORE.get_byok_provider(workspace.id, endpoint.provider)
+        if model_usage_type.is_byok()
+        else None
+    )
+    broadcast_destinations = [
+        payload
+        for destination in STORE.list_broadcast_destinations(workspace.id)
+        if (payload := gateway_destination_payload(destination)) is not None
+    ]
+    return _gateway_authorize_response(
+        authorization=authorization,
+        workspace_id=workspace.id,
+        key_hash=api_key.hash,
+        model=model,
+        endpoint=endpoint,
+        requested_model_id=requested_model_id,
+        model_usage_type=model_usage_type,
+        limit_usage_type=reservation_usage_type,
+        estimate=estimate,
+        credit_reservation_id=credit_reservation_id,
+        byok_config=byok_config,
+        region=region,
+        settings=settings,
+        broadcast_destinations=broadcast_destinations,
+        endpoint_candidates=endpoint_candidates,
+        idempotent_replay=idempotent_replay,
+        custom_model=custom_model,
+    )
+
+
 def register(router: APIRouter) -> None:
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
@@ -156,330 +490,7 @@ def register(router: APIRouter) -> None:
         body: GatewayAuthorizeRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        api_key = _api_key_for_gateway_authorization(body)
-        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
-        workspace = STORE.get_workspace(api_key.workspace_id)
-        if workspace is None:
-            raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
-        assert_workspace_billing_active(workspace)
-        body_dict = body.model_dump(exclude_none=True)
-        _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
-        requested_model_id = body.model
-        if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
-            raise api_error(
-                400,
-                "Custom models cannot be used with models fallback arrays in v1",
-                ErrorType.BAD_REQUEST,
-            )
-        custom_model = None
-        if is_custom_model_id(requested_model_id):
-            custom_model = STORE.get_custom_model(normalize_custom_model_id(requested_model_id))
-            if custom_model is None or not custom_model.enabled:
-                raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-            body_dict["model"] = custom_model.base_model_id
-            body_dict.pop("models", None)
-            body_dict["custom_model_id"] = custom_model.id
-            body_dict["custom_model_revision"] = custom_model.revision
-            _force_custom_model_credit_routes(body_dict)
-        # Embedding-only models can't go through the chat resolver (it
-        # rejects supports_chat=False). Route them to the embeddings
-        # resolver so the attested enclave can authorize + bill an
-        # embeddings call exactly like a chat one.
-        route_model_id = str(body_dict.get("model") or body.model)
-        requested_model = MODELS.get(route_model_id) if route_model_id else None
-        is_embeddings_request = (
-            requested_model is not None
-            and requested_model.supports_embeddings
-            and not requested_model.supports_chat
-        )
-        if is_embeddings_request:
-            endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
-            if not endpoint_candidates:
-                raise api_error(
-                    400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED
-                )
-        else:
-            endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
-            if not endpoint_candidates:
-                raise api_error(
-                    400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
-                )
-        endpoint_candidates = _eligible_gateway_endpoint_candidates(
-            endpoint_candidates, workspace.id
-        )
-        if not endpoint_candidates:
-            raise api_error(
-                400,
-                "No authorized route candidates are available for this workspace",
-                ErrorType.PROVIDER_NOT_SUPPORTED,
-            )
-        model, endpoint = endpoint_candidates[0]
-        region = choose_region(settings, body.region or None)
-
-        input_tokens = body.estimated_input_tokens
-        if custom_model is not None and custom_model.hidden_prompt.strip():
-            input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
-        output_tokens = body.output_estimate
-        estimate = max(
-            _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
-            for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        model_usage_type = UsageType.for_endpoint(endpoint)
-        has_credit_candidate = any(
-            UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
-            for _candidate_model, candidate_endpoint in endpoint_candidates
-        )
-        reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
-        request_idempotency_key = _gateway_idempotency_key(request, body) or str(
-            uuid.uuid4()
-        )
-        request_fingerprint = _gateway_authorize_fingerprint(
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            body=body_dict,
-        )
-        def _replay_response(existing_authorization: Any) -> dict[str, Any]:
-            # Build the replay response from the STORED authorization (NOT current
-            # routing), so a replay across catalog/pricing/BYOK drift advertises
-            # the endpoint that was actually authorized (codex 3e route review #1).
-            existing_candidates = _authorization_endpoint_candidates(
-                existing_authorization, endpoint_candidates
-            )
-            existing_model, existing_endpoint = existing_candidates[0]
-            existing_usage_type = UsageType.for_endpoint(existing_endpoint)
-            byok_config = (
-                STORE.get_byok_provider(workspace.id, existing_endpoint.provider)
-                if existing_usage_type.is_byok()
-                else None
-            )
-            broadcast_destinations = [
-                payload
-                for destination in STORE.list_broadcast_destinations(workspace.id)
-                if (payload := gateway_destination_payload(destination)) is not None
-            ]
-            return _gateway_authorize_response(
-                authorization=existing_authorization,
-                workspace_id=workspace.id,
-                key_hash=api_key.hash,
-                model=existing_model,
-                endpoint=existing_endpoint,
-                requested_model_id=requested_model_id,
-                model_usage_type=existing_usage_type,
-                limit_usage_type=UsageType.coerce(existing_authorization.usage_type),
-                estimate=existing_authorization.estimated_microdollars,
-                credit_reservation_id=existing_authorization.credit_reservation_id,
-                byok_config=byok_config,
-                region=existing_authorization.region or region,
-                settings=settings,
-                broadcast_destinations=broadcast_destinations,
-                endpoint_candidates=existing_candidates,
-                idempotent_replay=True,
-                custom_model=custom_model,
-            )
-
-        existing_authorization = STORE.get_gateway_authorization_by_idempotency_key(
-            workspace.id, api_key.hash, request_idempotency_key
-        )
-        if existing_authorization is None:
-            # Typed authorizations have no JSON idempotency index; look them up
-            # INDEPENDENT of the cohort flag so a retry after a cohort flag-off /
-            # denylist rollback still replays (codex 3e route review #2).
-            _typed_store = typed_billing_store()
-            if _typed_store is not None:
-                existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
-                    workspace.id, api_key.hash, request_idempotency_key
-                )
-        if existing_authorization is not None:
-            if existing_authorization.idempotency_fingerprint != request_fingerprint:
-                raise api_error(
-                    409,
-                    "Idempotency key was already used for a different gateway request",
-                    ErrorType.CONFLICT,
-                )
-            return _replay_response(existing_authorization)
-        credit_reservation_id: str | None = None
-        idempotent_replay = False
-        # Typed-column billing cutover: when this workspace is in the cohort AND
-        # the store supports it (Spanner), authorize via the atomic conditional-DML
-        # path (the deadlock fix). Default-off -> the legacy path below, unchanged.
-        _typed_store = typed_billing_store()
-        _typed_cohort = False
-        if _typed_store is not None:
-            from trusted_router.storage_gcp_authorize import (
-                typed_billing_enabled_for_workspace,
-            )
-
-            _typed_cohort = typed_billing_enabled_for_workspace(
-                workspace.id,
-                allowlist_csv=settings.typed_billing_workspace_ids,
-                denylist_csv=settings.typed_billing_workspace_denylist,
-            )
-        if _typed_store is not None and _typed_cohort:
-            import datetime as _dt
-
-            from trusted_router.spend_windows import (
-                enforced_window_limits,
-                utcnow,
-                window_resets_at,
-            )
-            from trusted_router.storage_gcp_authorize import AuthorizeOutcome
-
-            # expires_at = generous execution deadline (> max stream + settle
-            # retry window) so the reaper only reclaims genuinely-abandoned holds.
-            expires_at = _dt.datetime.now(_dt.UTC) + _dt.timedelta(seconds=7200)
-            # Per-window key caps (approximate). Omitted entirely for a BYOK
-            # request on a key that excludes BYOK from its caps — same rule the
-            # lifetime cap applies (authorize_atomic's window_limits contract).
-            is_byok_request = not has_credit_candidate
-            window_limits = (
-                {}
-                if is_byok_request and not api_key.include_byok_in_limit
-                else enforced_window_limits(api_key)  # {} in alert mode → never blocks
-            )
-            outcome, authorization = _typed_store.authorize_gateway_typed(
-                workspace_id=workspace.id,
-                key_hash=api_key.hash,
-                estimate=estimate,
-                has_credit_candidate=has_credit_candidate,
-                reservation_usage_type=reservation_usage_type,
-                model_id=model.id,
-                provider=endpoint.provider,
-                requested_model_id=requested_model_id,
-                candidate_model_ids=[m.id for m, _e in endpoint_candidates],
-                region=region,
-                endpoint_id=endpoint.id,
-                candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
-                idempotency_key=request_idempotency_key,
-                idempotency_fingerprint=request_fingerprint,
-                custom_model_id=custom_model.id if custom_model else None,
-                custom_model_revision=custom_model.revision if custom_model else None,
-                expires_at=expires_at,
-                window_limits=window_limits or None,
-            )
-            if outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS:
-                raise api_error(402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS)
-            if outcome.startswith(AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED):
-                _, _, window = outcome.partition(":")
-                window = window or "daily"
-                resets_at = window_resets_at(window, utcnow())
-                retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
-                raise api_error(
-                    429,
-                    f"API key {window} spend limit exceeded; resets at "
-                    f"{resets_at.isoformat().replace('+00:00', 'Z')}",
-                    ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                    headers={"Retry-After": str(retry_after)},
-                )
-            if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
-                raise api_error(
-                    402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
-                )
-            if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
-                raise api_error(
-                    409,
-                    "Idempotency key was already used for a different gateway request",
-                    ErrorType.CONFLICT,
-                )
-            if authorization is None:
-                raise api_error(500, "gateway authorize failed", ErrorType.INTERNAL_ERROR)
-            if outcome == AuthorizeOutcome.REPLAY:
-                # concurrent-race replay: respond from the STORED authorization
-                return _replay_response(authorization)
-            credit_reservation_id = authorization.credit_reservation_id
-        else:
-            from trusted_router.spend_windows import (
-                KeyWindowLimitExceeded,
-                utcnow,
-                window_resets_at,
-            )
-
-            try:
-                STORE.reserve_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-            except KeyWindowLimitExceeded as exc:
-                # InMemory twin of the typed window rejection (same 429 shape).
-                resets_at = window_resets_at(exc.window, utcnow())
-                retry_after = max(1, int((resets_at - utcnow()).total_seconds()))
-                raise api_error(
-                    429,
-                    f"API key {exc.window} spend limit exceeded; resets at "
-                    f"{resets_at.isoformat().replace('+00:00', 'Z')}",
-                    ErrorType.KEY_WINDOW_LIMIT_EXCEEDED,
-                    headers={"Retry-After": str(retry_after)},
-                ) from exc
-            except ValueError as exc:
-                raise api_error(
-                    402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
-                ) from exc
-
-            if has_credit_candidate:
-                try:
-                    credit_reservation = STORE.reserve(
-                        workspace.id,
-                        api_key.hash,
-                        estimate,
-                        idempotency_key=request_idempotency_key,
-                    )
-                    credit_reservation_id = credit_reservation.id
-                except ValueError as exc:
-                    STORE.refund_key_limit(api_key.hash, estimate, usage_type=reservation_usage_type)
-                    raise api_error(
-                        402, "Insufficient credits", ErrorType.INSUFFICIENT_CREDITS
-                    ) from exc
-
-            authorization = STORE.create_gateway_authorization(
-                workspace_id=workspace.id,
-                key_hash=api_key.hash,
-                model_id=model.id,
-                provider=endpoint.provider,
-                usage_type=reservation_usage_type,
-                estimated_microdollars=estimate,
-                credit_reservation_id=credit_reservation_id,
-                requested_model_id=requested_model_id,
-                candidate_model_ids=[
-                    candidate_model.id for candidate_model, _endpoint in endpoint_candidates
-                ],
-                region=region,
-                endpoint_id=endpoint.id,
-                candidate_endpoint_ids=[
-                    candidate_endpoint.id
-                    for _candidate_model, candidate_endpoint in endpoint_candidates
-                ],
-                idempotency_key=request_idempotency_key,
-                idempotency_fingerprint=request_fingerprint,
-                custom_model_id=custom_model.id if custom_model else None,
-                custom_model_revision=custom_model.revision if custom_model else None,
-            )
-        byok_config = (
-            STORE.get_byok_provider(workspace.id, endpoint.provider)
-            if model_usage_type.is_byok()
-            else None
-        )
-        broadcast_destinations = [
-            payload
-            for destination in STORE.list_broadcast_destinations(workspace.id)
-            if (payload := gateway_destination_payload(destination)) is not None
-        ]
-        return _gateway_authorize_response(
-            authorization=authorization,
-            workspace_id=workspace.id,
-            key_hash=api_key.hash,
-            model=model,
-            endpoint=endpoint,
-            requested_model_id=requested_model_id,
-            model_usage_type=model_usage_type,
-            limit_usage_type=reservation_usage_type,
-            estimate=estimate,
-            credit_reservation_id=credit_reservation_id,
-            byok_config=byok_config,
-            region=region,
-            settings=settings,
-            broadcast_destinations=broadcast_destinations,
-            endpoint_candidates=endpoint_candidates,
-            idempotent_replay=idempotent_replay,
-            custom_model=custom_model,
-        )
+        return await authorize_gateway(request, body, settings)
 
     @router.post("/internal/gateway/settle")
     async def gateway_settle(
