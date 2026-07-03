@@ -12,23 +12,44 @@ only on the registry/data leaves).
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
 import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _fresh_import(name: str) -> object:
-    for mod in list(sys.modules):
-        if mod.startswith("trusted_router"):
-            del sys.modules[mod]
-    return importlib.import_module(name)
+def _catalog_loaded_when_importing(module: str) -> bool:
+    """Import `module` in a BRAND-NEW interpreter and report whether
+    trusted_router.catalog got pulled in as a side effect.
+
+    Deliberately a subprocess: the obvious in-process version would clear
+    trusted_router.* out of sys.modules to force a fresh import, but doing that
+    mid-suite poisons the singleton STORE and every active monkeypatch for the
+    tests that run after this one (a real cascade — do not reintroduce it).
+    """
+    code = (
+        f"import sys; import {module}; "
+        "print('LOADED' if 'trusted_router.catalog' in sys.modules else 'CLEAN')"
+    )
+    env = {**os.environ, "PYTHONPATH": str(_REPO_ROOT / "src")}
+    out = subprocess.run(  # noqa: S603 - `module` is a hardcoded literal, not user input
+        [sys.executable, "-c", code],
+        cwd=_REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.strip() == "LOADED"
 
 
 def test_privacy_and_routing_import_without_loading_catalog() -> None:
     # Importing either split module standalone must NOT drag in catalog.py —
     # that is the invariant that keeps the dependency graph acyclic.
-    _fresh_import("trusted_router.catalog_privacy")
-    assert "trusted_router.catalog" not in sys.modules
-    _fresh_import("trusted_router.routing_candidates")
-    assert "trusted_router.catalog" not in sys.modules
+    assert not _catalog_loaded_when_importing("trusted_router.catalog_privacy")
+    assert not _catalog_loaded_when_importing("trusted_router.routing_candidates")
 
 
 def test_catalog_reexports_the_same_function_objects() -> None:
