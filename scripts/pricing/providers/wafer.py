@@ -8,8 +8,12 @@ so this module converts directly to integer microdollars per million tokens.
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -25,6 +29,14 @@ from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_ups
 
 SLUG = "wafer"
 URL = "https://pass.wafer.ai/v1/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "wafer.json"
+)
 
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
@@ -35,6 +47,7 @@ EXPECTED_MODELS = [
 _NATIVE_TO_OR_ID = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
+    "GLM-5.2-Fast": "z-ai/glm-5.2-fast",
     "Kimi-K2.6": "moonshotai/kimi-k2.6",
     "Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
@@ -47,6 +60,7 @@ _NATIVE_TO_OR_ID = {
 }
 
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
 def _cents_to_micro_per_m(value: object) -> int | None:
@@ -59,7 +73,72 @@ def _cents_to_micro_per_m(value: object) -> int | None:
     return int((parsed * Decimal("10000")).to_integral_value(ROUND_HALF_UP))
 
 
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _wafer_capabilities(row: dict[str, Any]) -> dict[str, Any]:
+    wafer = row.get("wafer")
+    if not isinstance(wafer, dict):
+        return {}
+    capabilities = wafer.get("capabilities")
+    return capabilities if isinstance(capabilities, dict) else {}
+
+
+def _wafer_pricing(row: dict[str, Any]) -> dict[str, Any] | None:
+    wafer = row.get("wafer")
+    if not isinstance(wafer, dict):
+        return None
+    pricing = wafer.get("pricing")
+    return pricing if isinstance(pricing, dict) else None
+
+
+def _manifest_row(
+    *,
+    model_id: str,
+    native_id: str,
+    source_row: dict[str, Any],
+    price: ModelPrice,
+) -> dict[str, Any]:
+    wafer = source_row.get("wafer")
+    wafer = wafer if isinstance(wafer, dict) else {}
+    capabilities = _wafer_capabilities(source_row)
+    chat_capabilities = capabilities.get("chat_completions")
+    chat_capabilities = chat_capabilities if isinstance(chat_capabilities, dict) else {}
+    zdr_capabilities = capabilities.get("zdr")
+    zdr_capabilities = zdr_capabilities if isinstance(zdr_capabilities, dict) else {}
+    supports_vision = bool(chat_capabilities.get("vision"))
+
+    row: dict[str, Any] = {
+        "id": model_id,
+        "upstream_id": native_id,
+        "display_name": str(wafer.get("display_name") or native_id),
+        "endpoints": ["chat/completions"],
+        "input_token_price_per_m": price.prompt_micro_per_m,
+        "output_token_price_per_m": price.completion_micro_per_m,
+        "zdr_supported": bool(zdr_capabilities.get("supported")),
+    }
+    context_length = _positive_int(wafer.get("context_length"))
+    if context_length is not None:
+        row["context_length"] = context_length
+    if supports_vision:
+        row["input_modalities"] = ["text", "image"]
+        row["output_modalities"] = ["text"]
+    tier = price.tiers[0]
+    if tier.prompt_cached_micro_per_m is not None:
+        row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
+    return row
+
+
 def fetch() -> ProviderPricingResult:
+    global _DISCOVERED_MANIFEST_ROWS
+
     api_key = os.environ.get("WAFER_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
@@ -78,6 +157,7 @@ def fetch() -> ProviderPricingResult:
     if not isinstance(rows, list):
         rows = []
     prices: dict[str, ModelPrice] = {}
+    manifest_rows: dict[str, dict[str, Any]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -88,8 +168,7 @@ def fetch() -> ProviderPricingResult:
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
-        wafer = row.get("wafer")
-        pricing = wafer.get("pricing") if isinstance(wafer, dict) else None
+        pricing = _wafer_pricing(row)
         if not isinstance(pricing, dict):
             continue
         prompt = _cents_to_micro_per_m(pricing.get("input_cents_per_million"))
@@ -97,11 +176,20 @@ def fetch() -> ProviderPricingResult:
         if prompt is None or completion is None:
             continue
         cache_read = _cents_to_micro_per_m(pricing.get("cache_read_cents_per_million"))
-        prices[or_id] = ModelPrice(
+        price = ModelPrice(
             prompt_micro_per_m=prompt,
             completion_micro_per_m=completion,
             prompt_cached_micro_per_m=cache_read,
         )
+        prices[or_id] = price
+        manifest_rows[or_id] = _manifest_row(
+            model_id=or_id,
+            native_id=native_id,
+            source_row=row,
+            price=price,
+        )
+
+    _DISCOVERED_MANIFEST_ROWS = manifest_rows
 
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
@@ -116,3 +204,71 @@ def fetch() -> ProviderPricingResult:
         fetched_url=URL,
         notes=notes,
     )
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    """Update Wafer's provider-native runtime manifest from `/v1/models`.
+
+    Wafer models are supplemental provider routes, so hourly price refreshes
+    must update `provider_models/wafer.json`, not only the OR-shaped snapshot.
+    This also lets newly launched Wafer-native IDs become routable as soon as
+    the Wafer API publishes the model + pricing.
+    """
+
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        raise RuntimeError("wafer manifest has no models list")
+
+    existing_by_id: dict[str, dict[str, Any]] = {
+        row["id"]: row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    updated: list[str] = []
+    appended: list[str] = []
+    for model_id, price in sorted(result.prices.items()):
+        discovered = _DISCOVERED_MANIFEST_ROWS.get(model_id)
+        row = existing_by_id.get(model_id)
+        if row is None:
+            if discovered is None:
+                continue
+            row = dict(discovered)
+            rows.append(row)
+            existing_by_id[model_id] = row
+            appended.append(model_id)
+        elif discovered is not None:
+            for key, value in discovered.items():
+                row[key] = value
+
+        tier = price.tiers[0]
+        row["input_token_price_per_m"] = tier.prompt_micro_per_m
+        row["output_token_price_per_m"] = tier.completion_micro_per_m
+        if tier.prompt_cached_micro_per_m is not None:
+            row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
+        else:
+            row.pop("cached_input_token_price_per_m", None)
+        updated.append(model_id)
+
+    missing = sorted(set(EXPECTED_MODELS) - set(updated))
+    if missing:
+        raise RuntimeError(f"wafer manifest did not update expected model(s): {missing}")
+    if not updated:
+        raise RuntimeError("wafer manifest update touched no rows")
+
+    raw["_about"] = (
+        "Provider-native supplement for Wafer serverless API. Refreshed "
+        "hourly from Wafer's OpenAI-compatible /v1/models feed."
+    )
+    raw["source"] = URL
+    raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    raw["model_count"] = len(rows)
+    MANIFEST_PATH.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    suffix = f", appended {len(appended)}" if appended else ""
+    return [f"wafer: refreshed provider_models/wafer.json ({len(updated)} priced rows{suffix})"]

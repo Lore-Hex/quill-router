@@ -103,6 +103,7 @@ def _baseten_model_id(native_id: str) -> str | None:
 _WAFER_MODEL_IDS = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
+    "GLM-5.2-Fast": "z-ai/glm-5.2-fast",
     "Kimi-K2.6": "moonshotai/kimi-k2.6",
     "Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",

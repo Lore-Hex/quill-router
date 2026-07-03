@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from scripts.pricing.providers import baseten, wafer
 
 
@@ -69,11 +72,33 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
             {
                 "id": "GLM-5.2",
                 "wafer": {
+                    "display_name": "GLM-5.2",
+                    "context_length": 1048576,
+                    "capabilities": {
+                        "zdr": {"supported": True},
+                        "chat_completions": {"vision": False},
+                    },
                     "pricing": {
                         "input_cents_per_million": 120,
                         "output_cents_per_million": 410,
                         "cache_read_cents_per_million": 20,
                     }
+                },
+            },
+            {
+                "id": "GLM-5.2-Fast",
+                "wafer": {
+                    "display_name": "GLM-5.2-Fast",
+                    "context_length": 1048576,
+                    "capabilities": {
+                        "zdr": {"supported": True},
+                        "chat_completions": {"vision": False},
+                    },
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1025,
+                        "cache_read_cents_per_million": 50,
+                    },
                 },
             },
             {
@@ -116,13 +141,154 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
 
     result = wafer.fetch()
     glm = result.prices["z-ai/glm-5.2"]
+    fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.7-code"]
     minimax = result.prices["minimax/minimax-m3"]
 
     assert glm.prompt_micro_per_m == 1_200_000
     assert glm.completion_micro_per_m == 4_100_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 200_000
+    assert fast.prompt_micro_per_m == 3_000_000
+    assert fast.completion_micro_per_m == 10_250_000
+    assert fast.tiers[0].prompt_cached_micro_per_m == 500_000
     assert kimi.prompt_micro_per_m == 950_000
     assert minimax.completion_micro_per_m == 1_320_000
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "GLM-5.2"
+    assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "GLM-5.2-Fast"
     assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k2.7-code"] == "Kimi-K2.7-Code"
+
+
+def test_wafer_provider_appends_new_priced_models_to_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "wafer.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "wafer",
+                "source": wafer.URL,
+                "generated_at": "2026-01-01T00:00:00Z",
+                "model_count": 3,
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "GLM-5.2",
+                        "display_name": "GLM 5.2",
+                        "context_length": 1048576,
+                        "endpoints": ["chat/completions"],
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
+                        "id": "moonshotai/kimi-k2.7-code",
+                        "upstream_id": "Kimi-K2.7-Code",
+                        "display_name": "Kimi K2.7 Code",
+                        "context_length": 262144,
+                        "endpoints": ["chat/completions"],
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
+                        "id": "minimax/minimax-m3",
+                        "upstream_id": "MiniMax-M3",
+                        "display_name": "MiniMax M3",
+                        "context_length": 1048576,
+                        "endpoints": ["chat/completions"],
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(wafer, "MANIFEST_PATH", manifest_path)
+
+    payload = {
+        "data": [
+            {
+                "id": "GLM-5.2",
+                "wafer": {
+                    "display_name": "GLM-5.2",
+                    "context_length": 1048576,
+                    "capabilities": {
+                        "zdr": {"supported": True},
+                        "chat_completions": {"vision": False},
+                    },
+                    "pricing": {
+                        "input_cents_per_million": 120,
+                        "output_cents_per_million": 410,
+                        "cache_read_cents_per_million": 20,
+                    },
+                },
+            },
+            {
+                "id": "GLM-5.2-Fast",
+                "wafer": {
+                    "display_name": "GLM-5.2-Fast",
+                    "context_length": 1048576,
+                    "capabilities": {
+                        "zdr": {"supported": True},
+                        "chat_completions": {"vision": False},
+                    },
+                    "pricing": {
+                        "input_cents_per_million": 300,
+                        "output_cents_per_million": 1025,
+                        "cache_read_cents_per_million": 50,
+                    },
+                },
+            },
+            {
+                "id": "Kimi-K2.7-Code",
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 95,
+                        "output_cents_per_million": 400,
+                        "cache_read_cents_per_million": 19,
+                    }
+                },
+            },
+            {
+                "id": "MiniMax-M3",
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 33,
+                        "output_cents_per_million": 132,
+                        "cache_read_cents_per_million": 7,
+                    }
+                },
+            },
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:  # noqa: ANN002, ANN003
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(wafer.httpx, "Client", FakeClient)
+
+    result = wafer.fetch()
+    notes = wafer.write_provider_manifest(result)
+
+    assert notes == [
+        "wafer: refreshed provider_models/wafer.json (4 priced rows, appended 1)"
+    ]
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {row["id"]: row for row in raw["models"]}
+    assert raw["model_count"] == 4
+    assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_200_000
+    assert by_id["z-ai/glm-5.2-fast"]["upstream_id"] == "GLM-5.2-Fast"
+    assert by_id["z-ai/glm-5.2-fast"]["input_token_price_per_m"] == 3_000_000
+    assert by_id["z-ai/glm-5.2-fast"]["output_token_price_per_m"] == 10_250_000
+    assert by_id["z-ai/glm-5.2-fast"]["cached_input_token_price_per_m"] == 500_000
+    assert by_id["z-ai/glm-5.2-fast"]["zdr_supported"] is True
