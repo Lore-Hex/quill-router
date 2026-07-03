@@ -446,9 +446,20 @@ def typed_billing_enabled_for_workspace(
     TR_TYPED_BILLING_WORKSPACE_DENYLIST=*` — takes effect on the next request
     across the region without a code deploy, and reverting is just clearing the
     var. Every typed path (authorize + the typed-aware balance reads) funnels
-    through this one predicate, so the kill is comprehensive. When killed,
-    authorize/settle fall back to the legacy JSON path, which is fail-safe (the
-    app keeps working; billing is approximate until re-enabled)."""
+    through this one predicate, so the kill is comprehensive.
+
+    This is a BREAK-GLASS AVAILABILITY brake, NOT a billing-clean rollback.
+    Reach for it when the typed gate itself misbehaves (deadlocks, elevated
+    errors/latency) and you need requests flowing again NOW; killed workspaces
+    fall back to the legacy JSON authorize path, so the app keeps serving. But
+    it is deliberately NOT revenue-neutral for a workspace that was already
+    running typed: its JSON usage columns are stale-LOW because the typed-owned
+    counters are never mirrored back to JSON (the #79 ownership split), so the
+    JSON fallback under-counts spend and can OVER-admit / UNDER-bill until typed
+    is re-enabled. A *correct* rollback is the pause -> drain -> backsync runbook
+    (storage_gcp_counter_reconcile / #32), which reconciles JSON before cutting
+    over; denylisting alone is knowingly lossy. Use the kill-switch to stop the
+    bleeding, then run the backsync — don't treat it as a clean off-switch."""
     deny = {w.strip() for w in denylist_csv.split(",") if w.strip()}
     if "*" in deny or workspace_id in deny:
         return False

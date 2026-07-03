@@ -47,8 +47,12 @@ class Settings(BaseSettings):
     # empty = legacy path everywhere (zero behavior change). "*" = all workspaces.
     # The denylist is an emergency kill switch that always wins; "*" in the
     # DENYLIST is the FAST GLOBAL kill-switch — it disables typed enforcement for
-    # every workspace on the next request (no deploy), falling back to the
-    # fail-safe legacy path. Flip via TR_TYPED_BILLING_WORKSPACE_DENYLIST=*.
+    # every workspace on the next request (no deploy). It is a break-glass
+    # AVAILABILITY brake (keeps the app serving via the legacy path), NOT a
+    # billing-clean rollback: already-typed workspaces have stale-low JSON usage
+    # (#79) so the fallback under-bills until re-enabled or reconciled via the
+    # pause->drain->backsync runbook (#32). Flip via
+    # TR_TYPED_BILLING_WORKSPACE_DENYLIST=*, then run the backsync.
     typed_billing_workspace_ids: str = ""
     typed_billing_workspace_denylist: str = ""
 
