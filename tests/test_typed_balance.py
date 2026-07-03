@@ -54,6 +54,24 @@ def test_credit_overlay_denylist_wins() -> None:
     assert acct.total_usage_microdollars == 0
 
 
+def test_credit_overlay_denylist_wildcard_global_kill_reads_stale_json() -> None:
+    """The "*" global kill-switch routes the balance read to JSON for EVERY
+    workspace — and this test pins the documented hazard: a workspace that was
+    running typed has stale-LOW JSON usage, so under the kill it under-reports
+    spend (999_999 booked in typed, but JSON reads 0). That is exactly why the
+    kill-switch is a break-glass availability brake, not a billing-clean
+    rollback (the pause->drain->backsync runbook reconciles JSON first)."""
+    store, db, _ = make_fake_store()
+    ws = "ws_globalkill"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 0)].update({"total_usage": 999_999})
+    # "*" allowlist (everyone-on cutover) + "*" denylist (global kill) → JSON.
+    acct = typed_aware_credit_account(store, ws, settings=_settings(allow="*", deny="*"))
+    assert acct.total_usage_microdollars == 0  # stale-low JSON, NOT the typed 999_999
+
+
 def test_credit_typed_but_unseeded_falls_back_to_json() -> None:
     store, _db, _ = make_fake_store()
     store._counter_mirror_enabled = False  # no typed row written

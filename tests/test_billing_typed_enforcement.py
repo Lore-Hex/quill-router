@@ -918,7 +918,10 @@ def test_cohort_gate_allowlist_denylist_wildcard() -> None:
 
 def test_cohort_gate_denylist_wildcard_is_global_kill_switch() -> None:
     """"*" in the denylist = fast global kill: typed enforcement off for EVERY
-    workspace, beating even an "*" allowlist (deny always wins)."""
+    workspace, beating even an "*" allowlist (deny always wins). This is a
+    break-glass availability brake — for already-typed workspaces the JSON
+    fallback is stale-low (#79), so it under-bills until the backsync runbook
+    (#32) runs; see typed_billing_enabled_for_workspace + test_typed_balance."""
     f = typed_billing_enabled_for_workspace
     # Kills a workspace that would otherwise be allowed by an explicit allowlist…
     assert f("ws1", allowlist_csv="ws1,ws2", denylist_csv="*") is False
