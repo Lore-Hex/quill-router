@@ -20,7 +20,6 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from trusted_router.ai_iq import ai_iq_for_model
 from trusted_router.benchmark_scores import scores_for_model
-from trusted_router.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
@@ -39,7 +38,8 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.config import Settings
-from trusted_router.legal import (
+from trusted_router.content.blog import BLOG_POSTS, BLOG_POSTS_BY_SLUG, BlogPost
+from trusted_router.content.legal import (
     hipaa_readiness_packet,
     legal_entity,
     procurement_packet,
