@@ -32,7 +32,6 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.config import Settings
-from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
     STATIC_DIR,
@@ -75,6 +74,7 @@ from trusted_router.dashboard import (
     subprocessors_json,
 )
 from trusted_router.og import OG_PNG_PATH
+from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
 from trusted_router.storage_models import utcnow
