@@ -205,6 +205,10 @@ class FakeSpannerDatabase:
                     _, pk, record = op
                     self.settle_outbox[pk] = record
                     self.settle_outbox_versions[pk] = new_version
+                elif op[0] == "delete_settle_outbox":
+                    _, pk = op
+                    self.settle_outbox.pop(pk, None)
+                    self.settle_outbox_versions.pop(pk, None)
                 elif op[0] == "update_reservation":
                     _, rid, record = op
                     self.reservations[rid] = record
@@ -313,6 +317,7 @@ class _FakeTransaction:
                 return 1
             return 0
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
+            _require_pred(sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release")
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)
             # mirrors the `AND reserved >= @hold` guard: underflow = 0-row no-op
@@ -340,6 +345,7 @@ class _FakeTransaction:
                 return 1
             return 0
         if "UPDATE tr_key_limit " in sql and "reserved = reserved - @hold" in sql:
+            _require_pred(sql, "key_hash=@kh AND shard=@shard AND reserved >= @hold", "key-release")
             pk = (p["kh"], p["shard"])
             rec = self._typed_current("tr_key_limit", pk)
             if rec is None or rec["reserved"] < p["hold"]:
@@ -388,6 +394,7 @@ class _FakeTransaction:
             self.pending_writes.append(("insert_reservation", record))
             return 1
         if "UPDATE tr_reservation SET settled=true" in sql:
+            _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
             rec = self._reservation_current(p["rid"])
             if rec is None or rec["settled"]:
                 return 0  # missing or already-claimed (replay)
@@ -468,12 +475,48 @@ class _FakeTransaction:
             new = dict(rec, lease_owner=p["owner"], leased_until=p["lease"], updated_at=p["now"])
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
-        if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
-            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
-            _require_pred(sql, "status='pending'", "mark")
+        if sql.startswith("UPDATE tr_settle_outbox SET status='pending'"):  # park
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "park")
+            _require_pred(sql, "AND status='pending' AND attempts=@attempts", "park")
+            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "park")
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)
             if rec is None or rec["status"] != "pending":
+                return 0
+            if int(rec.get("attempts", 0) or 0) != int(p["attempts"]):
+                return 0
+            owner = rec.get("lease_owner")
+            if owner is not None and owner != p.get("lease_owner"):
+                return 0
+            new = dict(
+                rec, status="pending", attempts=rec.get("attempts", 0), last_error=p["err"],
+                next_attempt_at=p["next_at"], lease_owner=None, leased_until=None,
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_settle_outbox", pk, new))
+            return 1
+        if sql.startswith("DELETE FROM tr_settle_outbox"):  # purge done
+            _require_pred(sql, "WHERE status='done'", "purge_done")
+            _require_pred(sql, "AND updated_at < @cutoff", "purge_done")
+            deleted = 0
+            for pk, rec in list(self.db.settle_outbox.items()):
+                vkey = ("outbox", pk)
+                if vkey not in self.read_versions:
+                    self.read_versions[vkey] = self.db.settle_outbox_versions.get(pk, 0)
+                if rec.get("status") == "done" and rec.get("updated_at") < p["cutoff"]:
+                    self.pending_writes.append(("delete_settle_outbox", pk))
+                    deleted += 1
+            return deleted
+        if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
+            _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
+            _require_pred(sql, "status='pending'", "mark")
+            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "mark")
+            pk = (p["aid"], p["kind"])
+            rec = self._settle_outbox_current(pk)
+            if rec is None or rec["status"] != "pending":
+                return 0
+            owner = rec.get("lease_owner")
+            if owner is not None and owner != p.get("lease_owner"):
                 return 0
             new = dict(
                 rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],
@@ -898,6 +941,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_keys import SpannerApiKeys
     from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
     from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
+    from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
     from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 
@@ -929,6 +973,7 @@ def make_fake_store(
     )
     store.byok_store = SpannerByok(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)
+    store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)
     store.auth_session_store = SpannerAuthSessions(io)
     store.oauth_code_store = SpannerOAuthCodes(io)
     store.rate_limit_store = SpannerRateLimits(io)

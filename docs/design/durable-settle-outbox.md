@@ -164,6 +164,10 @@ the enqueue INSERT commits** — a crash between receiving the POST and the enqu
 still relies on the enclave re-delivering; quantify recovery as "finalize-after-
 enqueue failures", not "all losses".
 
+Flag-on hot-path cost: two additional sequential Spanner commits on settle
+(enqueue before finalize, done-mark after finalize), accepted for the gated
+cohort.
+
 ## 6. Drain — apply the FROZEN amount via a narrow primitive (fixes MF4/MF5/SF7)
 
 `POST /internal/gateway/settle-outbox/drain?limit=N` (internal-token auth),
@@ -183,6 +187,9 @@ lease-claims due `pending` rows and for each:
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
   violation, do not report "recovered"); deterministic non-retryable errors →
   `dead` (no page); transient → backoff. After `max_attempts` → `dead` + alert.
+- Accepted SF7 loss: drained generations never reach metadata-broadcast
+  destinations.
+- Accepted SF7 loss: drained refunds record no provider-error benchmark sample.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same
@@ -229,6 +236,8 @@ lease-claims due `pending` rows and for each:
    split (§3).
 4. Flip `settle_outbox_enabled=True` fully once shadow is clean. **Billing
    prod-behavior flip → Joseph's explicit go** (typed-cutover bar).
+5. Retention is handled by the drain's done-row purge (default 30 days);
+   `pending`/`dead`/`release_approved` are never auto-deleted.
 
 ## 9. Open question for the owner (unchanged — §6 of v1)
 
@@ -300,41 +309,20 @@ Read this first if you are continuing the outbox build.
     (`_require_pred`) so a dropped predicate FAILS a test (the MF6 guarantee).
   - Tests: `tests/test_settle_outbox_storage.py` (11).
 
-### What REMAINS — Increments 2–4 (each its own codex-gated PR, default-off)
-2. **Reaper in-txn guard (MF1/MF2/MF3) — the correctness spine, the one live
-   change.** In `storage_gcp_authorize.py`:
-   - `settle_atomic` gains `guard_outbox: bool = False`. When True, INSIDE its
-     read-write txn after `read_reservation` (which returns `authorization_id` —
-     confirmed), do an in-txn `SELECT COUNT(*) FROM tr_settle_outbox WHERE
-     authorization_id=@aid AND status IN ('pending','dead')`; if > 0, ABORT the
-     free-release (return a new `SettleOutcome.OUTBOX_GUARDED`, do NOT claim). The
-     in-txn re-check is the interlock (a snapshot pre-filter alone has the MF2
-     TOCTOU).
-   - `reap_expired_reservations` must project `authorization_id` (today it
-     projects only `reservation_id`), advisory-skip candidates where
-     `settle_outbox.has_intent(aid)`, and call `settle_atomic(..., guard_outbox=True)`.
-   - INERT WHEN THE TABLE IS EMPTY → reaper is byte-identical to today when
-     disabled. Fake: the reaper query gains the guard subquery, so update the fake
-     reaper handler (`tests/fakes/spanner.py`, `"FROM tr_reservation WHERE
-     settled=false AND expires_at"` branch) to filter by the fake `settle_outbox`,
-     and add a `_require_pred` for the guard predicate (MF6 — a guard typo must
-     fail a test). Test both directions (row present → skipped; absent → reaped).
-3. **Frozen-cost finalize primitive + richer outcome (MF5/SF3/SF7).** A narrow
-   apply function (counter claim + gateway_authorization finalize + generation
-   write) that applies the STORED `actual_cost_micro` and returns the final
-   8-value §6 `ApplyOutcome` contract — NOT the full
-   `_settle_gateway_authorization` handler (which re-runs pricing + re-fires
-   alerts/refill/broadcast). The drain marks `done` on charged, `dead`+ALERT on
-   `already_released_free` (reaper beat us — never silently "recovered").
-4. **Enqueue-at-settle + drain endpoint.** In `_settle_gateway_authorization`
-   (`routes/internal/gateway.py`), gated on `settings.settle_outbox_enabled`:
-   enqueue BEFORE the inline finalize (capturing the resolved origin +
-   frozen cost the inline attempt computed), mark `done` after. Add
-   `POST /internal/gateway/settle-outbox/drain` (internal-token auth, mirror
-   `routes/internal/broadcast_queue.py`) that claims due rows and applies via the
-   Increment-3 primitive, routing on the STORED origin (MF4 — immune to a
-   `TR_TYPED_COUNTER_MIRROR` flip; PARK, don't dead-letter, if the typed store is
-   unavailable).
+- **Increment 2 — reaper in-txn guard (MF1/MF2/MF3)** = PR #116. `settle_atomic`
+  and `reap_expired_reservations` now freeze pending/dead outbox rows and fake
+  SQL asserts the guard predicates.
+- **Increment 3 — frozen-cost apply primitive (MF5/SF3/SF7)** = PR #118.
+  `apply_frozen_settle` applies stored origin/cost via the narrow 8-outcome
+  contract without the full HTTP settle side effects.
+- **Increment 4 — enqueue-at-settle + drain endpoint** = this PR. Live settle
+  enqueues frozen rows before inline finalize, marks done only on inline success,
+  and `/internal/gateway/settle-outbox/drain` claims and resolves rows.
+
+### What REMAINS — operator rollout
+
+The remaining operator steps are the §8 rollout sequence: apply the guarded DDL,
+then Joseph decides when to flip `settle_outbox_enabled=True`.
 
 ### HARD constraints (do not violate)
 - **codex-review BEFORE merge on every billing PR. Do NOT arm auto-merge-on-green
