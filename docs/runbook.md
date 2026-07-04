@@ -512,9 +512,9 @@ revision in every affected region, then pause the scheduler:
 
 ```bash
 gcloud run services update-traffic trusted-router --region=<r> \
-  --to-revisions=<previous-pinned-revision>=100
+  --to-revisions=<previous-pinned-revision>=100 --project=quill-cloud-proxy
 gcloud scheduler jobs pause trusted-router-settle-outbox-drain \
-  --location=us-central1
+  --location=us-central1 --project=quill-cloud-proxy
 ```
 
 Find the previous pinned revision with `gcloud run revisions list`. Pending
