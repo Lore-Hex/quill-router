@@ -183,12 +183,21 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_lite_preview = MODEL_ENDPOINTS[
         "google/gemini-3.1-flash-lite-preview@gemini/prepaid"
     ]
+    image_preview = MODEL_ENDPOINTS[
+        "google/gemini-3.1-flash-image-preview@gemini/prepaid"
+    ]
 
     assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
     assert gemini_35.upstream_id == "gemini-3.5-flash"
     assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_650_000
     assert gemini_35.completion_price_microdollars_per_million_tokens == 9_900_000
     assert gemini_lite_preview.upstream_id == "gemini-3.1-flash-lite-preview"
+    image_model = MODELS["google/gemini-3.1-flash-image-preview"]
+    assert image_model.context_length == 65_536
+    assert image_model.supports_chat
+    assert image_preview.upstream_id == "gemini-3.1-flash-image-preview"
+    assert image_preview.prompt_price_microdollars_per_million_tokens == 550_000
+    assert image_preview.completion_price_microdollars_per_million_tokens == 66_000_000
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:

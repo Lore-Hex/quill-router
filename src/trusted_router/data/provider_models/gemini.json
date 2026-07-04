@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for Gemini text chat models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct generateContent smoke on 2026-06-05. Pro preview models that returned quota errors are intentionally not exposed here.",
+  "_about": "Provider-native supplement for Gemini chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "gemini",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-06-05T00:00:00Z",
-  "model_count": 2,
+  "generated_at": "2026-07-04T00:00:00Z",
+  "model_count": 3,
   "models": [
     {
       "id": "google/gemini-3.5-flash",
@@ -36,6 +36,22 @@
       "features": [],
       "input_modalities": ["text"],
       "output_modalities": ["text"],
+      "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "google/gemini-3.1-flash-image-preview",
+      "upstream_id": "gemini-3.1-flash-image-preview",
+      "display_name": "Gemini 3.1 Flash Image Preview",
+      "title": "google/gemini-3.1-flash-image-preview",
+      "context_length": 65536,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 60000000,
+      "model_type": "chat",
+      "features": ["reasoning", "image-generation"],
+      "input_modalities": ["text", "image"],
+      "output_modalities": ["text", "image"],
       "endpoints": ["chat/completions"],
       "status": 1
     }

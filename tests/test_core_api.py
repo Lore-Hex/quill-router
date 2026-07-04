@@ -688,6 +688,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/athena",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
+        "google/gemini-3.1-flash-image-preview",
     }.issubset(model_ids)
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
