@@ -54,9 +54,9 @@ Consequences that shape the whole v2 design:
 - **`finalized=False` is ambiguous** — it means (a) already charged inline, (b)
   reaper released it free (charge lost), or (c) no credit reservation. The drain
   MUST NOT collapse these to "done". It needs a **richer finalize outcome**
-  (`settled_now | already_settled_with_charge | already_released_free |
-  reservation_missing`) and must treat `already_released_free` on a row that
-  intended a charge as an **invariant violation → alert, never silently done**.
+  (see the §6 `ApplyOutcome` contract) and must treat
+  `already_released_free` on a row that intended a charge as an **invariant
+  violation → alert, never silently done**.
 - The **double-charge direction is already safe**: `claim_reservation` is
   first-writer-wins, so N inline+drain replays book at most once. v2 must preserve
   that and only fix the lost-charge direction.
@@ -183,6 +183,22 @@ lease-claims due `pending` rows and for each:
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
   violation, do not report "recovered"); deterministic non-retryable errors →
   `dead` (no page); transient → backoff. After `max_attempts` → `dead` + alert.
+- Final `ApplyOutcome` contract for the drain:
+  `settled_now` → done. `already_settled_with_charge` means done for settle
+  intent; for refund intent with a charged reservation, done plus the same
+  low-priority review flag as legacy (a kept charge beat a refund intent, and
+  typed has strictly better information so it must not alert less). A frozen
+  `actual_cost_micro=0` replay is in this benign bucket even when the typed
+  reservation booked 0. `already_released_free` means a real settle charge was
+  lost unless the row intent is refund. `already_settled_legacy` → done, plus a
+  low-priority review flag if a sibling refund-intent row exists for that
+  authorization. `reservation_missing` → dead + alert: the row references an
+  authorization/reservation that does not exist, so replay cannot repair the
+  deterministic broken reference. `park_typed_unavailable` covers missing typed
+  capability and transient typed-store outages at all three store touchpoints:
+  pre-read, finalize, and disambiguation read; release the lease and do not
+  increment attempts. `invalid_row` is deterministic dead; `error` uses transient
+  backoff.
 - `mark` updates status/lease/next_attempt_at/attempts in a **single lease-fenced
   conditional-DML transaction** on the native row (SF8) — do NOT copy broadcast's
   non-atomic delete-then-write index rewrite.
@@ -305,12 +321,11 @@ Read this first if you are continuing the outbox build.
      fail a test). Test both directions (row present → skipped; absent → reaped).
 3. **Frozen-cost finalize primitive + richer outcome (MF5/SF3/SF7).** A narrow
    apply function (counter claim + gateway_authorization finalize + generation
-   write) that applies the STORED `actual_cost_micro` and returns
-   `settled_now | already_settled_with_charge | already_released_free |
-   reservation_missing` — NOT the full `_settle_gateway_authorization` handler
-   (which re-runs pricing + re-fires alerts/refill/broadcast). The drain marks
-   `done` on charged, `dead`+ALERT on `already_released_free` (reaper beat us —
-   never silently "recovered").
+   write) that applies the STORED `actual_cost_micro` and returns the final
+   8-value §6 `ApplyOutcome` contract — NOT the full
+   `_settle_gateway_authorization` handler (which re-runs pricing + re-fires
+   alerts/refill/broadcast). The drain marks `done` on charged, `dead`+ALERT on
+   `already_released_free` (reaper beat us — never silently "recovered").
 4. **Enqueue-at-settle + drain endpoint.** In `_settle_gateway_authorization`
    (`routes/internal/gateway.py`), gated on `settings.settle_outbox_enabled`:
    enqueue BEFORE the inline finalize (capturing the resolved origin +

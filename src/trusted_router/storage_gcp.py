@@ -1217,6 +1217,17 @@ class SpannerBigtableStore:
             return None
         return (int(rows[0][0]), int(rows[0][1]), int(rows[0][2]))
 
+    def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:
+        """Point-read a typed reservation for outbox lost-claim disambiguation.
+
+        The drain needs `actual_micro` to distinguish charged replays from
+        free releases after claim_reservation reports an already-settled row.
+        """
+        from trusted_router.storage_gcp_counter_dml import read_reservation
+
+        with self._database.snapshot() as snapshot:
+            return read_reservation(snapshot, self._param_types, reservation_id)
+
     def is_typed_reservation(self, reservation_id: str | None, authorization_id: str) -> bool:
         """Settle/refund origin detection (codex 3e): typed iff a tr_reservation
         row exists for this reservation id AND its authorization_id matches — so a
