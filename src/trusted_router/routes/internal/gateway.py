@@ -53,6 +53,7 @@ from trusted_router.services.broadcast import (
     gateway_destination_payload,
     should_drain_inline,
 )
+from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -731,24 +732,10 @@ def _settle_gateway_authorization(
     if model is None:
         raise api_error(500, "Authorized model is no longer configured", ErrorType.INTERNAL_ERROR)
 
-    input_tokens = body.input_count
     output_tokens = body.output_count
-    cache_read = body.cache_read_count
-    cache_creation = body.cache_creation_count
-    # Provider-dependent prompt accounting: Anthropic reports input_tokens
-    # EXCLUSIVE of cached tokens (input 14 + cache_read 6081 = 6095-token
-    # prompt), while OpenAI-compatible and Gemini prompt counts INCLUDE the
-    # cached subset. Normalize to (uncached, read, creation) for pricing
-    # and store the TOTAL prompt on the generation for honest dashboards.
-    if cache_read or cache_creation:
-        if selected_endpoint.provider == "anthropic":
-            uncached_input = input_tokens
-            total_input = input_tokens + cache_read + cache_creation
-        else:
-            uncached_input = max(input_tokens - cache_read - cache_creation, 0)
-            total_input = input_tokens
-    else:
-        uncached_input = total_input = input_tokens
+    uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
+        selected_endpoint.provider, body
+    )
     actual_cost = _endpoint_cost_microdollars(
         selected_endpoint,
         uncached_input,
