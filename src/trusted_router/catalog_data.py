@@ -1132,6 +1132,8 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         ZEUS_1_0_MINI_MODEL_ID,
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
     ),
 }
 

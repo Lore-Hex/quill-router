@@ -721,6 +721,8 @@ def test_athena_catalog_hides_orchestration_configuration() -> None:
         "z-ai/glm-5.2-fast",
         "z-ai/glm-5.2",
         "trustedrouter/zeus-1.0-mini",
+        "moonshotai/kimi-k2.7-code",
+        "moonshotai/kimi-k2.6",
     ]
     assert shape["trustedrouter"]["open_weights"] is False
 
