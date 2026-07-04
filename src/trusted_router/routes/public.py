@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -30,6 +32,7 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.config import Settings
+from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
     STATIC_DIR,
@@ -138,6 +141,96 @@ class _CachedStaticFiles(StaticFiles):
         return response
 
 
+log = logging.getLogger(__name__)
+
+# Simple in-process sliding-window limiter for the public TrustedOS inquiry
+# form. Not a substitute for an edge WAF, but enough to blunt casual abuse of
+# an unauthenticated POST that fans out to email. Keyed by client IP.
+_INQUIRY_RATE_LOCK = threading.Lock()
+_INQUIRY_HITS: dict[str, list[float]] = {}
+_INQUIRY_WINDOW_SECONDS = 3600.0
+_INQUIRY_MAX_PER_WINDOW = 5
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
+    now = time.time() if now is None else now
+    cutoff = now - _INQUIRY_WINDOW_SECONDS
+    with _INQUIRY_RATE_LOCK:
+        hits = [t for t in _INQUIRY_HITS.get(client_ip, ()) if t > cutoff]
+        if len(hits) >= _INQUIRY_MAX_PER_WINDOW:
+            _INQUIRY_HITS[client_ip] = hits
+            return False
+        hits.append(now)
+        _INQUIRY_HITS[client_ip] = hits
+        # Opportunistic cleanup so the dict can't grow unbounded.
+        if len(_INQUIRY_HITS) > 4096:
+            for key in [k for k, v in _INQUIRY_HITS.items() if not any(t > cutoff for t in v)]:
+                _INQUIRY_HITS.pop(key, None)
+    return True
+
+
+async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSONResponse:
+    """Receive a TrustedOS partner-inquiry submission and email it to the
+    configured recipient. Returns an opaque {"ok": true} on accept so the
+    endpoint never leaks whether email delivery or suppression happened."""
+    ok = JSONResponse({"ok": True})
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return JSONResponse({"ok": False, "error": "invalid_request"}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({"ok": False, "error": "invalid_request"}, status_code=400)
+
+    # Honeypot: a hidden field real users never fill. Silently accept so bots
+    # get a success and move on, without an email being sent.
+    if str(payload.get("website", "")).strip():
+        return ok
+
+    name = str(payload.get("name", "")).strip()[:200]
+    email = str(payload.get("email", "")).strip()[:320]
+    company = str(payload.get("company", "")).strip()[:200]
+    message = str(payload.get("message", "")).strip()[:5000]
+
+    if not name or not message or not _EMAIL_RE.match(email):
+        return JSONResponse({"ok": False, "error": "missing_fields"}, status_code=422)
+
+    client_ip = request.client.host if request.client else "unknown"
+    if not _inquiry_rate_ok(client_ip):
+        return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
+
+    recipient = settings.partner_inquiry_email or settings.ses_from_email
+    if not recipient:
+        # No inbox configured — capture the lead in logs so it isn't lost, and
+        # still report success to the sender.
+        log.error(
+            "trustedos_inquiry.no_recipient name=%r email=%r company=%r message=%r",
+            name, email, company, message,
+        )
+        return ok
+
+    text_body = (
+        "New TrustedOS partner inquiry\n\n"
+        f"Name:    {name}\n"
+        f"Company: {company or '(not given)'}\n"
+        f"Email:   {email}\n"
+        f"IP:      {client_ip}\n\n"
+        f"Message:\n{message}\n"
+    )
+    subject = f"TrustedOS inquiry: {company or name}"
+    try:
+        get_email_service(settings).send(
+            EmailMessage(to=recipient, subject=subject, text_body=text_body)
+        )
+    except Exception:  # noqa: BLE001 - never surface mailer errors to the form
+        log.exception(
+            "trustedos_inquiry.send_failed name=%r email=%r company=%r",
+            name, email, company,
+        )
+    return ok
+
+
 def register_public_routes(app: FastAPI, settings: Settings) -> None:
     app.mount("/static", _CachedStaticFiles(directory=STATIC_DIR), name="static")
 
@@ -224,6 +317,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/trustedos")
     async def trustedos() -> str:
         return public_page_html(settings, "trustedos")
+
+    @app.post("/trustedos/inquiry", include_in_schema=False)
+    async def trustedos_inquiry(request: Request) -> JSONResponse:
+        return await _handle_trustedos_inquiry(settings, request)
 
     # ── SEO landing pages ────────────────────────────────────────────
     # Top-level slugs targeting high-intent buyer queries. Each is a

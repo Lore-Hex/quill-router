@@ -4,9 +4,9 @@
   <div>
     <span class="eyebrow">For neoclouds, AI clouds, and hardware providers</span>
     <h1>TrustedOS: the OS for AI clouds.</h1>
-    <p class="lead">Dynamo and vLLM schedule your GPUs. TrustedOS runs your inference business &mdash; attested capacity, objective routing, metering, and high-margin models your customers can't get anywhere else.</p>
+    <p class="lead">Dynamo and vLLM schedule your GPUs. TrustedOS runs your inference business &mdash; attested capacity, objective routing, metering, and high-margin models your customers can buy on your hardware.</p>
     <div class="hero-actions">
-      <a class="btn primary" href="mailto:licensing@trustedrouter.com?subject=TrustedOS%20launch%20partner">Become a launch partner</a>
+      <a class="btn primary" href="#partner">Get access</a>
       <a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a>
     </div>
   </div>
@@ -26,13 +26,13 @@
   <div><strong>AWS Nitro Enclaves</strong><span>Same attested code path on a second cloud.</span></div>
 </section>
 
-<section class="marketing-split" aria-label="Sell products, not GPU-hours">
+<section class="marketing-split" aria-label="Sell new models on top of GPU-hours">
   <div class="marketing-copy">
-    <span class="eyebrow">The business problem</span>
-    <h2>Sell products, not GPU-hours.</h2>
-    <p>Renting raw compute is a commodity racing to the cost floor. Industry modeling puts a 1,024-GPU cluster at roughly &minus;$330k/month at 55% utilization and +$340k/month at 85% &mdash; the spread between renting and selling well is the whole margin.</p>
-    <p>Serving tokens beats renting the same GPU. Serving <em>models nobody else has</em> beats serving commodity open weights. TrustedOS is the layer that does both on your hardware.</p>
-    <p>Composite models are token multipliers: one customer request fans out inside the attested gateway to a panel of models, a judge, and a synthesizer &mdash; every inner call is billable inference that can land on your capacity first.</p>
+    <span class="eyebrow">The opportunity</span>
+    <h2>Sell new models on top of GPU-hours and commodity tokens.</h2>
+    <p>You already sell GPU-hours and commodity tokens. TrustedOS adds a higher-margin product line on the same silicon: composite models your customers can't get anywhere else, sold under your brand.</p>
+    <p>Composite models are token multipliers. One customer request fans out inside the attested gateway to a panel of models, a judge, and a synthesizer &mdash; every inner call is billable inference that lands on your capacity first.</p>
+    <p>More products per GPU-hour, more revenue per accelerator, one integration.</p>
     <p>
       <a class="btn" href="/docs/synth">How composite models work</a>
       <a class="btn" href="/models">Browse the catalog</a>
@@ -49,7 +49,7 @@ client = OpenAI(
 
 # A composite model id packages a whole graph:
 # panel of open models -> judge -> synthesizer.
-# Inner calls route to partner capacity first.
+# Inner calls route to your capacity first.
 resp = client.chat.completions.create(
     model="trustedrouter/prometheus-1.0",
     messages=[{"role": "user", "content": task}],
@@ -62,22 +62,22 @@ resp = client.chat.completions.create(
 
 <section class="marketing-grid three" aria-label="Three ways to plug in">
   <div class="marketing-card">
-    <span class="card-label">Today</span>
+    <span class="card-label">Models</span>
     <h3>Host our models.</h3>
     <p>Offer TrustedRouter composite models &mdash; Iris, Prometheus, Zeus, and custom models &mdash; to your own customers, under your brand. Prometheus 1.0 scores 69.2 on DRACO at ~$34 per run; the best single frontier model we tested scored 65.3 at ~$250.</p>
     <p class="muted">You keep the compute margin on inner calls; we take a model royalty. Published evals, reproducible harness.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Today</span>
+    <span class="card-label">Trust</span>
     <h3>Become an attested provider.</h3>
     <p>Providers are tiered by trust posture: confidential compute, zero-retention, standard. Attested capacity qualifies for <span class="mono">trustedrouter/e2e</span> and <span class="mono">/zdr</span> traffic that standard providers can never receive.</p>
     <p class="muted">Routing is earned, not bought: we probe uptime, latency, and throughput continuously and publish what we measure.</p>
   </div>
   <div class="marketing-card">
-    <span class="card-label">Roadmap</span>
+    <span class="card-label">Platform</span>
     <h3>Run TrustedOS.</h3>
-    <p>The full attested stack on your infrastructure: self-hosted gateway and control plane, a model marketplace with owner payouts, and per-model kernel optimization (private beta).</p>
-    <p class="muted">In design with launch partners now. Labeled roadmap because it is one &mdash; nothing on this page pretends to ship before it ships.</p>
+    <p>The full attested stack on your infrastructure: self-hosted gateway and control plane, a model marketplace with owner payouts, objective routing, and metering &mdash; the business layer above your serving engine.</p>
+    <p class="muted">Per-model kernel optimization is in private beta; benchmarks publish with it.</p>
   </div>
 </section>
 
@@ -92,23 +92,33 @@ resp = client.chat.completions.create(
     <span>Routing</span><span>KV-aware, inside one cluster</span><span>Objective-based across capacity: price, throughput, latency, privacy tier</span>
   </div>
   <div class="matrix-row">
-    <span>Monetization</span><span>None &mdash; bring your own billing</span><span>Prepaid metering, per-key budgets, spend alerts, usage broadcast</span>
+    <span>Monetization</span><span>Bring your own billing</span><span>Prepaid metering, per-key budgets, spend alerts, usage broadcast</span>
   </div>
   <div class="matrix-row">
-    <span>Demand</span><span>None</span><span>Routed traffic plus composite models your customers can't get elsewhere</span>
+    <span>Demand</span><span>Serving only</span><span>Routed traffic plus composite models your customers can buy on your hardware</span>
   </div>
   <div class="matrix-row">
-    <span>Trust</span><span>Not their job</span><span>Hardware attestation, fail-closed gateways, public evidence</span>
+    <span>Trust</span><span>Separate concern</span><span>Hardware attestation, fail-closed gateways, public evidence</span>
   </div>
   <div class="matrix-row">
     <span>Hardware</span><span>NVIDIA-first</span><span>Neutral &mdash; GPU fleets today; custom silicon via routing, onboarding, and demand</span>
   </div>
   <div class="matrix-row">
-    <span>Relationship</span><span>You run it</span><span>Runs alongside it &mdash; TrustedOS never replaces your serving engine</span>
+    <span>Relationship</span><span>You run it</span><span>Runs alongside it &mdash; TrustedOS complements your serving engine</span>
   </div>
 </section>
 
-<section class="marketing-split" aria-label="Attestation">
+<section class="marketing-split reverse" aria-label="Attestation">
+  <div class="marketing-copy">
+    <span class="eyebrow">Why &ldquo;Trusted&rdquo; OS</span>
+    <h2>The name is a claim we can prove.</h2>
+    <p>In the security world, the &ldquo;trusted OS&rdquo; is the operating system inside a trusted execution environment. We picked the name on purpose: TLS terminates inside attested hardware &mdash; AMD SEV-SNP and Intel TDX today, with a confidential-computing path to H100/H200-class GPUs &mdash; and the gateway fails closed if the measurement doesn't match.</p>
+    <p>Your customers' compliance teams can verify the stack you run for themselves. Don't trust the policy &mdash; verify the code.</p>
+    <p>
+      <a class="btn" href="https://trust.trustedrouter.com">Live attestation evidence</a>
+      <a class="btn" href="/security">How attestation works</a>
+    </p>
+  </div>
   <div class="copy-terminal">
     <div class="code-head"><span>Verify the gateway</span><span>curl + jq</span></div>
     <pre><code># Nonce-bound attestation from the live gateway
@@ -124,42 +134,124 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
 # Match the digest against the published build:
 #   https://trust.trustedrouter.com</code></pre>
   </div>
-  <div class="marketing-copy">
-    <span class="eyebrow">Why &ldquo;Trusted&rdquo; OS</span>
-    <h2>The name is a claim we can prove.</h2>
-    <p>In the security world, the &ldquo;trusted OS&rdquo; is the operating system inside a trusted execution environment. We picked the name on purpose: TLS terminates inside attested hardware &mdash; AMD SEV-SNP and Intel TDX today, with a confidential-computing path to H100/H200-class GPUs &mdash; and the gateway fails closed if the measurement doesn't match.</p>
-    <p>Your customers' compliance teams don't have to take your word for the stack you run. Don't trust the policy &mdash; verify the code.</p>
-    <p>
-      <a class="btn" href="https://trust.trustedrouter.com">Live attestation evidence</a>
-      <a class="btn" href="/security">How attestation works</a>
-    </p>
-  </div>
 </section>
 
-<section class="public-section" aria-label="Shipped and roadmap">
-  <div class="panel">
-    <div class="panel-head"><h2>Shipped vs roadmap</h2><span class="pill">no vaporware</span></div>
-    <div class="panel-body">
-      <p><strong>Shipped and verifiable in source today:</strong> objective routing (sort by price, throughput, or latency, with <span class="mono">:nitro</span>/<span class="mono">:floor</span> shortcuts and uptime-aware fallbacks) &middot; privacy-tier routing (<span class="mono">zdr</span>, <span class="mono">e2e</span>, <span class="mono">eu</span>) &middot; composite and custom models &middot; prepaid microdollar metering with per-key budget modes &middot; BYOK with envelope encryption &middot; usage broadcast to PostHog/OTLP &middot; multi-region attested gateways on two clouds.</p>
-      <p><strong>Roadmap, in design with launch partners:</strong> self-hosted TrustedOS on your infrastructure &middot; marketplace with model-owner payouts &middot; per-model kernel optimization (private beta &mdash; benchmarks will publish before claims do).</p>
-      <p class="muted">The control plane and gateway are source-available (BUSL-1.1): read, build, and verify the exact code &mdash; the hash you compute is the hash the enclave reports. Production deployment runs under a commercial license.</p>
-    </div>
-  </div>
-</section>
-
-<section class="quote-feature" aria-label="Deal shape">
+<section class="quote-feature" aria-label="How it works with you">
   <div>
     <span class="eyebrow">Working with us</span>
     <h2>The boring details that make this real.</h2>
   </div>
   <div>
-    <p><strong>How do we start?</strong> A design-partner pilot: pick one rung &mdash; host composite models, or qualify capacity for the attested tier &mdash; and we scope a proof-of-value in weeks, not quarters.</p>
-    <p><strong>Commercial shape?</strong> A platform license on active accelerators plus a small share on marketplace-originated traffic only. Your direct traffic is yours &mdash; we take nothing on it. Model royalties apply when you resell our composite models.</p>
-    <p><strong>White-label?</strong> Yes. Your brand, your customers, your billing relationship. We never own your customer, and there's no exclusivity in either direction.</p>
-    <p><strong>Custom silicon?</strong> We won't pretend to write kernels for wafer-scale or dataflow architectures. For non-GPU fleets the pitch is routing, fast model onboarding, and demand &mdash; not kernels.</p>
+    <p><strong>Commercial shape?</strong> A platform license on active accelerators plus a small share on marketplace-originated traffic only. Your direct traffic is yours &mdash; we take nothing on it. Model royalties apply when you resell our composite models. Providers are onboarding at full rate today.</p>
+    <p><strong>White-label?</strong> Yes. Your brand, your customers, your billing relationship. There's no exclusivity in either direction.</p>
+    <p><strong>Custom silicon?</strong> For wafer-scale and dataflow architectures the value is objective routing, fast model onboarding, and demand &mdash; sized to your compiler, not GPU kernels.</p>
+    <p><strong>Source-available?</strong> The control plane and gateway are BUSL-1.1: read, build, and verify the exact code &mdash; the hash you compute is the hash the enclave reports. Production deployment runs under a commercial license.</p>
     <p><strong>Who's behind this?</strong> The team building TrustedRouter &mdash; the attested LLM gateway with public status, live attestation, and published evals. Start at <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a> and read the code.</p>
-    <p><strong>Talk to us:</strong> <a href="mailto:licensing@trustedrouter.com?subject=TrustedOS">licensing@trustedrouter.com</a></p>
   </div>
 </section>
+
+<section class="public-section" id="partner" aria-label="Get access to TrustedOS">
+  <div class="panel">
+    <div class="panel-head"><h2>Sell new models on your capacity</h2><span class="pill">providers onboarding now</span></div>
+    <div class="panel-body">
+      <p class="muted">Tell us what you run and what you'd like to offer. We'll reach out to get your capacity and models online.</p>
+      <form class="inquiry-form" id="trustedos-inquiry" novalidate>
+        <div class="inquiry-grid">
+          <label>Name
+            <input type="text" name="name" autocomplete="name" required>
+          </label>
+          <label>Work email
+            <input type="email" name="email" autocomplete="email" required>
+          </label>
+          <label>Company
+            <input type="text" name="company" autocomplete="organization">
+          </label>
+          <label class="inquiry-wide">What you run / what you'd like to offer
+            <textarea name="message" rows="4" required></textarea>
+          </label>
+          {# Honeypot: hidden from humans, tempting to bots. If filled, the
+             server silently drops the submission. #}
+          <input class="inquiry-hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">
+        </div>
+        <div class="hero-actions">
+          <button class="btn primary" type="submit" data-role="submit">Request access</button>
+        </div>
+        <p class="inquiry-status" data-role="status" role="status" aria-live="polite" hidden></p>
+      </form>
+      <noscript><p class="muted">This form needs JavaScript enabled to submit.</p></noscript>
+    </div>
+  </div>
+</section>
+
+<style>
+  .inquiry-form { margin-top: 4px; }
+  .inquiry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .inquiry-grid label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 650; color: var(--muted); }
+  .inquiry-grid .inquiry-wide { grid-column: 1 / -1; }
+  .inquiry-grid input, .inquiry-grid textarea {
+    font: inherit; font-weight: 400; color: var(--ink, inherit);
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px 12px; width: 100%; box-sizing: border-box; resize: vertical;
+  }
+  .inquiry-grid input:focus, .inquiry-grid textarea:focus { outline: 2px solid var(--accent, #6aa1ff); outline-offset: 1px; }
+  .inquiry-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .inquiry-status { margin: 4px 0 0; font-size: 14px; }
+  .inquiry-status[data-tone="ok"] { color: var(--good, #3ecf8e); }
+  .inquiry-status[data-tone="err"] { color: var(--bad, #ff6b6b); }
+  @media (max-width: 640px) { .inquiry-grid { grid-template-columns: 1fr; } }
+</style>
+<script>
+  (function () {
+    var form = document.getElementById("trustedos-inquiry");
+    if (!form) return;
+    var status = form.querySelector('[data-role="status"]');
+    var button = form.querySelector('[data-role="submit"]');
+    function show(msg, tone) {
+      status.textContent = msg;
+      status.setAttribute("data-tone", tone);
+      status.hidden = false;
+    }
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var data = {
+        name: form.name.value.trim(),
+        email: form.email.value.trim(),
+        company: form.company.value.trim(),
+        message: form.message.value.trim(),
+        website: form.website.value.trim()
+      };
+      if (!data.name || !data.email || !data.message) {
+        show("Please add your name, work email, and a short message.", "err");
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "Sending…";
+      fetch("/trustedos/inquiry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      }).then(function (res) {
+        if (res.ok) {
+          form.reset();
+          show("Thanks — we've got it. We'll be in touch about getting your capacity and models online.", "ok");
+          button.textContent = "Request access";
+          button.disabled = false;
+        } else if (res.status === 429) {
+          show("Too many requests just now. Please try again later.", "err");
+          button.textContent = "Request access";
+          button.disabled = false;
+        } else {
+          show("Please check your details and try again.", "err");
+          button.textContent = "Request access";
+          button.disabled = false;
+        }
+      }).catch(function () {
+        show("Network error — please try again.", "err");
+        button.textContent = "Request access";
+        button.disabled = false;
+      });
+    });
+  })();
+</script>
 
 {% endblock %}

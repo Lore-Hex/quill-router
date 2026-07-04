@@ -129,6 +129,9 @@ class Settings(BaseSettings):
     # Configuration set used on every SendEmail call so SES emits bounce +
     # complaint events to our SNS topic (subscribed at /internal/ses/notifications).
     ses_configuration_set: str | None = "trustedrouter-default"
+    # Destination for TrustedOS partner-inquiry form submissions (/trustedos).
+    # Falls back to ses_from_email when unset so the lead never silently drops.
+    partner_inquiry_email: str | None = None
 
     stablecoin_checkout_enabled: bool = True
     x402_enabled: bool = False

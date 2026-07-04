@@ -399,13 +399,13 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "your capacity.",
             ),
             (
-                "What's real today versus roadmap?",
-                "Shipped: objective routing (price/throughput/latency with fallbacks), "
+                "What can we offer today?",
+                "Objective routing (price/throughput/latency with fallbacks), "
                 "privacy-tier routing (zdr/e2e/eu), composite and custom models, "
                 "prepaid metering with per-key budgets, BYOK, and multi-region "
-                "attested gateways on two clouds. Roadmap: self-hosted TrustedOS, "
-                "marketplace payouts, and per-model kernels (private beta). The page "
-                "labels each — we don't ship claims before code.",
+                "attested gateways on two clouds. Self-hosted TrustedOS, marketplace "
+                "payouts, and per-model kernels (private beta) extend the platform "
+                "from there.",
             ),
             (
                 "Is the code open?",
@@ -416,9 +416,10 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "How do we start?",
-                "Email licensing@trustedrouter.com. A design-partner pilot picks one "
-                "rung — host composite models under your brand, or qualify capacity "
-                "for the attested trust tier — and scopes a proof-of-value in weeks.",
+                "Use the form on the TrustedOS page. Tell us what you run and what "
+                "you'd like to offer — host composite models under your brand, or "
+                "qualify capacity for the attested trust tier — and we'll get your "
+                "capacity and models online.",
             ),
         ),
     ),
