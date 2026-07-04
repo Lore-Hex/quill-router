@@ -59,3 +59,48 @@ def test_axiom_client_kwargs_keep_standard_api_url_for_non_edge() -> None:
         "org_id": "org_1",
         "url": "https://api.axiom.co",
     }
+
+
+def _record(logger_name: str) -> logging.LogRecord:
+    return logging.LogRecord(
+        name=logger_name, level=logging.INFO, pathname=__file__,
+        lineno=1, msg="hello", args=(), exc_info=None,
+    )
+
+
+def test_noise_filter_drops_third_party_transport_chatter() -> None:
+    """urllib3.connectionpool was 235/238 Axiom events in a 2h window
+    (Sentry envelope uploads). The noise filter must drop it and its
+    friends so the dataset stays app-events-only."""
+    from trusted_router.axiom_config import _AxiomNoiseFilter
+
+    f = _AxiomNoiseFilter()
+    for name in [
+        "urllib3",
+        "urllib3.connectionpool",
+        "sentry_sdk.errors",
+        "google.auth.transport.requests",
+        "grpc._channel",
+        "httpx",
+        "httpcore.http11",
+        "hpack.hpack",
+    ]:
+        assert f.filter(_record(name)) is False, name
+
+
+def test_noise_filter_keeps_app_and_server_logs() -> None:
+    """App loggers and uvicorn error logs must pass through — and a
+    prefix must not shadow lookalike names (e.g. `googleapis_custom`
+    is not `google.*`)."""
+    from trusted_router.axiom_config import _AxiomNoiseFilter
+
+    f = _AxiomNoiseFilter()
+    for name in [
+        "trusted_router.routes.inference",
+        "trusted_router.storage_gcp",
+        "uvicorn.error",
+        "root",
+        "googleapis_custom",
+        "urllib3x",
+    ]:
+        assert f.filter(_record(name)) is True, name

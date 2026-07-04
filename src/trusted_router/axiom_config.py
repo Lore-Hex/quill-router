@@ -85,6 +85,12 @@ def init_axiom(settings: Settings) -> None:
     # record. Reuses sentry_config's `_scrub` so the rules are defined
     # in one place.
     handler.addFilter(_AxiomScrubFilter())
+    # Drop third-party transport chatter before it ships. Measured
+    # 2026-07-04: urllib3.connectionpool (Sentry's envelope uploads)
+    # was 235 of 238 events in a 2h window — a feedback loop where
+    # observability traffic generates observability traffic. Name-based
+    # so it composes with any handler level.
+    handler.addFilter(_AxiomNoiseFilter())
 
     root = logging.getLogger()
     root.addHandler(handler)
@@ -163,6 +169,39 @@ class _AxiomScrubFilter(logging.Filter):
             scrubbed = _scrub(value)
             if scrubbed is not value:
                 record.__dict__[key] = scrubbed
+        return True
+
+
+class _AxiomNoiseFilter(logging.Filter):
+    """Drop third-party transport/client chatter before it ships to
+    Axiom. The dataset exists for the app's structured events
+    (request_id, provider, error_class joins) — not for the HTTP
+    plumbing underneath our own observability stack.
+
+    Measured 2026-07-04: `urllib3.connectionpool` alone (Sentry's
+    envelope uploads) was 235 of 238 events in a 2h window. Shipping
+    those burns ingest quota to record that we recorded something.
+
+    Prefix match on the logger name, so child loggers
+    (`urllib3.connectionpool`, `google.auth.transport`, ...) are
+    covered by their root entry. App loggers (`trusted_router.*`) and
+    uvicorn error logs are unaffected."""
+
+    _NOISY_PREFIXES = (
+        "urllib3",             # Sentry transport + assorted HTTP chatter
+        "sentry_sdk",          # the SDK's own internal logging
+        "google",              # spanner/bigtable/auth client libraries
+        "grpc",                # gRPC channel state churn
+        "httpx",               # per-request INFO lines for provider calls
+        "httpcore",            # httpx's transport layer
+        "hpack",               # HTTP/2 header codec debug noise
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        name = record.name
+        for prefix in self._NOISY_PREFIXES:
+            if name == prefix or name.startswith(prefix + "."):
+                return False
         return True
 
 
