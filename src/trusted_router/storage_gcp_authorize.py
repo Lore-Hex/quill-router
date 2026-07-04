@@ -38,6 +38,7 @@ from trusted_router.storage_gcp_counter_dml import (
     reserve_key,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL
 
 
 class AuthorizeOutcome:
@@ -234,6 +235,7 @@ class SettleOutcome:
     ALREADY_SETTLED = "already_settled"  # replay: another caller already settled
     NOT_FOUND = "not_found"  # no such reservation
     ERROR = "error"  # a release row-count != 1 -> rolled back, re-drive/alarm
+    OUTBOX_GUARDED = "outbox_guarded"  # reaper aborted: a pending/dead outbox row intends a charge
 
 
 class _SettleError(Exception):
@@ -249,6 +251,7 @@ def settle_atomic(
     actual_micro: int,
     settled_usage_type: str,
     success: bool,
+    guard_outbox: bool = False,
 ) -> dict:
     """Claim-gated settle/refund in ONE transaction (key then credit lock order).
 
@@ -273,6 +276,20 @@ def settle_atomic(
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
+        if guard_outbox:
+            aid = res.get("authorization_id")
+            if aid:
+                # MF2: this strong read inside the read-write claim txn is the
+                # real interlock; Spanner serializes it against a concurrent
+                # enqueue commit. Snapshot scans are advisory latency filters
+                # only and can miss that commit.
+                rows = list(transaction.execute_sql(
+                    GUARD_COUNT_SQL,
+                    params={"aid": aid},
+                    param_types={"aid": pt.STRING},
+                ))
+                if rows and int(rows[0][0]) > 0:
+                    return {"outcome": SettleOutcome.OUTBOX_GUARDED}
         won = claim_reservation(
             transaction, pt, reservation_id,
             actual_micro=book_actual, settled_usage_type=settled_usage_type,
@@ -307,6 +324,43 @@ def settle_atomic(
         return {"outcome": SettleOutcome.ERROR}
 
 
+def _is_table_missing(exc: Exception) -> bool:
+    # Rollout guard: code can deploy before the operator-applied outbox DDL.
+    # FAIL CLOSED on everything except the ONE real "table itself is missing"
+    # shape: Cloud Spanner (and its emulator) raise NotFound("Table not found:
+    # tr_settle_outbox") — table name AFTER the phrase. Anchoring on position
+    # keeps wrapped transients ("Session not found while querying
+    # tr_settle_outbox") and schema errors ('column "status" of relation
+    # "tr_settle_outbox" does not exist') from silently unguarding a cycle;
+    # any other probe error re-raises, so a mismatch can only delay reaping,
+    # never free-release a guarded hold.
+    lowered = str(exc).lower()
+    return (
+        "table not found" in lowered
+        and "tr_settle_outbox" in lowered.split("table not found", 1)[1]
+    )
+
+
+# Reaper scan, two forms. The guarded form excludes holds with a pending/dead
+# outbox row IN THE SCAN so frozen holds never consume @limit and cannot
+# starve unguarded expired holds behind them (PR #116 review P2). The NOT
+# EXISTS runs on a snapshot, so it is ADVISORY ONLY — the strong re-read
+# inside settle_atomic(guard_outbox=True) remains the MF2 interlock. Keep the
+# subquery predicates literally in sync with GUARD_COUNT_SQL / GUARD_STATUSES.
+_REAP_SCAN_SQL = (
+    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now LIMIT @limit"
+)
+_REAP_SCAN_GUARDED_SQL = (
+    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    "AND o.status IN ('pending', 'dead')) "
+    "LIMIT @limit"
+)
+
+
 def reap_expired_reservations(
     database: Any, param_types: Any, *, now: Any, limit: int = 100
 ) -> int:
@@ -316,29 +370,45 @@ def reap_expired_reservations(
     path (success=False = refund, books nothing), so a late settle racing the
     reaper is safe — whoever claims the row first wins, the other no-ops.
 
-    `expires_at` is set at authorize to the EXECUTION DEADLINE (max stream
-    duration + settle-retry window + margin), so a reaped reservation is genuinely
-    abandoned; releasing without a charge is the bounded-loss accept (red-team P1).
-    A durable settle outbox (gateway persists actuals on response) is the planned
-    enhancement to recover the rare completed-but-settle-lost charge instead of
-    releasing it free; until then, keep `expires_at` generous. Returns the count
-    reaped.
+    The outbox guard is live: advisory filtering happens in the scan SQL, so a
+    hold whose authorization has a pending/dead `tr_settle_outbox` row is
+    invisible to the scan and cannot starve later unguarded holds behind @limit
+    (PR #116 review P2). `settle_atomic(..., guard_outbox=True)` still does the
+    in-txn re-check; that strong read remains the MF2 interlock. `release_approved`
+    is the only human-set status that re-permits this free release. Returns the
+    count reaped.
     """
     pt = param_types
+    guard_active = True
+    try:
+        with database.snapshot() as snapshot:
+            list(snapshot.execute_sql(
+                GUARD_COUNT_SQL,
+                params={"aid": ""},
+                param_types={"aid": pt.STRING},
+            ))
+    except Exception as exc:
+        if not _is_table_missing(exc):
+            raise
+        # Pre-migration: the table does not exist, so no intent rows can exist
+        # either. Unguarded free-release is exactly today's behavior; the guard
+        # arms itself the moment the DDL is applied.
+        guard_active = False
+
+    scan_sql = _REAP_SCAN_GUARDED_SQL if guard_active else _REAP_SCAN_SQL
     with database.snapshot() as snapshot:
         rows = list(
             snapshot.execute_sql(
-                "SELECT reservation_id FROM tr_reservation "
-                "WHERE settled=false AND expires_at < @now LIMIT @limit",
+                scan_sql,
                 params={"now": now, "limit": int(limit)},
                 param_types={"now": pt.TIMESTAMP, "limit": pt.INT64},
             )
         )
     reaped = 0
-    for (reservation_id,) in rows:
+    for reservation_id, _authorization_id in rows:
         result = settle_atomic(
             database, pt, reservation_id=reservation_id, actual_micro=0,
-            settled_usage_type="Credits", success=False,
+            settled_usage_type="Credits", success=False, guard_outbox=guard_active,
         )
         if result["outcome"] == SettleOutcome.SETTLED:
             reaped += 1

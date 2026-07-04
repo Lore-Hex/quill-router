@@ -50,6 +50,17 @@ OUTBOX_COLUMNS = [
 # let the reaper free the hold. `done` means the charge already applied.
 GUARD_STATUSES = ("pending", "dead")
 
+# The reaper-guard predicate. SINGLE SOURCE OF TRUTH for this SQL: it is
+# executed on a snapshot by has_intent (advisory pre-scan), on a snapshot by
+# the reaper's advisory skip, and INSIDE settle_atomic's read-write
+# transaction (the real interlock, MF2). The fake asserts both predicates
+# (`authorization_id=@aid`, `status IN ('pending', 'dead')`) — keep the
+# literal exactly in sync with GUARD_STATUSES.
+GUARD_COUNT_SQL = (
+    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "
+    "AND status IN ('pending', 'dead')"
+)
+
 # Enqueue outcomes.
 ENQ_INSERTED = "inserted"          # new pending row
 ENQ_REFRESHED = "refreshed"        # existing pending row's frozen inputs updated
@@ -333,10 +344,7 @@ class SpannerSettleOutbox:
         also re-checks in-transaction (Increment 2) for the real interlock."""
         with self._database.snapshot() as snapshot:
             rows = list(snapshot.execute_sql(
-                # GUARD_STATUSES inlined as a fixed literal (not user input) so the
-                # predicate needs no Array param type — keeps the fake faithful.
-                "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "
-                "AND status IN ('pending', 'dead')",
+                GUARD_COUNT_SQL,
                 params={"aid": authorization_id},
                 param_types={"aid": self._pt.STRING},
             ))
