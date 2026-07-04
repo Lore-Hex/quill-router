@@ -658,28 +658,52 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
-    # tr_settle_outbox (durable settle outbox) — modeled explicitly so a guard/
-    # column/status typo makes a test FAIL rather than silently matching a
-    # generic branch (the substring-collision hazard the design flags).
-    if "tr_settle_outbox" in sql:
-        return _execute_settle_outbox_sql(db, txn, sql, params)
-    # Reaper scan: expired unsettled reservations.
+    # Reaper scan: expired unsettled reservations. This must precede the generic
+    # tr_settle_outbox dispatcher because the guarded scan names both tables; match
+    # the more specific query first.
     if "FROM tr_reservation WHERE settled=false AND expires_at" in sql:
         _require_pred(
             sql,
             "SELECT reservation_id, authorization_id FROM tr_reservation",
             "reaper-scan",
         )
+        _require_pred(sql, "expires_at < @now", "reaper-scan")
+        _require_pred(sql, "LIMIT @limit", "reaper-scan")
+        guarded = "NOT EXISTS" in sql
+        if guarded:
+            _require_pred(
+                sql,
+                "o.authorization_id = tr_reservation.authorization_id",
+                "reaper-scan-guard",
+            )
+            _require_pred(sql, "o.status IN ('pending', 'dead')", "reaper-scan-guard")
         now = params["now"]
         limit = int(params.get("limit", 100))
         out: list[list] = []
         for rid, rec in db.reservations.items():
             exp = rec.get("expires_at")
-            if not rec.get("settled") and exp is not None and exp < now:
-                out.append([rid, rec.get("authorization_id")])
-                if len(out) >= limit:
-                    break
+            if rec.get("settled") or exp is None or exp >= now:
+                continue
+            if guarded:
+                # Model NOT EXISTS semantics before LIMIT (MF6): a dropped guard
+                # predicate must fail tests instead of letting frozen rows consume
+                # the reaper's scan window.
+                aid = rec.get("authorization_id")
+                if any(
+                    row.get("authorization_id") == aid
+                    and row.get("status") in ("pending", "dead")
+                    for row in db.settle_outbox.values()
+                ):
+                    continue
+            out.append([rid, rec.get("authorization_id")])
+            if len(out) >= limit:
+                break
         return out
+    # tr_settle_outbox (durable settle outbox) — modeled explicitly so a guard/
+    # column/status typo makes a test FAIL rather than silently matching a
+    # generic branch (the substring-collision hazard the design flags).
+    if "tr_settle_outbox" in sql:
+        return _execute_settle_outbox_sql(db, txn, sql, params)
     # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
     # contains the generic count substrings below.)
     if "key_shard!=0" in sql:

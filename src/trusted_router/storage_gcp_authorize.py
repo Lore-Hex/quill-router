@@ -326,32 +326,39 @@ def settle_atomic(
 
 def _is_table_missing(exc: Exception) -> bool:
     # Rollout guard: code can deploy before the operator-applied outbox DDL.
-    # FAIL CLOSED on anything else (e.g. a transient "Session not found" is
-    # also typed NotFound): only a message naming the table counts — real
-    # Spanner raises NotFound("Table not found: tr_settle_outbox"). Any other
-    # probe error re-raises, so a transient can only delay reaping, never
-    # silently disable the interlock.
-    text = str(exc)
-    lowered = text.lower()
-    if "tr_settle_outbox" not in text:
-        return False
+    # FAIL CLOSED on everything except the ONE real "table itself is missing"
+    # shape: Cloud Spanner (and its emulator) raise NotFound("Table not found:
+    # tr_settle_outbox") — table name AFTER the phrase. Anchoring on position
+    # keeps wrapped transients ("Session not found while querying
+    # tr_settle_outbox") and schema errors ('column "status" of relation
+    # "tr_settle_outbox" does not exist') from silently unguarding a cycle;
+    # any other probe error re-raises, so a mismatch can only delay reaping,
+    # never free-release a guarded hold.
+    lowered = str(exc).lower()
     return (
-        type(exc).__name__ == "NotFound"
-        or "not found" in lowered
-        or "does not exist" in lowered
+        "table not found" in lowered
+        and "tr_settle_outbox" in lowered.split("table not found", 1)[1]
     )
 
 
-def _outbox_has_intent(database: Any, param_types: Any, authorization_id: str) -> bool:
-    """Advisory snapshot check for reaper latency only; settle_atomic re-checks
-    inside the claim transaction for the MF2 interlock."""
-    with database.snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(
-            GUARD_COUNT_SQL,
-            params={"aid": authorization_id},
-            param_types={"aid": param_types.STRING},
-        ))
-    return bool(rows) and int(rows[0][0]) > 0
+# Reaper scan, two forms. The guarded form excludes holds with a pending/dead
+# outbox row IN THE SCAN so frozen holds never consume @limit and cannot
+# starve unguarded expired holds behind them (PR #116 review P2). The NOT
+# EXISTS runs on a snapshot, so it is ADVISORY ONLY — the strong re-read
+# inside settle_atomic(guard_outbox=True) remains the MF2 interlock. Keep the
+# subquery predicates literally in sync with GUARD_COUNT_SQL / GUARD_STATUSES.
+_REAP_SCAN_SQL = (
+    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now LIMIT @limit"
+)
+_REAP_SCAN_GUARDED_SQL = (
+    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "WHERE settled=false AND expires_at < @now "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    "AND o.status IN ('pending', 'dead')) "
+    "LIMIT @limit"
+)
 
 
 def reap_expired_reservations(
@@ -363,8 +370,11 @@ def reap_expired_reservations(
     path (success=False = refund, books nothing), so a late settle racing the
     reaper is safe — whoever claims the row first wins, the other no-ops.
 
-    The outbox guard is live: a hold whose authorization has a pending/dead
-    `tr_settle_outbox` row is FROZEN and never free-released. `release_approved`
+    The outbox guard is live: advisory filtering happens in the scan SQL, so a
+    hold whose authorization has a pending/dead `tr_settle_outbox` row is
+    invisible to the scan and cannot starve later unguarded holds behind @limit
+    (PR #116 review P2). `settle_atomic(..., guard_outbox=True)` still does the
+    in-txn re-check; that strong read remains the MF2 interlock. `release_approved`
     is the only human-set status that re-permits this free release. Returns the
     count reaped.
     """
@@ -385,21 +395,17 @@ def reap_expired_reservations(
         # arms itself the moment the DDL is applied.
         guard_active = False
 
+    scan_sql = _REAP_SCAN_GUARDED_SQL if guard_active else _REAP_SCAN_SQL
     with database.snapshot() as snapshot:
         rows = list(
             snapshot.execute_sql(
-                "SELECT reservation_id, authorization_id FROM tr_reservation "
-                "WHERE settled=false AND expires_at < @now LIMIT @limit",
+                scan_sql,
                 params={"now": now, "limit": int(limit)},
                 param_types={"now": pt.TIMESTAMP, "limit": pt.INT64},
             )
         )
     reaped = 0
-    for reservation_id, authorization_id in rows:
-        if guard_active and authorization_id and _outbox_has_intent(
-            database, pt, authorization_id
-        ):
-            continue  # advisory skip — latency only; the in-txn re-check is the interlock
+    for reservation_id, _authorization_id in rows:
         result = settle_atomic(
             database, pt, reservation_id=reservation_id, actual_micro=0,
             settled_usage_type="Credits", success=False, guard_outbox=guard_active,
