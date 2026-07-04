@@ -440,8 +440,12 @@ That merge is the production flip:
 2. `rollout.sh` creates Cloud Run revisions with `--no-traffic`.
 3. `staged_traffic.sh` ramps traffic by named revision.
 4. Watchdog canaries auto-roll traffic back on failure.
-5. Cold regions receive the same revision with their normal scale-to-zero
-   behavior.
+5. Cold regions keep their previous revision on a normal merge. After the
+   hot-region rollout completes, run the deploy workflow via
+   `workflow_dispatch` with `deploy_cold_regions=true` to bring them to the
+   same revision: `gh workflow run deploy.yml -f deploy_cold_regions=true`.
+   The interim mixed state is safe: a flag-off region simply keeps the old
+   byte-identical settle path, its charges just aren't outbox-protected yet.
 
 **WARNING**: never flip this with a bare
 `gcloud run services update --update-env-vars`. Cloud Run traffic is pinned to
