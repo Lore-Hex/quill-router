@@ -128,6 +128,48 @@ def test_mark_rejects_a_lost_lease() -> None:
     assert ob.get("gwa-8", "settle").status == "pending"
 
 
+def test_mark_without_owner_respects_active_lease_then_owner_succeeds() -> None:
+    store, _db, _ = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-lease-fence"))
+    [job] = ob.claim(lease_seconds=300)
+
+    assert ob.mark("gwa-lease-fence", "settle", done=True) is None
+    fenced = ob.get("gwa-lease-fence", "settle")
+    assert fenced is not None
+    assert fenced.status == "pending"
+    assert fenced.lease_owner == job.lease_owner
+
+    assert (
+        ob.mark(
+            "gwa-lease-fence",
+            "settle",
+            done=True,
+            lease_owner=job.lease_owner,
+        )
+        == "done"
+    )
+    done = ob.get("gwa-lease-fence", "settle")
+    assert done is not None
+    assert done.status == "done"
+    assert done.lease_owner is None and done.leased_until is None
+
+
+def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
+    store, _db, _ = make_fake_store()
+    ob = _outbox(store)
+    assert ob.enqueue(_row("gwa-delayed"), initial_delay_seconds=60) == ENQ_INSERTED
+    assert ob.claim() == []
+
+    assert ob.enqueue(_row("gwa-now")) == ENQ_INSERTED
+    claimed = ob.claim()
+    assert [row.authorization_id for row in claimed] == ["gwa-now"]
+    delayed = ob.get("gwa-delayed", "settle")
+    assert delayed is not None
+    assert delayed.status == "pending"
+    assert delayed.lease_owner is None
+
+
 def test_enqueue_refresh_does_not_overwrite_an_actively_leased_row() -> None:
     """codex #113 finding 2: a claimed row stays status='pending' while a drain
     applies it, so a retry-enqueue must NOT overwrite its frozen inputs mid-drain."""

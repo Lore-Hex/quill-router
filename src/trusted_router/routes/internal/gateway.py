@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
@@ -54,6 +56,10 @@ from trusted_router.services.broadcast import (
     should_drain_inline,
 )
 from trusted_router.services.settle_outbox_apply import normalized_prompt_accounting
+from trusted_router.services.settle_outbox_drain import (
+    drain_settle_outbox,
+    spanner_settle_outbox,
+)
 from trusted_router.storage import (
     STORE,
     Generation,
@@ -61,7 +67,10 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
+from trusted_router.storage_models import SettleOutboxRow
 from trusted_router.types import ErrorType, UsageType
+
+logger = logging.getLogger(__name__)
 
 
 async def authorize_gateway(
@@ -523,6 +532,15 @@ def register(router: APIRouter) -> None:
             background_tasks=background_tasks,
         )
 
+    @router.post("/internal/gateway/settle-outbox/drain")
+    async def gateway_settle_outbox_drain(
+        request: Request,
+        settings: SettingsDep,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        require_internal_gateway(request, settings)
+        return await run_in_threadpool(drain_settle_outbox, limit)
+
 
 def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | None:
     return _api_key_for_gateway_lookup(
@@ -767,9 +785,43 @@ def _settle_gateway_authorization(
     # JSON (codex 3e). Default: no typed reservation (or InMemory store) -> legacy
     # path unchanged.
     _typed_store = typed_billing_store()
-    if _typed_store is not None and _typed_store.is_typed_reservation(
-        authorization.credit_reservation_id, authorization.id
-    ):
+    is_typed = (
+        _typed_store is not None
+        and _typed_store.is_typed_reservation(
+            authorization.credit_reservation_id, authorization.id
+        )
+    )
+    intent_kind = "settle" if success else "refund"
+    if settings.settle_outbox_enabled:
+        try:
+            # §5.4 honest scope: durability starts only when this INSERT commits;
+            # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
+            # the origin and exact resolved cost used by the inline finalize.
+            spanner_settle_outbox().enqueue(
+                SettleOutboxRow(
+                    authorization_id=authorization.id,
+                    intent_kind=intent_kind,
+                    settle_origin="typed" if is_typed else "legacy",
+                    actual_cost_micro=actual_cost,
+                    reservation_id=authorization.credit_reservation_id,
+                    selected_endpoint_id=selected_endpoint.id,
+                    model_id=model.id,
+                    selected_usage_type=str(selected_usage_type),
+                    settle_body=body.model_dump_json(exclude_none=True),
+                ),
+                # Grace so inline finalize wins the benign race; the drain only
+                # sees rows whose inline attempt is dead >=60s, avoiding replays.
+                initial_delay_seconds=60,
+            )
+        except Exception:
+            logger.error(
+                "settle outbox enqueue failed authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
+
+    if is_typed:
+        assert _typed_store is not None
         finalized = _typed_store.typed_finalize_gateway_authorization(
             authorization.id,
             success=success,
@@ -786,6 +838,10 @@ def _settle_gateway_authorization(
             generation=generation,
         )
     if not finalized:
+        # §3/§6/§7: leave the row pending on purpose. Inline's False only says
+        # "claim lost"; it cannot distinguish a charged replay from reaper-free
+        # lost charge. The drain's apply_frozen_settle outcome disambiguates, and
+        # marking done here would silently swallow a lost charge.
         return {
             "data": {
                 "authorization_id": authorization.id,
@@ -793,6 +849,25 @@ def _settle_gateway_authorization(
                 "already_settled": True,
             }
         }
+    if settings.settle_outbox_enabled:
+        try:
+            marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
+            if marked is None:
+                logger.info(
+                    "settle outbox done mark skipped authorization_id=%s intent_kind=%s; "
+                    "row leased or already resolved; drain will re-derive done",
+                    authorization.id,
+                    intent_kind,
+                )
+        except Exception:
+            # Safe to swallow: §7 says a crash/failure after inline finalize
+            # leaves a pending replay, and the drain will re-derive done via
+            # ALREADY_SETTLED_WITH_CHARGE / ALREADY_SETTLED_LEGACY.
+            logger.error(
+                "settle outbox done mark failed authorization_id=%s",
+                authorization.id,
+                exc_info=True,
+            )
 
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
