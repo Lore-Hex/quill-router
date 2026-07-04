@@ -102,6 +102,10 @@ ENV_VARS=(
   "TR_AWS_REGION=us-east-1" # SES region only; hosted compute is GCP-only.
   "TR_SES_FROM_EMAIL=noreply@trustedrouter.com"
   "TR_SES_FROM_NAME=TrustedRouter"
+  # /trustedos partner-inquiry form leads. Plain env (an address, not a
+  # secret); without it the handler falls back to TR_SES_FROM_EMAIL, which
+  # is send-only and effectively a black hole.
+  "TR_PARTNER_INQUIRY_EMAIL=joseph@jperla.com"
   # Axiom log shipping. Token comes from Secret Manager via the
   # add_secret_env_if_exists block above; dataset name is plain config.
   # Empty AXIOM_API_TOKEN at runtime → handler is not registered (graceful no-op).

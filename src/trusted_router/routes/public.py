@@ -210,6 +210,13 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
         )
         return ok
 
+    # Log every accepted lead in full before attempting delivery, so a lead
+    # can never be lost to a mailer failure.
+    log.info(
+        "trustedos_inquiry.received name=%r email=%r company=%r message=%r",
+        name, email, company, message,
+    )
+
     text_body = (
         "New TrustedOS partner inquiry\n\n"
         f"Name:    {name}\n"
@@ -220,13 +227,22 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     )
     subject = f"TrustedOS inquiry: {company or name}"
     try:
-        get_email_service(settings).send(
+        sent = get_email_service(settings).send(
             EmailMessage(to=recipient, subject=subject, text_body=text_body)
         )
     except Exception:  # noqa: BLE001 - never surface mailer errors to the form
+        sent = False
         log.exception(
             "trustedos_inquiry.send_failed name=%r email=%r company=%r",
             name, email, company,
+        )
+    if not sent:
+        # send() returns False when SES is unconfigured or the recipient is
+        # suppressed. Surface the full lead at error level so it reaches
+        # alerting and is never silently dropped.
+        log.error(
+            "trustedos_inquiry.delivery_failed recipient=%r name=%r email=%r company=%r message=%r",
+            recipient, name, email, company, message,
         )
     return ok
 
