@@ -514,9 +514,11 @@ Outcome cheat-sheet:
 Monitoring signals:
 
 App INFO logs such as `reaped N expired reservations` and `recovered settle
-charge` ship to Axiom (`TR_AXIOM_DATASET`), not Cloud Logging. Cloud Logging
-only carries stderr tracebacks and platform request logs. Judge reap/drain
-health by state, not by missing INFO lines:
+charge` are currently DROPPED entirely: `init_axiom()` adds a handler but
+never lowers the root logger level, and uvicorn leaves root at WARNING, so
+INFO never reaches Axiom or Cloud Logging. WARNING/ERROR lines (the review
+flags and the `ALERT settle outbox` family) do emit — to stderr (Cloud
+Logging) and to Axiom. Judge reap/drain health by state, never by log lines:
 
 ```bash
 gcloud spanner databases execute-sql trusted-router \
@@ -601,9 +603,13 @@ bursts deserve triage.
    Client impact is a handful of 500s the enclave retries. Do NOT restart
    services or roll back deploys for this signature.
 
-Structural fix if a tenant does this chronically: assign nonzero `ws_shard` /
-`key_shard` spreading. The schema supports it, and the repair queries in
-`docs/design/billing-typed-counters.md` handle shard!=0.
+Structural fix if a tenant does this chronically: shard spreading — but note
+it is NOT currently operable. The `ws_shard`/`key_shard` columns exist as
+schema headroom only: `authorize_atomic()` pins every reservation to shard 0
+and `repair_typed_reserved()` refuses nonzero shards. Enabling spreading is
+an engineering change (write path + repair path together, per
+`docs/design/billing-typed-counters.md`), not an ops action — do not hand-set
+shard values.
 
 ---
 
