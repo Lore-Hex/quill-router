@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from collections import Counter
-from typing import Any
+from typing import Any, cast
 
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.storage import STORE
@@ -62,12 +63,25 @@ def drain_settle_outbox(limit: int) -> dict[str, Any]:
         if outcome == ApplyOutcome.SETTLED_NOW and row.intent_kind == "settle":
             recovered_micro += int(row.actual_cost_micro)
     purged = outbox.purge_done()
+    # §3/§4: free-release only expired settled=false holds whose authorization
+    # has no pending/dead outbox row. Running after row resolution means a just-
+    # recovered charge is already settled; the claim gate makes that ordering a
+    # latency nicety, while the Increment-2 guard is the lost-charge interlock.
+    # Limit 200 drains the ~2.6k wiring-time backlog in about an hour of 5-min
+    # ticks without a tr_credit_balance write burst; steady state is far lower.
+    reaped = cast(Any, STORE).reap_expired_reservations(
+        now=dt.datetime.now(dt.UTC),
+        limit=200,
+    )
+    if reaped > 0:
+        logger.info("reaped %s expired reservations", reaped)
 
     return {
         "claimed": len(rows),
         "outcomes": dict(outcomes),
         "recovered_micro": recovered_micro,
         "purged": purged,
+        "reaped": reaped,
     }
 
 

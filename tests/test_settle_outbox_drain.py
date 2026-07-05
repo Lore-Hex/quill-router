@@ -31,6 +31,7 @@ ENDPOINT_ID = "anthropic/claude-haiku-4.5@anthropic/prepaid"
 ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
 NOW = "2026-07-04T12:00:00Z"
+EXPIRED_AT = "2000-01-01T00:00:00Z"
 
 
 @pytest.fixture
@@ -104,6 +105,22 @@ def _typed_authorization(
     assert outcome == AuthorizeOutcome.ACCEPTED
     assert auth is not None
     return auth
+
+
+def _expired_authorization(
+    store: Any,
+    *,
+    workspace_id: str,
+    key_hash: str,
+    estimate: int = ESTIMATE,
+) -> GatewayAuthorization:
+    return _typed_authorization(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key_hash,
+        estimate=estimate,
+        expires_at=EXPIRED_AT,
+    )
 
 
 def _legacy_authorization(
@@ -429,6 +446,93 @@ def test_enqueue_failure_does_not_fail_settle(
 # Integration (drain + reaper)
 
 
+def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any, Any]) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-drain-reap-unguarded"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _expired_authorization(store, workspace_id=ws, key_hash=key.hash)
+    assert _typed_credit(db, ws)["reserved"] == ESTIMATE
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 0
+    assert result["reaped"] == 1
+    assert _typed_credit(db, ws)["reserved"] == 0
+    reservation = db.reservations[auth.credit_reservation_id]
+    assert reservation["settled"] is True
+    assert reservation["actual_micro"] == 0
+
+
+def test_drain_reap_respects_outbox_guard(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-drain-reap-guard"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _expired_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth)
+    ob = _outbox(store)
+    ob.enqueue(row)
+    original_typed_store = apply_mod.typed_billing_store
+    monkeypatch.setattr(apply_mod, "typed_billing_store", lambda: None)
+
+    parked = drain_mod.drain_settle_outbox(10)
+
+    assert parked["claimed"] == 1
+    assert parked["outcomes"] == {ApplyOutcome.PARK_TYPED_UNAVAILABLE: 1}
+    assert parked["reaped"] == 0
+    parked_row = ob.get(auth.id, "settle")
+    assert parked_row is not None
+    assert parked_row.status == "pending"
+    assert parked_row.attempts == 0
+    assert _typed_credit(db, ws)["reserved"] == ESTIMATE
+    assert db.reservations[auth.credit_reservation_id]["settled"] is False
+
+    monkeypatch.setattr(apply_mod, "typed_billing_store", original_typed_store)
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = "2000-01-01T00:00:00Z"
+    recovered = drain_mod.drain_settle_outbox(10)
+
+    assert recovered["claimed"] == 1
+    assert recovered["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    assert recovered["reaped"] == 0
+    assert ob.get(auth.id, "settle").status == "done"
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
+    assert _typed_credit(db, ws)["reserved"] == 0
+    assert _typed_credit(db, ws)["total_usage"] == row.actual_cost_micro
+
+    again = drain_mod.drain_settle_outbox(10)
+    assert again["claimed"] == 0
+    assert again["reaped"] == 0
+    assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
+
+
+def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-drain-reap-limit"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auths = [
+        _expired_authorization(store, workspace_id=ws, key_hash=key.hash)
+        for _ in range(3)
+    ]
+    assert _typed_credit(db, ws)["reserved"] == ESTIMATE * 3
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["reaped"] == 3
+    assert _typed_credit(db, ws)["reserved"] == 0
+    for auth in auths:
+        reservation = db.reservations[auth.credit_reservation_id]
+        assert reservation["settled"] is True
+        assert reservation["actual_micro"] == 0
+
+    again = drain_mod.drain_settle_outbox(10)
+    assert again["reaped"] == 0
+
+
 def test_lost_charge_recovery_end_to_end(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
@@ -468,6 +572,7 @@ def test_lost_charge_recovery_end_to_end(
     assert payload["claimed"] == 1
     assert payload["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
     assert payload["recovered_micro"] == row.actual_cost_micro
+    assert payload["reaped"] == 0
     assert _outbox(store).get(auth.id, "settle").status == "done"
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
     assert _typed_credit(db, ws)["total_usage"] == row.actual_cost_micro
@@ -507,7 +612,7 @@ def test_drain_purges_only_old_done_rows_and_reports_count(
 
     result = drain_mod.drain_settle_outbox(10)
 
-    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 2}
+    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 2, "reaped": 0}
     assert ob.get("gwa-old-done-a", "settle") is None
     assert ob.get("gwa-old-done-b", "settle") is None
     assert ob.get("gwa-fresh-done", "settle").status == "done"
@@ -679,7 +784,12 @@ def test_drain_resolve_errors_do_not_abort_later_rows(
     assert ob.get(second.id, "settle").status == "done"
 
 
-def test_drain_clamps_limit_to_500(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_drain_clamps_limit_to_500(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert fake_store is not None
+
     class SpyOutbox:
         seen_limit: int | None = None
 
@@ -696,7 +806,7 @@ def test_drain_clamps_limit_to_500(monkeypatch: pytest.MonkeyPatch) -> None:
     result = drain_mod.drain_settle_outbox(99_999)
 
     assert spy.seen_limit == 500
-    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0}
+    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
 
 
 def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]) -> None:
@@ -717,4 +827,4 @@ def test_drain_endpoint_requires_internal_token(fake_store: tuple[Any, Any, Any]
     assert missing.status_code == 401
     assert wrong.status_code == 401
     assert ok.status_code == 200
-    assert ok.json() == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0}
+    assert ok.json() == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
