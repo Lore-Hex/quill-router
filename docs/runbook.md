@@ -491,9 +491,10 @@ gcloud scheduler jobs resume trusted-router-settle-outbox-drain \
 
 Every 5 min it POSTs
 `/v1/internal/gateway/settle-outbox/drain?limit=100` with the internal-token
-header and returns `{claimed, outcomes, recovered_micro, purged}`. It also
+header and returns `{claimed, outcomes, recovered_micro, purged, reaped}`. It also
 purges `done` rows older than 30 days; it never purges `pending`, `dead`, or
-`release_approved`.
+`release_approved`. The drain also reclaims expired abandoned reservation holds
+(limit 200/tick); frozen `pending`/`dead`-guarded holds are never reaped.
 
 Outcome cheat-sheet:
 
@@ -506,6 +507,9 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
+
+A persistently large `reaped` count means upstream abandonment (enclave crashes
+or client disconnects before settle); investigate the enclave, not the drain.
 
 Rollback normally by reverting the `TR_SETTLE_OUTBOX_ENABLED=true` line in
 `scripts/deploy/rollout.sh` and merging. The pipeline redeploys flag-off; the

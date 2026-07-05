@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -646,6 +647,13 @@ def _require_pred(sql: str, needle: str, what: str) -> None:
         raise AssertionError(f"tr_settle_outbox {what} query missing predicate: {needle!r}")
 
 
+def _utc_datetime(value: Any) -> dt.datetime:
+    if isinstance(value, dt.datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=dt.UTC)
+    parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
+
+
 def _execute_settle_outbox_sql(
     db: FakeSpannerDatabase,
     txn: _FakeTransaction | None,
@@ -725,7 +733,7 @@ def _execute_sql(
         out: list[list] = []
         for rid, rec in db.reservations.items():
             exp = rec.get("expires_at")
-            if rec.get("settled") or exp is None or exp >= now:
+            if rec.get("settled") or exp is None or _utc_datetime(exp) >= _utc_datetime(now):
                 continue
             if guarded:
                 # Model NOT EXISTS semantics before LIMIT (MF6): a dropped guard
