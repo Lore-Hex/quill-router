@@ -476,10 +476,16 @@ state; pending rows are in-flight or crash-orphaned and freeze their holds by
 design. Replayed settles (`already_settled`) never enqueue, so an empty table
 under replay-only traffic is normal.
 
-Verify there are no alert lines:
+Verify there are no alert lines — in AXIOM, not Cloud Logging (app
+WARNING/ERROR ships to Axiom only; see Monitoring signals below): search the
+`trusted-router-logs` dataset for `"ALERT settle outbox"`. Equivalent
+state-based check that needs no log access at all — dead rows are the
+alert-worthy terminal state:
 
 ```bash
-gcloud logging read 'resource.labels.service_name="trusted-router" textPayload:"ALERT settle outbox"' --project=quill-cloud-proxy --limit=10
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT COUNT(*) FROM tr_settle_outbox WHERE status='dead'"
 ```
 
 Spot-check settle latency is unchanged in `httpRequest.latency` for
@@ -513,12 +519,17 @@ Outcome cheat-sheet:
 
 Monitoring signals:
 
-App INFO logs such as `reaped N expired reservations` and `recovered settle
-charge` are currently DROPPED entirely: `init_axiom()` adds a handler but
-never lowers the root logger level, and uvicorn leaves root at WARNING, so
-INFO never reaches Axiom or Cloud Logging. WARNING/ERROR lines (the review
-flags and the `ALERT settle outbox` family) do emit — to stderr (Cloud
-Logging) and to Axiom. Judge reap/drain health by state, never by log lines:
+App log routing is a trap here, so know it exactly. INFO lines such as
+`reaped N expired reservations` and `recovered settle charge` are DROPPED
+entirely: `init_axiom()` adds a handler but never lowers the root logger
+level, and uvicorn leaves root at WARNING. WARNING/ERROR from
+`trusted_router.*` loggers (the review flags and the `ALERT settle outbox`
+family) ship to AXIOM ONLY — once `init_axiom()` attaches the sole root
+handler, `logging.lastResort` stops mirroring app records to stderr, so they
+never appear in Cloud Logging. Search alerts in Axiom
+(`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
+carries only platform request logs and uvicorn/unhandled-exception stderr
+tracebacks. Judge reap/drain health by state, never by log lines:
 
 ```bash
 gcloud spanner databases execute-sql trusted-router \
@@ -534,8 +545,7 @@ abandoned requests are reclaimed within a few ticks.
 Drain tick latency in request logs is a health signal: ~0.1s means nothing to
 do; 15-40s means it is actively reaping a backlog, one claim transaction per
 reaped hold. Sustained 40s+ ticks with `expired_open` not falling means
-investigate for a silent per-row failure. ERROR-level lines, including the
-`ALERT settle outbox` family and tracebacks, do reach Cloud Logging.
+investigate for a silent per-row failure.
 
 A persistently large `reaped` count means upstream abandonment (enclave crashes
 or client disconnects before settle); investigate the enclave, not the drain.
