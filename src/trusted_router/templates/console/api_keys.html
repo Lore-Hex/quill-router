@@ -1,5 +1,21 @@
 {% extends "console/_layout.html" %}
 {% block body %}
+{% macro create_key_form() %}
+<form class="form" method="post" action="/console/api-keys">
+  <div class="row">
+    <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
+    <label>Total budget (USD, optional)<input name="limit" type="text" inputmode="decimal" placeholder="e.g. 100"></label>
+  </div>
+  <div class="row key-window-row">
+    <label>Daily limit (USD, optional)<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
+    <label>Weekly limit (USD, optional)<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
+    <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
+  </div>
+  <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" checked> <span>Alert only — email me when a budget is crossed, don’t block the app</span></label>
+  <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Uncheck “Alert only” to hard-stop (429) at the budget instead. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
+  <button class="btn primary" type="submit">Create key</button>
+</form>
+{% endmacro %}
 {% if flash %}
 <div class="console-flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>
 {% endif %}
@@ -17,27 +33,27 @@
   </div>
 </section>
 {% endif %}
+{% if not keys %}
 <section class="panel">
   <div class="panel-head"><h2>Create a new API key</h2></div>
   <div class="panel-body">
-    <form class="form" method="post" action="/console/api-keys">
-      <div class="row">
-        <label>Name<input name="name" required placeholder="Production key" maxlength="120"></label>
-        <label>Total budget (USD, optional)<input name="limit" type="text" inputmode="decimal" placeholder="e.g. 100"></label>
-      </div>
-      <div class="row key-window-row">
-        <label>Daily limit (USD, optional)<input name="limit_daily" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.daily }}"></label>
-        <label>Weekly limit (USD, optional)<input name="limit_weekly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.weekly }}"></label>
-        <label>Monthly limit (USD, optional)<input name="limit_monthly" type="text" inputmode="decimal" placeholder="e.g. {{ suggested.monthly }}"></label>
-      </div>
-      <label class="budget-action-check"><input type="checkbox" name="budget_alert_only" checked> <span>Alert only — email me when a budget is crossed, don’t block the app</span></label>
-      <p class="key-window-note">Optional — left blank, a key has no window limit. A balanced starting point is <strong>${{ suggested.daily }} / day</strong>, <strong>${{ suggested.weekly }} / week</strong>, <strong>${{ suggested.monthly }} / month</strong> (weekly ≈ half the monthly, daily ≈ a fifth of the weekly). Uncheck “Alert only” to hard-stop (429) at the budget instead. Windows reset at UTC midnight / Monday / the 1st; enforcement is approximate. Agents can read their remaining budget from <code>GET /v1/key</code>.</p>
-      <button class="btn primary" type="submit">Create key</button>
-    </form>
+    {{ create_key_form() }}
   </div>
 </section>
+{% endif %}
 <section class="panel">
-  <div class="panel-head"><h2>Existing keys</h2><span class="pill">{{ keys|length }} total</span></div>
+  <div class="panel-head">
+    <div>
+      <h2>Existing keys</h2>
+      <p class="panel-kicker">Monitor usage, budgets, and access for this workspace.</p>
+    </div>
+    <div class="panel-head-actions">
+      <span class="pill">{{ keys|length }} total</span>
+      {% if keys %}
+      <button class="btn" type="button" data-action="open-new-key">New key</button>
+      {% endif %}
+    </div>
+  </div>
   <div class="panel-body">
     <div class="table-scroll">
     <table class="keys-table">
@@ -90,4 +106,15 @@
     </div>
   </div>
 </section>
+{% if keys %}
+<details class="panel key-create-panel" id="new-api-key">
+  <summary>
+    <span>Create a new API key</span>
+    <span class="summary-hint">Open only when you need another application or environment key.</span>
+  </summary>
+  <div class="panel-body">
+    {{ create_key_form() }}
+  </div>
+</details>
+{% endif %}
 {% endblock %}

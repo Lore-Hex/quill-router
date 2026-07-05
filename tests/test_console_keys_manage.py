@@ -184,3 +184,12 @@ def test_budget_inputs_have_no_number_spinners(console: dict) -> None:
     page = console["client"].get("/console/api-keys").text
     assert 'type="number"' not in page  # spinners removed
     assert 'inputmode="decimal"' in page
+
+
+def test_existing_keys_are_primary_when_workspace_has_keys(console: dict) -> None:
+    """Once a workspace has keys, monitoring them should be above creation."""
+    page = console["client"].get("/console/api-keys").text
+
+    assert page.index("Existing keys") < page.index("Create a new API key")
+    assert 'data-action="open-new-key"' in page
+    assert '<details class="panel key-create-panel" id="new-api-key">' in page

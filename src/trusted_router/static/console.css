@@ -234,8 +234,64 @@ body.console {
   overflow-x: auto;
 }
 
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.panel-kicker {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .keys-table {
   min-width: 860px;
+}
+
+.key-create-panel {
+  background: transparent;
+}
+
+.key-create-panel summary {
+  display: grid;
+  grid-template-columns: 24px minmax(0, max-content) minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+  cursor: pointer;
+  padding: 16px 18px;
+  color: var(--ink);
+  font-weight: 750;
+  list-style: none;
+}
+
+.key-create-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.key-create-panel summary::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.key-create-panel[open] summary::before {
+  content: "-";
+}
+
+.key-create-panel .summary-hint {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .key-budget-form {

@@ -99,6 +99,20 @@ function initConsole() {
       toggleTheme();
       return;
     }
+    const newKeyButton = target.closest('[data-action="open-new-key"]');
+    if (newKeyButton) {
+      event.preventDefault();
+      const panel = document.getElementById("new-api-key");
+      if (panel) {
+        panel.open = true;
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        const input = panel.querySelector('input[name="name"]');
+        if (input) {
+          window.setTimeout(() => input.focus(), 250);
+        }
+      }
+      return;
+    }
     const button = target.closest("[data-copy-secret]");
     if (!button)
       return;
