@@ -109,17 +109,21 @@ def test_axiom_scrub_filter_collapses_and_redacts_positional_args() -> None:
 
 
 def test_axiom_scrub_filter_tolerates_bad_format_args() -> None:
+    raw_arg = "token=abc123"
     record = logging.LogRecord(
         name="trusted_router.email",
         level=logging.INFO,
         pathname=__file__,
         lineno=1,
-        msg="%s %s",
-        args=("only-one",),
+        msg="email_send.fallback %s %s",
+        args=(raw_arg,),
         exc_info=None,
     )
 
     assert _AxiomScrubFilter().filter(record) is True
+    assert record.msg == "email_send.fallback %s %s"
+    assert record.args is None
+    assert raw_arg not in repr(record.__dict__)
 
 
 def test_axiom_client_kwargs_use_edge_url_for_edge_deployments() -> None:
@@ -195,6 +199,46 @@ def test_init_axiom_sets_package_logger_level_and_keeps_third_party_info_gated(
         for record in captured_records
     )
     assert all(record.name != "thirdparty" for record in captured_records)
+
+
+def test_init_axiom_caps_package_logger_level_at_warning_but_keeps_handler_level(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_axiom_logging_state: None,
+) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class CapturingAxiomHandler(logging.Handler):
+        def __init__(self, client: FakeClient, dataset: str) -> None:
+            super().__init__()
+            self.client = client
+            self.dataset = dataset
+
+        def emit(self, record: logging.LogRecord) -> None:
+            pass
+
+    monkeypatch.setenv("AXIOM_API_TOKEN", _fake_axiom_token())
+    monkeypatch.delenv("AXIOM_TOKEN", raising=False)
+    monkeypatch.delenv("AXIOM_ORG_ID", raising=False)
+    monkeypatch.setattr(axiom_config, "_running_under_pytest", lambda _settings: False)
+    monkeypatch.setattr(axiom_py, "Client", FakeClient)
+    monkeypatch.setattr(axiom_logging, "AxiomHandler", CapturingAxiomHandler)
+
+    init_axiom(
+        Settings(
+            environment="local",
+            axiom_dataset="test-logs",
+            axiom_log_level="ERROR",
+        )
+    )
+
+    installed_handlers = [
+        handler for handler in logging.getLogger().handlers if isinstance(handler, _SafeAxiomHandler)
+    ]
+    assert len(installed_handlers) == 1
+    assert logging.getLogger("trusted_router").level == logging.WARNING
+    assert installed_handlers[0].level == logging.ERROR
 
 
 def _record(logger_name: str) -> logging.LogRecord:
