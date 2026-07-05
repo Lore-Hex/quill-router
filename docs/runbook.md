@@ -22,6 +22,9 @@ Index:
 - [Adding a model to an existing provider](#new-model)
 - [Rotating a provider API key](#rotate-key)
 - [Spinning up Phala / RedPill again after a key issue](#phala-revive)
+- [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
+- [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
+- [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 
 ---
 
@@ -473,10 +476,16 @@ state; pending rows are in-flight or crash-orphaned and freeze their holds by
 design. Replayed settles (`already_settled`) never enqueue, so an empty table
 under replay-only traffic is normal.
 
-Verify there are no alert lines:
+Verify there are no alert lines — in AXIOM, not Cloud Logging (app
+WARNING/ERROR ships to Axiom only; see Monitoring signals below): search the
+`trusted-router-logs` dataset for `"ALERT settle outbox"`. Equivalent
+state-based check that needs no log access at all — dead rows are the
+alert-worthy terminal state:
 
 ```bash
-gcloud logging read 'resource.labels.service_name="trusted-router" textPayload:"ALERT settle outbox"' --project=quill-cloud-proxy --limit=10
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT COUNT(*) FROM tr_settle_outbox WHERE status='dead'"
 ```
 
 Spot-check settle latency is unchanged in `httpRequest.latency` for
@@ -508,6 +517,36 @@ Outcome cheat-sheet:
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
 
+Monitoring signals:
+
+App log routing is a trap here, so know it exactly. INFO lines such as
+`reaped N expired reservations` and `recovered settle charge` are DROPPED
+entirely: `init_axiom()` adds a handler but never lowers the root logger
+level, and uvicorn leaves root at WARNING. WARNING/ERROR from
+`trusted_router.*` loggers (the review flags and the `ALERT settle outbox`
+family) ship to AXIOM ONLY — once `init_axiom()` attaches the sole root
+handler, `logging.lastResort` stops mirroring app records to stderr, so they
+never appear in Cloud Logging. Search alerts in Axiom
+(`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
+carries only platform request logs and uvicorn/unhandled-exception stderr
+tracebacks. Judge reap/drain health by state, never by log lines:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT COUNTIF(settled=false) open_holds,
+         COUNTIF(settled=false AND expires_at < CURRENT_TIMESTAMP()) expired_open
+         FROM tr_reservation"
+```
+
+`expired_open` should trend to near zero and stay there. New expirations from
+abandoned requests are reclaimed within a few ticks.
+
+Drain tick latency in request logs is a health signal: ~0.1s means nothing to
+do; 15-40s means it is actively reaping a backlog, one claim transaction per
+reaped hold. Sustained 40s+ ticks with `expired_open` not falling means
+investigate for a silent per-row failure.
+
 A persistently large `reaped` count means upstream abandonment (enclave crashes
 or client disconnects before settle); investigate the enclave, not the drain.
 
@@ -532,6 +571,55 @@ gcloud scheduler jobs pause trusted-router-settle-outbox-drain \
 Find the previous pinned revision with `gcloud run revisions list`. Pending
 and dead rows left behind keep their holds frozen; they are safe and resolve on
 the next flip or via `release_approved`.
+
+---
+
+## <a id="authorize-deadlock-burst"></a>Sentry "Aborted ... deadlock/wounded" burst on gateway authorize
+
+Symptom: Sentry issues on `gateway_authorize` / `authorize_atomic` with
+Spanner messages like "Deadlock with higher priority transaction" or "wounded
+by a higher priority transaction", in a burst. Each event is one request that
+exhausted all 8 in-request retries. Scattered singles are retry-tail noise;
+bursts deserve triage.
+
+1. Check for operational churn first. Was a deploy rolling, or was DDL being
+   applied? Schema changes wound in-flight read-write transactions. Receipt:
+   the 2026-07-04 21:25-21:31 UTC burst was `migrate_typed_counters.sh` DDL
+   applied while the Increment-4 deploy was still rolling. Rule: apply
+   operator DDL only when no deploy is in flight, in a low-traffic window, and
+   expect a brief Aborted blip even then. Pre-announce it so the page does not
+   stall the rollout.
+
+2. If there is no churn, it is almost certainly one hot tenant. The Sentry
+   message names the conflict row:
+   `conflict on keys with prefix [<workspace_id>,0] ... tr_credit_balance` or
+   `[<key_hash>,0] ... tr_key_limit`. Every concurrent request from one tenant
+   serializes on those two shard-0 singleton rows.
+
+3. Profile the tenant read-only:
+
+   ```bash
+   gcloud spanner databases execute-sql trusted-router \
+     --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+     --sql="SELECT workspace_id, COUNTIF(settled=false) open_holds, COUNT(*) total
+            FROM tr_reservation WHERE key_hash='<key_hash>' GROUP BY 1"
+   ```
+
+   Also inspect the `tr_key_limit` / `tr_credit_balance` shard rows for
+   reserved/usage on the named `<key_hash>` and `<workspace_id>`.
+
+4. Bursts self-resolve when the tenant's spike ends. Receipt: the 2026-07-04
+   22:26-22:33 UTC burst was a single tenant and ended with zero intervention.
+   Client impact is a handful of 500s the enclave retries. Do NOT restart
+   services or roll back deploys for this signature.
+
+Structural fix if a tenant does this chronically: shard spreading — but note
+it is NOT currently operable. The `ws_shard`/`key_shard` columns exist as
+schema headroom only: `authorize_atomic()` pins every reservation to shard 0
+and `repair_typed_reserved()` refuses nonzero shards. Enabling spreading is
+an engineering change (write path + repair path together, per
+`docs/design/billing-typed-counters.md`), not an ops action — do not hand-set
+shard values.
 
 ---
 
