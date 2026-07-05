@@ -7,6 +7,12 @@
 # databases. Apply this BEFORE deploying the mirror code with
 # TR_TYPED_COUNTER_MIRROR=1 — the dual-write writes to these tables.
 #
+# Operational sequencing: apply this only when no Cloud Run deploy is rolling
+# and prefer a low-traffic window. Spanner schema changes wound in-flight
+# read-write transactions at schema-version boundaries, and overlapping a
+# rollout doubles the churn (receipt: 2026-07-04 21:25-21:31 UTC Aborted burst
+# on gateway authorize). Expect a brief blip even when sequenced correctly.
+#
 # Usage:
 #   SPANNER_INSTANCE_ID=... SPANNER_DATABASE_ID=... [GCP_PROJECT_ID=...] \
 #     scripts/deploy/migrate_typed_counters.sh
