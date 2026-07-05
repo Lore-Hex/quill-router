@@ -426,6 +426,111 @@ https://docs.phala.com/phala-cloud/confidential-ai/confidential-model/confidenti
 
 ---
 
+## <a id="settle-outbox"></a>Settle outbox: flip, verify, monitor, roll back
+
+Durably recover completed charges whose settle intent was recorded but whose
+inline settle result was lost. See `docs/design/durable-settle-outbox.md`.
+The correctness spine is the reaper guard; drain cadence affects latency only.
+
+The flip is config-as-code. Add `TR_SETTLE_OUTBOX_ENABLED=true` to the
+`ENV_VARS` array in `scripts/deploy/rollout.sh`, then merge to `main`.
+
+That merge is the production flip:
+1. CI gates the change.
+2. `rollout.sh` creates Cloud Run revisions with `--no-traffic`.
+3. `staged_traffic.sh` ramps traffic by named revision.
+4. Watchdog canaries auto-roll traffic back on failure.
+5. Cold regions keep their previous revision on a normal merge. After the
+   hot-region rollout completes, run the deploy workflow via
+   `workflow_dispatch` with `deploy_cold_regions=true` to bring them to the
+   same revision: `gh workflow run deploy.yml -f deploy_cold_regions=true`.
+   The interim mixed state is safe: a flag-off region simply keeps the old
+   byte-identical settle path, its charges just aren't outbox-protected yet.
+
+**WARNING**: never flip this with a bare
+`gcloud run services update --update-env-vars`. Cloud Run traffic is pinned to
+named revisions here; template-only env changes can serve ZERO requests. This
+was learned on 2026-07-04. Always verify the env on the SERVING revision:
+
+```bash
+gcloud run services describe trusted-router --region=us-central1 \
+  --project=quill-cloud-proxy --format="value(spec.traffic)"
+gcloud run revisions describe <pinned-revision> --region=us-central1 \
+  --project=quill-cloud-proxy --format="value(spec.containers[0].env)" \
+  | tr ';' '\n' | grep OUTBOX
+```
+
+After the deploy workflow completes, verify rows flow and complete inline:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT status, intent_kind, COUNT(*) n FROM tr_settle_outbox GROUP BY 1,2"
+```
+
+Expect `done` to grow with settle traffic. Expect `pending` near zero at steady
+state; pending rows are in-flight or crash-orphaned and freeze their holds by
+design. Replayed settles (`already_settled`) never enqueue, so an empty table
+under replay-only traffic is normal.
+
+Verify there are no alert lines:
+
+```bash
+gcloud logging read 'resource.labels.service_name="trusted-router" textPayload:"ALERT settle outbox"' --project=quill-cloud-proxy --limit=10
+```
+
+Spot-check settle latency is unchanged in `httpRequest.latency` for
+`/internal/gateway/settle`.
+
+Resume the drain after the flip. The job already exists and is paused:
+
+```bash
+gcloud scheduler jobs resume trusted-router-settle-outbox-drain \
+  --location=us-central1 --project=quill-cloud-proxy
+```
+
+Every 5 min it POSTs
+`/v1/internal/gateway/settle-outbox/drain?limit=100` with the internal-token
+header and returns `{claimed, outcomes, recovered_micro, purged}`. It also
+purges `done` rows older than 30 days; it never purges `pending`, `dead`, or
+`release_approved`.
+
+Outcome cheat-sheet:
+
+| Outcome | Action |
+| --- | --- |
+| `settled_now` | Recovered charge; info log only. |
+| `already_settled_with_charge` | Benign done; review low-priority flags from log warnings. |
+| `already_settled_legacy` | Benign done; review low-priority flags from log warnings. |
+| `already_released_free` on a settle row | DEAD plus `ALERT settle outbox lost charge`; invariant violation. Investigate. A human may set `status='release_approved'` to let the reaper free the hold only after confirming the charge is genuinely unrecoverable. |
+| `reservation_missing` | Dead plus alert; investigate missing reservation state. |
+| `invalid_row` | Dead; no page. |
+| `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
+
+Rollback normally by reverting the `TR_SETTLE_OUTBOX_ENABLED=true` line in
+`scripts/deploy/rollout.sh` and merging. The pipeline redeploys flag-off; the
+settle path is byte-identical. A normal merge never deploys cold regions: if
+the cold-region dispatch was run for the flip, run
+`gh workflow run deploy.yml -f deploy_cold_regions=true` again after the
+revert merge's hot-region rollout completes so cold regions also return to
+flag-off.
+
+Emergency rollback in the same minute: move traffic to the previous pinned
+revision in every affected region, then pause the scheduler:
+
+```bash
+gcloud run services update-traffic trusted-router --region=<r> \
+  --to-revisions=<previous-pinned-revision>=100 --project=quill-cloud-proxy
+gcloud scheduler jobs pause trusted-router-settle-outbox-drain \
+  --location=us-central1 --project=quill-cloud-proxy
+```
+
+Find the previous pinned revision with `gcloud run revisions list`. Pending
+and dead rows left behind keep their holds frozen; they are safe and resolve on
+the next flip or via `release_approved`.
+
+---
+
 ## <a id="dns-vendor-split"></a>DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)
 
 Cloudflare and Google Cloud DNS are both authoritative for

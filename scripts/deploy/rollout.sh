@@ -153,6 +153,14 @@ ENV_VARS=(
   # typed.reserved is never blind to its open holds. Denylist still wins for an
   # emergency per-workspace revert.
   "TR_TYPED_BILLING_WORKSPACE_IDS=*"
+  # Durable settle outbox (docs/design/durable-settle-outbox.md §5.4, §8):
+  # every gateway settle/refund durably records its frozen intent BEFORE the
+  # inline finalize, and /internal/gateway/settle-outbox/drain recovers any
+  # that were lost so the reaper never free-releases a completed request.
+  # DDL applied 2026-07-04 (migrate_typed_counters.sh); reaper guard armed.
+  # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
+  # flag-off settle path is byte-identical.
+  "TR_SETTLE_OUTBOX_ENABLED=true"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
