@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -39,6 +40,11 @@ from trusted_router.config import Settings
 from trusted_router.sentry_config import _scrub
 
 log = logging.getLogger(__name__)
+
+# Key-based `_scrub` cannot see positional-arg VALUES; collapsing + regex is
+# the args-safe complement (PR #124 review P2).
+_AXIOM_SECRET_VALUE_RE = re.compile(r"(?i)(token|secret|key|password|authorization)=([^&\s\"']+)")
+_AXIOM_EMAIL_VALUE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
 def init_axiom(settings: Settings) -> None:
@@ -169,6 +175,20 @@ class _AxiomScrubFilter(logging.Filter):
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            collapsed = record.getMessage()
+        except Exception:  # noqa: BLE001 - logging filters must not break logging.
+            collapsed = None
+        if collapsed is not None:
+            # Collapsing args means Axiom loses structured args fields and gets
+            # the final formatted message only. That is the point: nothing
+            # unscrubbed can leave the process.
+            record.msg = _AXIOM_EMAIL_VALUE_RE.sub(
+                "[Filtered-email]",
+                _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
+            )
+            record.args = None
+
         for key, value in list(record.__dict__.items()):
             if key in self._SKIP_FIELDS:
                 continue

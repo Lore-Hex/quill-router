@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 import time
@@ -179,7 +180,9 @@ def init_sentry(settings: Settings) -> None:
         enable_logs=True,
         traces_sample_rate=settings.sentry_traces_sample_rate,
         integrations=[
-            LoggingIntegration(level=None, event_level=None),
+            # INFO is Axiom-only by design; Sentry logs stay WARNING+ so chatty
+            # INFO can never crowd out error events in the floodgate.
+            LoggingIntegration(level=None, event_level=None, sentry_logs_level=logging.WARNING),
             StarletteIntegration(transaction_style="endpoint"),
             FastApiIntegration(transaction_style="endpoint"),
         ],

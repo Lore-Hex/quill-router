@@ -9,6 +9,7 @@ import pytest
 
 import trusted_router.axiom_config as axiom_config
 from trusted_router.axiom_config import (
+    _AxiomScrubFilter,
     _client_kwargs,
     _resolve_level,
     _SafeAxiomHandler,
@@ -84,6 +85,41 @@ def test_safe_axiom_handler_never_raises_from_emit(capsys) -> None:
     captured = capsys.readouterr()
     assert "axiom.emit_failed dropped=true" in captured.err
     assert captured.err.count("axiom.emit_failed") == 1
+
+
+def test_axiom_scrub_filter_collapses_and_redacts_positional_args() -> None:
+    record = logging.LogRecord(
+        name="trusted_router.email",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="email_send.fallback %s",
+        args=("body https://x/auth/verify-email?token=abc123 for a@b.com",),
+        exc_info=None,
+    )
+
+    assert _AxiomScrubFilter().filter(record) is True
+
+    assert record.args is None
+    assert "token=[Filtered]" in record.msg
+    assert "[Filtered-email]" in record.msg
+    record_payload = repr(record.__dict__)
+    assert "abc123" not in record_payload
+    assert "a@b.com" not in record_payload
+
+
+def test_axiom_scrub_filter_tolerates_bad_format_args() -> None:
+    record = logging.LogRecord(
+        name="trusted_router.email",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="%s %s",
+        args=("only-one",),
+        exc_info=None,
+    )
+
+    assert _AxiomScrubFilter().filter(record) is True
 
 
 def test_axiom_client_kwargs_use_edge_url_for_edge_deployments() -> None:
