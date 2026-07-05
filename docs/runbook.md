@@ -509,7 +509,11 @@ Outcome cheat-sheet:
 
 Rollback normally by reverting the `TR_SETTLE_OUTBOX_ENABLED=true` line in
 `scripts/deploy/rollout.sh` and merging. The pipeline redeploys flag-off; the
-settle path is byte-identical.
+settle path is byte-identical. A normal merge never deploys cold regions: if
+the cold-region dispatch was run for the flip, run
+`gh workflow run deploy.yml -f deploy_cold_regions=true` again after the
+revert merge's hot-region rollout completes so cold regions also return to
+flag-off.
 
 Emergency rollback in the same minute: move traffic to the previous pinned
 revision in every affected region, then pause the scheduler:
