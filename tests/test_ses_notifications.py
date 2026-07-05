@@ -267,3 +267,70 @@ def test_sns_verify_accepts_valid_sha256_rsa_signature() -> None:
         message,
         cert_fetcher=lambda url: cert.public_bytes(serialization.Encoding.PEM),
     )
+
+
+def _self_signed_cert_and_key() -> tuple[Any, Any]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "sns.us-east-1.amazonaws.com")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(dt.datetime.now(dt.UTC) - dt.timedelta(days=1))
+        .not_valid_after(dt.datetime.now(dt.UTC) + dt.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return cert, key
+
+
+def test_sns_verify_matches_aws_spec_canonical_string_v1() -> None:
+    """Sign a HAND-BUILT canonical string (per the AWS docs) rather than the
+    implementation's own _canonical_string, so a spec deviation in the
+    implementation cannot hide behind a circular round-trip."""
+    cert, key = _self_signed_cert_and_key()
+    message = _envelope(SignatureVersion="1", Signature="")
+    canonical = (
+        f"Message\n{message['Message']}\n"
+        f"MessageId\n{message['MessageId']}\n"
+        f"Timestamp\n{message['Timestamp']}\n"
+        f"TopicArn\n{message['TopicArn']}\n"
+        f"Type\n{message['Type']}\n"
+    )
+    signature = key.sign(canonical.encode("utf-8"), padding.PKCS1v15(), hashes.SHA1())  # noqa: S303 - SigV1 is SHA1 by AWS spec
+    message["Signature"] = base64.b64encode(signature).decode("ascii")
+    verify_sns_message(
+        message, cert_fetcher=lambda url: cert.public_bytes(serialization.Encoding.PEM)
+    )
+
+
+def test_sns_verify_excludes_null_subject_like_aws_does() -> None:
+    """SES notifications arrive with "Subject": null; AWS signs WITHOUT the
+    Subject lines in that case and verification must agree."""
+    cert, key = _self_signed_cert_and_key()
+    message = _envelope(SignatureVersion="1", Signature="", Subject=None)
+    canonical = (
+        f"Message\n{message['Message']}\n"
+        f"MessageId\n{message['MessageId']}\n"
+        f"Timestamp\n{message['Timestamp']}\n"
+        f"TopicArn\n{message['TopicArn']}\n"
+        f"Type\n{message['Type']}\n"
+    )
+    signature = key.sign(canonical.encode("utf-8"), padding.PKCS1v15(), hashes.SHA1())  # noqa: S303 - SigV1 is SHA1 by AWS spec
+    message["Signature"] = base64.b64encode(signature).decode("ascii")
+    verify_sns_message(
+        message, cert_fetcher=lambda url: cert.public_bytes(serialization.Encoding.PEM)
+    )
+
+
+def test_sns_verify_rejects_raw_message_delivery_envelope() -> None:
+    """A subscription with RawMessageDelivery=true delivers the bare SES
+    feedback JSON — no Type, no Signature. That must be rejected (it is
+    unverifiable), and the reason should point operators at the cause."""
+    raw_feedback = {
+        "notificationType": "Bounce",
+        "bounce": {"bounceType": "Permanent", "bouncedRecipients": [{"emailAddress": "x@y.com"}]},
+    }
+    with pytest.raises(SnsVerificationError, match="unsupported SNS Type"):
+        verify_sns_message(raw_feedback, cert_fetcher=lambda url: b"")

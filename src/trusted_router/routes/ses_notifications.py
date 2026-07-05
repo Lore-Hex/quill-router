@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Request
@@ -48,6 +50,20 @@ def register_ses_notification_routes(router: APIRouter) -> None:
             verify_sns_message(envelope)
         except SnsVerificationError as exc:
             log.warning("ses_notification.signature_invalid reason=%s", exc)
+            # TEMP(2026-07-05): mirror the failure to stderr so it reaches
+            # Cloud Logging — module logs ship to Axiom only, and this 403
+            # has been rejecting every SNS delivery for days. Metadata only
+            # (field names, type, cert host); never the Message content.
+            cert_url = str(envelope.get("SigningCertURL") or envelope.get("SigningCertUrl") or "")
+            print(
+                "ses_notification.signature_invalid "
+                f"reason={str(exc)!r} keys={sorted(envelope.keys())} "
+                f"type={envelope.get('Type')!r} "
+                f"sig_version={envelope.get('SignatureVersion')!r} "
+                f"cert_host={urlparse(cert_url).hostname!r}",
+                file=sys.stderr,
+                flush=True,
+            )
             raise api_error(403, "SNS signature verification failed", ErrorType.FORBIDDEN) from exc
 
         message_id = str(envelope.get("MessageId") or "")
