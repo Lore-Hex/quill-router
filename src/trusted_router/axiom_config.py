@@ -77,10 +77,11 @@ def init_axiom(settings: Settings) -> None:
         log.warning("axiom.disabled reason=client_init_failed err=%s", exc)
         return
 
+    resolved_level = _resolve_level(settings.axiom_log_level)
     raw_handler: logging.Handler = AxiomHandler(client, dataset)
     raw_handler.setLevel(logging.NOTSET)
     handler: logging.Handler = _SafeAxiomHandler(raw_handler)
-    handler.setLevel(_resolve_level(settings.axiom_log_level))
+    handler.setLevel(resolved_level)
     # Attach a filter that scrubs PII before the handler ships the
     # record. Reuses sentry_config's `_scrub` so the rules are defined
     # in one place.
@@ -94,6 +95,13 @@ def init_axiom(settings: Settings) -> None:
 
     root = logging.getLogger()
     root.addHandler(handler)
+    # The handler's level alone is not enough: uvicorn leaves the root
+    # logger at WARNING, which filters app INFO records before any handler
+    # sees them. Lower the level on OUR package logger only — scoping it
+    # keeps third-party INFO chatter (google clients, urllib3, ...) from
+    # shipping; those still gate on root's WARNING. Records propagate from
+    # trusted_router.* up to root's Axiom handler as before.
+    logging.getLogger("trusted_router").setLevel(resolved_level)
     log.info(
         "axiom.enabled dataset=%s url=%s level=%s org_id=%s",
         dataset,

@@ -476,11 +476,11 @@ state; pending rows are in-flight or crash-orphaned and freeze their holds by
 design. Replayed settles (`already_settled`) never enqueue, so an empty table
 under replay-only traffic is normal.
 
-Verify there are no alert lines — in AXIOM, not Cloud Logging (app
-WARNING/ERROR ships to Axiom only; see Monitoring signals below): search the
-`trusted-router-logs` dataset for `"ALERT settle outbox"`. Equivalent
-state-based check that needs no log access at all — dead rows are the
-alert-worthy terminal state:
+Verify there are no alert lines — in AXIOM, not Cloud Logging (app logs at
+or above `TR_AXIOM_LOG_LEVEL` ship to Axiom only; see Monitoring signals
+below): search the `trusted-router-logs` dataset for `"ALERT settle outbox"`.
+Equivalent state-based check that needs no log access at all — dead rows are
+the alert-worthy terminal state:
 
 ```bash
 gcloud spanner databases execute-sql trusted-router \
@@ -519,14 +519,13 @@ Outcome cheat-sheet:
 
 Monitoring signals:
 
-App log routing is a trap here, so know it exactly. INFO lines such as
-`reaped N expired reservations` and `recovered settle charge` are DROPPED
-entirely: `init_axiom()` adds a handler but never lowers the root logger
-level, and uvicorn leaves root at WARNING. WARNING/ERROR from
-`trusted_router.*` loggers (the review flags and the `ALERT settle outbox`
-family) ship to AXIOM ONLY — once `init_axiom()` attaches the sole root
-handler, `logging.lastResort` stops mirroring app records to stderr, so they
-never appear in Cloud Logging. Search alerts in Axiom
+App log routing is a trap here, so know it exactly. INFO and above from
+`trusted_router.*` loggers now ship to AXIOM because `init_axiom()` lowers
+only the package logger to `TR_AXIOM_LOG_LEVEL` (default INFO) and leaves
+root at uvicorn's WARNING. Third-party INFO still does not ship because it
+gates on root's WARNING. App records still never appear in Cloud Logging:
+once `init_axiom()` attaches the root Axiom handler, `logging.lastResort`
+stops mirroring app records to stderr. Search alerts and app INFO in Axiom
 (`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
 carries only platform request logs and uvicorn/unhandled-exception stderr
 tracebacks. Judge reap/drain health by state, never by log lines:

@@ -1,12 +1,64 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 
-from trusted_router.axiom_config import _client_kwargs, _SafeAxiomHandler
+import axiom_py
+import axiom_py.logging as axiom_logging
+import pytest
+
+import trusted_router.axiom_config as axiom_config
+from trusted_router.axiom_config import (
+    _client_kwargs,
+    _resolve_level,
+    _SafeAxiomHandler,
+    init_axiom,
+)
+from trusted_router.config import Settings
 
 
 def _fake_axiom_token() -> str:
     return "xaat_test"
+
+
+@pytest.fixture
+def clean_axiom_logging_state() -> Iterator[None]:
+    root = logging.getLogger()
+    original_root_level = root.level
+    original_disable = logging.root.manager.disable
+    original_handlers = list(root.handlers)
+    logger_names = ("trusted_router", "trusted_router.anything", "thirdparty")
+    original_logger_states = {
+        name: (
+            logging.getLogger(name).level,
+            logging.getLogger(name).propagate,
+            logging.getLogger(name).disabled,
+        )
+        for name in logger_names
+    }
+
+    root.setLevel(logging.WARNING)
+    logging.disable(logging.NOTSET)
+    for name in logger_names:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.NOTSET)
+        logger.propagate = True
+        logger.disabled = False
+
+    try:
+        yield
+    finally:
+        for handler in list(root.handlers):
+            if handler not in original_handlers:
+                root.removeHandler(handler)
+                handler.close()
+        for name, (level, propagate, disabled) in original_logger_states.items():
+            logger = logging.getLogger(name)
+            logger.setLevel(level)
+            logger.propagate = propagate
+            logger.disabled = disabled
+        root.setLevel(original_root_level)
+        logging.disable(original_disable)
 
 
 class _ExplodingHandler(logging.Handler):
@@ -59,6 +111,54 @@ def test_axiom_client_kwargs_keep_standard_api_url_for_non_edge() -> None:
         "org_id": "org_1",
         "url": "https://api.axiom.co",
     }
+
+
+def test_init_axiom_sets_package_logger_level_and_keeps_third_party_info_gated(
+    monkeypatch: pytest.MonkeyPatch,
+    clean_axiom_logging_state: None,
+) -> None:
+    captured_records: list[logging.LogRecord] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class CapturingAxiomHandler(logging.Handler):
+        def __init__(self, client: FakeClient, dataset: str) -> None:
+            super().__init__()
+            self.client = client
+            self.dataset = dataset
+
+        def emit(self, record: logging.LogRecord) -> None:
+            captured_records.append(record)
+
+    monkeypatch.setenv("AXIOM_API_TOKEN", _fake_axiom_token())
+    monkeypatch.delenv("AXIOM_TOKEN", raising=False)
+    monkeypatch.delenv("AXIOM_ORG_ID", raising=False)
+    monkeypatch.setattr(axiom_config, "_running_under_pytest", lambda _settings: False)
+    monkeypatch.setattr(axiom_py, "Client", FakeClient)
+    monkeypatch.setattr(axiom_logging, "AxiomHandler", CapturingAxiomHandler)
+
+    settings = Settings(
+        environment="local",
+        axiom_dataset="test-logs",
+        axiom_log_level="INFO",
+    )
+
+    init_axiom(settings)
+
+    assert logging.getLogger().level == logging.WARNING
+    assert logging.getLogger("trusted_router").level == _resolve_level(settings.axiom_log_level)
+
+    logging.getLogger("trusted_router.anything").info("app info reaches axiom")
+    logging.getLogger("thirdparty").info("third-party info stays gated")
+
+    assert any(
+        record.name == "trusted_router.anything"
+        and record.getMessage() == "app info reaches axiom"
+        for record in captured_records
+    )
+    assert all(record.name != "thirdparty" for record in captured_records)
 
 
 def _record(logger_name: str) -> logging.LogRecord:
