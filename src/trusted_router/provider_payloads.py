@@ -5,6 +5,16 @@ from typing import Any
 from trusted_router.adapter import chat_to_anthropic, chat_to_gemini, resolve_max_output_tokens
 from trusted_router.catalog import Model
 
+ANTHROPIC_MESSAGES_PASSTHROUGH_FIELDS = (
+    "top_p",
+    "stop_sequences",
+    "top_k",
+    "thinking",
+    "metadata",
+)
+# TODO(tool-schema-translation, see #130): translate OpenAI chat tools/tool_choice
+# to Anthropic tools/input_schema instead of forwarding raw chat schemas.
+
 
 def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream: bool) -> dict[str, Any]:
     base = chat_to_anthropic(messages(request), max_tokens=resolve_max_output_tokens(request) or 1024)
@@ -15,12 +25,17 @@ def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream:
     }
     if request.get("temperature") is not None:
         payload["temperature"] = request["temperature"]
+    for field in ANTHROPIC_MESSAGES_PASSTHROUGH_FIELDS:
+        if request.get(field) is not None:
+            payload[field] = request[field]
     return payload
 
 
 def gemini_payload(request: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {"contents": chat_to_gemini(messages(request))}
     generation_config: dict[str, Any] = {}
+    # TODO(tool-schema-translation, see #130): translate OpenAI chat tools/tool_choice
+    # to Gemini functionDeclarations/toolConfig instead of forwarding raw chat schemas.
     max_output_tokens = resolve_max_output_tokens(request)
     if max_output_tokens is not None:
         generation_config["maxOutputTokens"] = max_output_tokens

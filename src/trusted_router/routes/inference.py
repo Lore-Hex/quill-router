@@ -125,6 +125,7 @@ def register_inference_routes(router: APIRouter) -> None:
                     result=result,
                     model_id=selected_model.id,
                     generation_id=generation.id,
+                    generation=generation,
                     extra_tr_block={
                         "requested_model": requested_model,
                         "selected_model": selected_model.id,
@@ -174,6 +175,7 @@ def register_inference_routes(router: APIRouter) -> None:
                 result=result,
                 model_id=model.id,
                 generation_id=generation.id,
+                generation=generation,
                 extra_tr_block={"selected_provider": model.provider},
             ),
             headers=provenance_headers,
@@ -283,6 +285,7 @@ def _chat_completion_envelope(
     result: Any,
     model_id: str,
     generation_id: str,
+    generation: Any | None = None,
     extra_tr_block: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """OpenAI / OpenRouter `/chat/completions` shape."""
@@ -292,6 +295,33 @@ def _chat_completion_envelope(
     }
     if extra_tr_block:
         tr_block.update(extra_tr_block)
+    usage: dict[str, Any] = {
+        "prompt_tokens": result.input_tokens,
+        "completion_tokens": result.output_tokens,
+        "total_tokens": result.input_tokens + result.output_tokens,
+    }
+    cached_tokens = _known_positive_int(
+        getattr(result, "cached_input_tokens", 0),
+        getattr(generation, "cached_input_tokens", 0),
+    )
+    if cached_tokens:
+        usage["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
+    reasoning_tokens = _known_positive_int(
+        getattr(result, "reasoning_tokens", 0),
+        getattr(generation, "reasoning_tokens", 0),
+    )
+    if reasoning_tokens:
+        usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    message_content = result.text
+    message: dict[str, Any] = {"role": "assistant", "content": message_content}
+    tool_calls = _known_tool_calls(
+        getattr(result, "tool_calls", None),
+        getattr(generation, "tool_calls", None),
+    )
+    if tool_calls:
+        if not message_content:
+            message["content"] = None
+        message["tool_calls"] = tool_calls
     return {
         "id": result.request_id,
         "object": "chat.completion",
@@ -300,17 +330,37 @@ def _chat_completion_envelope(
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": result.text},
+                "message": message,
                 "finish_reason": result.finish_reason,
             }
         ],
-        "usage": {
-            "prompt_tokens": result.input_tokens,
-            "completion_tokens": result.output_tokens,
-            "total_tokens": result.input_tokens + result.output_tokens,
-        },
+        "usage": usage,
         "trustedrouter": tr_block,
     }
+
+
+def _known_positive_int(*values: Any) -> int:
+    for value in values:
+        try:
+            parsed = int(value or 0)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return 0
+
+
+def _known_tool_calls(*values: Any) -> list[dict[str, Any]] | None:
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        tool_calls: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                tool_calls.append({str(key): item_value for key, item_value in item.items()})
+        if tool_calls:
+            return tool_calls
+    return None
 
 
 def _anthropic_messages_envelope(

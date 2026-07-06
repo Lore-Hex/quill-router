@@ -311,6 +311,7 @@ class ProviderClient:
         state.usage_estimated = result.usage_estimated
         state.elapsed_seconds = result.elapsed_seconds
         state.text_parts = [result.text]
+        state.tool_calls = result.tool_calls
         async for chunk in stream_openai_chunks(
             request_id=result.request_id,
             model_id=model.id,
@@ -334,6 +335,7 @@ class ProviderClient:
         state.usage_estimated = result.usage_estimated
         state.elapsed_seconds = result.elapsed_seconds
         state.text_parts = [result.text]
+        state.tool_calls = result.tool_calls
         yield anthropic_sse(
             "message_start",
             {

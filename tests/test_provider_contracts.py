@@ -107,6 +107,180 @@ async def test_openai_compatible_live_adapter_uses_provider_usage_and_headers(
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_adapter_forwards_documented_chat_controls(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("OPENAI_API_KEY=openai-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_controls",
+                    "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": 7,
+                        "completion_tokens": 5,
+                        "prompt_tokens_details": {"cached_tokens": 3},
+                        "completion_tokens_details": {"reasoning_tokens": 2},
+                    },
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}},
+    }
+
+    result = await client.chat(
+        MODELS["openai/gpt-5.4-nano"],
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 5,
+            "response_format": {"type": "json_object"},
+            "tools": [tool],
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+            "parallel_tool_calls": False,
+            "top_p": 0.9,
+            "seed": 123,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.2,
+            "logit_bias": {"42": -100},
+            "stop": ["END"],
+            "logprobs": True,
+            "top_logprobs": 2,
+        },
+    )
+
+    assert result.cached_input_tokens == 3
+    assert result.reasoning_tokens == 2
+    assert "logprobs" not in calls[0]["json"]
+    assert "top_logprobs" not in calls[0]["json"]
+    assert calls[0]["json"] == {
+        "model": "gpt-5.4-nano",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": False,
+        "max_tokens": 5,
+        "response_format": {"type": "json_object"},
+        "tools": [tool],
+        "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+        "parallel_tool_calls": False,
+        "top_p": 0.9,
+        "seed": 123,
+        "frequency_penalty": 0.1,
+        "presence_penalty": 0.2,
+        "logit_bias": {"42": -100},
+        "stop": ["END"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adapter_carries_tool_calls_into_chat_envelope(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("OPENAI_API_KEY=openai-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}},
+    }
+    tool_calls = [
+        {
+            "id": "call_lookup",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": '{"query":"hello"}'},
+        }
+    ]
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl_tool",
+                    "choices": [
+                        {
+                            "message": {"content": None, "tool_calls": tool_calls},
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 1},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+
+    result = await client.chat(
+        MODELS["openai/gpt-5.4-nano"],
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 5,
+            "tools": [tool],
+            "tool_choice": "auto",
+        },
+    )
+
+    from trusted_router.routes.inference import _chat_completion_envelope
+    from trusted_router.storage_models import Generation
+
+    generation = Generation.from_chat_result(
+        result=result,
+        workspace_id="ws_tool",
+        key_hash="key_tool",
+        model_id="openai/gpt-5.4-nano",
+        app_name="test",
+        actual_cost_microdollars=0,
+        usage_type="Credits",
+        streamed=False,
+        provider="openai",
+    )
+
+    envelope = _chat_completion_envelope(
+        result=result,
+        model_id="openai/gpt-5.4-nano",
+        generation_id=generation.id,
+        generation=generation,
+    )
+    choice = envelope["choices"][0]
+
+    assert calls[0]["json"]["tools"] == [tool]
+    assert result.text == ""
+    assert result.tool_calls == tool_calls
+    assert result.finish_reason == "tool_calls"
+    assert generation.tool_calls == tool_calls
+    assert choice["message"]["content"] is None
+    assert choice["message"]["tool_calls"] == tool_calls
+    assert choice["finish_reason"] == "tool_calls"
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_adapter_forwards_provider_specific_controls(
     tmp_path, monkeypatch
 ) -> None:
@@ -682,6 +856,128 @@ async def test_openai_compatible_stream_adapter_passes_through_sse_and_usage(
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_stream_records_and_passes_through_tool_calls(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("OPENAI_API_KEY=openai-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+
+    class FakeStreamResponse:
+        status_code = 200
+        reason_phrase = "OK"
+
+        async def __aenter__(self) -> FakeStreamResponse:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def aiter_lines(self) -> AsyncIterator[str]:
+            payloads = [
+                {
+                    "id": "chatcmpl_tool_stream",
+                    "choices": [{"delta": {"role": "assistant"}, "finish_reason": None}],
+                },
+                {
+                    "id": "chatcmpl_tool_stream",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_lookup",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "lookup",
+                                            "arguments": '{"query"',
+                                        },
+                                    }
+                                ]
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                },
+                {
+                    "id": "chatcmpl_tool_stream",
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "function": {"arguments": ':"hello"}'}}
+                                ]
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 1},
+                },
+            ]
+            for payload in payloads:
+                yield "data: " + json.dumps(payload, separators=(",", ":"))
+            yield "data: [DONE]"
+
+        async def aread(self) -> bytes:
+            return b""
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, *_args: Any, **_kwargs: Any):
+            raise AssertionError("streaming must not call the non-streaming post adapter")
+
+        def stream(
+            self, method: str, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any
+        ):
+            calls.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "headers": headers,
+                    "json": json,
+                    "timeout": self.timeout,
+                }
+            )
+            return FakeStreamResponse()
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+    tool = {"type": "function", "function": {"name": "lookup"}}
+    request = {
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 5,
+        "tools": [tool],
+        "tool_choice": "auto",
+    }
+    model = MODELS["openai/gpt-5.4-nano"]
+    state = client.new_stream_state(model, request)
+
+    chunks = [chunk async for chunk in client.stream_chat(model, request, state)]
+
+    result = state.to_result()
+    assert b'"tool_calls"' in b"".join(chunks)
+    assert result.text == ""
+    assert result.finish_reason == "tool_calls"
+    assert result.tool_calls == [
+        {
+            "id": "call_lookup",
+            "type": "function",
+            "function": {"name": "lookup", "arguments": '{"query":"hello"}'},
+        }
+    ]
+    assert calls[0]["json"]["tools"] == [tool]
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_stream_forwards_provider_specific_controls(
     tmp_path, monkeypatch
 ) -> None:
@@ -737,6 +1033,10 @@ async def test_openai_compatible_stream_forwards_provider_specific_controls(
         "max_tokens": 5,
         "thinking": {"type": "disabled"},
         "chat_template_kwargs": {"enable_thinking": False},
+        "tools": [{"type": "function", "function": {"name": "lookup"}}],
+        "tool_choice": "auto",
+        "top_p": 0.9,
+        "stop": ["END"],
     }
     model = MODELS["xiaomi/mimo-v2.5-pro"]
     state = client.new_stream_state(model, request)
@@ -758,6 +1058,10 @@ async def test_openai_compatible_stream_forwards_provider_specific_controls(
                 "max_tokens": 5,
                 "thinking": {"type": "disabled"},
                 "chat_template_kwargs": {"enable_thinking": False},
+                "tools": [{"type": "function", "function": {"name": "lookup"}}],
+                "tool_choice": "auto",
+                "top_p": 0.9,
+                "stop": ["END"],
             },
             "timeout": 120,
         }
@@ -916,6 +1220,57 @@ async def test_anthropic_live_adapter_splits_system_prompt_and_uses_native_usage
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "hi"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_does_not_forward_raw_openai_chat_tools(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("ANTHROPIC_API_KEY=anthropic-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}},
+    }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any], **_: Any):
+            calls.append({"url": url, "headers": headers, "json": json})
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg_no_tools",
+                    "content": [{"type": "text", "text": "anthropic hello"}],
+                    "usage": {"input_tokens": 8, "output_tokens": 3},
+                    "stop_reason": "end_turn",
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+
+    await client.chat(
+        MODELS["anthropic/claude-sonnet-4.6"],
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 6,
+            "tools": [tool],
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+        },
+    )
+
+    assert "tools" not in calls[0]["json"]
+    assert "tool_choice" not in calls[0]["json"]
 
 
 @pytest.mark.asyncio
@@ -1132,7 +1487,12 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
                             "finishReason": "STOP",
                         }
                     ],
-                    "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4},
+                    "usageMetadata": {
+                        "promptTokenCount": 9,
+                        "candidatesTokenCount": 4,
+                        "thoughtsTokenCount": 3,
+                        "cachedContentTokenCount": 2,
+                    },
                 },
             )
 
@@ -1152,7 +1512,9 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
 
     assert result.text == "gemini hello"
     assert result.input_tokens == 9
-    assert result.output_tokens == 4
+    assert result.output_tokens == 7
+    assert result.reasoning_tokens == 3
+    assert result.cached_input_tokens == 2
     assert result.finish_reason == "stop"
     assert result.usage_estimated is False
     assert calls[0]["params"] == {"key": "gemini-value"}
@@ -1161,6 +1523,117 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
         {"role": "model", "parts": [{"text": "prior"}]},
         {"role": "user", "parts": [{"text": "hello"}]},
     ]
+
+
+@pytest.mark.asyncio
+async def test_gemini_adapter_does_not_forward_raw_openai_chat_tools(
+    tmp_path, monkeypatch
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("GEMINI_API_KEY=gemini-value\n", encoding="utf-8")
+    calls: list[dict[str, Any]] = []
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}},
+    }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(
+            self,
+            url: str,
+            *,
+            params: dict[str, str],
+            json: dict[str, Any],
+            **_: Any,
+        ):
+            calls.append({"url": url, "params": params, "json": json})
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {
+                            "content": {"parts": [{"text": "gemini hello"}]},
+                            "finishReason": "STOP",
+                        }
+                    ],
+                    "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+
+    await client.chat(
+        MODELS["google/gemini-2.5-flash"],
+        {
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [tool],
+            "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+        },
+    )
+
+    assert "tools" not in calls[0]["json"]
+    assert "tool_choice" not in calls[0]["json"]
+    assert "toolConfig" not in calls[0]["json"]
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "expected"),
+    [
+        ("SAFETY", "content_filter"),
+        ("MAX_TOKENS", "length"),
+        ("STOP", "stop"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_gemini_live_adapter_maps_non_streaming_finish_reason(
+    tmp_path, monkeypatch, finish_reason: str, expected: str
+) -> None:
+    key_file = tmp_path / "keys.private"
+    key_file.write_text("GEMINI_API_KEY=gemini-value\n", encoding="utf-8")
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def post(self, *_args: Any, **_kwargs: Any):
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {
+                            "content": {"parts": [{"text": "gemini hello"}]},
+                            "finishReason": finish_reason,
+                        }
+                    ],
+                    "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4},
+                },
+            )
+
+    monkeypatch.setattr("trusted_router.provider_adapters.httpx.AsyncClient", FakeAsyncClient)
+    client = ProviderClient(LocalKeyFile(key_file), live=True)
+
+    result = await client.chat(
+        MODELS["google/gemini-2.5-flash"],
+        {"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert result.finish_reason == expected
 
 
 @pytest.mark.asyncio
@@ -1189,7 +1662,8 @@ async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(
             yield (
                 'data: {"responseId":"gemini_stream","candidates":[{"content":{"parts":'
                 '[{"text":"lo"}],"role":"model"},"finishReason":"STOP"}],'
-                '"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2}}'
+                '"usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":2,'
+                '"thoughtsTokenCount":3}}'
             )
 
         async def aread(self) -> bytes:
@@ -1249,7 +1723,8 @@ async def test_gemini_stream_adapter_uses_native_sse_and_records_usage(
     assert result.text == "hello"
     assert result.request_id == "gemini_stream"
     assert result.input_tokens == 9
-    assert result.output_tokens == 2
+    assert result.output_tokens == 5
+    assert result.reasoning_tokens == 3
     assert result.finish_reason == "stop"
     assert result.usage_estimated is False
     assert calls == [
