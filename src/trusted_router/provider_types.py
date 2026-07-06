@@ -20,6 +20,11 @@ class ProviderResult:
     # of `input_tokens` (NOT additional). 0 when upstream didn't report
     # cache stats or when the request was a fresh miss.
     cached_input_tokens: int = 0
+    # Number of output tokens upstream reported as hidden reasoning/thinking.
+    # This is a subset of `output_tokens` when the upstream reports total
+    # completion tokens, and 0 when the upstream does not expose it.
+    reasoning_tokens: int = 0
+    tool_calls: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -35,6 +40,8 @@ class ProviderStreamState:
     started_at: float = 0.0
     text_parts: list[str] | None = None
     cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+    tool_calls: list[dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if self.text_parts is None:
@@ -53,6 +60,8 @@ class ProviderStreamState:
         assert self.text_parts is not None
         text = "".join(self.text_parts)
         output_tokens = self.output_tokens or estimate_tokens_from_text(text)
+        if not self.output_tokens and self.reasoning_tokens:
+            output_tokens += self.reasoning_tokens
         return ProviderResult(
             text=text,
             input_tokens=self.input_tokens,
@@ -64,6 +73,8 @@ class ProviderStreamState:
             elapsed_seconds=max(time.monotonic() - self.started_at, 0.001),
             first_token_seconds=self.first_token_seconds,
             cached_input_tokens=self.cached_input_tokens,
+            reasoning_tokens=self.reasoning_tokens,
+            tool_calls=self.tool_calls,
         )
 
 

@@ -127,6 +127,71 @@ def test_provider_payloads_use_max_completion_tokens() -> None:
     assert gemini["generationConfig"]["maxOutputTokens"] == 3456
 
 
+def test_messages_round_trip_preserves_anthropic_control_params_except_raw_tools() -> None:
+    tool = {
+        "name": "lookup",
+        "description": "Look up a value.",
+        "input_schema": {"type": "object"},
+    }
+    body = {
+        "system": "system",
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 123,
+        "top_p": 0.8,
+        "tools": [tool],
+        "tool_choice": {"type": "tool", "name": "lookup"},
+        "stop_sequences": ["END"],
+        "top_k": 7,
+        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        "metadata": {"user_id": "user_123"},
+    }
+
+    chat_body = messages_to_chat_body(body, model_id="anthropic/claude-sonnet-4.6")
+    payload = anthropic_messages_payload(
+        MODELS["anthropic/claude-sonnet-4.6"], chat_body, stream=False
+    )
+
+    for field in (
+        "top_p",
+        "stop_sequences",
+        "top_k",
+        "thinking",
+        "metadata",
+    ):
+        assert chat_body[field] == body[field]
+        assert payload[field] == body[field]
+    assert chat_body["tools"] == body["tools"]
+    assert chat_body["tool_choice"] == body["tool_choice"]
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+    assert payload["system"] == "system"
+    assert payload["messages"] == [{"role": "user", "content": "hello"}]
+
+
+def test_native_payloads_do_not_forward_openai_chat_tools() -> None:
+    tool = {
+        "type": "function",
+        "function": {"name": "lookup", "parameters": {"type": "object"}},
+    }
+    request = {
+        "model": "google/gemini-2.5-flash",
+        "messages": [{"role": "user", "content": "hello"}],
+        "tools": [tool],
+        "tool_choice": {"type": "function", "function": {"name": "lookup"}},
+    }
+
+    anthropic = anthropic_messages_payload(
+        MODELS["anthropic/claude-sonnet-4.6"], request, stream=False
+    )
+    gemini = gemini_payload(request)
+
+    assert "tools" not in anthropic
+    assert "tool_choice" not in anthropic
+    assert "tools" not in gemini
+    assert "tool_choice" not in gemini
+    assert "toolConfig" not in gemini
+
+
 @pytest.mark.asyncio
 async def test_openai_compatible_payload_uses_max_completion_tokens(monkeypatch) -> None:
     calls: list[dict[str, Any]] = []

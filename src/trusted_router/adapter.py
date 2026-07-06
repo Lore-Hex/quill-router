@@ -19,6 +19,15 @@ from typing import Any
 from trusted_router.errors import api_error
 
 _OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
+_ANTHROPIC_MESSAGES_PARAM_FIELDS = (
+    "top_p",
+    "tools",
+    "tool_choice",
+    "stop_sequences",
+    "top_k",
+    "thinking",
+    "metadata",
+)
 
 
 def resolve_max_output_tokens(body: Mapping[str, Any]) -> int | None:
@@ -84,6 +93,9 @@ def messages_to_chat_body(body: dict[str, Any], *, model_id: str) -> dict[str, A
     }
     if system := body.get("system"):
         chat_body["messages"] = [{"role": "system", "content": system}, *chat_body["messages"]]
+    for field in _ANTHROPIC_MESSAGES_PARAM_FIELDS:
+        if body.get(field) is not None:
+            chat_body[field] = body[field]
     return chat_body
 
 

@@ -34,6 +34,16 @@ def _is_synthetic_metadata(metadata: Any) -> bool:
     )
 
 
+def _coerce_tool_calls(value: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(value, list):
+        return None
+    tool_calls: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            tool_calls.append({str(key): item_value for key, item_value in item.items()})
+    return tool_calls or None
+
+
 def _is_expired(expires_at: str | None) -> bool:
     """Treat unparseable ISO timestamps as already expired so a malformed
     cookie can't replay forever."""
@@ -319,6 +329,9 @@ class Generation:
     status: str
     streamed: bool
     usage_estimated: bool = True
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+    tool_calls: list[dict[str, Any]] | None = None
     created_at: str = field(default_factory=iso_now)
     provider: str | None = None
     elapsed_milliseconds: int | None = None
@@ -367,6 +380,9 @@ class Generation:
             status="success",
             streamed=streamed,
             usage_estimated=result.usage_estimated,
+            cached_input_tokens=int(getattr(result, "cached_input_tokens", 0) or 0),
+            reasoning_tokens=int(getattr(result, "reasoning_tokens", 0) or 0),
+            tool_calls=_coerce_tool_calls(getattr(result, "tool_calls", None)),
             provider=provider,
             elapsed_milliseconds=elapsed_ms,
             first_token_milliseconds=(
@@ -461,6 +477,9 @@ class Generation:
             status=str(body.get("status") or "success"),
             streamed=bool(body.get("streamed", False)),
             usage_estimated=bool(body.get("usage_estimated", False)),
+            cached_input_tokens=int(body.get("cached_input_tokens") or body.get("cached_tokens") or 0),
+            reasoning_tokens=int(body.get("reasoning_tokens") or 0),
+            tool_calls=_coerce_tool_calls(body.get("tool_calls")),
             provider=provider,
             elapsed_milliseconds=_seconds_to_milliseconds(elapsed),
             first_token_milliseconds=(

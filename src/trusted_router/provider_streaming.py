@@ -132,6 +132,7 @@ def record_openai_stream_payload(state: ProviderStreamState, payload: dict[str, 
                 content = delta.get("content")
                 if isinstance(content, str):
                     state.record_text(content)
+                _record_openai_tool_call_deltas(state, delta.get("tool_calls"))
             finish_reason = choice.get("finish_reason")
             if finish_reason:
                 state.finish_reason = str(finish_reason)
@@ -149,7 +150,68 @@ def record_openai_stream_payload(state: ProviderStreamState, payload: dict[str, 
             state.cached_input_tokens = int(details["cached_tokens"])
         elif usage.get("cached_tokens") is not None:
             state.cached_input_tokens = int(usage["cached_tokens"])
+        completion_details = usage.get("completion_tokens_details")
+        if (
+            isinstance(completion_details, dict)
+            and completion_details.get("reasoning_tokens") is not None
+        ):
+            state.reasoning_tokens = int(completion_details["reasoning_tokens"])
+        elif usage.get("reasoning_tokens") is not None:
+            state.reasoning_tokens = int(usage["reasoning_tokens"])
         state.usage_estimated = False
+
+
+def _record_openai_tool_call_deltas(state: ProviderStreamState, value: Any) -> None:
+    if not isinstance(value, list):
+        return
+    tool_calls = state.tool_calls
+    if tool_calls is None:
+        tool_calls = []
+        state.tool_calls = tool_calls
+    for fallback_index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        index = _tool_call_index(item.get("index"), fallback_index)
+        while len(tool_calls) <= index:
+            tool_calls.append({})
+        _merge_openai_tool_call_delta(tool_calls[index], item)
+
+
+def _tool_call_index(value: Any, fallback: int) -> int:
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(index, 0)
+
+
+def _merge_openai_tool_call_delta(target: dict[str, Any], delta: dict[Any, Any]) -> None:
+    for key, value in delta.items():
+        if key == "index" or value is None:
+            continue
+        if key == "function" and isinstance(value, dict):
+            function_target = target.get("function")
+            if not isinstance(function_target, dict):
+                function_target = {}
+                target["function"] = function_target
+            _merge_openai_function_delta(function_target, value)
+            continue
+        target[str(key)] = value
+
+
+def _merge_openai_function_delta(target: dict[Any, Any], delta: dict[Any, Any]) -> None:
+    for key, value in delta.items():
+        if value is None:
+            continue
+        normalized_key = str(key)
+        if normalized_key in {"arguments", "name"} and isinstance(value, str):
+            existing = target.get(normalized_key)
+            if isinstance(existing, str):
+                target[normalized_key] = existing + value
+            else:
+                target[normalized_key] = value
+            continue
+        target[normalized_key] = value
 
 
 def record_anthropic_stream_payload(state: ProviderStreamState, payload: dict[str, Any]) -> str | None:
@@ -220,8 +282,20 @@ def record_gemini_stream_payload(state: ProviderStreamState, payload: dict[str, 
     if isinstance(usage, dict):
         if usage.get("promptTokenCount") is not None:
             state.input_tokens = int(usage["promptTokenCount"])
+        previous_reasoning_tokens = state.reasoning_tokens
+        thoughts_tokens = (
+            int(usage["thoughtsTokenCount"])
+            if usage.get("thoughtsTokenCount") is not None
+            else None
+        )
+        if thoughts_tokens is not None:
+            state.reasoning_tokens = thoughts_tokens
         if usage.get("candidatesTokenCount") is not None:
-            state.output_tokens = int(usage["candidatesTokenCount"])
+            state.output_tokens = int(usage["candidatesTokenCount"]) + (
+                thoughts_tokens if thoughts_tokens is not None else state.reasoning_tokens
+            )
+        elif thoughts_tokens is not None and state.output_tokens:
+            state.output_tokens += max(thoughts_tokens - previous_reasoning_tokens, 0)
         # Gemini exposes cache hits via `cachedContentTokenCount`.
         if usage.get("cachedContentTokenCount") is not None:
             state.cached_input_tokens = int(usage["cachedContentTokenCount"])

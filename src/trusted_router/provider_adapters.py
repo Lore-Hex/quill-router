@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -17,6 +17,7 @@ from trusted_router.provider_payloads import (
     upstream_model_id,
 )
 from trusted_router.provider_streaming import (
+    gemini_finish_reason,
     openai_stream_chunk,
     record_anthropic_stream_payload,
     record_gemini_stream_payload,
@@ -38,6 +39,16 @@ OPENAI_COMPATIBLE_PASSTHROUGH_FIELDS = (
     # reasoning text that otherwise arrives as normal delta.content.
     "thinking",
     "chat_template_kwargs",
+    "response_format",
+    "tools",
+    "tool_choice",
+    "parallel_tool_calls",
+    "top_p",
+    "seed",
+    "frequency_penalty",
+    "presence_penalty",
+    "logit_bias",
+    "stop",
 )
 
 
@@ -47,6 +58,32 @@ def _openai_compatible_passthrough(request: dict[str, Any]) -> dict[str, Any]:
         for field in OPENAI_COMPATIBLE_PASSTHROUGH_FIELDS
         if request.get(field) is not None
     }
+
+
+def _openai_cached_input_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and details.get("cached_tokens") is not None:
+        return int(details["cached_tokens"])
+    if usage.get("cached_tokens") is not None:
+        return int(usage["cached_tokens"])
+    return 0
+
+
+def _openai_reasoning_tokens(usage: dict[str, Any]) -> int:
+    details = usage.get("completion_tokens_details")
+    if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
+        return int(details["reasoning_tokens"])
+    if usage.get("reasoning_tokens") is not None:
+        return int(usage["reasoning_tokens"])
+    return 0
+
+
+def _openai_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]] | None:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        return None
+    parsed = [cast(dict[str, Any], item) for item in tool_calls if isinstance(item, dict)]
+    return parsed or None
 
 
 async def openai_compatible_chat(
@@ -82,6 +119,7 @@ async def openai_compatible_chat(
     message = choice.get("message") or {}
     usage = data.get("usage") or {}
     text = str(message.get("content") or "")
+    tool_calls = _openai_tool_calls(message)
     return ProviderResult(
         text=text,
         input_tokens=int(
@@ -93,6 +131,9 @@ async def openai_compatible_chat(
         request_id=str(data.get("id") or f"req-{uuid.uuid4()}"),
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
+        cached_input_tokens=_openai_cached_input_tokens(usage),
+        reasoning_tokens=_openai_reasoning_tokens(usage),
+        tool_calls=tool_calls,
     )
 
 
@@ -439,17 +480,26 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
     parts = (candidate.get("content") or {}).get("parts") or []
     text = _gemini_parts_to_openai_content(parts)
     usage = data.get("usageMetadata") or {}
+    candidates_tokens = usage.get("candidatesTokenCount")
+    thoughts_tokens = int(usage.get("thoughtsTokenCount") or 0)
+    output_tokens = (
+        int(candidates_tokens) + thoughts_tokens
+        if candidates_tokens is not None
+        else estimate_tokens_from_text(text) + thoughts_tokens
+    )
     return ProviderResult(
         text=text,
         input_tokens=int(
             usage.get("promptTokenCount") or estimate_tokens_from_messages(messages(request))
         ),
-        output_tokens=int(usage.get("candidatesTokenCount") or estimate_tokens_from_text(text)),
-        finish_reason=str(candidate.get("finishReason") or "stop").lower(),
+        output_tokens=output_tokens,
+        finish_reason=gemini_finish_reason(str(candidate.get("finishReason") or "stop")),
         provider_name="Gemini",
         request_id=f"req-{uuid.uuid4()}",
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
+        cached_input_tokens=int(usage.get("cachedContentTokenCount") or 0),
+        reasoning_tokens=thoughts_tokens,
     )
 
 
