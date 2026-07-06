@@ -13,7 +13,9 @@ from trusted_router.adapter import (
 from trusted_router.catalog import MODELS
 from trusted_router.provider_adapters import openai_compatible_chat
 from trusted_router.provider_payloads import anthropic_messages_payload, gemini_payload
+from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.schemas import GatewayAuthorizeRequest
+from trusted_router.services.inference import _estimate_reserve
 
 
 @pytest.mark.parametrize(
@@ -57,6 +59,38 @@ def test_gateway_authorize_request_uses_max_completion_tokens_for_output_estimat
     )
 
     assert body.output_estimate == 8000
+
+
+def test_gateway_authorize_request_prefers_max_tokens_for_output_estimate() -> None:
+    body = GatewayAuthorizeRequest(
+        api_key_hash="hash",
+        model="openai/gpt-5.4-nano",
+        max_tokens=100,
+        max_completion_tokens=8000,
+    )
+
+    assert body.output_estimate == 100
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_completion_tokens", 12_000),
+        ("max_output_tokens", 13_000),
+    ],
+)
+def test_estimate_reserve_uses_output_token_aliases(field: str, value: int) -> None:
+    model = MODELS["anthropic/claude-sonnet-4.6"]
+    input_estimate = 37
+    body = {
+        "messages": [{"role": "user", "content": "hello"}],
+        field: value,
+    }
+
+    reserve = _estimate_reserve(body, model, input_estimate=input_estimate)
+
+    assert reserve == cost_microdollars(model, input_estimate, value)
+    assert reserve != cost_microdollars(model, input_estimate, 512)
 
 
 def test_adapter_conversions_use_max_completion_tokens() -> None:
