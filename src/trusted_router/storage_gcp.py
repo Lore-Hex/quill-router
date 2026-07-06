@@ -1072,11 +1072,15 @@ class SpannerBigtableStore:
                 index_ms = (time.perf_counter() - index_start) * 1000
             # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
             # into Spanner-txn vs Bigtable-index time.
+            # attempts counts only OUTER wrapper retries; Spanner's own internal
+            # Aborted retries are invisible, so attempts>1 is definitive severe
+            # contention while attempts==1 does not rule out absorbed contention.
             log.info(
-                "typed finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f",
+                "typed finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f attempts=%d",
                 authorization_id,
                 spanner_ms,
                 index_ms,
+                result.get("attempts", 1),
             )
             return True
         return False  # already_settled / not_found

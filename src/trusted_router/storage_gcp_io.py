@@ -22,7 +22,13 @@ from typing import Any, TypeVar
 T = TypeVar("T")
 
 
-def run_in_transaction_with_retry(database: Any, func: Callable[..., T], *, attempts: int = 8) -> T:
+def run_in_transaction_with_retry(
+    database: Any,
+    func: Callable[..., T],
+    *,
+    attempts: int = 8,
+    attempts_out: list[int] | None = None,
+) -> T:
     """Run a Spanner transaction, retrying on ABORTED with backoff + jitter.
 
     Spanner already retries ABORTED to an internal deadline, but sustained
@@ -45,19 +51,26 @@ def run_in_transaction_with_retry(database: Any, func: Callable[..., T], *, atte
     Unlike the rate limiter (middleware._enforce_rate_limit), which fails OPEN
     on this same contention, billing transactions must not be dropped — so we
     retry rather than swallow the abort.
+
+    ``attempts_out``, if given, receives the winning attempt number (1 = no
+    retry) — used to attribute finalize latency to contention.
     """
     from google.api_core.exceptions import Aborted
 
     delay = 0.05
     for attempt in range(1, attempts + 1):
         try:
-            return database.run_in_transaction(func)
+            result = database.run_in_transaction(func)
         except Aborted:
             if attempt >= attempts:
                 raise
             jitter = secrets.randbelow(1_000_000) / 1_000_000 * delay
             time.sleep(delay + jitter)
             delay = min(delay * 2.0, 2.0)
+            continue
+        if attempts_out is not None:
+            attempts_out.append(attempt)
+        return result
     raise AssertionError("unreachable")  # pragma: no cover
 
 
