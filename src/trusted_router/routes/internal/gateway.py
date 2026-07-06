@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import uuid
+from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
@@ -727,10 +728,13 @@ def _settle_gateway_authorization(
     settings: Settings,
     background_tasks: BackgroundTasks | None = None,
 ) -> dict[str, Any]:
+    timing_start = perf_counter()
     authorization = STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
     if authorization.settled:
+        # No timing line for replays: they are ~one point-read and would dominate
+        # the latency dataset with noise.
         return {
             "data": {
                 "authorization_id": authorization.id,
@@ -749,6 +753,7 @@ def _settle_gateway_authorization(
     model = MODELS.get(selected_endpoint.model_id)
     if model is None:
         raise api_error(500, "Authorized model is no longer configured", ErrorType.INTERNAL_ERROR)
+    auth_ms = (perf_counter() - timing_start) * 1000
 
     output_tokens = body.output_count
     uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
@@ -792,7 +797,9 @@ def _settle_gateway_authorization(
         )
     )
     intent_kind = "settle" if success else "refund"
+    enqueue_ms = 0.0
     if settings.settle_outbox_enabled:
+        enqueue_start = perf_counter()
         try:
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
@@ -819,9 +826,13 @@ def _settle_gateway_authorization(
                 authorization.id,
                 exc_info=True,
             )
+        enqueue_ms = (perf_counter() - enqueue_start) * 1000
 
+    finalize_start = perf_counter()
     if is_typed:
         assert _typed_store is not None
+        # Typed finalize includes the Bigtable activity-index and benchmark
+        # write inside the wrapper's index_after_commit.
         finalized = _typed_store.typed_finalize_gateway_authorization(
             authorization.id,
             success=success,
@@ -837,11 +848,14 @@ def _settle_gateway_authorization(
             selected_usage_type=selected_usage_type,
             generation=generation,
         )
+    finalize_ms = (perf_counter() - finalize_start) * 1000
     if not finalized:
         # §3/§6/§7: leave the row pending on purpose. Inline's False only says
         # "claim lost"; it cannot distinguish a charged replay from reaper-free
         # lost charge. The drain's apply_frozen_settle outcome disambiguates, and
         # marking done here would silently swallow a lost charge.
+        # No timing line for replays: they would dominate the latency dataset
+        # with noise instead of measuring full settle/refund work.
         return {
             "data": {
                 "authorization_id": authorization.id,
@@ -849,7 +863,9 @@ def _settle_gateway_authorization(
                 "already_settled": True,
             }
         }
+    mark_ms = 0.0
     if settings.settle_outbox_enabled:
+        mark_start = perf_counter()
         try:
             marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
             if marked is None:
@@ -868,6 +884,7 @@ def _settle_gateway_authorization(
                 authorization.id,
                 exc_info=True,
             )
+        mark_ms = (perf_counter() - mark_start) * 1000
 
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
@@ -916,6 +933,21 @@ def _settle_gateway_authorization(
             )
         )
 
+    total_ms = (perf_counter() - timing_start) * 1000
+    # Request-log latency minus total_ms ~= Cloud Run queue + transport time;
+    # that subtraction is the point of this line (2026-07-05 latency investigation).
+    logger.info(
+        "settle timing authorization_id=%s success=%s origin=%s total_ms=%.1f "
+        "auth_ms=%.1f enqueue_ms=%.1f finalize_ms=%.1f mark_ms=%.1f",
+        authorization.id,
+        success,
+        "typed" if is_typed else "legacy",
+        total_ms,
+        auth_ms,
+        enqueue_ms,
+        finalize_ms,
+        mark_ms,
+    )
     return {
         "data": {
             "authorization_id": authorization.id,

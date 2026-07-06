@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -32,6 +34,8 @@ ESTIMATE = 1_000_000
 TOTAL_CREDIT = 5_000_000
 NOW = "2026-07-04T12:00:00Z"
 EXPIRED_AT = "2000-01-01T00:00:00Z"
+GATEWAY_LOGGER = "trusted_router.routes.internal.gateway"
+TIMING_FIELDS = ("total_ms", "auth_ms", "enqueue_ms", "finalize_ms", "mark_ms")
 
 
 @pytest.fixture
@@ -202,6 +206,14 @@ def _row(
     )
 
 
+def _settle_timing_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name == GATEWAY_LOGGER and record.getMessage().startswith("settle timing ")
+    ]
+
+
 # Unit (storage)
 
 
@@ -352,6 +364,55 @@ def test_flag_on_successful_typed_settle_enqueues_frozen_done_row(
     assert json.loads(row.settle_body or "{}") == GatewaySettleRequest(
         **body
     ).model_dump(exclude_none=True)
+
+
+def test_settle_emits_timing_line(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws-route-timing"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
+        resp = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert resp.status_code == 200, resp.text
+    [record] = _settle_timing_records(caplog)
+    message = record.getMessage()
+    for field in TIMING_FIELDS:
+        assert re.search(rf"\b{field}=\d+\.\d\b", message)
+    assert isinstance(record.args, tuple)
+    assert record.args[0] == auth.id
+    assert record.args[2] == "typed"
+    total_ms_arg = record.args[3]
+    assert isinstance(total_ms_arg, float)
+    assert total_ms_arg > 0
+
+
+def test_settle_replay_emits_no_timing_line(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _db, _bt = fake_store
+    ws = "ws-route-timing-replay"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+    first = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+    assert first.status_code == 200, first.text
+    caplog.clear()
+
+    with caplog.at_level(logging.INFO, logger=GATEWAY_LOGGER):
+        replay = client.post("/v1/internal/gateway/settle", json=_settle_json(auth.id))
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert _settle_timing_records(caplog) == []
 
 
 def test_flag_on_refund_enqueues_refund_done_row(fake_store: tuple[Any, Any, Any]) -> None:
