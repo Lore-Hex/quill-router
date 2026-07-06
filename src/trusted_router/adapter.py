@@ -18,16 +18,29 @@ from typing import Any
 
 from trusted_router.errors import api_error
 
+_OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
+
 
 def resolve_max_output_tokens(body: Mapping[str, Any]) -> int | None:
     # Honor all three documented output-limit spellings; precedence:
     # max_tokens (legacy/explicit) > max_completion_tokens (modern OpenAI
     # chat; gpt-5.x requires it) > max_output_tokens (Responses/Gemini).
-    for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+    for key in _OUTPUT_TOKEN_FIELDS:
         value = body.get(key)
         if value is not None:
             return int(value)
     return None
+
+
+def _resolve_route_max_output_tokens(body: Mapping[str, Any]) -> int | None:
+    output_token_field = next(
+        (field for field in _OUTPUT_TOKEN_FIELDS if body.get(field) is not None),
+        "max_tokens",
+    )
+    try:
+        return resolve_max_output_tokens(body)
+    except (TypeError, ValueError) as exc:
+        raise api_error(400, f"{output_token_field} must be an integer", "bad_request") from exc
 
 
 def responses_to_chat_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +66,7 @@ def responses_to_chat_body(body: dict[str, Any]) -> dict[str, Any]:
         "messages": messages,
         "temperature": body.get("temperature"),
         "top_p": body.get("top_p"),
-        "max_tokens": resolve_max_output_tokens(body),
+        "max_tokens": _resolve_route_max_output_tokens(body),
         "stream": False,
     }
 
@@ -66,7 +79,7 @@ def messages_to_chat_body(body: dict[str, Any], *, model_id: str) -> dict[str, A
     chat_body: dict[str, Any] = {
         "model": model_id,
         "messages": list(body.get("messages") or []),
-        "max_tokens": resolve_max_output_tokens(body),
+        "max_tokens": _resolve_route_max_output_tokens(body),
         "temperature": body.get("temperature"),
     }
     if system := body.get("system"):
