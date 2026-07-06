@@ -24,7 +24,11 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from trusted_router.adapter import messages_to_chat_body, responses_to_chat_body
+from trusted_router.adapter import (
+    messages_to_chat_body,
+    resolve_max_output_tokens,
+    responses_to_chat_body,
+)
 from trusted_router.auth import (
     InferencePrincipal,
     Principal,
@@ -52,6 +56,7 @@ from trusted_router.services.inference import (
 from trusted_router.types import ErrorType, UsageType
 
 _VALID_ROLES = frozenset({"system", "user", "assistant", "tool", "developer"})
+_OUTPUT_TOKEN_FIELDS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +78,7 @@ def register_inference_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> Any:
         body = await json_body(request)
+        _validate_output_token_limit(body)
         _validate_chat_messages(body)
         _require_monitor_model_key(body, principal, settings)
         provider_prefs = provider_route_preferences(body)
@@ -180,6 +186,7 @@ def register_inference_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> Any:
         body = await json_body(request)
+        _validate_output_token_limit(body)
         model = _require_messages_model(body)
         chat_body = messages_to_chat_body(body, model_id=model.id)
         app_name = _app_name(request)
@@ -244,6 +251,7 @@ def register_inference_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> JSONResponse:
         body = await json_body(request)
+        _validate_output_token_limit(body)
         chat_body = responses_to_chat_body(body)
         _require_monitor_model_key(chat_body, principal, settings)
         model = _require_chat_model(chat_body)
@@ -439,6 +447,25 @@ def _validate_chat_messages(body: dict[str, Any]) -> None:
     as `_require_chat_model` does internally; this is the standalone
     pre-route-resolution gate."""
     _validate_messages_field(body)
+
+
+def _validate_output_token_limit(body: dict[str, Any]) -> None:
+    field = next(
+        (key for key in _OUTPUT_TOKEN_FIELDS if body.get(key) is not None),
+        "max_tokens",
+    )
+    try:
+        max_tokens = resolve_max_output_tokens(body)
+    except (TypeError, ValueError) as exc:
+        raise api_error(
+            400,
+            f"{field} must be an integer",
+            ErrorType.BAD_REQUEST,
+        ) from exc
+    if max_tokens is not None and max_tokens < 1:
+        raise api_error(400, f"{field} must be at least 1", ErrorType.BAD_REQUEST)
+    if max_tokens is not None:
+        body[field] = max_tokens
 
 
 def _validate_messages_field(body: dict[str, Any]) -> None:
