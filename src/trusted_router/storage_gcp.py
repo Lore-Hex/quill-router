@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Any, TypeVar
 
@@ -983,9 +984,23 @@ class SpannerBigtableStore:
             )
             return True
 
+        spanner_start = time.perf_counter()
         finalized = self._run_in_transaction(txn)
+        spanner_ms = (time.perf_counter() - spanner_start) * 1000
+        index_ms = 0.0
         if finalized and success and generation is not None:
+            index_start = time.perf_counter()
             self.generation_store.index_after_commit(generation)
+            index_ms = (time.perf_counter() - index_start) * 1000
+        if finalized:
+            # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
+            # into Spanner-txn vs Bigtable-index time.
+            log.info(
+                "legacy finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f",
+                authorization_id,
+                spanner_ms,
+                index_ms,
+            )
         return bool(finalized)
 
     # ── Typed-column billing (Step 3): thin wrappers over storage_gcp_authorize.
@@ -1033,6 +1048,7 @@ class SpannerBigtableStore:
                 ),
             ]
         authorization.settled = True
+        spanner_start = time.perf_counter()
         result = typed_finalize_atomic(
             self._database,
             self._param_types,
@@ -1045,11 +1061,23 @@ class SpannerBigtableStore:
             auth_body_settled=_json_body(authorization),
             generation_writes=generation_writes,
         )
+        spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
             raise RuntimeError("typed finalize failed: release row-count != 1")
         if result["outcome"] == SettleOutcome.SETTLED:
+            index_ms = 0.0
             if success and generation is not None:
+                index_start = time.perf_counter()
                 self.generation_store.index_after_commit(generation)
+                index_ms = (time.perf_counter() - index_start) * 1000
+            # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
+            # into Spanner-txn vs Bigtable-index time.
+            log.info(
+                "typed finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f",
+                authorization_id,
+                spanner_ms,
+                index_ms,
+            )
             return True
         return False  # already_settled / not_found
 

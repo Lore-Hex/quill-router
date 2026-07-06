@@ -12,6 +12,7 @@ See docs/design/billing-typed-counters.md.
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import pytest
@@ -21,6 +22,7 @@ from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage import CreditAccount
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_models import Generation
 
 
 def _floors() -> dict:
@@ -976,6 +978,78 @@ def test_store_typed_finalize_wrapper_and_reaper_wrapper() -> None:
     assert _typed(db, ws)["total_usage"] == 900_000
     # reaper wrapper: nothing expired+unsettled now
     assert store.reap_expired_reservations(now=_NOW) == 0
+
+
+def test_typed_finalize_gateway_authorization_logs_split_timing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, _db, _ = make_fake_store()
+    ws = "ws_wrap_timing"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    outcome, auth = store.authorize_gateway_typed(
+        workspace_id=ws,
+        key_hash=key.hash,
+        estimate=1_000_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="m",
+        provider="openai",
+        requested_model_id=None,
+        candidate_model_ids=["m"],
+        region="us",
+        endpoint_id="e",
+        candidate_endpoint_ids=["e"],
+        idempotency_key=None,
+        idempotency_fingerprint=None,
+        expires_at="2026-01-01T00:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert auth is not None
+    generation = Generation(
+        id="gen-wrap-timing",
+        request_id="req-wrap-timing",
+        workspace_id=ws,
+        key_hash=key.hash,
+        model="m",
+        provider_name="OpenAI",
+        app="typed-finalize-test",
+        tokens_prompt=10,
+        tokens_completion=5,
+        total_cost_microdollars=900_000,
+        usage_type="Credits",
+        speed_tokens_per_second=10.0,
+        finish_reason="stop",
+        status="success",
+        streamed=False,
+    )
+
+    with caplog.at_level(logging.INFO, logger="trusted_router.storage_gcp"):
+        finalized = store.typed_finalize_gateway_authorization(
+            auth.id,
+            success=True,
+            actual_microdollars=900_000,
+            selected_usage_type="Credits",
+            generation=generation,
+        )
+
+    assert finalized is True
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "trusted_router.storage_gcp"
+        and record.getMessage().startswith("typed finalize timing ")
+    ]
+    [record] = records
+    message = record.getMessage()
+    assert f"authorization_id={auth.id}" in message
+    assert " spanner_ms=" in message
+    assert " index_ms=" in message
+    assert isinstance(record.args, tuple)
+    assert len(record.args) == 3
+    assert record.args[0] == auth.id
+    assert isinstance(record.args[1], float)
+    assert isinstance(record.args[2], float)
 
 
 def test_typed_idempotency_lookup_survives_cohort_rollback() -> None:
