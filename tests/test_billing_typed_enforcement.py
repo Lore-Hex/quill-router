@@ -1045,11 +1045,13 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
     assert f"authorization_id={auth.id}" in message
     assert " spanner_ms=" in message
     assert " index_ms=" in message
+    assert " attempts=1" in message
     assert isinstance(record.args, tuple)
-    assert len(record.args) == 3
+    assert len(record.args) == 4
     assert record.args[0] == auth.id
     assert isinstance(record.args[1], float)
     assert isinstance(record.args[2], float)
+    assert record.args[3] == 1
 
 
 def test_typed_idempotency_lookup_survives_cohort_rollback() -> None:

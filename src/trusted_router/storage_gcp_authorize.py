@@ -498,7 +498,10 @@ def typed_finalize_atomic(
         return {"outcome": SettleOutcome.SETTLED}
 
     try:
-        return run_in_transaction_with_retry(database, txn)
+        attempts_box: list[int] = []
+        result = run_in_transaction_with_retry(database, txn, attempts_out=attempts_box)
+        result["attempts"] = attempts_box[0] if attempts_box else 1
+        return result
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
 
