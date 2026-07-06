@@ -185,6 +185,7 @@ class GatewayAuthorizeRequest(_Lenient):
     provider: dict[str, Any] | None = None
     estimated_input_tokens: int = Field(default=1, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    max_completion_tokens: int | None = Field(default=None, ge=1)
     max_tokens: int | None = Field(default=None, ge=1)
     region: str | None = None
     user: str | None = Field(default=None, max_length=256)
@@ -201,10 +202,12 @@ class GatewayAuthorizeRequest(_Lenient):
 
     @property
     def output_estimate(self) -> int:
-        if self.max_output_tokens is not None:
-            return self.max_output_tokens
         if self.max_tokens is not None:
             return self.max_tokens
+        if self.max_completion_tokens is not None:
+            return self.max_completion_tokens
+        if self.max_output_tokens is not None:
+            return self.max_output_tokens
         return 512
 
 

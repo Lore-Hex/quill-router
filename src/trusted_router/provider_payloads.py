@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from trusted_router.adapter import chat_to_anthropic, chat_to_gemini
+from trusted_router.adapter import chat_to_anthropic, chat_to_gemini, resolve_max_output_tokens
 from trusted_router.catalog import Model
 
 
 def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream: bool) -> dict[str, Any]:
-    base = chat_to_anthropic(messages(request), max_tokens=request.get("max_tokens") or 1024)
+    base = chat_to_anthropic(messages(request), max_tokens=resolve_max_output_tokens(request) or 1024)
     payload: dict[str, Any] = {
         "model": upstream_model_id(model),
         "stream": stream,
@@ -21,8 +21,9 @@ def anthropic_messages_payload(model: Model, request: dict[str, Any], *, stream:
 def gemini_payload(request: dict[str, Any]) -> dict[str, Any]:
     payload: dict[str, Any] = {"contents": chat_to_gemini(messages(request))}
     generation_config: dict[str, Any] = {}
-    if request.get("max_tokens") is not None:
-        generation_config["maxOutputTokens"] = request["max_tokens"]
+    max_output_tokens = resolve_max_output_tokens(request)
+    if max_output_tokens is not None:
+        generation_config["maxOutputTokens"] = max_output_tokens
     if request.get("temperature") is not None:
         generation_config["temperature"] = request["temperature"]
     if request.get("top_p") is not None:

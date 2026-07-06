@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
@@ -233,6 +234,96 @@ def test_malformed_json_and_bad_messages_are_stable_errors(
     )
     assert bad_max_tokens.status_code == 400
     assert bad_max_tokens.json()["error"]["type"] == "bad_request"
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/v1/chat/completions",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/messages",
+            {
+                "model": "anthropic/claude-sonnet-4.6",
+                "max_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/responses",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_output_tokens": "a lot",
+                "input": "hello",
+            },
+        ),
+    ],
+)
+def test_non_integer_output_token_limits_return_bad_request(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    resp = client.post(path, headers=inference_headers, json=payload)
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "bad_request"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "/v1/chat/completions",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_completion_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/messages",
+            {
+                "model": "anthropic/claude-sonnet-4.6",
+                "max_completion_tokens": "a lot",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ),
+        (
+            "/v1/responses",
+            {
+                "model": "openai/gpt-5.4-nano",
+                "max_completion_tokens": "a lot",
+                "input": "hello",
+            },
+        ),
+    ],
+)
+def test_non_integer_max_completion_tokens_returns_bad_request_before_dispatch(
+    client: TestClient,
+    inference_headers: dict[str, str],
+    path: str,
+    payload: dict[str, object],
+    stream: bool,
+) -> None:
+    resp = client.post(
+        path,
+        headers=inference_headers,
+        json={**payload, "stream": stream},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "bad_request"
+    assert resp.json()["error"]["source"] == "router"
+    assert resp.json()["error"]["message"] == "max_completion_tokens must be an integer"
 
 
 def test_key_limit_validation_uses_stable_errors(

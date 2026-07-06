@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from trusted_router.adapter import resolve_max_output_tokens
 from trusted_router.catalog import PROVIDERS, Model
 from trusted_router.provider_payloads import (
     anthropic_messages_payload,
@@ -62,7 +63,7 @@ async def openai_compatible_chat(
         "messages": messages(request),
         "stream": False,
         "temperature": request.get("temperature"),
-        "max_tokens": request.get("max_tokens"),
+        "max_tokens": resolve_max_output_tokens(request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}
@@ -110,7 +111,7 @@ async def openai_compatible_chat_stream(
         "stream": True,
         "stream_options": {"include_usage": True},
         "temperature": request.get("temperature"),
-        "max_tokens": request.get("max_tokens"),
+        "max_tokens": resolve_max_output_tokens(request),
     }
     payload.update(_openai_compatible_passthrough(request))
     payload = {k: v for k, v in payload.items() if v is not None}

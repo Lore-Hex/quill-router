@@ -15,16 +15,18 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from trusted_router.adapter import resolve_max_output_tokens
 from trusted_router.auth import Principal
 from trusted_router.catalog import MODELS, PROVIDERS, Model, auto_candidate_models
 from trusted_router.config import Settings
+from trusted_router.errors import api_error
 from trusted_router.providers import (
     ProviderClient,
     ProviderError,
     estimate_tokens_from_messages,
     estimate_tokens_from_text,
 )
-from trusted_router.routes.helpers import cost_microdollars, integer_body_field
+from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.services.inference_errors import (
     all_candidates_failed,
@@ -358,7 +360,22 @@ async def run_chat_candidates(
 
 def _estimate_reserve(body: dict[str, Any], model: Model, *, input_estimate: int | None = None) -> int:
     input_estimate = input_estimate or estimate_tokens_from_messages(body.get("messages", []))
-    max_tokens = integer_body_field(body, "max_tokens", default=512, minimum=1)
+    output_token_field = next(
+        (
+            field
+            for field in ("max_tokens", "max_completion_tokens", "max_output_tokens")
+            if body.get(field) is not None
+        ),
+        "max_tokens",
+    )
+    try:
+        max_tokens = resolve_max_output_tokens(body)
+    except (TypeError, ValueError) as exc:
+        raise api_error(400, f"{output_token_field} must be an integer", "bad_request") from exc
+    if max_tokens is None:
+        max_tokens = 512
+    if max_tokens < 1:
+        raise api_error(400, f"{output_token_field} must be at least 1", "bad_request")
     return cost_microdollars(model, input_estimate, max_tokens)
 
 
