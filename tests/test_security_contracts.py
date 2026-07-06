@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
 import pytest
+import sentry_sdk
+import sentry_sdk.integrations.logging as sentry_logging
 from fastapi.testclient import TestClient
 
+import trusted_router.sentry_config as sentry_config
 from trusted_router.auth import bootstrap_management_key
 from trusted_router.config import Settings
 from trusted_router.main import create_app
@@ -407,6 +411,31 @@ def test_sentry_init_is_noop_under_pytest_even_with_local_dsn(monkeypatch) -> No
     )
 
     assert calls == []
+
+
+def test_sentry_init_gates_logs_product_at_warning(monkeypatch) -> None:
+    init_calls: list[dict] = []
+    logging_integration_kwargs: list[dict] = []
+
+    class FakeLoggingIntegration:
+        def __init__(self, **kwargs) -> None:
+            logging_integration_kwargs.append(kwargs)
+
+    monkeypatch.setattr(sentry_config, "_running_under_pytest", lambda _settings: False)
+    monkeypatch.setattr(sentry_sdk, "init", lambda **kwargs: init_calls.append(kwargs))
+    monkeypatch.setattr(sentry_logging, "LoggingIntegration", FakeLoggingIntegration)
+
+    init_sentry(
+        Settings(
+            environment="staging",
+            sentry_dsn="https://example@example.ingest.sentry.io/1",
+        )
+    )
+
+    assert len(init_calls) == 1
+    assert logging_integration_kwargs == [
+        {"level": None, "event_level": None, "sentry_logs_level": logging.WARNING}
+    ]
 
 
 def test_sentry_init_is_noop_for_local_scripts_unless_explicitly_enabled() -> None:

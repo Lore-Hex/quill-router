@@ -73,7 +73,10 @@ class Settings(BaseSettings):
     # Empty token at startup → handler is not registered (graceful no-op).
     axiom_dataset: str = "trusted-router-logs"
     axiom_url: str = "https://api.axiom.co"
-    # Levels at and above this go to Axiom. INFO captures rate-limit
+    # Levels at and above this go to Axiom. This sets both the Axiom
+    # handler threshold and the `trusted_router` package logger level;
+    # root stays at uvicorn's WARNING, so third-party loggers are
+    # unaffected and their INFO does not ship. INFO captures rate-limit
     # decisions, structured business events, and the Bigtable swallowed-
     # error log lines we just enriched. DEBUG would flood; ERROR alone
     # would miss the request_id correlation in 429s.

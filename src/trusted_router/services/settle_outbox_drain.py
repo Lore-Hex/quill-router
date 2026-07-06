@@ -69,10 +69,11 @@ def drain_settle_outbox(limit: int) -> dict[str, Any]:
     # latency nicety, while the Increment-2 guard is the lost-charge interlock.
     # Limit 200 drains the ~2.6k wiring-time backlog in about an hour of 5-min
     # ticks without a tr_credit_balance write burst; steady state is far lower.
-    # Operationally, INFO logs are dropped in prod (root logger stays at
-    # uvicorn's WARNING default; init_axiom never lowers it) — the visible
-    # health signals are request-log tick latency plus the response's
-    # reaped/outcomes fields. See docs/runbook.md#settle-outbox.
+    # Operationally, INFO logs ship to Axiom via the scoped `trusted_router`
+    # package logger (`TR_AXIOM_LOG_LEVEL`, default INFO), but Cloud Logging
+    # still only has request logs. The durable health signals are request-log
+    # tick latency plus the response's reaped/outcomes fields. See
+    # docs/runbook.md#settle-outbox.
     reaped = cast(Any, STORE).reap_expired_reservations(
         now=dt.datetime.now(dt.UTC),
         limit=200,

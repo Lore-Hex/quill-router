@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -39,6 +40,11 @@ from trusted_router.config import Settings
 from trusted_router.sentry_config import _scrub
 
 log = logging.getLogger(__name__)
+
+# Key-based `_scrub` cannot see positional-arg VALUES; collapsing + regex is
+# the args-safe complement (PR #124 review P2).
+_AXIOM_SECRET_VALUE_RE = re.compile(r"(?i)(token|secret|key|password|authorization)=([^&\s\"']+)")
+_AXIOM_EMAIL_VALUE_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
 def init_axiom(settings: Settings) -> None:
@@ -77,10 +83,11 @@ def init_axiom(settings: Settings) -> None:
         log.warning("axiom.disabled reason=client_init_failed err=%s", exc)
         return
 
+    resolved_level = _resolve_level(settings.axiom_log_level)
     raw_handler: logging.Handler = AxiomHandler(client, dataset)
     raw_handler.setLevel(logging.NOTSET)
     handler: logging.Handler = _SafeAxiomHandler(raw_handler)
-    handler.setLevel(_resolve_level(settings.axiom_log_level))
+    handler.setLevel(resolved_level)
     # Attach a filter that scrubs PII before the handler ships the
     # record. Reuses sentry_config's `_scrub` so the rules are defined
     # in one place.
@@ -94,6 +101,14 @@ def init_axiom(settings: Settings) -> None:
 
     root = logging.getLogger()
     root.addHandler(handler)
+    # The handler's level alone is not enough: uvicorn leaves the root
+    # logger at WARNING, which filters app INFO records before any handler
+    # sees them. Lower the level on OUR package logger only, but never
+    # raise it above WARNING. TR_AXIOM_LOG_LEVEL is the Axiom handler
+    # threshold; if set above WARNING it must not suppress app warnings
+    # from other integrations such as Sentry. The handler's own level still
+    # filters what ships to Axiom.
+    logging.getLogger("trusted_router").setLevel(min(resolved_level, logging.WARNING))
     log.info(
         "axiom.enabled dataset=%s url=%s level=%s org_id=%s",
         dataset,
@@ -161,6 +176,23 @@ class _AxiomScrubFilter(logging.Filter):
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            collapsed = record.getMessage()
+        except Exception:  # noqa: BLE001 - logging filters must not break logging.
+            collapsed = None
+            # If formatting fails, keep the unformatted template but drop raw
+            # positional values so axiom-py cannot ship them from record.args.
+            record.args = None
+        if collapsed is not None:
+            # Collapsing args means Axiom loses structured args fields and gets
+            # the final formatted message only. That is the point: nothing
+            # unscrubbed can leave the process.
+            record.msg = _AXIOM_EMAIL_VALUE_RE.sub(
+                "[Filtered-email]",
+                _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
+            )
+            record.args = None
+
         for key, value in list(record.__dict__.items()):
             if key in self._SKIP_FIELDS:
                 continue
