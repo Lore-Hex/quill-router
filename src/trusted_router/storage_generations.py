@@ -128,9 +128,18 @@ class InMemoryGenerations:
     ) -> dict[str, Any]:
         if granularity not in {"hour", "day"}:
             raise ValueError("granularity must be 'hour' or 'day'")
-        today = dt.datetime.now(dt.UTC).date()
-        start_day = (today - dt.timedelta(days=max(1, days) - 1)).isoformat()
-        end_day = today.isoformat()
+        if granularity == "hour":
+            now = dt.datetime.now(dt.UTC)
+            window_hours = max(1, days) * 24
+            since = now - dt.timedelta(hours=window_hours)
+            start_day = since.date().isoformat()
+            end_day = now.date().isoformat()
+            min_created_at = since.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            today = dt.datetime.now(dt.UTC).date()
+            start_day = (today - dt.timedelta(days=max(1, days) - 1)).isoformat()
+            end_day = today.isoformat()
+            min_created_at = None
         buckets: dict[str, dict[str, Any]] = {}
         model_buckets: dict[str, dict[str, dict[str, Any]]] = {}
         with self._lock:
@@ -142,6 +151,8 @@ class InMemoryGenerations:
             if api_key_hash is not None and generation.key_hash != api_key_hash:
                 continue
             if day < start_day or day > end_day:
+                continue
+            if min_created_at is not None and generation.created_at[:19] < min_created_at:
                 continue
             bucket = generation.created_at[:13] if granularity == "hour" else day
             metrics = generation_metrics(generation)

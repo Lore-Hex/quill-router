@@ -184,6 +184,7 @@ class SpannerGenerations:
         granularity: str,
         api_key_hash: str | None = None,
         by_model: bool = False,
+        min_created_at: str | None = None,
     ) -> dict[str, Any]:
         return _bt_usage_series(
             self._bt_table,
@@ -194,6 +195,7 @@ class SpannerGenerations:
             granularity=granularity,
             api_key_hash=api_key_hash,
             by_model=by_model,
+            min_created_at=min_created_at,
         )
 
     def reconcile_activity(

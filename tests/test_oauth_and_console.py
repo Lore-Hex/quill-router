@@ -648,9 +648,18 @@ def test_console_activity_renders_usage_panel(
 ) -> None:
     client, _ = console_session
     resp = client.get("/console/activity")
+    console_css = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "trusted_router"
+        / "static"
+        / "console.css"
+    ).read_text(encoding="utf-8")
 
     assert resp.status_code == 200
     assert '<section class="panel usage-panel" data-usage-panel>' in resp.text
+    assert '<input type="radio" name="usage-days" value="1">' in resp.text
+    assert "<span>24h</span>" in resp.text
     assert 'data-usage-chart' in resp.text
     assert 'data-usage-breakdown' in resp.text
     assert "/console/activity/usage.json" in resp.text
@@ -659,6 +668,7 @@ def test_console_activity_renders_usage_panel(
     assert "Tokens" in resp.text
     assert "Requests" in resp.text
     assert resp.text.index("<h2>Usage</h2>") < resp.text.index("<h2>Recent activity</h2>")
+    assert ".usage-layout[hidden]" in console_css
 
 
 def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(

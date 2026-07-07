@@ -127,7 +127,7 @@
     const svg = svgNode("svg", {
       class: "usage-chart-svg",
       role: "img",
-      "aria-label": `${metric.label} usage over the last ${days} days`,
+      "aria-label": `${metric.label} usage over the last ${days <= 2 ? days * 24 + " hours" : days + " days"}`,
       viewBox: `0 0 ${width} ${height}`,
       width,
       height
@@ -252,7 +252,9 @@
     const state = currentState();
     const metric = metrics[state.metric];
     const buckets = Array.isArray(data.buckets) ? data.buckets : [];
-    rangeLabel.textContent = `Last ${state.days} days`;
+    rangeLabel.textContent = state.days <= 2
+      ? `Last ${state.days * 24} hours`
+      : `Last ${state.days} days`;
 
     if (buckets.length === 0) {
       layout.hidden = true;
@@ -368,6 +370,10 @@
     <div class="usage-controls" aria-label="Usage chart controls">
       <fieldset class="usage-segmented-control">
         <legend>Range</legend>
+        <label>
+          <input type="radio" name="usage-days" value="1">
+          <span>24h</span>
+        </label>
         <label>
           <input type="radio" name="usage-days" value="7">
           <span>7 days</span>

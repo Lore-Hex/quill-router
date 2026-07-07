@@ -352,6 +352,10 @@ body.console {
   align-items: stretch;
 }
 
+.usage-layout[hidden] {
+  display: none;
+}
+
 .usage-chart-card,
 .usage-breakdown {
   min-width: 0;
