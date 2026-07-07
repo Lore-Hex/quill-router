@@ -19,6 +19,9 @@ from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
 )
 from trusted_router.storage_gcp_activity_index import (
+    usage_series as _bt_usage_series,
+)
+from trusted_router.storage_gcp_activity_index import (
     write_generation as _bt_write_generation,
 )
 from trusted_router.storage_gcp_benchmark_index import (
@@ -171,6 +174,27 @@ class SpannerGenerations:
             limit=limit,
         )
         return generation_events(rows)
+
+    def usage_series(
+        self,
+        workspace_id: str,
+        *,
+        start_day: str,
+        end_day: str,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+    ) -> dict[str, Any]:
+        return _bt_usage_series(
+            self._bt_table,
+            self._family,
+            workspace_id,
+            start_day=start_day,
+            end_day=end_day,
+            granularity=granularity,
+            api_key_hash=api_key_hash,
+            by_model=by_model,
+        )
 
     def reconcile_activity(
         self,

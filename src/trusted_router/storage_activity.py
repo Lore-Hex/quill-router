@@ -7,6 +7,18 @@ from trusted_router.money import microdollars_to_float
 from trusted_router.storage_models import Generation, _is_byok
 
 
+def generation_metrics(gen: Generation) -> dict[str, int]:
+    is_byok = _is_byok(gen.usage_type)
+    return {
+        "requests": 1,
+        "prompt_tokens": gen.tokens_prompt,
+        "completion_tokens": gen.tokens_completion,
+        "reasoning_tokens": gen.reasoning_tokens,
+        "cost_micro": 0 if is_byok else gen.total_cost_microdollars,
+        "byok_micro": gen.total_cost_microdollars if is_byok else 0,
+    }
+
+
 def filter_generations(
     generations: Iterable[Generation],
     *,
@@ -45,18 +57,15 @@ def summarize_activity(generations: Iterable[Generation]) -> list[dict[str, Any]
                 "byok_usage_inference_microdollars": 0,
             },
         )
-        item["requests"] += 1
-        item["prompt_tokens"] += gen.tokens_prompt
-        item["completion_tokens"] += gen.tokens_completion
-        cost = microdollars_to_float(gen.total_cost_microdollars)
-        if _is_byok(gen.usage_type):
-            item["byok_usage_inference"] += cost
-        else:
-            item["usage"] += cost
-        item["usage_microdollars"] += 0 if _is_byok(gen.usage_type) else gen.total_cost_microdollars
-        item["byok_usage_inference_microdollars"] += (
-            gen.total_cost_microdollars if _is_byok(gen.usage_type) else 0
-        )
+        metrics = generation_metrics(gen)
+        item["requests"] += metrics["requests"]
+        item["prompt_tokens"] += metrics["prompt_tokens"]
+        item["completion_tokens"] += metrics["completion_tokens"]
+        item["reasoning_tokens"] += metrics["reasoning_tokens"]
+        item["usage_microdollars"] += metrics["cost_micro"]
+        item["byok_usage_inference_microdollars"] += metrics["byok_micro"]
+        item["usage"] += microdollars_to_float(metrics["cost_micro"])
+        item["byok_usage_inference"] += microdollars_to_float(metrics["byok_micro"])
     return sorted(grouped.values(), key=lambda item: item["date"], reverse=True)
 
 

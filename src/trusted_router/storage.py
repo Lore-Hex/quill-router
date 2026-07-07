@@ -882,6 +882,23 @@ class InMemoryStore:
             workspace_id, api_key_hash=api_key_hash, date=date, limit=limit
         )
 
+    def usage_series(
+        self,
+        workspace_id: str,
+        *,
+        days: int,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+    ) -> dict[str, Any]:
+        return self.generation_store.usage_series(
+            workspace_id,
+            days=days,
+            granularity=granularity,
+            api_key_hash=api_key_hash,
+            by_model=by_model,
+        )
+
     def reconcile_generation_activity(
         self,
         workspace_id: str,
