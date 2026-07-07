@@ -643,6 +643,24 @@ def test_console_root_redirects_to_api_keys(console_session: tuple[TestClient, s
     assert resp.headers["location"] == "/console/api-keys"
 
 
+def test_console_activity_renders_usage_panel(
+    console_session: tuple[TestClient, str],
+) -> None:
+    client, _ = console_session
+    resp = client.get("/console/activity")
+
+    assert resp.status_code == 200
+    assert '<section class="panel usage-panel" data-usage-panel>' in resp.text
+    assert 'data-usage-chart' in resp.text
+    assert 'data-usage-breakdown' in resp.text
+    assert "/console/activity/usage.json" in resp.text
+    assert 'by_model: "1"' in resp.text
+    assert "Spend" in resp.text
+    assert "Tokens" in resp.text
+    assert "Requests" in resp.text
+    assert resp.text.index("<h2>Usage</h2>") < resp.text.index("<h2>Recent activity</h2>")
+
+
 def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(
     console_session: tuple[TestClient, str],
 ) -> None:

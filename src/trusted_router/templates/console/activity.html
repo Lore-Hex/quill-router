@@ -1,5 +1,426 @@
 {% extends "console/_layout.html" %}
+{% block scripts %}
+<script>
+(function () {
+  "use strict";
+
+  const ENDPOINT = "/console/activity/usage.json";
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const numberFormat = new Intl.NumberFormat("en-US");
+  const compactFormat = new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  });
+  const dollarsFormat = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const modelColors = ["var(--blue)", "var(--green)", "var(--amber)", "var(--rust)", "var(--red)"];
+
+  function tokenTotal(bucket) {
+    return Number(bucket.prompt_tokens || 0) + Number(bucket.completion_tokens || 0);
+  }
+
+  const metrics = {
+    spend: {
+      label: "Spend",
+      value: (bucket) => Number(bucket.cost_micro || 0) / 1000000,
+      format: (value) => dollarsFormat.format(value),
+      tooltip: (value) => dollarsFormat.format(value),
+      axis: (value) => dollarsFormat.format(value)
+    },
+    tokens: {
+      label: "Tokens",
+      value: tokenTotal,
+      format: (value) => numberFormat.format(Math.round(value)),
+      tooltip: (value) => numberFormat.format(Math.round(value)),
+      axis: (value) => compactFormat.format(value)
+    },
+    requests: {
+      label: "Requests",
+      value: (bucket) => Number(bucket.requests || 0),
+      format: (value) => numberFormat.format(Math.round(value)),
+      tooltip: (value) => numberFormat.format(Math.round(value)),
+      axis: (value) => compactFormat.format(value)
+    }
+  };
+
+  let panel = null;
+  let chart = null;
+  let breakdown = null;
+  let empty = null;
+  let layout = null;
+  let message = null;
+  let status = null;
+  let totalValue = null;
+  let averageValue = null;
+  let rangeLabel = null;
+  let lastData = null;
+  let requestId = 0;
+
+  function svgNode(name, attrs, text) {
+    const node = document.createElementNS(SVG_NS, name);
+    Object.entries(attrs || {}).forEach(([key, value]) => {
+      node.setAttribute(key, String(value));
+    });
+    if (text !== undefined) {
+      node.textContent = text;
+    }
+    return node;
+  }
+
+  function selectedValue(name, fallback) {
+    const input = panel.querySelector(`input[name="${name}"]:checked`);
+    return input ? input.value : fallback;
+  }
+
+  function granularityForDays(days) {
+    return days <= 2 ? "hour" : "day";
+  }
+
+  function currentState() {
+    const days = Number.parseInt(selectedValue("usage-days", "30"), 10);
+    const metric = selectedValue("usage-metric", "spend");
+    return {
+      days: Number.isFinite(days) ? days : 30,
+      metric: metrics[metric] ? metric : "spend"
+    };
+  }
+
+  function setStatus(text, tone) {
+    status.textContent = text;
+    status.classList.toggle("warn", tone === "warn");
+    status.classList.toggle("good", tone === "good");
+  }
+
+  function showMessage(text, tone) {
+    message.textContent = text;
+    message.hidden = !text;
+    message.classList.toggle("error", tone === "error");
+  }
+
+  function formatBucket(bucket, granularity) {
+    const value = String(bucket || "");
+    const date = new Date(granularity === "hour" ? `${value}:00:00Z` : `${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    if (granularity === "hour") {
+      return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", timeZone: "UTC" });
+    }
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  function renderChart(series, metric, granularity, days) {
+    chart.replaceChildren();
+    const width = Math.max(chart.clientWidth || 0, 640, series.length * 24);
+    const height = 280;
+    const margin = { top: 14, right: 18, bottom: 42, left: 58 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const maxValue = Math.max(...series.map((point) => point.value), 0);
+    const yMax = maxValue > 0 ? maxValue : 1;
+    const step = plotWidth / Math.max(series.length, 1);
+    const barWidth = Math.max(4, Math.min(22, step - 4));
+    const svg = svgNode("svg", {
+      class: "usage-chart-svg",
+      role: "img",
+      "aria-label": `${metric.label} usage over the last ${days} days`,
+      viewBox: `0 0 ${width} ${height}`,
+      width,
+      height
+    });
+
+    [0, 0.25, 0.5, 0.75, 1].forEach((ratio) => {
+      const y = margin.top + plotHeight - (plotHeight * ratio);
+      svg.appendChild(svgNode("line", {
+        class: "usage-chart-grid",
+        x1: margin.left,
+        x2: width - margin.right,
+        y1: y,
+        y2: y
+      }));
+      svg.appendChild(svgNode("text", {
+        class: "usage-chart-axis",
+        x: margin.left - 10,
+        y: y + 4,
+        "text-anchor": "end"
+      }, metric.axis(yMax * ratio)));
+    });
+
+    const barGroup = svgNode("g", { class: "usage-chart-bars" });
+    series.forEach((point, index) => {
+      const x = margin.left + (step * index) + ((step - barWidth) / 2);
+      const barHeight = maxValue > 0 ? (point.value / yMax) * plotHeight : 0;
+      const renderedBarHeight = Math.max(barHeight, point.value > 0 ? 2 : 0);
+      const y = margin.top + plotHeight - renderedBarHeight;
+      const group = svgNode("g", {
+        class: "usage-chart-bar-group",
+        tabindex: "0",
+        "aria-label": `${formatBucket(point.bucket, granularity)} ${metric.tooltip(point.value)}`
+      });
+      const rect = svgNode("rect", {
+        class: "usage-chart-bar",
+        x,
+        y,
+        width: barWidth,
+        height: renderedBarHeight,
+        rx: Math.min(4, barWidth / 2)
+      });
+      group.appendChild(rect);
+      group.appendChild(svgNode("title", {}, `${formatBucket(point.bucket, granularity)}: ${metric.tooltip(point.value)}`));
+      barGroup.appendChild(group);
+    });
+    svg.appendChild(barGroup);
+
+    const labelEvery = Math.max(1, Math.ceil(series.length / 6));
+    series.forEach((point, index) => {
+      if (index % labelEvery !== 0 && index !== series.length - 1) {
+        return;
+      }
+      const x = margin.left + (step * index) + (step / 2);
+      svg.appendChild(svgNode("text", {
+        class: "usage-chart-axis usage-chart-x-axis",
+        x,
+        y: height - 14,
+        "text-anchor": "middle"
+      }, formatBucket(point.bucket, granularity)));
+    });
+
+    chart.replaceChildren(svg);
+  }
+
+  function modelTotals(byModel) {
+    return Object.entries(byModel || {}).map(([model, buckets]) => {
+      const rows = Array.isArray(buckets) ? buckets : [];
+      return rows.reduce((total, bucket) => {
+        total.model = model;
+        total.spend += Number(bucket.cost_micro || 0);
+        total.requests += Number(bucket.requests || 0);
+        total.tokens += tokenTotal(bucket);
+        return total;
+      }, { model, spend: 0, requests: 0, tokens: 0 });
+    }).filter((row) => row.spend > 0 || row.requests > 0 || row.tokens > 0);
+  }
+
+  function renderBreakdown(byModel) {
+    breakdown.replaceChildren();
+    const rows = modelTotals(byModel).sort((a, b) => b.spend - a.spend || b.requests - a.requests).slice(0, 5);
+    if (rows.length === 0) {
+      const note = document.createElement("p");
+      note.className = "usage-breakdown-empty";
+      note.textContent = "No model usage in this range.";
+      breakdown.appendChild(note);
+      return;
+    }
+    const list = document.createElement("div");
+    list.className = "usage-model-list";
+    const maxSpend = Math.max(...rows.map((row) => row.spend), 1);
+    rows.forEach((row, index) => {
+      const item = document.createElement("article");
+      item.className = "usage-model-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "usage-model-swatch";
+      swatch.style.background = modelColors[index % modelColors.length];
+
+      const body = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = row.model;
+      const meta = document.createElement("span");
+      meta.textContent = `${dollarsFormat.format(row.spend / 1000000)} spend | ${numberFormat.format(row.requests)} requests | ${compactFormat.format(row.tokens)} tokens`;
+      body.append(name, meta);
+
+      const meter = document.createElement("span");
+      meter.className = "usage-model-meter";
+      const fill = document.createElement("span");
+      fill.className = "usage-model-meter-fill";
+      fill.style.width = `${Math.max(3, (row.spend / maxSpend) * 100)}%`;
+      fill.style.background = modelColors[index % modelColors.length];
+      meter.appendChild(fill);
+      body.appendChild(meter);
+
+      item.append(swatch, body);
+      list.appendChild(item);
+    });
+    breakdown.appendChild(list);
+  }
+
+  function renderUsage(data) {
+    const state = currentState();
+    const metric = metrics[state.metric];
+    const buckets = Array.isArray(data.buckets) ? data.buckets : [];
+    rangeLabel.textContent = `Last ${state.days} days`;
+
+    if (buckets.length === 0) {
+      layout.hidden = true;
+      empty.hidden = false;
+      chart.replaceChildren();
+      breakdown.replaceChildren();
+      setStatus("empty", "warn");
+      showMessage(data.truncated ? "Showing partial data." : "", "");
+      return;
+    }
+
+    const series = buckets.map((bucket) => ({
+      bucket: bucket.bucket,
+      value: metric.value(bucket)
+    }));
+    const total = series.reduce((sum, point) => sum + point.value, 0);
+    totalValue.textContent = metric.format(total);
+    averageValue.textContent = `${metric.format(total / Math.max(series.length, 1))} avg / bucket`;
+    layout.hidden = false;
+    empty.hidden = true;
+    setStatus(`${buckets.length} ${data.granularity || granularityForDays(state.days)} buckets`, "good");
+    showMessage(data.truncated ? "Showing partial data; narrow the range if totals look lower than expected." : "", "");
+    renderChart(series, metric, data.granularity || granularityForDays(state.days), state.days);
+    renderBreakdown(data.by_model || {});
+  }
+
+  async function loadUsage() {
+    const state = currentState();
+    const token = ++requestId;
+    const params = new URLSearchParams({
+      days: String(state.days),
+      granularity: granularityForDays(state.days),
+      by_model: "1"
+    });
+    setStatus("loading", "");
+    showMessage("", "");
+    try {
+      const response = await fetch(`${ENDPOINT}?${params.toString()}`, {
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) {
+        throw new Error(`usage endpoint returned ${response.status}`);
+      }
+      const data = await response.json();
+      if (token !== requestId) {
+        return;
+      }
+      lastData = data;
+      renderUsage(data);
+    } catch (error) {
+      if (token !== requestId) {
+        return;
+      }
+      setStatus("couldn't load", "warn");
+      showMessage("Couldn't load usage right now.", "error");
+      if (!lastData) {
+        layout.hidden = true;
+        empty.hidden = true;
+      }
+    }
+  }
+
+  function rerenderOnResize() {
+    if (lastData) {
+      renderUsage(lastData);
+    }
+  }
+
+  function initUsagePanel() {
+    panel = document.querySelector("[data-usage-panel]");
+    if (!panel) {
+      return;
+    }
+    chart = panel.querySelector("[data-usage-chart]");
+    breakdown = panel.querySelector("[data-usage-breakdown]");
+    empty = panel.querySelector("[data-usage-empty]");
+    layout = panel.querySelector("[data-usage-layout]");
+    message = panel.querySelector("[data-usage-message]");
+    status = panel.querySelector("[data-usage-status]");
+    totalValue = panel.querySelector("[data-usage-total]");
+    averageValue = panel.querySelector("[data-usage-average]");
+    rangeLabel = panel.querySelector("[data-usage-range-label]");
+
+    panel.querySelectorAll('input[name="usage-days"], input[name="usage-metric"]').forEach((input) => {
+      input.addEventListener("change", loadUsage);
+    });
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(rerenderOnResize).observe(chart);
+    } else {
+      window.addEventListener("resize", rerenderOnResize);
+    }
+    loadUsage();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initUsagePanel);
+  } else {
+    initUsagePanel();
+  }
+})();
+</script>
+{% endblock %}
 {% block body %}
+<section class="panel usage-panel" data-usage-panel>
+  <div class="panel-head usage-panel-head">
+    <div>
+      <h2>Usage</h2>
+      <p class="panel-kicker">Spend, token, and request volume over time.</p>
+    </div>
+    <span class="pill" data-usage-status>loading</span>
+  </div>
+  <div class="panel-body">
+    <div class="usage-controls" aria-label="Usage chart controls">
+      <fieldset class="usage-segmented-control">
+        <legend>Range</legend>
+        <label>
+          <input type="radio" name="usage-days" value="7">
+          <span>7 days</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-days" value="30" checked>
+          <span>30 days</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-days" value="90">
+          <span>90 days</span>
+        </label>
+      </fieldset>
+      <fieldset class="usage-segmented-control">
+        <legend>Metric</legend>
+        <label>
+          <input type="radio" name="usage-metric" value="spend" checked>
+          <span>Spend</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-metric" value="tokens">
+          <span>Tokens</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-metric" value="requests">
+          <span>Requests</span>
+        </label>
+      </fieldset>
+    </div>
+    <p class="usage-message" data-usage-message role="status" hidden></p>
+    <div class="usage-layout" data-usage-layout hidden>
+      <div class="usage-chart-card">
+        <div class="usage-chart-summary">
+          <div>
+            <span data-usage-range-label>Last 30 days</span>
+            <strong data-usage-total>$0.00</strong>
+          </div>
+          <span data-usage-average>$0.00 avg / bucket</span>
+        </div>
+        <div class="usage-chart-scroll" data-usage-chart></div>
+      </div>
+      <aside class="usage-breakdown" aria-labelledby="usage-breakdown-title">
+        <div class="usage-breakdown-head">
+          <h3 id="usage-breakdown-title">Model breakdown</h3>
+          <span>Top models by spend</span>
+        </div>
+        <div data-usage-breakdown></div>
+      </aside>
+    </div>
+    <p class="empty" data-usage-empty hidden>No activity yet. Make a request with your API key to see it here.</p>
+  </div>
+</section>
+
 <section class="panel">
   <div class="panel-head"><h2>Recent activity</h2><span class="pill">metadata only</span></div>
   <div class="panel-body">
