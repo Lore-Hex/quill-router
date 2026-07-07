@@ -428,6 +428,15 @@ class Store(Protocol):
         date: str | None = ...,
         limit: int = ...,
     ) -> list[dict[str, Any]]: ...
+    def usage_series(
+        self,
+        workspace_id: str,
+        *,
+        days: int,
+        granularity: str,
+        api_key_hash: str | None = ...,
+        by_model: bool = ...,
+    ) -> dict[str, Any]: ...
 
     # Rate limiting -----------------------------------------------------------
     def hit_rate_limit(

@@ -914,26 +914,43 @@ def _execute_sql(
 class FakeBigtableTable:
     def __init__(self) -> None:
         self.committed: list[bytes] = []
+        self.rows: dict[bytes, dict[str, dict[bytes, list[Any]]]] = {}
+        self.reads: list[tuple[bytes, bytes, int]] = []
         self.lock = threading.Lock()
 
     def direct_row(self, key: bytes) -> _FakeDirectRow:
         return _FakeDirectRow(key, self)
 
     def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int) -> list[Any]:
-        return []
+        with self.lock:
+            self.reads.append((start_key, end_key, limit))
+            keys = [key for key in sorted(self.rows) if start_key <= key < end_key]
+            return [_FakeReadRow(self.rows[key]) for key in keys[:limit]]
+
+
+class _FakeCell:
+    def __init__(self, value: bytes) -> None:
+        self.value = value
+
+
+class _FakeReadRow:
+    def __init__(self, cells: dict[str, dict[bytes, list[Any]]]) -> None:
+        self.cells = cells
 
 
 class _FakeDirectRow:
     def __init__(self, key: bytes, table: FakeBigtableTable) -> None:
         self.key = key
         self.table = table
+        self.cells: dict[str, dict[bytes, list[Any]]] = {}
 
-    def set_cell(self, *_: Any) -> None:
-        return None
+    def set_cell(self, family: str, qualifier: bytes, value: bytes) -> None:
+        self.cells.setdefault(family, {})[qualifier] = [_FakeCell(value)]
 
     def commit(self) -> None:
         with self.table.lock:
             self.table.committed.append(self.key)
+            self.table.rows[self.key] = self.cells
 
 
 def make_fake_store(
