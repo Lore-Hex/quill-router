@@ -60,6 +60,7 @@ def usage_series(
     granularity: str,
     api_key_hash: str | None = None,
     by_model: bool = False,
+    min_created_at: str | None = None,
     max_rows: int = 200_000,
 ) -> dict[str, Any]:
     if granularity not in {"hour", "day"}:
@@ -67,8 +68,12 @@ def usage_series(
 
     buckets: dict[str, dict[str, Any]] = {}
     model_buckets: dict[str, dict[str, dict[str, Any]]] = {}
+    if min_created_at is not None:
+        start_key = f"ws#{workspace_id}#{start_day}#{min_created_at}".encode()
+    else:
+        start_key = f"ws#{workspace_id}#{start_day}".encode()
     rows = table.read_rows(
-        start_key=f"ws#{workspace_id}#{start_day}".encode(),
+        start_key=start_key,
         end_key=f"ws#{workspace_id}#{end_day}~".encode(),
         limit=max_rows,
     )
@@ -83,6 +88,8 @@ def usage_series(
         if generation is None:
             continue
         if api_key_hash is not None and generation.key_hash != api_key_hash:
+            continue
+        if min_created_at is not None and generation.created_at[:19] < min_created_at:
             continue
         bucket = generation.created_at[:13] if granularity == "hour" else generation.created_at[:10]
         metrics = generation_metrics(generation)

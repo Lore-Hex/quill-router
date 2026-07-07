@@ -1428,15 +1428,26 @@ class SpannerBigtableStore:
         api_key_hash: str | None = None,
         by_model: bool = False,
     ) -> dict[str, Any]:
-        today = dt.datetime.now(dt.UTC).date()
-        start_day = (today - dt.timedelta(days=max(1, days) - 1)).isoformat()
+        if granularity == "hour":
+            now = dt.datetime.now(dt.UTC)
+            window_hours = max(1, days) * 24
+            since = now - dt.timedelta(hours=window_hours)
+            start_day = since.date().isoformat()
+            end_day = now.date().isoformat()
+            min_created_at = since.strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            today = dt.datetime.now(dt.UTC).date()
+            start_day = (today - dt.timedelta(days=max(1, days) - 1)).isoformat()
+            end_day = today.isoformat()
+            min_created_at = None
         return self.generation_store.usage_series(
             workspace_id,
             start_day=start_day,
-            end_day=today.isoformat(),
+            end_day=end_day,
             granularity=granularity,
             api_key_hash=api_key_hash,
             by_model=by_model,
+            min_created_at=min_created_at,
         )
 
     def reconcile_generation_activity(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pytest
@@ -46,6 +47,46 @@ def _generation(
         streamed=False,
         created_at=created_at,
     )
+
+
+def test_memory_usage_series_hourly_uses_rolling_24h_window() -> None:
+    store = InMemoryStore()
+    user = store.ensure_user("rolling-usage@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    _raw_key, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="rolling usage key",
+        creator_user_id=user.id,
+    )
+    now = dt.datetime.now(dt.UTC)
+    rows = [
+        ("gen-2h", now - dt.timedelta(hours=2), 100),
+        ("gen-10h", now - dt.timedelta(hours=10), 200),
+        ("gen-30h", now - dt.timedelta(hours=30), 300),
+    ]
+    for generation_id, created_at, cost_micro in rows:
+        store.add_generation(
+            _generation(
+                generation_id,
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                created_at=created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                prompt_tokens=10,
+                completion_tokens=5,
+                reasoning_tokens=0,
+                cost_micro=cost_micro,
+            )
+        )
+
+    hourly = store.usage_series(workspace.id, days=1, granularity="hour")
+    daily = store.usage_series(workspace.id, days=30, granularity="day")
+
+    assert sum(int(bucket["requests"]) for bucket in hourly["buckets"]) == 2
+    assert sum(int(bucket["cost_micro"]) for bucket in hourly["buckets"]) == 300
+    assert all("T" in str(bucket["bucket"]) for bucket in hourly["buckets"])
+    assert all(len(str(bucket["bucket"])) == 13 for bucket in hourly["buckets"])
+    assert sum(int(bucket["requests"]) for bucket in daily["buckets"]) == 3
+    assert sum(int(bucket["cost_micro"]) for bucket in daily["buckets"]) == 600
 
 
 def _seed_generations() -> tuple[Any, list[Generation]]:
@@ -176,6 +217,26 @@ def test_usage_series_hourly_and_daily_buckets() -> None:
         b"ws#ws_1#2026-05-02~",
         200_000,
     )
+
+
+def test_usage_series_hourly_cutoff_uses_start_key() -> None:
+    table, _generations = _seed_generations()
+
+    hourly = usage_series(
+        table,
+        "m",
+        "ws_1",
+        start_day="2026-05-01",
+        end_day="2026-05-02",
+        granularity="hour",
+        min_created_at="2026-05-01T10:30:00",
+    )
+
+    assert table.reads[-1][0] == b"ws#ws_1#2026-05-01#2026-05-01T10:30:00"
+    assert table.reads[-1][1] == b"ws#ws_1#2026-05-02~"
+    assert sum(int(bucket["requests"]) for bucket in hourly["buckets"]) == 3
+    assert hourly["buckets"][0]["bucket"] == "2026-05-01T10"
+    assert hourly["buckets"][0]["requests"] == 1
 
 
 def test_usage_series_by_model_breakdown() -> None:
