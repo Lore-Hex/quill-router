@@ -886,14 +886,14 @@ class InMemoryStore:
         self,
         workspace_id: str,
         *,
-        days: int,
+        window_minutes: int,
         granularity: str,
         api_key_hash: str | None = None,
         by_model: bool = False,
     ) -> dict[str, Any]:
         return self.generation_store.usage_series(
             workspace_id,
-            days=days,
+            window_minutes=window_minutes,
             granularity=granularity,
             api_key_hash=api_key_hash,
             by_model=by_model,

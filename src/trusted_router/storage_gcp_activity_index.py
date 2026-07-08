@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from trusted_router.storage_activity import generation_metrics
+from trusted_router.storage_activity import generation_metrics, usage_bucket_key
 from trusted_router.storage_gcp_codec import json_body, reverse_time_key
 from trusted_router.storage_models import Generation
 
@@ -63,8 +63,8 @@ def usage_series(
     min_created_at: str | None = None,
     max_rows: int = 200_000,
 ) -> dict[str, Any]:
-    if granularity not in {"hour", "day"}:
-        raise ValueError("granularity must be 'hour' or 'day'")
+    if granularity not in {"minute", "5min", "hour", "day"}:
+        raise ValueError("granularity must be 'minute', '5min', 'hour', or 'day'")
 
     buckets: dict[str, dict[str, Any]] = {}
     model_buckets: dict[str, dict[str, dict[str, Any]]] = {}
@@ -91,7 +91,7 @@ def usage_series(
             continue
         if min_created_at is not None and generation.created_at[:19] < min_created_at:
             continue
-        bucket = generation.created_at[:13] if granularity == "hour" else generation.created_at[:10]
+        bucket = usage_bucket_key(generation.created_at, granularity)
         metrics = generation_metrics(generation)
         _add_metrics(_bucket(buckets, bucket), metrics)
         if by_model:

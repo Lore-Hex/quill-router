@@ -22,7 +22,8 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.storage import STORE, Generation
+from trusted_router.routes.console.activity import _USAGE_CACHE
+from trusted_router.storage import STORE, Generation, InMemoryStore
 
 
 @pytest.fixture
@@ -658,17 +659,82 @@ def test_console_activity_renders_usage_panel(
 
     assert resp.status_code == 200
     assert '<section class="panel usage-panel" data-usage-panel>' in resp.text
-    assert '<input type="radio" name="usage-days" value="1">' in resp.text
+    assert '<input type="radio" name="usage-range" value="1h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="6h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="24h">' in resp.text
+    assert '<input type="radio" name="usage-range" value="7d">' in resp.text
+    assert '<input type="radio" name="usage-range" value="30d" checked>' in resp.text
+    assert '<input type="radio" name="usage-range" value="90d">' in resp.text
+    assert 'name="usage-days"' not in resp.text
+    assert "<span>1h</span>" in resp.text
+    assert "<span>6h</span>" in resp.text
     assert "<span>24h</span>" in resp.text
+    assert "<span>7d</span>" in resp.text
+    assert "<span>30d</span>" in resp.text
+    assert "<span>90d</span>" in resp.text
     assert 'data-usage-chart' in resp.text
     assert 'data-usage-breakdown' in resp.text
     assert "/console/activity/usage.json" in resp.text
+    assert 'range: state.range' in resp.text
     assert 'by_model: "1"' in resp.text
     assert "Spend" in resp.text
     assert "Tokens" in resp.text
     assert "Requests" in resp.text
     assert resp.text.index("<h2>Usage</h2>") < resp.text.index("<h2>Recent activity</h2>")
     assert ".usage-layout[hidden]" in console_css
+
+
+def test_console_activity_usage_endpoint_uses_range_param(
+    console_session: tuple[TestClient, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _USAGE_CACHE.clear()
+    client, _ = console_session
+    user = STORE.find_user_by_email("alice@example.com")
+    assert user is not None
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    calls: list[tuple[str, int, str, str | None, bool]] = []
+
+    def spy_usage_series(
+        self: InMemoryStore,
+        workspace_id: str,
+        *,
+        window_minutes: int,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+    ) -> dict[str, Any]:
+        _ = self
+        calls.append((workspace_id, window_minutes, granularity, api_key_hash, by_model))
+        return {
+            "granularity": granularity,
+            "start_day": "2026-07-08",
+            "end_day": "2026-07-08",
+            "truncated": False,
+            "buckets": [],
+            "by_model": {"model-a": []} if by_model else {},
+        }
+
+    monkeypatch.setattr(InMemoryStore, "usage_series", spy_usage_series)
+
+    response = client.get("/console/activity/usage.json?range=1h&by_model=1&api_key_hash=key_a")
+
+    assert response.status_code == 200
+    assert response.json()["range"] == "1h"
+    assert response.json()["granularity"] == "minute"
+    assert calls == [(workspace.id, 60, "minute", "key_a", True)]
+
+
+def test_console_activity_usage_endpoint_rejects_invalid_range(
+    console_session: tuple[TestClient, str],
+) -> None:
+    _USAGE_CACHE.clear()
+    client, _ = console_session
+
+    response = client.get("/console/activity/usage.json?range=2h")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "invalid range"
 
 
 def test_console_welcome_reveals_raw_key_from_pending_reveal_cookie(

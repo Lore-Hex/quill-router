@@ -18,6 +18,20 @@
     maximumFractionDigits: 2
   });
   const modelColors = ["var(--blue)", "var(--green)", "var(--amber)", "var(--rust)", "var(--red)"];
+  const rangeLabels = {
+    "1h": "Last hour",
+    "6h": "Last 6 hours",
+    "24h": "Last 24 hours",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "90d": "Last 90 days"
+  };
+  const granularityLabels = {
+    minute: "minute",
+    "5min": "5-minute",
+    hour: "hour",
+    day: "day"
+  };
 
   function tokenTotal(bucket) {
     return Number(bucket.prompt_tokens || 0) + Number(bucket.completion_tokens || 0);
@@ -76,15 +90,11 @@
     return input ? input.value : fallback;
   }
 
-  function granularityForDays(days) {
-    return days <= 2 ? "hour" : "day";
-  }
-
   function currentState() {
-    const days = Number.parseInt(selectedValue("usage-days", "30"), 10);
+    const range = selectedValue("usage-range", "30d");
     const metric = selectedValue("usage-metric", "spend");
     return {
-      days: Number.isFinite(days) ? days : 30,
+      range: rangeLabels[range] ? range : "30d",
       metric: metrics[metric] ? metric : "spend"
     };
   }
@@ -103,6 +113,11 @@
 
   function formatBucket(bucket, granularity) {
     const value = String(bucket || "");
+    if (granularity === "minute" || granularity === "5min") {
+      const date = new Date(`${value}:00Z`);
+      return Number.isNaN(date.getTime()) ? value
+        : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" });
+    }
     const date = new Date(granularity === "hour" ? `${value}:00:00Z` : `${value}T00:00:00Z`);
     if (Number.isNaN(date.getTime())) {
       return value;
@@ -113,7 +128,7 @@
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
   }
 
-  function renderChart(series, metric, granularity, days) {
+  function renderChart(series, metric, granularity, rangeText) {
     chart.replaceChildren();
     const width = Math.max(chart.clientWidth || 0, 640, series.length * 24);
     const height = 280;
@@ -127,7 +142,7 @@
     const svg = svgNode("svg", {
       class: "usage-chart-svg",
       role: "img",
-      "aria-label": `${metric.label} usage over the last ${days <= 2 ? days * 24 + " hours" : days + " days"}`,
+      "aria-label": `${metric.label} usage over ${rangeText.toLowerCase()}`,
       viewBox: `0 0 ${width} ${height}`,
       width,
       height
@@ -252,9 +267,9 @@
     const state = currentState();
     const metric = metrics[state.metric];
     const buckets = Array.isArray(data.buckets) ? data.buckets : [];
-    rangeLabel.textContent = state.days <= 2
-      ? `Last ${state.days * 24} hours`
-      : `Last ${state.days} days`;
+    const rangeText = rangeLabels[state.range] || rangeLabels["30d"];
+    const granularity = data.granularity || "day";
+    rangeLabel.textContent = rangeText;
 
     if (buckets.length === 0) {
       layout.hidden = true;
@@ -275,9 +290,9 @@
     averageValue.textContent = `${metric.format(total / Math.max(series.length, 1))} avg / bucket`;
     layout.hidden = false;
     empty.hidden = true;
-    setStatus(`${buckets.length} ${data.granularity || granularityForDays(state.days)} buckets`, "good");
+    setStatus(`${buckets.length} ${granularityLabels[granularity] || granularity} buckets`, "good");
     showMessage(data.truncated ? "Showing partial data; narrow the range if totals look lower than expected." : "", "");
-    renderChart(series, metric, data.granularity || granularityForDays(state.days), state.days);
+    renderChart(series, metric, granularity, rangeText);
     renderBreakdown(data.by_model || {});
   }
 
@@ -285,8 +300,7 @@
     const state = currentState();
     const token = ++requestId;
     const params = new URLSearchParams({
-      days: String(state.days),
-      granularity: granularityForDays(state.days),
+      range: state.range,
       by_model: "1"
     });
     setStatus("loading", "");
@@ -338,7 +352,7 @@
     averageValue = panel.querySelector("[data-usage-average]");
     rangeLabel = panel.querySelector("[data-usage-range-label]");
 
-    panel.querySelectorAll('input[name="usage-days"], input[name="usage-metric"]').forEach((input) => {
+    panel.querySelectorAll('input[name="usage-range"], input[name="usage-metric"]').forEach((input) => {
       input.addEventListener("change", loadUsage);
     });
     if ("ResizeObserver" in window) {
@@ -371,20 +385,28 @@
       <fieldset class="usage-segmented-control">
         <legend>Range</legend>
         <label>
-          <input type="radio" name="usage-days" value="1">
+          <input type="radio" name="usage-range" value="1h">
+          <span>1h</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="6h">
+          <span>6h</span>
+        </label>
+        <label>
+          <input type="radio" name="usage-range" value="24h">
           <span>24h</span>
         </label>
         <label>
-          <input type="radio" name="usage-days" value="7">
-          <span>7 days</span>
+          <input type="radio" name="usage-range" value="7d">
+          <span>7d</span>
         </label>
         <label>
-          <input type="radio" name="usage-days" value="30" checked>
-          <span>30 days</span>
+          <input type="radio" name="usage-range" value="30d" checked>
+          <span>30d</span>
         </label>
         <label>
-          <input type="radio" name="usage-days" value="90">
-          <span>90 days</span>
+          <input type="radio" name="usage-range" value="90d">
+          <span>90d</span>
         </label>
       </fieldset>
       <fieldset class="usage-segmented-control">
