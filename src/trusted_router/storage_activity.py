@@ -19,6 +19,18 @@ def generation_metrics(gen: Generation) -> dict[str, int]:
     }
 
 
+def usage_bucket_key(created_at: str, granularity: str) -> str:
+    if granularity == "minute":
+        return created_at[:16]
+    if granularity == "5min":
+        return created_at[:14] + f"{(int(created_at[14:16]) // 5) * 5:02d}"
+    if granularity == "hour":
+        return created_at[:13]
+    if granularity == "day":
+        return created_at[:10]
+    raise ValueError(f"unknown granularity: {granularity}")
+
+
 def filter_generations(
     generations: Iterable[Generation],
     *,

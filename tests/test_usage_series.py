@@ -11,7 +11,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console.activity import _USAGE_CACHE
 from trusted_router.storage import STORE, Generation, InMemoryStore
-from trusted_router.storage_activity import summarize_activity
+from trusted_router.storage_activity import summarize_activity, usage_bucket_key
 from trusted_router.storage_gcp_activity_index import usage_series, write_generation
 
 
@@ -49,6 +49,19 @@ def _generation(
     )
 
 
+def test_usage_bucket_key_all_granularities() -> None:
+    assert usage_bucket_key("2026-05-01T14:23:45Z", "minute") == "2026-05-01T14:23"
+    assert usage_bucket_key("2026-05-01T14:23:45Z", "5min") == "2026-05-01T14:20"
+    assert usage_bucket_key("2026-05-01T14:23:45Z", "hour") == "2026-05-01T14"
+    assert usage_bucket_key("2026-05-01T14:23:45Z", "day") == "2026-05-01"
+    assert usage_bucket_key("2026-05-01T14:00:00Z", "5min") == "2026-05-01T14:00"
+    assert usage_bucket_key("2026-05-01T14:04:00Z", "5min") == "2026-05-01T14:00"
+    assert usage_bucket_key("2026-05-01T14:05:00Z", "5min") == "2026-05-01T14:05"
+    assert usage_bucket_key("2026-05-01T14:59:00Z", "5min") == "2026-05-01T14:55"
+    with pytest.raises(ValueError, match="unknown granularity"):
+        usage_bucket_key("2026-05-01T14:23:45Z", "week")
+
+
 def test_memory_usage_series_hourly_uses_rolling_24h_window() -> None:
     store = InMemoryStore()
     user = store.ensure_user("rolling-usage@example.com")
@@ -78,8 +91,8 @@ def test_memory_usage_series_hourly_uses_rolling_24h_window() -> None:
             )
         )
 
-    hourly = store.usage_series(workspace.id, days=1, granularity="hour")
-    daily = store.usage_series(workspace.id, days=30, granularity="day")
+    hourly = store.usage_series(workspace.id, window_minutes=1440, granularity="hour")
+    daily = store.usage_series(workspace.id, window_minutes=43200, granularity="day")
 
     assert sum(int(bucket["requests"]) for bucket in hourly["buckets"]) == 2
     assert sum(int(bucket["cost_micro"]) for bucket in hourly["buckets"]) == 300
@@ -87,6 +100,50 @@ def test_memory_usage_series_hourly_uses_rolling_24h_window() -> None:
     assert all(len(str(bucket["bucket"])) == 13 for bucket in hourly["buckets"])
     assert sum(int(bucket["requests"]) for bucket in daily["buckets"]) == 3
     assert sum(int(bucket["cost_micro"]) for bucket in daily["buckets"]) == 600
+
+
+def test_memory_usage_series_minute_uses_rolling_60_minute_window() -> None:
+    store = InMemoryStore()
+    user = store.ensure_user("minute-usage@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+    _raw_key, api_key = store.create_api_key(
+        workspace_id=workspace.id,
+        name="minute usage key",
+        creator_user_id=user.id,
+    )
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+    included_at = now - dt.timedelta(minutes=15)
+    excluded_at = now - dt.timedelta(minutes=75)
+    for generation_id, created_at, cost_micro in [
+        ("gen-15m", included_at, 100),
+        ("gen-75m", excluded_at, 200),
+    ]:
+        store.add_generation(
+            _generation(
+                generation_id,
+                workspace_id=workspace.id,
+                key_hash=api_key.hash,
+                created_at=created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                prompt_tokens=10,
+                completion_tokens=5,
+                reasoning_tokens=0,
+                cost_micro=cost_micro,
+            )
+        )
+
+    minute = store.usage_series(workspace.id, window_minutes=60, granularity="minute")
+
+    assert minute["buckets"] == [
+        {
+            "bucket": included_at.strftime("%Y-%m-%dT%H:%M"),
+            "requests": 1,
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "reasoning_tokens": 0,
+            "cost_micro": 100,
+            "byok_micro": 0,
+        }
+    ]
 
 
 def _seed_generations() -> tuple[Any, list[Generation]]:
@@ -219,24 +276,71 @@ def test_usage_series_hourly_and_daily_buckets() -> None:
     )
 
 
-def test_usage_series_hourly_cutoff_uses_start_key() -> None:
+def test_usage_series_minute_and_5min_buckets() -> None:
+    _store, _db, table = make_fake_store()
+    write_generation(
+        table,
+        "m",
+        _generation(
+            "gen-5min",
+            created_at="2026-05-01T14:23:00Z",
+            prompt_tokens=10,
+            completion_tokens=5,
+            reasoning_tokens=1,
+            cost_micro=100,
+        ),
+    )
+
+    minute = usage_series(
+        table,
+        "m",
+        "ws_1",
+        start_day="2026-05-01",
+        end_day="2026-05-01",
+        granularity="minute",
+    )
+    five_min = usage_series(
+        table,
+        "m",
+        "ws_1",
+        start_day="2026-05-01",
+        end_day="2026-05-01",
+        granularity="5min",
+    )
+
+    assert minute["buckets"][0]["bucket"] == "2026-05-01T14:23"
+    assert five_min["buckets"][0]["bucket"] == "2026-05-01T14:20"
+
+
+@pytest.mark.parametrize(
+    ("granularity", "first_bucket"),
+    [
+        ("hour", "2026-05-01T10"),
+        ("minute", "2026-05-01T10:45"),
+        ("5min", "2026-05-01T10:45"),
+    ],
+)
+def test_usage_series_rolling_cutoff_uses_start_key(
+    granularity: str,
+    first_bucket: str,
+) -> None:
     table, _generations = _seed_generations()
 
-    hourly = usage_series(
+    series = usage_series(
         table,
         "m",
         "ws_1",
         start_day="2026-05-01",
         end_day="2026-05-02",
-        granularity="hour",
+        granularity=granularity,
         min_created_at="2026-05-01T10:30:00",
     )
 
     assert table.reads[-1][0] == b"ws#ws_1#2026-05-01#2026-05-01T10:30:00"
     assert table.reads[-1][1] == b"ws#ws_1#2026-05-02~"
-    assert sum(int(bucket["requests"]) for bucket in hourly["buckets"]) == 3
-    assert hourly["buckets"][0]["bucket"] == "2026-05-01T10"
-    assert hourly["buckets"][0]["requests"] == 1
+    assert sum(int(bucket["requests"]) for bucket in series["buckets"]) == 3
+    assert series["buckets"][0]["bucket"] == first_bucket
+    assert series["buckets"][0]["requests"] == 1
 
 
 def test_usage_series_by_model_breakdown() -> None:
@@ -410,13 +514,13 @@ def test_console_usage_series_endpoint_returns_json_and_uses_cache(
         self: InMemoryStore,
         workspace_id: str,
         *,
-        days: int,
+        window_minutes: int,
         granularity: str,
         api_key_hash: str | None = None,
         by_model: bool = False,
     ) -> dict[str, Any]:
         _ = self
-        calls.append((workspace_id, days, granularity, api_key_hash, by_model))
+        calls.append((workspace_id, window_minutes, granularity, api_key_hash, by_model))
         return {
             "granularity": granularity,
             "start_day": "2026-07-06",
@@ -428,17 +532,18 @@ def test_console_usage_series_endpoint_returns_json_and_uses_cache(
 
     monkeypatch.setattr(InMemoryStore, "usage_series", spy_usage_series)
 
-    first = client.get("/console/activity/usage.json?days=2&by_model=true&api_key_hash=key_a")
-    second = client.get("/console/activity/usage.json?days=2&by_model=true&api_key_hash=key_a")
+    first = client.get("/console/activity/usage.json?range=1h&by_model=true&api_key_hash=key_a")
+    second = client.get("/console/activity/usage.json?range=1h&by_model=true&api_key_hash=key_a")
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert first.json()["granularity"] == "hour"
+    assert first.json()["granularity"] == "minute"
+    assert first.json()["range"] == "1h"
     assert first.json() == second.json()
-    assert calls == [(workspace.id, 2, "hour", "key_a", True)]
+    assert calls == [(workspace.id, 60, "minute", "key_a", True)]
 
 
-def test_console_usage_series_endpoint_rejects_bad_granularity() -> None:
+def test_console_usage_series_endpoint_rejects_bad_range() -> None:
     _USAGE_CACHE.clear()
     app = create_app(Settings(environment="local"), init_observability=False)
     client = TestClient(app)
@@ -452,6 +557,7 @@ def test_console_usage_series_endpoint_rejects_bad_granularity() -> None:
     )
     client.cookies.set("tr_session", raw_token)
 
-    response = client.get("/console/activity/usage.json?granularity=minute")
+    response = client.get("/console/activity/usage.json?range=bad")
 
     assert response.status_code == 400
+    assert response.json()["error"]["message"] == "invalid range"

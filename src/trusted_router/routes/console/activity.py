@@ -6,7 +6,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 
 from trusted_router.auth import SettingsDep
@@ -15,7 +15,15 @@ from trusted_router.routes.console._shared import ConsoleDep, render
 from trusted_router.storage import STORE
 
 _USAGE_CACHE_TTL_SECONDS = 60.0
-_UsageCacheKey = tuple[str, int, str, bool, str | None]
+USAGE_RANGE_PRESETS: dict[str, tuple[int, str]] = {
+    "1h": (60, "minute"),
+    "6h": (360, "5min"),
+    "24h": (1440, "hour"),
+    "7d": (10080, "day"),
+    "30d": (43200, "day"),
+    "90d": (129600, "day"),
+}
+_UsageCacheKey = tuple[str, str, bool, str | None]
 _USAGE_CACHE: dict[_UsageCacheKey, tuple[float, dict[str, Any]]] = {}
 
 
@@ -39,19 +47,16 @@ def register(app: FastAPI) -> None:
     @app.get("/console/activity/usage.json")
     async def console_activity_usage(
         ctx: ConsoleDep,
-        days: int = 30,
-        granularity: str | None = None,
+        range_: str = Query("30d", alias="range"),
         by_model: bool = False,
         api_key_hash: str | None = None,
     ) -> dict[str, Any]:
-        clamped_days = min(90, max(1, days))
-        resolved_granularity = granularity or ("hour" if clamped_days <= 2 else "day")
-        if resolved_granularity not in {"hour", "day"}:
-            raise HTTPException(status_code=400, detail="granularity must be 'hour' or 'day'")
+        if range_ not in USAGE_RANGE_PRESETS:
+            raise HTTPException(status_code=400, detail="invalid range")
+        window_minutes, granularity = USAGE_RANGE_PRESETS[range_]
         cache_key = (
             ctx.workspace.id,
-            clamped_days,
-            resolved_granularity,
+            range_,
             by_model,
             api_key_hash,
         )
@@ -61,11 +66,13 @@ def register(app: FastAPI) -> None:
             return cached[1]
         result = STORE.usage_series(
             ctx.workspace.id,
-            days=clamped_days,
-            granularity=resolved_granularity,
+            window_minutes=window_minutes,
+            granularity=granularity,
             api_key_hash=api_key_hash,
             by_model=by_model,
         )
+        result = dict(result)
+        result["range"] = range_
         # A shared cache (Redis) is deferred; this per-worker TTL covers
         # occasional console reads and protects Bigtable from refresh bursts.
         _USAGE_CACHE[cache_key] = (now + _USAGE_CACHE_TTL_SECONDS, result)

@@ -432,7 +432,7 @@ class Store(Protocol):
         self,
         workspace_id: str,
         *,
-        days: int,
+        window_minutes: int,
         granularity: str,
         api_key_hash: str | None = ...,
         by_model: bool = ...,
