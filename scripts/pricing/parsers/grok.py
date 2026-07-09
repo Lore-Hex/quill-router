@@ -3,6 +3,7 @@
 # Parses docs.x.ai/developers/pricing (Jina-rendered markdown). The page
 # has a single chat-models table:
 #
+#   | [grok-4.5](https://docs.x.ai/developers/models/grok-4.5) | 500k | $2.00 | $0.50 | $6.00 |
 #   | [grok-4.3](https://docs.x.ai/developers/models/grok-4.3) | 1M | $1.25 | $0.20 | $2.50 |
 #   | [grok-4.20-multi-agent-0309](...) | 2M | $1.25 | $0.20 | $2.50 |
 #
@@ -16,6 +17,7 @@ from __future__ import annotations
 import re
 
 _NAME_TO_OR_ID = {
+    "grok-4.5": "x-ai/grok-4.5",
     "grok-4.3": "x-ai/grok-4.3",
     "grok-4.20-multi-agent-0309": "x-ai/grok-4.20-multi-agent",
     "grok-4.20-0309-reasoning": "x-ai/grok-4.20-reasoning",

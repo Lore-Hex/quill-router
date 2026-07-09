@@ -1,0 +1,36 @@
+{
+  "provider": "grok",
+  "source": "https://docs.x.ai/developers/models",
+  "generated_at": "2026-07-08T00:00:00Z",
+  "model_count": 1,
+  "_note": "xAI Grok first-party OpenAI-compatible chat at api.x.ai/v1. grok-4.5 model id, context, and pricing verified from xAI docs on 2026-07-08.",
+  "models": [
+    {
+      "id": "x-ai/grok-4.5",
+      "upstream_id": "grok-4.5",
+      "display_name": "xAI Grok 4.5",
+      "title": "grok-4.5",
+      "created": 1783468800,
+      "context_length": 500000,
+      "input_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 500000,
+      "output_token_price_per_m": 6000000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    }
+  ]
+}

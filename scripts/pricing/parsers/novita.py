@@ -16,6 +16,12 @@ import re
 # so most ids pass through unchanged.
 _NAME_TO_OR_ID: dict[str, str] = {}  # populated by _normalize
 
+# Some newly launched rows render as plain display-name tables instead of
+# markdown links. Keep these explicit so pricing does not invent model IDs.
+_DISPLAY_NAME_TO_OR_ID: dict[str, str] = {
+    "Hy3": "tencent/hy3",
+}
+
 
 def _normalize(native_id: str) -> str:
     """Novita's ids match OR's convention closely (`vendor/model-name`),
@@ -33,6 +39,11 @@ _LINK_PRICE_RE = re.compile(
     r"\|\s*\$([\d.]+)\s*/Mt"                # output price
     r"[^|]*"
     r"\|"
+)
+
+_FREE_TEXT_ROW_RE = re.compile(
+    r"(?m)^\s*(?P<name>[^\t\n]+)\t[\d,]+\s*\n"
+    r"\s*Free\s*\n\s*\n?\s*Free\s*\n",
 )
 
 
@@ -60,4 +71,13 @@ def parse(md: str) -> dict:
             except ValueError:
                 pass
         out[or_id] = row_out
+    for match in _FREE_TEXT_ROW_RE.finditer(md):
+        name = match.group("name").strip()
+        or_id = _DISPLAY_NAME_TO_OR_ID.get(name)
+        if not or_id or or_id in out:
+            continue
+        out[or_id] = {
+            "prompt_micro_per_m": 0,
+            "completion_micro_per_m": 0,
+        }
     return out

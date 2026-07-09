@@ -4,7 +4,7 @@
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
   "generated_at": "2026-06-20T00:00:00Z",
-  "model_count": 105,
+  "model_count": 106,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -2705,6 +2705,33 @@
         "anthropic",
         "chat/completions",
         "completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "tencent/hy3",
+      "display_name": "Hy3",
+      "title": "tencent/hy3",
+      "created": 1782798401,
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless",
+        "structured-outputs"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
       ],
       "status": 1
     },

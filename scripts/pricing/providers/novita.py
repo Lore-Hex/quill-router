@@ -14,6 +14,7 @@ JINA_HEADERS = {"X-Return-Format": "markdown"}
 
 EXPECTED_MODELS = [
     "deepseek/deepseek-v4-flash",
+    "tencent/hy3",
 ]
 
 

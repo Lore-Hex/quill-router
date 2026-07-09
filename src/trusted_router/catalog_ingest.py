@@ -354,6 +354,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "gemini",
         "fireworks",
         "deepinfra",
+        "grok",
         "gmi",
         "together",
         "phala",

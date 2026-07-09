@@ -88,6 +88,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
         ("moonshotai/kimi-k2.6", "kimi"),
         ("moonshotai/kimi-k2.7-code", "novita"),
+        ("tencent/hy3", "novita"),
         ("z-ai/glm-5.2", "zai"),
         ("z-ai/glm-5.2", "gmi"),
         ("z-ai/glm-5.2", "deepinfra"),
@@ -170,6 +171,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             [
                 "moonshotai/kimi-k2.6",
                 "deepseek/deepseek-ocr-2",
+                "tencent/hy3",
                 "xiaomimimo/mimo-v2.5-pro",
                 "zai-org/glm-5.1",
                 "Sao10K/L3-8B-Stheno-v3.2",
@@ -218,6 +220,14 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             ],
         ),
         (
+            "grok",
+            4,
+            [
+                "x-ai/grok-4.5",
+                "x-ai/grok-4.3",
+            ],
+        ),
+        (
             "zai",
             6,
             [
@@ -259,6 +269,36 @@ def test_minimax_public_ids_map_to_exact_upstream_ids() -> None:
         MODEL_ENDPOINTS["minimax/minimax-m2.7-highspeed@minimax/byok"].upstream_id
         == "MiniMax-M2.7-highspeed"
     )
+
+
+def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
+    model = MODELS["x-ai/grok-4.5"]
+    prepaid = MODEL_ENDPOINTS["x-ai/grok-4.5@grok/prepaid"]
+    byok = MODEL_ENDPOINTS["x-ai/grok-4.5@grok/byok"]
+
+    assert model.provider == "grok"
+    assert model.context_length == 500_000
+    assert prepaid.upstream_id == "grok-4.5"
+    assert byok.upstream_id == "grok-4.5"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 2_200_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 6_600_000
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 550_000
+
+
+def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
+    model = MODELS["tencent/hy3"]
+    prepaid = MODEL_ENDPOINTS["tencent/hy3@novita/prepaid"]
+    byok = MODEL_ENDPOINTS["tencent/hy3@novita/byok"]
+
+    # We do not have a first-party Tencent provider object yet, so provider
+    # ownership falls back to the serving provider while the model ID keeps
+    # the canonical Tencent namespace.
+    assert model.provider == "novita"
+    assert model.context_length == 262_144
+    assert prepaid.upstream_id == "tencent/hy3"
+    assert byok.upstream_id == "tencent/hy3"
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 10_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 10_000
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:

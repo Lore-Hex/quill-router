@@ -304,7 +304,7 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # xAI Grok — OpenAI-compatible chat completions at api.x.ai/v1.
-    # As of 2026-05, headline model is grok-4.3 ($1.25/$2.50 per M).
+    # As of 2026-07, headline model is grok-4.5 ($2/$6 per M, 500k ctx).
     "grok": Provider(
         slug="grok",
         name="xAI Grok",

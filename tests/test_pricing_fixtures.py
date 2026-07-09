@@ -204,6 +204,29 @@ def test_novita_fixture_keeps_qwen_235b_prices_in_true_microdollars() -> None:
     }
 
 
+def test_novita_parser_keeps_hy3_free_row() -> None:
+    module = importlib.import_module("scripts.pricing.parsers.novita")
+    result = module.parse(
+        """
+Hunyuan
+
+--
+
+Model Name\tContext\tInput\tOutput\tActions
+Hy3\t262,144\t
+Free
+\t
+Free
+\tMore
+"""
+    )
+
+    assert result["tencent/hy3"] == {
+        "prompt_micro_per_m": 0,
+        "completion_micro_per_m": 0,
+    }
+
+
 @pytest.mark.parametrize(
     "slug",
     ["anthropic", "cerebras", "gemini", "mistral", "deepseek", "openai", "kimi", "zai"],
@@ -261,3 +284,20 @@ def test_parser_returns_well_shaped_dict(slug: str) -> None:
                 assert cached is None or isinstance(cached, int)
                 if isinstance(cached, int):
                     assert cached >= 0
+
+
+def test_grok_parser_extracts_grok_45_current_pricing_row() -> None:
+    from scripts.pricing.parsers import grok
+
+    result = grok.parse(
+        """
+| Model | Context | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| [grok-4.5](https://docs.x.ai/developers/models/grok-4.5) | 500k | $2.00 | $0.50 | $6.00 |
+"""
+    )
+
+    assert result["x-ai/grok-4.5"] == {
+        "prompt_micro_per_m": 2_000_000,
+        "completion_micro_per_m": 6_000_000,
+    }
