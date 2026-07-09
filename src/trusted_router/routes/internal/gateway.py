@@ -35,6 +35,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.pricing import select_price_tier
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routes.internal._shared import require_internal_gateway
@@ -1077,15 +1078,22 @@ def _endpoint_cost_microdollars(
     """input_tokens must be the UNCACHED prompt tokens when cache counts
     are passed — cached reads/writes bill at the provider-specific
     multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
-    cost = token_cost_microdollars(
-        input_tokens, endpoint.prompt_price_microdollars_per_million_tokens
-    ) + token_cost_microdollars(
+    prompt_price = endpoint.prompt_price_microdollars_per_million_tokens
+    completion_price = endpoint.completion_price_microdollars_per_million_tokens
+    total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
+    tiers = getattr(endpoint, "price_tiers", ()) or ()
+    if tiers:
+        tier = select_price_tier(tiers, total_prompt)
+        prompt_price = tier.prompt_price_microdollars_per_million_tokens
+        completion_price = tier.completion_price_microdollars_per_million_tokens
+
+    cost = token_cost_microdollars(input_tokens, prompt_price) + token_cost_microdollars(
         output_tokens,
-        endpoint.completion_price_microdollars_per_million_tokens,
+        completion_price,
     )
     if cache_read_tokens or cache_creation_tokens:
         read_price, write_price = cache_token_prices_microdollars(
-            endpoint.provider, endpoint.prompt_price_microdollars_per_million_tokens
+            endpoint.provider, prompt_price
         )
         cost += token_cost_microdollars(cache_read_tokens, read_price)
         cost += token_cost_microdollars(cache_creation_tokens, write_price)
