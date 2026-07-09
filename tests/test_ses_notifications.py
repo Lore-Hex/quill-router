@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import logging
 from typing import Any
 from unittest.mock import patch
 
@@ -166,6 +167,40 @@ def test_email_service_skips_blocked_recipient() -> None:
         )
     )
     assert sent is False
+
+
+def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCaptureFixture) -> None:
+    settings = Settings(environment="local")
+    service = EmailService(settings)
+    body = "Verify with token=secret-token and free-text sensitive content."
+    subject_marker = "SubjectUserMarker-4837"
+    subject = f"Confirm account for {subject_marker}"
+
+    with caplog.at_level(logging.INFO, logger="trusted_router.services.email"):
+        sent = service.send(
+            EmailMessage(
+                to="user@example.com",
+                subject=subject,
+                text_body=body,
+            )
+        )
+
+    assert sent is False
+    fallback_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "trusted_router.services.email"
+        and record.getMessage().startswith("email_send.fallback ")
+    ]
+    assert fallback_logs == [
+        "email_send.fallback to=user@example.com "
+        f"subject_len={len(subject)} body_len={len(body)}"
+    ]
+    assert "subject=" not in fallback_logs[0]
+    assert subject_marker not in fallback_logs[0]
+    assert subject not in fallback_logs[0]
+    assert "body=" not in fallback_logs[0]
+    assert body not in fallback_logs[0]
 
 
 def test_email_service_sends_expected_ses_payload(monkeypatch) -> None:
