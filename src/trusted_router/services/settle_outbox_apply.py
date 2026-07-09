@@ -48,6 +48,7 @@ _TRANSIENT_STORE_EXCS = (
 class ApplyOutcome:
     SETTLED_NOW = "settled_now"
     ALREADY_SETTLED_WITH_CHARGE = "already_settled_with_charge"
+    RESOLVED_ZERO_COST_ELSEWHERE = "resolved_zero_cost_elsewhere"
     # Legacy origin cannot disambiguate a charged replay from a refund/
     # failure-settle free release (legacy Reservation records no actual
     # amount). Increment 4: mark done; flag for low-priority review when a
@@ -248,16 +249,16 @@ def _apply_typed(
         if reservation is None:
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
-        if actual_micro > 0 or row.actual_cost_micro == 0:
-            # Charged replay — or our own frozen cost is 0, in which case
-            # whatever resolved the hold produced a state identical to applying
-            # this row (booking 0 == booking nothing): nothing was lost, benign.
-            # Parity with the inline path's known post-commit index hole; the
-            # drain's retry-after-ambiguous-failure purpose makes it likelier.
+        if actual_micro > 0:
+            # Charged replay. Parity with the inline path's known post-commit
+            # index hole; the drain's retry-after-ambiguous-failure purpose
+            # makes it likelier.
             logger.info(
                 "drain replay of a charged settle; if the charge was committed by a finalize whose response was lost (park->retry), its Bigtable activity-index entry may be absent; repairable via reconcile_activity"
             )
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+        if row.actual_cost_micro == 0:
+            return ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE
         # Booked 0 while this row intended a real charge: the hold was resolved
         # WITHOUT our charge (reaper free-release, or a refund won the race).
         # For settle intent this is the §3 lost-charge signal; for refund intent

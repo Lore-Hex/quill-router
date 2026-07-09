@@ -243,7 +243,7 @@ def test_zero_cost_replay_is_benign(fake_store: tuple[Any, Any, Any]) -> None:
     row = _row(auth, cost=0)
 
     assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
-    assert apply_frozen_settle(row) == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
+    assert apply_frozen_settle(row) == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE
     assert _typed_credit(db, ws)["total_usage"] == 0
     assert len(_generation_bodies(db)) == 1
 

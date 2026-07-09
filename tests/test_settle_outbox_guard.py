@@ -6,6 +6,7 @@ the outbox row builder style from test_settle_outbox_storage.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -26,7 +27,11 @@ from trusted_router.storage_gcp_authorize import (
     reap_expired_reservations,
     settle_atomic,
 )
-from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL, SpannerSettleOutbox
+from trusted_router.storage_gcp_settle_outbox import (
+    GUARD_COUNT_SQL,
+    GUARD_STATUSES,
+    SpannerSettleOutbox,
+)
 from trusted_router.storage_models import SettleOutboxRow
 
 
@@ -104,6 +109,14 @@ def _assert_free_released(db: Any, ws: str, rid: str) -> None:
     assert _typed(db, ws)["total_usage"] == 0
     assert db.reservations[rid]["settled"] is True
     assert db.reservations[rid]["actual_micro"] == 0
+
+
+def test_guard_sql_literals_come_from_guard_statuses() -> None:
+    for sql in (GUARD_COUNT_SQL, _REAP_SCAN_GUARDED_SQL):
+        [fragment] = re.findall(r"\bstatus IN \(([^)]*)\)", sql)
+        quoted = re.findall(r"'([^']+)'", sql)
+        assert quoted == list(GUARD_STATUSES)
+        assert re.findall(r"'([^']+)'", fragment) == quoted
 
 
 def test_pending_row_freezes_hold() -> None:

@@ -116,6 +116,21 @@ def _resolve_row(
             )
         return
 
+    if outcome == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE:
+        outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
+        # Rare $0 race: money is correct and no alert is warranted, but this row
+        # did not write a Generation. reconcile_generation_activity can repair
+        # per-request records if needed; we intentionally avoid a bypass write
+        # primitive for this edge case.
+        logger.warning(
+            "settle outbox warning: settle intent found reservation already zero-resolved "
+            "authorization_id=%s reservation_id=%s likely reaper race; "
+            "no generation record was written by this row",
+            row.authorization_id,
+            row.reservation_id,
+        )
+        return
+
     if outcome == ApplyOutcome.ALREADY_SETTLED_LEGACY:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
         if row.intent_kind == "settle" and outbox.get(row.authorization_id, "refund") is not None:

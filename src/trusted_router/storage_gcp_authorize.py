@@ -38,7 +38,7 @@ from trusted_router.storage_gcp_counter_dml import (
     reserve_key,
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
-from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL
+from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
 
 
 class AuthorizeOutcome:
@@ -341,22 +341,21 @@ def _is_table_missing(exc: Exception) -> bool:
     )
 
 
-# Reaper scan, two forms. The guarded form excludes holds with a pending/dead
-# outbox row IN THE SCAN so frozen holds never consume @limit and cannot
+# Reaper scan, two forms. The guarded form excludes holds with an outbox row
+# whose status is in GUARD_STATUSES IN THE SCAN so frozen holds never consume @limit and cannot
 # starve unguarded expired holds behind them (PR #116 review P2). The NOT
 # EXISTS runs on a snapshot, so it is ADVISORY ONLY — the strong re-read
-# inside settle_atomic(guard_outbox=True) remains the MF2 interlock. Keep the
-# subquery predicates literally in sync with GUARD_COUNT_SQL / GUARD_STATUSES.
+# inside settle_atomic(guard_outbox=True) remains the MF2 interlock.
 _REAP_SCAN_SQL = (
     "SELECT reservation_id, authorization_id FROM tr_reservation "
     "WHERE settled=false AND expires_at < @now LIMIT @limit"
 )
 _REAP_SCAN_GUARDED_SQL = (
-    "SELECT reservation_id, authorization_id FROM tr_reservation "
+    "SELECT reservation_id, authorization_id FROM tr_reservation "  # noqa: S608
     "WHERE settled=false AND expires_at < @now "
     "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
     "WHERE o.authorization_id = tr_reservation.authorization_id "
-    "AND o.status IN ('pending', 'dead')) "
+    f"AND o.status IN ({_GUARD_STATUS_SQL})) "
     "LIMIT @limit"
 )
 
@@ -371,12 +370,12 @@ def reap_expired_reservations(
     reaper is safe — whoever claims the row first wins, the other no-ops.
 
     The outbox guard is live: advisory filtering happens in the scan SQL, so a
-    hold whose authorization has a pending/dead `tr_settle_outbox` row is
-    invisible to the scan and cannot starve later unguarded holds behind @limit
-    (PR #116 review P2). `settle_atomic(..., guard_outbox=True)` still does the
-    in-txn re-check; that strong read remains the MF2 interlock. `release_approved`
-    is the only human-set status that re-permits this free release. Returns the
-    count reaped.
+    hold whose authorization has a `tr_settle_outbox` row with status in
+    GUARD_STATUSES is invisible to the scan and cannot starve later unguarded
+    holds behind @limit (PR #116 review P2). `settle_atomic(..., guard_outbox=True)`
+    still does the in-txn re-check; that strong read remains the MF2 interlock.
+    `release_approved` is the only human-set status that re-permits this free
+    release. Returns the count reaped.
     """
     pt = param_types
     guard_active = True
