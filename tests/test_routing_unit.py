@@ -17,8 +17,10 @@ from trusted_router.catalog import PROVIDER_JURISDICTION_US
 from trusted_router.config import Settings
 from trusted_router.routing import (
     _sort_endpoint_candidates,
+    catalog_endpoint_candidates,
     chat_route_candidates,
     chat_route_endpoint_candidates,
+    embeddings_route_endpoint_candidates,
     provider_route_preferences,
 )
 
@@ -427,6 +429,77 @@ def test_data_collection_deny_still_filters_when_satisfiable() -> None:
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
         for _model, endpoint in endpoint_candidates
     )
+
+
+def test_embeddings_data_collection_deny_soft_fallback_keeps_standard_model_endpoints() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_NO_STORE,
+        endpoint_privacy_tier,
+        endpoints_for_model,
+    )
+
+    model_id = "openai/text-embedding-3-large"
+    catalog_endpoints = endpoints_for_model(model_id)
+    assert catalog_endpoints
+    assert all(endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in catalog_endpoints)
+
+    candidates_without_deny = embeddings_route_endpoint_candidates({"model": model_id}, _settings())
+    candidates_with_deny = embeddings_route_endpoint_candidates(
+        {"model": model_id, "provider": {"data_collection": "deny"}},
+        _settings(),
+    )
+
+    assert [endpoint.id for _model, endpoint in candidates_with_deny] == [
+        endpoint.id for _model, endpoint in candidates_without_deny
+    ]
+
+
+def test_embeddings_provider_only_stays_hard_when_data_collection_soft_falls_back() -> None:
+    with pytest.raises(HTTPException) as exc:
+        embeddings_route_endpoint_candidates(
+            {
+                "model": "openai/text-embedding-3-large",
+                "provider": {"only": ["cohere"], "data_collection": "deny"},
+            },
+            _settings(),
+        )
+    assert exc.value.status_code == 400
+    assert "filters" in exc.value.detail["error"]["message"].lower()
+
+
+def test_catalog_data_collection_deny_soft_fallback_and_satisfiable_filtering() -> None:
+    from trusted_router.catalog import (
+        MODELS,
+        PRIVACY_TIER_NO_STORE,
+        endpoint_privacy_tier,
+        endpoints_for_model,
+    )
+
+    standard_model_id = "openai/text-embedding-3-large"
+    standard_endpoints = endpoints_for_model(standard_model_id)
+    assert standard_endpoints
+    assert all(
+        endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in standard_endpoints
+    )
+
+    deny_prefs = provider_route_preferences({"provider": {"data_collection": "deny"}})
+    standard_candidates = catalog_endpoint_candidates(MODELS[standard_model_id], deny_prefs)
+    assert {endpoint.id for _model, endpoint in standard_candidates} == {
+        endpoint.id for endpoint in standard_endpoints
+    }
+
+    private_model_id = "cohere/embed-v4.0"
+    private_candidates = catalog_endpoint_candidates(MODELS[private_model_id], deny_prefs)
+    assert private_candidates
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
+        for _model, endpoint in private_candidates
+    )
+    assert {endpoint.id for _model, endpoint in private_candidates} == {
+        endpoint.id
+        for endpoint in endpoints_for_model(private_model_id)
+        if endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
+    }
 
 
 def test_provider_only_stays_hard_when_data_collection_soft_falls_back() -> None:
