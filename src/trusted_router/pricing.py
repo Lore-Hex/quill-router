@@ -5,6 +5,9 @@ pricing, price-tier selection, and provider-manifest price parsing. Pure
 functions of the money primitives — NO dependency on the catalog data
 (PROVIDERS/MODELS) — so a pricing change is reviewable in isolation from the
 catalog. catalog.py re-exports these for backward compatibility.
+
+Request cost callers intentionally differ only in cache policy; tier selection
+and prompt/completion rate resolution must go through resolve_request_rates.
 """
 
 from __future__ import annotations
@@ -42,6 +45,15 @@ class PriceTier:
     completion_price_microdollars_per_million_tokens: int
     prompt_cached_price_microdollars_per_million_tokens: int | None = None
 
+
+@dataclass(frozen=True)
+class RequestRates:
+    prompt_price_microdollars_per_million_tokens: int
+    completion_price_microdollars_per_million_tokens: int
+    # Tier-declared cached-read rate; None when the selected tier declares none.
+    prompt_cached_price_microdollars_per_million_tokens: int | None
+
+
 def _flat_tier(
     prompt: int,
     completion: int,
@@ -73,6 +85,34 @@ def select_price_tier(tiers: tuple[PriceTier, ...], prompt_tokens: int) -> Price
     # Should be unreachable — the last tier always matches due to
     # max_prompt_tokens=None — but defend against malformed catalog data.
     return tiers[-1]
+
+
+def resolve_request_rates(
+    tiers: tuple[PriceTier, ...],
+    *,
+    headline_prompt_micro_per_m: int,
+    headline_completion_micro_per_m: int,
+    total_prompt_tokens: int,
+) -> RequestRates:
+    if tiers:
+        tier = select_price_tier(tiers, total_prompt_tokens)
+        return RequestRates(
+            prompt_price_microdollars_per_million_tokens=(
+                tier.prompt_price_microdollars_per_million_tokens
+            ),
+            completion_price_microdollars_per_million_tokens=(
+                tier.completion_price_microdollars_per_million_tokens
+            ),
+            prompt_cached_price_microdollars_per_million_tokens=(
+                tier.prompt_cached_price_microdollars_per_million_tokens
+            ),
+        )
+    return RequestRates(
+        prompt_price_microdollars_per_million_tokens=headline_prompt_micro_per_m,
+        completion_price_microdollars_per_million_tokens=headline_completion_micro_per_m,
+        prompt_cached_price_microdollars_per_million_tokens=None,
+    )
+
 
 class ModelPricingKwargs(TypedDict):
     prompt_price_microdollars_per_million_tokens: int

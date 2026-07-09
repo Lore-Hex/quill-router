@@ -5,13 +5,14 @@ from typing import Any
 
 from fastapi import Request
 
-from trusted_router.catalog import Model, select_price_tier
+from trusted_router.catalog import Model
 from trusted_router.errors import api_error
 from trusted_router.money import (
     dollars_to_microdollars,
     microdollars_to_float,
     token_cost_microdollars,
 )
+from trusted_router.pricing import resolve_request_rates
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -56,34 +57,37 @@ def cost_microdollars(
     cached_input_tokens = max(0, min(cached_input_tokens, input_tokens))
     uncached_input_tokens = input_tokens - cached_input_tokens
 
-    tiers = model.price_tiers
-    if tiers:
-        tier = select_price_tier(tiers, input_tokens)
-        cached_rate = (
-            tier.prompt_cached_price_microdollars_per_million_tokens
-            if tier.prompt_cached_price_microdollars_per_million_tokens is not None
-            else tier.prompt_price_microdollars_per_million_tokens
-        )
+    rates = resolve_request_rates(
+        model.price_tiers,
+        headline_prompt_micro_per_m=model.prompt_price_microdollars_per_million_tokens,
+        headline_completion_micro_per_m=model.completion_price_microdollars_per_million_tokens,
+        total_prompt_tokens=input_tokens,
+    )
+    if not model.price_tiers:
         return (
             token_cost_microdollars(
-                uncached_input_tokens,
-                tier.prompt_price_microdollars_per_million_tokens,
+                input_tokens,
+                rates.prompt_price_microdollars_per_million_tokens,
             )
-            + token_cost_microdollars(cached_input_tokens, cached_rate)
             + token_cost_microdollars(
                 output_tokens,
-                tier.completion_price_microdollars_per_million_tokens,
+                rates.completion_price_microdollars_per_million_tokens,
             )
         )
-    # Pre-tier flat-rate path. Cached tokens fall back to the same rate
-    # as uncached because there's no cached-rate field on Model.
+    cached_rate = (
+        rates.prompt_cached_price_microdollars_per_million_tokens
+        if rates.prompt_cached_price_microdollars_per_million_tokens is not None
+        else rates.prompt_price_microdollars_per_million_tokens
+    )
     return (
         token_cost_microdollars(
-            input_tokens, model.prompt_price_microdollars_per_million_tokens
+            uncached_input_tokens,
+            rates.prompt_price_microdollars_per_million_tokens,
         )
+        + token_cost_microdollars(cached_input_tokens, cached_rate)
         + token_cost_microdollars(
             output_tokens,
-            model.completion_price_microdollars_per_million_tokens,
+            rates.completion_price_microdollars_per_million_tokens,
         )
     )
 

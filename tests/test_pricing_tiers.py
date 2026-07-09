@@ -13,6 +13,7 @@ from trusted_router.catalog import (
     PriceTier,
     select_price_tier,
 )
+from trusted_router.pricing import RequestRates, resolve_request_rates
 from trusted_router.routes.helpers import cost_microdollars
 
 # ----------------------------------------------------------------------
@@ -70,6 +71,85 @@ def test_select_price_tier_handles_single_uncapped_tier() -> None:
     for size in [0, 1_000, 1_000_000_000]:
         tier = select_price_tier(tiers, prompt_tokens=size)
         assert tier.max_prompt_tokens is None
+
+
+# ----------------------------------------------------------------------
+# resolve_request_rates — shared request-rate primitive
+# ----------------------------------------------------------------------
+
+
+def test_resolve_request_rates_empty_tiers_uses_headline_rates() -> None:
+    assert resolve_request_rates(
+        (),
+        headline_prompt_micro_per_m=123,
+        headline_completion_micro_per_m=456,
+        total_prompt_tokens=10_000,
+    ) == RequestRates(
+        prompt_price_microdollars_per_million_tokens=123,
+        completion_price_microdollars_per_million_tokens=456,
+        prompt_cached_price_microdollars_per_million_tokens=None,
+    )
+
+
+def test_resolve_request_rates_single_tier() -> None:
+    rates = resolve_request_rates(
+        (
+            PriceTier(
+                max_prompt_tokens=None,
+                prompt_price_microdollars_per_million_tokens=1_000_000,
+                completion_price_microdollars_per_million_tokens=2_000_000,
+                prompt_cached_price_microdollars_per_million_tokens=100_000,
+            ),
+        ),
+        headline_prompt_micro_per_m=123,
+        headline_completion_micro_per_m=456,
+        total_prompt_tokens=999_999,
+    )
+
+    assert rates == RequestRates(
+        prompt_price_microdollars_per_million_tokens=1_000_000,
+        completion_price_microdollars_per_million_tokens=2_000_000,
+        prompt_cached_price_microdollars_per_million_tokens=100_000,
+    )
+
+
+def test_resolve_request_rates_multi_tier_below_threshold() -> None:
+    assert resolve_request_rates(
+        _gemini_pro_tiers(),
+        headline_prompt_micro_per_m=123,
+        headline_completion_micro_per_m=456,
+        total_prompt_tokens=199_999,
+    ) == RequestRates(
+        prompt_price_microdollars_per_million_tokens=1_375_000,
+        completion_price_microdollars_per_million_tokens=11_000_000,
+        prompt_cached_price_microdollars_per_million_tokens=None,
+    )
+
+
+def test_resolve_request_rates_multi_tier_at_inclusive_threshold() -> None:
+    assert resolve_request_rates(
+        _gemini_pro_tiers(),
+        headline_prompt_micro_per_m=123,
+        headline_completion_micro_per_m=456,
+        total_prompt_tokens=200_000,
+    ) == RequestRates(
+        prompt_price_microdollars_per_million_tokens=1_375_000,
+        completion_price_microdollars_per_million_tokens=11_000_000,
+        prompt_cached_price_microdollars_per_million_tokens=None,
+    )
+
+
+def test_resolve_request_rates_multi_tier_above_threshold() -> None:
+    assert resolve_request_rates(
+        _gemini_pro_tiers(),
+        headline_prompt_micro_per_m=123,
+        headline_completion_micro_per_m=456,
+        total_prompt_tokens=200_001,
+    ) == RequestRates(
+        prompt_price_microdollars_per_million_tokens=2_750_000,
+        completion_price_microdollars_per_million_tokens=16_500_000,
+        prompt_cached_price_microdollars_per_million_tokens=None,
+    )
 
 
 # ----------------------------------------------------------------------
