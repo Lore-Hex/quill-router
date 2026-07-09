@@ -49,16 +49,16 @@ OUTBOX_COLUMNS = [
 # `release_approved` is deliberately excluded: it is the human's explicit ok to
 # let the reaper free the hold. `done` means the charge already applied.
 GUARD_STATUSES = ("pending", "dead")
+_GUARD_STATUS_SQL = ", ".join(f"'{status}'" for status in GUARD_STATUSES)
 
 # The reaper-guard predicate. SINGLE SOURCE OF TRUTH for this SQL: it is
 # executed on a snapshot by has_intent (advisory pre-scan), on a snapshot by
 # the reaper's advisory skip, and INSIDE settle_atomic's read-write
-# transaction (the real interlock, MF2). The fake asserts both predicates
-# (`authorization_id=@aid`, `status IN ('pending', 'dead')`) — keep the
-# literal exactly in sync with GUARD_STATUSES.
+# transaction (the real interlock, MF2). Guard statuses come from
+# GUARD_STATUSES; update the tuple, not the SQL literals.
 GUARD_COUNT_SQL = (
-    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "
-    "AND status IN ('pending', 'dead')"
+    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
+    f"AND status IN ({_GUARD_STATUS_SQL})"
 )
 
 # Enqueue outcomes.

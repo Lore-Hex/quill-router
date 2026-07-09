@@ -23,7 +23,7 @@ from trusted_router.storage_gcp_authorize import (
     reap_expired_reservations,
     settle_atomic,
 )
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import CreditAccount, GatewayAuthorization, SettleOutboxRow
 
@@ -79,6 +79,14 @@ def _make_key(store: Any, workspace_id: str, *, limit: int | None = TOTAL_CREDIT
 
 def _typed_credit(db: Any, workspace_id: str) -> dict[str, Any]:
     return db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]
+
+
+def _typed_key(db: Any, key_hash: str) -> dict[str, Any]:
+    return db.typed[KEY_LIMIT_TABLE][(key_hash, 0)]
+
+
+def _generation_count(db: Any) -> int:
+    return sum(1 for (kind, _entity_id) in db.rows if kind == "generation")
 
 
 def _typed_authorization(
@@ -592,6 +600,135 @@ def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
 
     again = drain_mod.drain_settle_outbox(10)
     assert again["reaped"] == 0
+
+
+def test_zero_cost_settle_reaper_race_resolves_done_with_warning(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, bt = fake_store
+    ws = "ws-drain-zero-reaper-race"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    freed = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=auth.credit_reservation_id,
+        actual_micro=0,
+        settled_usage_type="Credits",
+        success=False,
+    )
+    assert freed["outcome"] == SettleOutcome.SETTLED
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=0))
+    credit_before = dict(_typed_credit(db, ws))
+    key_before = dict(_typed_key(db, key.hash))
+    assert _generation_count(db) == 0
+    caplog.set_level(logging.WARNING)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1}
+    assert result["recovered_micro"] == 0
+    assert result["reaped"] == 0
+    assert ob.get(auth.id, "settle").status == "done"
+    assert _typed_credit(db, ws) == credit_before
+    assert _typed_key(db, key.hash) == key_before
+    assert _generation_count(db) == 0
+    assert bt.committed == []
+    messages = [rec.message for rec in caplog.records]
+    assert any(
+        "settle intent found reservation already zero-resolved" in msg
+        and f"authorization_id={auth.id}" in msg
+        and f"reservation_id={auth.credit_reservation_id}" in msg
+        and "likely reaper race" in msg
+        and "no generation record was written by this row" in msg
+        for msg in messages
+    )
+    assert not any("ALERT" in msg for msg in messages)
+
+
+def test_nonzero_settle_reaper_race_still_alerts_lost_charge(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-drain-nonzero-reaper-race"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    freed = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=auth.credit_reservation_id,
+        actual_micro=0,
+        settled_usage_type="Credits",
+        success=False,
+    )
+    assert freed["outcome"] == SettleOutcome.SETTLED
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=777_777))
+    credit_before = dict(_typed_credit(db, ws))
+    key_before = dict(_typed_key(db, key.hash))
+    caplog.set_level(logging.WARNING)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.ALREADY_RELEASED_FREE: 1}
+    assert result["recovered_micro"] == 0
+    assert result["reaped"] == 0
+    lost = ob.get(auth.id, "settle")
+    assert lost is not None
+    assert lost.status == "dead"
+    assert lost.last_error == "already_released_free: settle charge was lost"
+    assert _typed_credit(db, ws) == credit_before
+    assert _typed_key(db, key.hash) == key_before
+    assert any("ALERT settle outbox lost charge" in rec.message for rec in caplog.records)
+
+
+def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, bt = fake_store
+    ws = "ws-drain-zero-replay"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth, cost=0)
+    ob = _outbox(store)
+    ob.enqueue(row)
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+    credit_before = dict(_typed_credit(db, ws))
+    key_before = dict(_typed_key(db, key.hash))
+    generation_count_before = _generation_count(db)
+    committed_before = list(bt.committed)
+    assert generation_count_before == 1
+    caplog.set_level(logging.WARNING)
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1}
+    assert result["recovered_micro"] == 0
+    assert result["reaped"] == 0
+    assert ob.get(auth.id, "settle").status == "done"
+    assert _typed_credit(db, ws) == credit_before
+    assert _typed_key(db, key.hash) == key_before
+    assert _generation_count(db) == generation_count_before
+    assert bt.committed == committed_before
+    messages = [rec.message for rec in caplog.records]
+    assert any(
+        "settle intent found reservation already zero-resolved" in msg
+        and f"authorization_id={auth.id}" in msg
+        and f"reservation_id={auth.credit_reservation_id}" in msg
+        and "no generation record was written by this row" in msg
+        for msg in messages
+    )
+    assert not any("ALERT" in msg for msg in messages)
 
 
 def test_lost_charge_recovery_end_to_end(

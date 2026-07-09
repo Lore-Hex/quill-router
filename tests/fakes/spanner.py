@@ -6,7 +6,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from trusted_router.storage_gcp_settle_outbox import OUTBOX_COLUMNS
+from trusted_router.storage_gcp_settle_outbox import (
+    _GUARD_STATUS_SQL,
+    GUARD_STATUSES,
+    OUTBOX_COLUMNS,
+)
 
 
 class _ParamTypes:
@@ -687,13 +691,13 @@ def _execute_settle_outbox_sql(
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
         _require_pred(sql, "authorization_id=@aid", "has_intent")
-        _require_pred(sql, "status IN ('pending', 'dead')", "has_intent")
+        _require_pred(sql, f"status IN ({_GUARD_STATUS_SQL})", "has_intent")
         aid = p["aid"]
         # Committed-state read is correct for the in-txn guard too: enqueue
         # commits in its own txn, and the reaper txn never writes outbox rows.
         n = sum(
             1 for rec in db.settle_outbox.values()
-            if rec.get("authorization_id") == aid and rec.get("status") in ("pending", "dead")
+            if rec.get("authorization_id") == aid and rec.get("status") in GUARD_STATUSES
         )
         return [[n]]
     if "WHERE authorization_id=@aid AND intent_kind=@kind" in sql:  # get by PK
@@ -727,7 +731,7 @@ def _execute_sql(
                 "o.authorization_id = tr_reservation.authorization_id",
                 "reaper-scan-guard",
             )
-            _require_pred(sql, "o.status IN ('pending', 'dead')", "reaper-scan-guard")
+            _require_pred(sql, f"o.status IN ({_GUARD_STATUS_SQL})", "reaper-scan-guard")
         now = params["now"]
         limit = int(params.get("limit", 100))
         out: list[list] = []
@@ -742,7 +746,7 @@ def _execute_sql(
                 aid = rec.get("authorization_id")
                 if any(
                     row.get("authorization_id") == aid
-                    and row.get("status") in ("pending", "dead")
+                    and row.get("status") in GUARD_STATUSES
                     for row in db.settle_outbox.values()
                 ):
                     continue

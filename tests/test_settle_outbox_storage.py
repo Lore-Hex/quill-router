@@ -12,6 +12,7 @@ import pytest
 
 from tests.fakes.spanner import _execute_settle_outbox_sql, _FakeTransaction, make_fake_store
 from trusted_router.storage_gcp_settle_outbox import (
+    _GUARD_STATUS_SQL,
     ENQ_EXISTS_TERMINAL,
     ENQ_INSERTED,
     ENQ_LEASED,
@@ -193,7 +194,7 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
     with pytest.raises(AssertionError, match="has_intent"):
         _execute_settle_outbox_sql(
             db, None,
-            "SELECT COUNT(*) FROM tr_settle_outbox WHERE status IN ('pending', 'dead')",
+            f"SELECT COUNT(*) FROM tr_settle_outbox WHERE status IN ({_GUARD_STATUS_SQL})",  # noqa: S608
             {"aid": "gwa-12"},
         )
     # A claim query missing its `leased_until` lease fence must likewise FAIL.
