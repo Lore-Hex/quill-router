@@ -60,18 +60,32 @@ Rollback story: per-workspace `pause → drain → backsync_typed_to_json → re
 allowlist → unpause` — the existing, tested runbook. This is why Phase A deletes nothing.
 
 ### Phase B — move the remaining JSON-money surfaces (code; one PR per step)
-B1. Reads: `signup()` trial-credit report and console credits/billing display →
-    `typed_credit_snapshot`. (Safe once the workspace is typed; during the ramp, gate on
-    membership like the routes do.)
-B2. Writes: `credit_workspace_once`, stripe settlement, auto-refill outcome → write
-    typed `total_credits` directly (idempotency event + typed write in one txn — the
-    same shape the mirror achieves today, minus the JSON hop). JSON money fields become
-    dead weight, not yet deleted.
+B1. Reads: `signup()` trial-credit report, console credits/billing display, AND the MCP
+    `credits-get` tool (routes/mcp.py:172-187 — reads JSON total_credits/total_usage/
+    reserved/available; found in adversarial review) → `typed_credit_snapshot`. (Safe
+    once the workspace is typed; during the ramp, gate on membership like the routes do.)
+B2. Writes: `credit_workspace_once`, stripe settlement, auto-refill outcome → typed
+    `total_credits` becomes AUTHORITATIVE (idempotency event + typed write in one txn),
+    but the JSON `total_credits` field is STILL written in the same txn ("kept warm").
+    Rationale (P1 from adversarial review): `backsync_typed_to_json` copies only
+    total_usage/reserved — never total_credits (counter_reconcile.py:491,550-553; pinned
+    by tests/test_billing_rollback_backsync.py:51-52) — so a denylisted/rolled-back
+    workspace's legacy authorize (storage_gcp_keys.py:278-286) would otherwise read a
+    stale JSON balance after a typed-direct top-up. Keeping JSON warm preserves the
+    per-workspace rollback unchanged; the JSON write (and the warm-keeping) is deleted
+    only in Phase C when rollback-to-legacy is retired. (Alternative — extending
+    backsync to copy total_credits — rejected: touches rollback semantics mid-migration.)
 B3. Grant scripts (`scripts/credit_grant_*.py` pattern) switch their verification to the
     typed snapshot (they already cross-check it today).
 
 ### Phase C — delete (the payoff; only after A4 + B and clean audits for ~2 weeks)
-C1. Delete the legacy JSON finalize path and `_require_credit_tx` enforcement.
+C1. Delete the legacy JSON finalize path and `_require_credit_tx` enforcement — AND the
+    legacy RESERVE side (missed in v1, found in adversarial review): the fallback
+    authorize path's `STORE.reserve` call (routes/internal/gateway.py:343-351) and
+    `SpannerApiKeys.reserve` (storage_gcp_keys.py:278-295), which reads JSON availability
+    and writes `CreditAccount.reserved_microdollars`. Also delete B2's JSON
+    total_credits warm-keeping write in the same step (rollback-to-legacy is retired
+    here, so the warm copy loses its purpose).
 C2. Delete the mirror, `backsync`, `backfill`, `compare`; slim `CreditAccount` to
     metadata; update the memory twin + every test that constructs money fields on it.
 C3. Runbook rewrite: single-book operations; keep `repair_typed_reserved` +
@@ -90,9 +104,13 @@ C3. Runbook rewrite: single-book operations; keep `repair_typed_reserved` +
   after single-book).
 - No auto-refill/stripe metadata redesign — those fields just stay JSON metadata.
 
-## Appendix: inventory (2026-07-10)
+## Appendix: inventory (2026-07-10; v2 additions from adversarial review marked ⊕)
 JSON readers: get_credit_account (storage_gcp.py:391) ← signup (280), console billing,
-grants verification. JSON writers (all mirror-firing via _write_entity_tx/batch):
+grants verification, ⊕ MCP credits-get (routes/mcp.py:172-187),
+⊕ legacy authorize availability read (storage_gcp_keys.py:278-286).
+⊕ JSON money writer missed in v1: SpannerApiKeys.reserve (storage_gcp_keys.py:278-295,
+called from the fallback authorize at routes/internal/gateway.py:343-351) — increments
+CreditAccount.reserved_microdollars on the legacy path; scheduled for deletion in C1. JSON writers (all mirror-firing via _write_entity_tx/batch):
 credit_workspace_once (753), auto-refill settings (765), stripe customer (785), clear
 payment method (804), refill outcome (818), legacy finalize (935: reserved/total_usage),
 ensure_user (248), create_workspace (328), backsync (counter_reconcile.py:551). Typed
