@@ -506,6 +506,9 @@ def test_socrates_aliases_are_cataloged_with_advisor_candidates() -> None:
     ]
     rolling_candidates = [
         "xiaomi/mimo-v2.5-pro-ultraspeed",
+        "minimax/minimax-m3",
+        "z-ai/glm-5.2-fast",
+        "deepseek/deepseek-v4-flash",
         "trustedrouter/zeus-1.0",
     ]
 
