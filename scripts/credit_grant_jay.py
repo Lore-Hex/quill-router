@@ -1,4 +1,4 @@
-"""One-shot $40 credit grant for jayzalowitz@robotrobotandhuman.com (manual top-up).
+"""One-shot $10 credit grant for jayzalowitz@robotrobotandhuman.com (manual top-up).
 
 User (Joseph) asked on 2026-07-09 to give jay another $10 of credit.
 
@@ -8,7 +8,7 @@ TR_TYPED_COUNTER_MIRROR=1. Verifies the typed counter after.
 
 Usage:
     cd /Users/jperla/claude/qr-billing
-    PYTHONPATH=src uv run python scripts/credit_grant_david.py
+    PYTHONPATH=src uv run python scripts/credit_grant_jay.py
 """
 
 from __future__ import annotations

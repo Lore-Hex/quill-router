@@ -519,13 +519,15 @@ Outcome cheat-sheet:
 
 Monitoring signals:
 
-App log routing is a trap here, so know it exactly. INFO and above from
-`trusted_router.*` loggers now ship to AXIOM because `init_axiom()` lowers
-only the package logger to `TR_AXIOM_LOG_LEVEL` (default INFO) and leaves
-root at uvicorn's WARNING. Third-party INFO still does not ship because it
-gates on root's WARNING. App records still never appear in Cloud Logging:
-once `init_axiom()` attaches the root Axiom handler, `logging.lastResort`
-stops mirroring app records to stderr. Search alerts and app INFO in Axiom
+App log routing is a trap here, so know it exactly. INFO settle-outbox lines
+such as `reaped N expired reservations` and `recovered settle charge` do ship
+to Axiom via the scoped `trusted_router.*` package logger
+(`TR_AXIOM_LOG_LEVEL`, default INFO), so on-call can search for them there.
+`init_axiom()` lowers only the package logger and leaves root at uvicorn's
+WARNING. Third-party INFO still does not ship because it gates on root's
+WARNING. App records still never appear in Cloud Logging: once `init_axiom()`
+attaches the root Axiom handler, `logging.lastResort` stops mirroring app
+records to stderr. Search alerts and app INFO in Axiom
 (`TR_AXIOM_DATASET=trusted-router-logs`), not `gcloud logging`. Cloud Logging
 carries only platform request logs and uvicorn/unhandled-exception stderr
 tracebacks. Judge reap/drain health by state, never by log lines:
