@@ -246,6 +246,9 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert "<span class=\"pill\">named preset</span>" in response.text
     assert "Models used by this orchestration" in response.text
     assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
+    assert "minimax/minimax-m3" in response.text
+    assert "z-ai/glm-5.2-fast" in response.text
+    assert "deepseek/deepseek-v4-flash" in response.text
     assert "trustedrouter/zeus-1.0" in response.text
     assert "Model not found" not in response.text
     assert "/models/trustedrouter/socrates-1.1/providers" not in response.text

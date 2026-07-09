@@ -666,14 +666,23 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
         ],
         SOCRATES_PRO_PLUS_1_0_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
         SOCRATES_1_1_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
         SOCRATES_PRO_PLUS_MODEL_ID: [
             "xiaomi/mimo-v2.5-pro-ultraspeed",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2-fast",
+            "deepseek/deepseek-v4-flash",
             "trustedrouter/zeus-1.0",
         ],
         OPEN_PATCHER_A1_MODEL_ID: [

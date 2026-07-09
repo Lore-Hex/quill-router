@@ -1036,6 +1036,18 @@ SOCRATES_CATALOG_MODEL_ORDER = (
     "anthropic/claude-opus-4.8",
 )
 
+SOCRATES_1_1_WORKER_MODEL_ORDER = (
+    "xiaomi/mimo-v2.5-pro-ultraspeed",
+    "minimax/minimax-m3",
+    "z-ai/glm-5.2-fast",
+    "deepseek/deepseek-v4-flash",
+)
+
+SOCRATES_1_1_CATALOG_MODEL_ORDER = (
+    *SOCRATES_1_1_WORKER_MODEL_ORDER,
+    ZEUS_1_0_MODEL_ID,
+)
+
 SELECTOR_CATALOG_MODEL_ORDER = (
     *SYNTH_QUALITY_MODEL_ORDER,
     "moonshotai/kimi-k2.7-code",
@@ -1051,14 +1063,8 @@ MAPREDUCE_CATALOG_MODEL_ORDER = (
 
 ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
     SOCRATES_1_0_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
-    SOCRATES_1_1_MODEL_ID: (
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        ZEUS_1_0_MODEL_ID,
-    ),
-    SOCRATES_MODEL_ID: (
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        ZEUS_1_0_MODEL_ID,
-    ),
+    SOCRATES_1_1_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
+    SOCRATES_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
     ADVISOR_MODEL_ID: SOCRATES_CATALOG_MODEL_ORDER,
     SUBAGENT_MODEL_ID: (
         "deepseek/deepseek-v4-flash",
@@ -1106,14 +1112,8 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "xiaomi/mimo-v2.5-pro-ultraspeed",
         "anthropic/claude-opus-4.8",
     ),
-    SOCRATES_PRO_PLUS_1_0_MODEL_ID: (
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        ZEUS_1_0_MODEL_ID,
-    ),
-    SOCRATES_PRO_PLUS_MODEL_ID: (
-        "xiaomi/mimo-v2.5-pro-ultraspeed",
-        ZEUS_1_0_MODEL_ID,
-    ),
+    SOCRATES_PRO_PLUS_1_0_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
+    SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_1_1_CATALOG_MODEL_ORDER,
     OPEN_PATCHER_A1_MODEL_ID: (
         OPEN_PATCHER_S1_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
