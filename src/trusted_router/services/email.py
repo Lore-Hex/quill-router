@@ -68,7 +68,12 @@ class EmailService:
             )
             return False
         if self._client is None:
-            log.info("email_send.fallback to=%s subject=%s body=%s", message.to, message.subject, message.text_body)
+            log.info(
+                "email_send.fallback to=%s subject=%r body_len=%d",
+                message.to,
+                message.subject,
+                len(message.text_body),
+            )
             return False
         body: dict[str, dict[str, str]] = {"Text": {"Data": message.text_body, "Charset": "UTF-8"}}
         if message.html_body:

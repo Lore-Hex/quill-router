@@ -6,8 +6,10 @@ from collections.abc import Iterator
 import axiom_py
 import axiom_py.logging as axiom_logging
 import pytest
+from fastapi.testclient import TestClient
 
 import trusted_router.axiom_config as axiom_config
+import trusted_router.routes.public as public_routes
 from trusted_router.axiom_config import (
     _AxiomScrubFilter,
     _client_kwargs,
@@ -16,6 +18,8 @@ from trusted_router.axiom_config import (
     init_axiom,
 )
 from trusted_router.config import Settings
+from trusted_router.main import create_app
+from trusted_router.services.email import EmailMessage
 
 
 def _fake_axiom_token() -> str:
@@ -108,6 +112,24 @@ def test_axiom_scrub_filter_collapses_and_redacts_positional_args() -> None:
     assert "a@b.com" not in record_payload
 
 
+def test_axiom_scrub_filter_truncates_formatted_message_to_2000_chars() -> None:
+    record = logging.LogRecord(
+        name="trusted_router.email",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="email_send.fallback %s",
+        args=("x" * 2_500,),
+        exc_info=None,
+    )
+
+    assert _AxiomScrubFilter().filter(record) is True
+
+    assert record.args is None
+    assert len(record.msg) == _AxiomScrubFilter._MAX_MESSAGE_CHARS
+    assert record.msg.endswith(_AxiomScrubFilter._TRUNCATION_SUFFIX)
+
+
 def test_axiom_scrub_filter_tolerates_bad_format_args() -> None:
     raw_arg = "token=abc123"
     record = logging.LogRecord(
@@ -124,6 +146,66 @@ def test_axiom_scrub_filter_tolerates_bad_format_args() -> None:
     assert record.msg == "email_send.fallback %s %s"
     assert record.args is None
     assert raw_arg not in repr(record.__dict__)
+
+
+def test_trustedos_inquiry_log_ships_lengths_not_free_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sent_messages: list[EmailMessage] = []
+
+    class FakeEmailService:
+        def send(self, message: EmailMessage) -> bool:
+            sent_messages.append(message)
+            return True
+
+    monkeypatch.setattr(public_routes, "get_email_service", lambda _settings: FakeEmailService())
+    with public_routes._INQUIRY_RATE_LOCK:
+        public_routes._INQUIRY_HITS.clear()
+    client = TestClient(
+        create_app(
+            Settings(
+                environment="test",
+                partner_inquiry_email="leads@example.com",
+            ),
+            init_observability=False,
+        )
+    )
+    message_body = "Please call about SSN 123-45-6789 and card 4111111111111111."
+
+    with caplog.at_level(logging.INFO, logger="trusted_router.routes.public"):
+        response = client.post(
+            "/trustedos/inquiry",
+            json={
+                "name": "Ada Lovelace",
+                "email": "ada@example.com",
+                "company": "Analytical Engines Ltd",
+                "message": message_body,
+            },
+        )
+
+    assert response.status_code == 200
+    assert sent_messages
+    assert message_body in sent_messages[0].text_body
+    received_records = [
+        record
+        for record in caplog.records
+        if record.name == "trusted_router.routes.public"
+        and record.getMessage().startswith("trustedos_inquiry.received ")
+    ]
+    assert len(received_records) == 1
+
+    record = received_records[0]
+    assert _AxiomScrubFilter().filter(record) is True
+    shipped_message = record.getMessage()
+    assert "name='Ada Lovelace'" in shipped_message
+    assert "email='[Filtered-email]'" in shipped_message
+    assert "company_len=22" in shipped_message
+    assert f"message_len={len(message_body)}" in shipped_message
+    assert "message=" not in shipped_message
+    assert message_body not in shipped_message
+    assert "Analytical Engines Ltd" not in shipped_message
+    assert "ada@example.com" not in shipped_message
 
 
 def test_axiom_client_kwargs_use_edge_url_for_edge_deployments() -> None:

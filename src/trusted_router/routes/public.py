@@ -210,11 +210,9 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
         )
         return ok
 
-    # Log every accepted lead in full before attempting delivery, so a lead
-    # can never be lost to a mailer failure.
     log.info(
-        "trustedos_inquiry.received name=%r email=%r company=%r message=%r",
-        name, email, company, message,
+        "trustedos_inquiry.received name=%r email=%r company_len=%d message_len=%d",
+        name, email, len(company or ""), len(message or ""),
     )
 
     text_body = (

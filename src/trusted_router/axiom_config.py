@@ -174,6 +174,8 @@ class _AxiomScrubFilter(logging.Filter):
             "taskName", "asctime",
         }
     )
+    _MAX_MESSAGE_CHARS = 2_000
+    _TRUNCATION_SUFFIX = "…[truncated]"
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
@@ -191,6 +193,11 @@ class _AxiomScrubFilter(logging.Filter):
                 "[Filtered-email]",
                 _AXIOM_SECRET_VALUE_RE.sub(r"\1=[Filtered]", collapsed),
             )
+            if len(record.msg) > self._MAX_MESSAGE_CHARS:
+                record.msg = (
+                    record.msg[: self._MAX_MESSAGE_CHARS - len(self._TRUNCATION_SUFFIX)]
+                    + self._TRUNCATION_SUFFIX
+                )
             record.args = None
 
         for key, value in list(record.__dict__.items()):
