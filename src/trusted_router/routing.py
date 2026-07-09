@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from trusted_router.catalog import (
     AUTO_MODEL_ID,
@@ -156,6 +157,8 @@ _PROVIDER_PREFERENCE = {
     "gmi": 5,
 }
 
+_CandidateT = TypeVar("_CandidateT")
+
 
 def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Model]:
     raw_ids, prefs = _routing_for_body(body, settings)
@@ -173,7 +176,7 @@ def chat_route_candidates(body: dict[str, Any], settings: Settings) -> list[Mode
             candidates.append(model)
             seen.add(model.id)
 
-    candidates = _apply_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(candidates, prefs, _apply_provider_filters)
     if not candidates:
         raise api_error(
             400,
@@ -206,7 +209,9 @@ def chat_route_endpoint_candidates(
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     if not candidates:
         raise api_error(
             400,
@@ -499,6 +504,24 @@ def _expand_model_id(model_id: str, settings: Settings) -> list[str]:
     if meta_candidates:
         return [candidate.id for candidate in meta_candidates]
     return [model_id]
+
+
+def _filter_candidates_soft_data_collection(
+    candidates: list[_CandidateT],
+    prefs: RoutePreferences,
+    apply_fn: Callable[[list[_CandidateT], RoutePreferences], list[_CandidateT]],
+) -> list[_CandidateT]:
+    """Apply provider filters with data_collection='deny' as a soft preference.
+
+    Some OpenRouter-migrated clients send this compatibility flag on every request
+    unconditionally, so it must not hard-fail routing when it is the only filter
+    emptying an otherwise valid route. Explicit privacy floors and provider
+    inclusion/exclusion filters remain hard.
+    """
+    filtered = apply_fn(candidates, prefs)
+    if not filtered and prefs.data_collection == "deny":
+        filtered = apply_fn(candidates, dataclasses.replace(prefs, data_collection=None))
+    return filtered
 
 
 def _apply_provider_filters(candidates: list[Model], prefs: RoutePreferences) -> list[Model]:

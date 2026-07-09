@@ -18,6 +18,7 @@ from trusted_router.config import Settings
 from trusted_router.routing import (
     _sort_endpoint_candidates,
     chat_route_candidates,
+    chat_route_endpoint_candidates,
     provider_route_preferences,
 )
 
@@ -369,26 +370,89 @@ def test_model_shape_exposes_privacy_tier() -> None:
     assert tr["privacy_tier"] >= 2  # zero retention or better
 
 
-def test_data_collection_deny_keeps_zdr_drops_standard() -> None:
-    # deny == "no data collection" → require >= no-store tier. A model on a
-    # no-store+ provider (deepseek via phala/tinfoil) must be KEPT; a model only
-    # on standard providers must be dropped. NOTE: anthropic/openai/google were
-    # downgraded from ZDR to standard in 4faa10d ("excluded from trustedrouter/zdr
-    # until reverified"), so they are no longer the ZDR example.
-    from trusted_router.catalog import PRIVACY_TIER_NO_STORE, model_max_privacy_tier
+def test_data_collection_deny_soft_fallback_keeps_standard_only_model_and_endpoints() -> None:
+    from trusted_router.catalog import (
+        MODELS,
+        PRIVACY_TIER_NO_STORE,
+        endpoint_privacy_tier,
+        endpoints_for_model,
+        model_max_privacy_tier,
+    )
 
-    kept = chat_route_candidates(
-        {"model": "deepseek/deepseek-v3.2", "provider": {"data_collection": "deny"}},
+    model_id = "mistralai/mistral-small-2603"
+    catalog_endpoints = endpoints_for_model(model_id)
+    assert model_max_privacy_tier(MODELS[model_id]) < PRIVACY_TIER_NO_STORE
+    assert all(endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in catalog_endpoints)
+
+    body = {"model": model_id, "provider": {"data_collection": "deny"}}
+    candidates = chat_route_candidates(body, _settings())
+    endpoint_candidates = chat_route_endpoint_candidates(body, _settings())
+
+    assert [model.id for model in candidates] == [model_id]
+    assert {endpoint.id for _model, endpoint in endpoint_candidates} == {
+        endpoint.id for endpoint in catalog_endpoints
+    }
+
+
+def test_data_collection_deny_still_filters_when_satisfiable() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_NO_STORE,
+        endpoint_privacy_tier,
+        endpoints_for_model,
+        model_max_privacy_tier,
+    )
+
+    standard_model_id = "mistralai/mistral-small-2603"
+    private_model_id = "deepseek/deepseek-v3.2"
+    candidates = chat_route_candidates(
+        {
+            "models": [standard_model_id, private_model_id],
+            "provider": {"data_collection": "deny"},
+        },
         _settings(),
     )
-    assert kept and all(model_max_privacy_tier(m) >= PRIVACY_TIER_NO_STORE for m in kept)
+    assert [model.id for model in candidates] == [private_model_id]
+    assert all(model_max_privacy_tier(model) >= PRIVACY_TIER_NO_STORE for model in candidates)
 
+    endpoint_candidates = chat_route_endpoint_candidates(
+        {"model": private_model_id, "provider": {"data_collection": "deny"}},
+        _settings(),
+    )
+    assert endpoint_candidates
+    assert any(
+        endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
+        for endpoint in endpoints_for_model(private_model_id)
+    )
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
+        for _model, endpoint in endpoint_candidates
+    )
+
+
+def test_provider_only_stays_hard_when_data_collection_soft_falls_back() -> None:
     with pytest.raises(HTTPException) as exc:
         chat_route_candidates(
-            {"model": "mistralai/mistral-small-2603", "provider": {"data_collection": "deny"}},
+            {
+                "model": "mistralai/mistral-small-2603",
+                "provider": {"only": ["openai"], "data_collection": "deny"},
+            },
             _settings(),
         )
     assert exc.value.status_code == 400
+    assert "filters" in exc.value.detail["error"]["message"].lower()
+
+
+def test_min_privacy_stays_hard_when_data_collection_soft_falls_back() -> None:
+    with pytest.raises(HTTPException) as exc:
+        chat_route_candidates(
+            {
+                "model": "mistralai/mistral-small-2603",
+                "provider": {"data_collection": "deny", "min_privacy": "no_store"},
+            },
+            _settings(),
+        )
+    assert exc.value.status_code == 400
+    assert "filters" in exc.value.detail["error"]["message"].lower()
 
 
 def test_unverified_provider_defaults_to_stores_content() -> None:
