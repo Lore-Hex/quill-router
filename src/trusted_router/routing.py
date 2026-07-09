@@ -235,7 +235,9 @@ def catalog_endpoint_candidates(
     to describe any served model while still honoring provider filters.
     """
     candidates = [(model, endpoint) for endpoint in endpoints_for_model(model.id)]
-    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     candidates = _sort_endpoint_candidates(candidates, prefs)
     if not prefs.allow_fallbacks:
         return candidates[:1]
@@ -267,7 +269,9 @@ def embeddings_route_endpoint_candidates(
             candidates.append((model, endpoint))
             seen.add(endpoint.id)
 
-    candidates = _apply_endpoint_provider_filters(candidates, prefs)
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
     if not candidates:
         raise api_error(
             400,
