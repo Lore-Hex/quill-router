@@ -488,18 +488,31 @@ def test_catalog_data_collection_deny_soft_fallback_and_satisfiable_filtering() 
         endpoint.id for endpoint in standard_endpoints
     }
 
-    private_model_id = "cohere/embed-v4.0"
-    private_candidates = catalog_endpoint_candidates(MODELS[private_model_id], deny_prefs)
-    assert private_candidates
-    assert all(
-        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
-        for _model, endpoint in private_candidates
-    )
-    assert {endpoint.id for _model, endpoint in private_candidates} == {
-        endpoint.id
-        for endpoint in endpoints_for_model(private_model_id)
-        if endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
-    }
+    mixed_model_id = None
+    mixed_endpoints = []
+    mixed_qualifying_endpoints = []
+    for model_id in MODELS:
+        endpoints = endpoints_for_model(model_id)
+        qualifying_endpoints = [
+            endpoint
+            for endpoint in endpoints
+            if endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_NO_STORE
+        ]
+        if qualifying_endpoints and len(qualifying_endpoints) < len(endpoints):
+            mixed_model_id = model_id
+            mixed_endpoints = endpoints
+            mixed_qualifying_endpoints = qualifying_endpoints
+            break
+
+    assert mixed_model_id is not None
+    mixed_candidates = catalog_endpoint_candidates(MODELS[mixed_model_id], deny_prefs)
+    mixed_candidate_ids = {endpoint.id for _model, endpoint in mixed_candidates}
+    mixed_endpoint_ids = {endpoint.id for endpoint in mixed_endpoints}
+    mixed_qualifying_endpoint_ids = {endpoint.id for endpoint in mixed_qualifying_endpoints}
+
+    assert mixed_candidate_ids == mixed_qualifying_endpoint_ids
+    assert mixed_candidate_ids
+    assert mixed_candidate_ids < mixed_endpoint_ids
 
 
 def test_provider_only_stays_hard_when_data_collection_soft_falls_back() -> None:
