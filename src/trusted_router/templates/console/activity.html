@@ -286,8 +286,14 @@
       value: metric.value(bucket)
     }));
     const total = series.reduce((sum, point) => sum + point.value, 0);
-    totalValue.textContent = metric.format(total);
-    averageValue.textContent = `${metric.format(total / Math.max(series.length, 1))} avg / bucket`;
+    const truncatedPrefix = data.truncated ? "≥" : "";
+    totalValue.textContent = `${truncatedPrefix}${metric.format(total)}`;
+    if (data.truncated) {
+      totalValue.title = "Partial data — some rows were not scanned; narrow the range for an exact total";
+    } else {
+      totalValue.removeAttribute("title");
+    }
+    averageValue.textContent = `${truncatedPrefix}${metric.format(total / Math.max(series.length, 1))} avg / bucket`;
     layout.hidden = false;
     empty.hidden = true;
     setStatus(`${buckets.length} ${granularityLabels[granularity] || granularity} buckets`, "good");

@@ -677,6 +677,11 @@ def test_console_activity_renders_usage_panel(
     assert "/console/activity/usage.json" in resp.text
     assert 'range: state.range' in resp.text
     assert 'by_model: "1"' in resp.text
+    assert 'const truncatedPrefix = data.truncated ? "≥" : "";' in resp.text
+    assert (
+        "Partial data — some rows were not scanned; narrow the range for an exact total"
+        in resp.text
+    )
     assert "Spend" in resp.text
     assert "Tokens" in resp.text
     assert "Requests" in resp.text
