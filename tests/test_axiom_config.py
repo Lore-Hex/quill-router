@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import axiom_py
 import axiom_py.logging as axiom_logging
@@ -69,6 +70,104 @@ def clean_axiom_logging_state() -> Iterator[None]:
 class _ExplodingHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         raise RuntimeError("axiom dataset is not ingestible")
+
+
+class _CapturingHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(logging.makeLogRecord(record.__dict__.copy()))
+
+
+@contextmanager
+def _capture_lead_and_root_logs() -> Iterator[tuple[_CapturingHandler, _CapturingHandler]]:
+    lead_logger = logging.getLogger("tr_leads.trustedos_inquiry")
+    root = logging.getLogger()
+    lead_capture = _CapturingHandler()
+    root_capture = _CapturingHandler()
+    lead_logger.addHandler(lead_capture)
+    root.addHandler(root_capture)
+    try:
+        yield lead_capture, root_capture
+    finally:
+        lead_logger.removeHandler(lead_capture)
+        root.removeHandler(root_capture)
+
+
+def _trustedos_client(settings: Settings) -> TestClient:
+    with public_routes._INQUIRY_RATE_LOCK:
+        public_routes._INQUIRY_HITS.clear()
+    return TestClient(create_app(settings, init_observability=False))
+
+
+def _trustedos_payload(*, company: str, message: str) -> dict[str, str]:
+    return {
+        "name": "Ada Lovelace",
+        "email": "ada@example.com",
+        "company": company,
+        "message": message,
+    }
+
+
+def _scrubbed_trustedos_messages(
+    caplog: pytest.LogCaptureFixture,
+    event_name: str,
+) -> list[str]:
+    messages: list[str] = []
+    for record in caplog.records:
+        if record.name != "trusted_router.routes.public":
+            continue
+        if not record.getMessage().startswith(f"{event_name} "):
+            continue
+        assert _AxiomScrubFilter().filter(record) is True
+        messages.append(record.getMessage())
+    return messages
+
+
+def _assert_inquiry_log_minimized(
+    shipped_message: str,
+    *,
+    company: str,
+    message: str,
+) -> None:
+    assert "company_len=" in shipped_message
+    assert "message_len=" in shipped_message
+    assert f"company_len={len(company)}" in shipped_message
+    assert f"message_len={len(message)}" in shipped_message
+    assert company not in shipped_message
+    assert message not in shipped_message
+
+
+def _assert_lead_log_local_only(
+    lead_records: list[logging.LogRecord],
+    root_records: list[logging.LogRecord],
+    *,
+    recipient: str | None,
+    company: str,
+    message: str,
+) -> None:
+    lead_logger = logging.getLogger("tr_leads.trustedos_inquiry")
+    assert lead_logger.propagate is False
+    assert not lead_logger.name.startswith("trusted_router")
+
+    lead_messages = [
+        record.getMessage()
+        for record in lead_records
+        if record.name == lead_logger.name
+        and record.getMessage().startswith("trustedos_inquiry.lead ")
+    ]
+    assert len(lead_messages) == 1
+    assert f"recipient={recipient!r}" in lead_messages[0]
+    assert "name='Ada Lovelace'" in lead_messages[0]
+    assert "email='ada@example.com'" in lead_messages[0]
+    assert f"company={company!r}" in lead_messages[0]
+    assert f"message={message!r}" in lead_messages[0]
+
+    root_payloads = [f"{record.getMessage()} {record.__dict__!r}" for record in root_records]
+    assert all(company not in payload for payload in root_payloads)
+    assert all(message not in payload for payload in root_payloads)
 
 
 def test_safe_axiom_handler_never_raises_from_emit(capsys) -> None:
@@ -160,15 +259,10 @@ def test_trustedos_inquiry_log_ships_lengths_not_free_text(
             return True
 
     monkeypatch.setattr(public_routes, "get_email_service", lambda _settings: FakeEmailService())
-    with public_routes._INQUIRY_RATE_LOCK:
-        public_routes._INQUIRY_HITS.clear()
-    client = TestClient(
-        create_app(
-            Settings(
-                environment="test",
-                partner_inquiry_email="leads@example.com",
-            ),
-            init_observability=False,
+    client = _trustedos_client(
+        Settings(
+            environment="test",
+            partner_inquiry_email="leads@example.com",
         )
     )
     message_body = "Please call about SSN 123-45-6789 and card 4111111111111111."
@@ -206,6 +300,109 @@ def test_trustedos_inquiry_log_ships_lengths_not_free_text(
     assert message_body not in shipped_message
     assert "Analytical Engines Ltd" not in shipped_message
     assert "ada@example.com" not in shipped_message
+
+
+def test_trustedos_inquiry_no_recipient_log_ships_lengths_not_free_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    company = "Round Two Company Marker"
+    message = "Round two no recipient message marker."
+    client = _trustedos_client(
+        Settings(
+            environment="test",
+            partner_inquiry_email=None,
+            ses_from_email=None,
+        )
+    )
+
+    with _capture_lead_and_root_logs() as (lead_capture, root_capture):
+        with caplog.at_level(logging.ERROR, logger="trusted_router.routes.public"):
+            response = client.post(
+                "/trustedos/inquiry",
+                json=_trustedos_payload(company=company, message=message),
+            )
+
+    assert response.status_code == 200
+    shipped_messages = _scrubbed_trustedos_messages(caplog, "trustedos_inquiry.no_recipient")
+    assert len(shipped_messages) == 1
+    _assert_inquiry_log_minimized(shipped_messages[0], company=company, message=message)
+    _assert_lead_log_local_only(
+        lead_capture.records,
+        root_capture.records,
+        recipient=None,
+        company=company,
+        message=message,
+    )
+
+
+def test_trustedos_inquiry_send_failed_log_ships_lengths_not_free_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    company = "Round Two Send Failure Company Marker"
+    message = "Round two send failure message marker."
+
+    class FailingEmailService:
+        def send(self, _message: EmailMessage) -> bool:
+            raise RuntimeError("smtp unavailable")
+
+    monkeypatch.setattr(public_routes, "get_email_service", lambda _settings: FailingEmailService())
+    client = _trustedos_client(
+        Settings(
+            environment="test",
+            partner_inquiry_email="leads@example.com",
+        )
+    )
+
+    with caplog.at_level(logging.ERROR, logger="trusted_router.routes.public"):
+        response = client.post(
+            "/trustedos/inquiry",
+            json=_trustedos_payload(company=company, message=message),
+        )
+
+    assert response.status_code == 200
+    shipped_messages = _scrubbed_trustedos_messages(caplog, "trustedos_inquiry.send_failed")
+    assert len(shipped_messages) == 1
+    _assert_inquiry_log_minimized(shipped_messages[0], company=company, message=message)
+
+
+def test_trustedos_inquiry_delivery_failed_log_ships_lengths_not_free_text(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    company = "Round Two Delivery Failure Company Marker"
+    message = "Round two delivery failure message marker."
+
+    class RefusingEmailService:
+        def send(self, _message: EmailMessage) -> bool:
+            return False
+
+    monkeypatch.setattr(public_routes, "get_email_service", lambda _settings: RefusingEmailService())
+    client = _trustedos_client(
+        Settings(
+            environment="test",
+            partner_inquiry_email="leads@example.com",
+        )
+    )
+
+    with _capture_lead_and_root_logs() as (lead_capture, root_capture):
+        with caplog.at_level(logging.ERROR, logger="trusted_router.routes.public"):
+            response = client.post(
+                "/trustedos/inquiry",
+                json=_trustedos_payload(company=company, message=message),
+            )
+
+    assert response.status_code == 200
+    shipped_messages = _scrubbed_trustedos_messages(caplog, "trustedos_inquiry.delivery_failed")
+    assert len(shipped_messages) == 1
+    _assert_inquiry_log_minimized(shipped_messages[0], company=company, message=message)
+    _assert_lead_log_local_only(
+        lead_capture.records,
+        root_capture.records,
+        recipient="leads@example.com",
+        company=company,
+        message=message,
+    )
 
 
 def test_axiom_client_kwargs_use_edge_url_for_edge_deployments() -> None:

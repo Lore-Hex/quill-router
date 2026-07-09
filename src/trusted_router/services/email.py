@@ -69,9 +69,9 @@ class EmailService:
             return False
         if self._client is None:
             log.info(
-                "email_send.fallback to=%s subject=%r body_len=%d",
+                "email_send.fallback to=%s subject_len=%d body_len=%d",
                 message.to,
-                message.subject,
+                len(message.subject),
                 len(message.text_body),
             )
             return False

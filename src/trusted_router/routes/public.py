@@ -142,6 +142,12 @@ class _CachedStaticFiles(StaticFiles):
 
 
 log = logging.getLogger(__name__)
+_leads_log = logging.getLogger("tr_leads.trustedos_inquiry")
+_leads_log.propagate = False
+if not _leads_log.handlers:
+    _leads_handler = logging.StreamHandler()
+    _leads_handler.setFormatter(logging.Formatter("%(message)s"))
+    _leads_log.addHandler(_leads_handler)
 
 # Simple in-process sliding-window limiter for the public TrustedOS inquiry
 # form. Not a substitute for an edge WAF, but enough to blunt casual abuse of
@@ -202,11 +208,18 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
 
     recipient = settings.partner_inquiry_email or settings.ses_from_email
     if not recipient:
-        # No inbox configured — capture the lead in logs so it isn't lost, and
-        # still report success to the sender.
+        # No inbox configured — emit a metadata-only diagnostic and still
+        # report success to the sender.
         log.error(
-            "trustedos_inquiry.no_recipient name=%r email=%r company=%r message=%r",
-            name, email, company, message,
+            "trustedos_inquiry.no_recipient name=%r email=%r company_len=%d message_len=%d",
+            name, email, len(company or ""), len(message or ""),
+        )
+        # Full lead goes to first-party stderr logs only. This logger is outside
+        # the trusted_router namespace and propagate=False keeps it off the
+        # root-attached third-party Axiom handler.
+        _leads_log.error(
+            "trustedos_inquiry.lead recipient=%r name=%r email=%r company=%r message=%r",
+            recipient, name, email, company, message,
         )
         return ok
 
@@ -231,15 +244,22 @@ async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSO
     except Exception:  # noqa: BLE001 - never surface mailer errors to the form
         sent = False
         log.exception(
-            "trustedos_inquiry.send_failed name=%r email=%r company=%r",
-            name, email, company,
+            "trustedos_inquiry.send_failed name=%r email=%r company_len=%d message_len=%d",
+            name, email, len(company or ""), len(message or ""),
         )
     if not sent:
         # send() returns False when SES is unconfigured or the recipient is
-        # suppressed. Surface the full lead at error level so it reaches
-        # alerting and is never silently dropped.
+        # suppressed. Surface a metadata-only diagnostic so alerting sees the
+        # delivery issue without logging submitted free text.
         log.error(
-            "trustedos_inquiry.delivery_failed recipient=%r name=%r email=%r company=%r message=%r",
+            "trustedos_inquiry.delivery_failed recipient=%r name=%r email=%r company_len=%d message_len=%d",
+            recipient, name, email, len(company or ""), len(message or ""),
+        )
+        # Full lead goes to first-party stderr logs only. This logger is outside
+        # the trusted_router namespace and propagate=False keeps it off the
+        # root-attached third-party Axiom handler.
+        _leads_log.error(
+            "trustedos_inquiry.lead recipient=%r name=%r email=%r company=%r message=%r",
             recipient, name, email, company, message,
         )
     return ok

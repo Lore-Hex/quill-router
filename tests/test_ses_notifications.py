@@ -173,12 +173,14 @@ def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCapt
     settings = Settings(environment="local")
     service = EmailService(settings)
     body = "Verify with token=secret-token and free-text sensitive content."
+    subject_marker = "SubjectUserMarker-4837"
+    subject = f"Confirm account for {subject_marker}"
 
     with caplog.at_level(logging.INFO, logger="trusted_router.services.email"):
         sent = service.send(
             EmailMessage(
                 to="user@example.com",
-                subject="Confirm your TrustedRouter account",
+                subject=subject,
                 text_body=body,
             )
         )
@@ -192,8 +194,11 @@ def test_email_service_fallback_logs_body_length_not_body(caplog: pytest.LogCapt
     ]
     assert fallback_logs == [
         "email_send.fallback to=user@example.com "
-        f"subject='Confirm your TrustedRouter account' body_len={len(body)}"
+        f"subject_len={len(subject)} body_len={len(body)}"
     ]
+    assert "subject=" not in fallback_logs[0]
+    assert subject_marker not in fallback_logs[0]
+    assert subject not in fallback_logs[0]
     assert "body=" not in fallback_logs[0]
     assert body not in fallback_logs[0]
 
