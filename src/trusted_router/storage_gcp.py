@@ -49,7 +49,7 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
-from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
+from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
 from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
@@ -72,7 +72,6 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
-from trusted_router.storage_models import _is_byok
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
@@ -279,13 +278,15 @@ class SpannerBigtableStore:
             creator_user_id=user.id,
             management=True,
         )
-        credit = self.get_credit_account(workspace.id)
+        from trusted_router.typed_balance import live_credit_summary
+
+        summary = live_credit_summary(workspace.id, store=self)
         return SignupResult(
             user=user,
             workspace=workspace,
             raw_key=raw_key,
             api_key=api_key,
-            trial_credit_microdollars=credit.total_credits_microdollars if credit else 0,
+            trial_credit_microdollars=summary["total_credits"] if summary else 0,
         )
 
     # Auth sessions delegate to storage_gcp_auth_sessions.SpannerAuthSessions.
@@ -758,9 +759,7 @@ class SpannerBigtableStore:
         def txn(transaction: Any) -> bool:
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
                 return False
-            account = self._require_credit_tx(transaction, workspace_id)
             amount = int(amount_microdollars)
-            new_total = int(account.total_credits_microdollars) + amount
             now = dt.datetime.now(dt.UTC).replace(microsecond=0)
             created_at = now.isoformat().replace("+00:00", "Z")
             pt = self._param_types
@@ -784,6 +783,13 @@ class SpannerBigtableStore:
                 },
             )
             if updated == 0:
+                # Seed path for pre-mirror rows; JSON credit money dies in C2.
+                account = self._read_entity_tx(
+                    transaction, "credit", workspace_id, CreditAccount
+                )
+                if account is None:
+                    raise ValueError("credit account not found")
+                new_total = int(account.total_credits_microdollars) + amount
                 transaction.execute_update(
                     "INSERT INTO tr_credit_balance "
                     "(workspace_id, shard, total_credits, source_updated_at, updated_at) "
@@ -802,19 +808,6 @@ class SpannerBigtableStore:
                     },
                 )
 
-            account.total_credits_microdollars = new_total
-            # Post-B2 authoritative top-up path: typed total_credits is updated
-            # explicitly above, and JSON is kept warm directly. Do not call
-            # _write_entity_tx here or the generic mirror would double-apply.
-            if update_entity_body_dml(
-                transaction,
-                pt,
-                "credit",
-                workspace_id,
-                _json_body(account),
-                now,
-            ) != 1:
-                raise ValueError("credit account not found")
             insert_entity_dml_at(
                 transaction,
                 pt,
@@ -908,18 +901,19 @@ class SpannerBigtableStore:
         *,
         idempotency_key: str | None = None,
     ) -> Reservation:
-        return self.api_keys.reserve(
-            workspace_id,
-            key_hash,
-            amount_microdollars,
-            idempotency_key=idempotency_key,
+        raise RuntimeError(
+            "legacy JSON reserve path removed (C1); direct inference requires the memory store"
         )
 
     def settle(self, reservation_id: str, actual_microdollars: int) -> None:
-        self.api_keys.settle(reservation_id, actual_microdollars)
+        raise RuntimeError(
+            "legacy JSON settle path removed (C1); direct inference requires the memory store"
+        )
 
     def refund(self, reservation_id: str) -> None:
-        self.api_keys.refund(reservation_id)
+        raise RuntimeError(
+            "legacy JSON refund path removed (C1); direct inference requires the memory store"
+        )
 
     def create_gateway_authorization(
         self,
@@ -984,96 +978,13 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
     ) -> bool:
-        actual_usage_type = UsageType.coerce(selected_usage_type)
-
-        def txn(transaction: Any) -> bool:
-            authorization = self._read_entity_tx(
-                transaction, "gateway_authorization", authorization_id, GatewayAuthorization
-            )
-            if authorization is None or authorization.settled:
-                return False
-
-            if authorization.credit_reservation_id is not None:
-                reservation = self._read_entity_tx(
-                    transaction,
-                    "reservation",
-                    authorization.credit_reservation_id,
-                    Reservation,
-                )
-                if reservation is None:
-                    raise ValueError("gateway reservation not found")
-                if not reservation.settled:
-                    account = self._require_credit_tx(
-                        transaction, reservation.workspace_id
-                    )
-                    account.reserved_microdollars -= reservation.amount_microdollars
-                    if success and actual_usage_type == UsageType.CREDITS:
-                        account.total_usage_microdollars += actual_microdollars
-                    reservation.settled = True
-                    self._write_entity_tx(
-                        transaction, "credit", account.workspace_id, account
-                    )
-                    self._write_entity_tx(
-                        transaction, "reservation", reservation.id, reservation
-                    )
-
-            key = self._read_entity_tx(transaction, "api_key", authorization.key_hash, ApiKey)
-            if key is not None:
-                if key.limit_microdollars is not None and not (
-                    _is_byok(authorization.usage_type) and not key.include_byok_in_limit
-                ):
-                    key.reserved_microdollars = max(
-                        0,
-                        key.reserved_microdollars
-                        - authorization.estimated_microdollars,
-                    )
-                if success and generation is not None:
-                    if _is_byok(generation.usage_type):
-                        key.byok_usage_microdollars += generation.total_cost_microdollars
-                    else:
-                        key.usage_microdollars += generation.total_cost_microdollars
-                self._write_entity_tx(transaction, "api_key", key.hash, key)
-
-            if success and generation is not None:
-                self._write_entity_tx(transaction, "generation", generation.id, generation)
-                self._write_entity_tx(
-                    transaction,
-                    "generation_by_workspace",
-                    _generation_workspace_id(generation),
-                    {"generation_id": generation.id},
-                )
-
-            authorization.settled = True
-            self._write_entity_tx(
-                transaction,
-                "gateway_authorization",
-                authorization.id,
-                authorization,
-            )
-            return True
-
-        spanner_start = time.perf_counter()
-        finalized = self._run_in_transaction(txn)
-        spanner_ms = (time.perf_counter() - spanner_start) * 1000
-        index_ms = 0.0
-        if finalized and success and generation is not None:
-            index_start = time.perf_counter()
-            self.generation_store.index_after_commit(generation)
-            index_ms = (time.perf_counter() - index_start) * 1000
-        if finalized:
-            # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
-            # into Spanner-txn vs Bigtable-index time.
-            log.info(
-                "legacy finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f",
-                authorization_id,
-                spanner_ms,
-                index_ms,
-            )
-        return bool(finalized)
+        raise RuntimeError(
+            "legacy JSON finalize path removed (C1); use typed finalize on Spanner"
+        )
 
     # ── Typed-column billing (Step 3): thin wrappers over storage_gcp_authorize.
-    # The atomic conditional-DML authorize/settle engine. Gated by the route on
-    # the cohort flag (authorize) and reservation origin (settle/refund).
+    # The atomic conditional-DML authorize/settle engine. Routes select this by
+    # typed-store capability; the legacy cohort/denylist brake is gone after C1.
     def authorize_gateway_atomic(self, **kwargs: Any) -> dict:
         from trusted_router.storage_gcp_authorize import authorize_atomic
 
@@ -1615,12 +1526,6 @@ class SpannerBigtableStore:
         if email_user:
             return str(email_user["user_id"])
         return None
-
-    def _require_credit_tx(self, transaction: Any, workspace_id: str) -> CreditAccount:
-        account = self._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if account is None:
-            raise ValueError("credit account not found")
-        return account
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
         with self._database.snapshot() as snapshot:

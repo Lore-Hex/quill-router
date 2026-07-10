@@ -372,11 +372,11 @@ def _run_audit(store: Any) -> bool:
 def _print_prepare_next_steps(workspace_id: str) -> None:
     print("NEXT STEPS:")
     print(
-        "add the workspace id to TR_TYPED_BILLING_WORKSPACE_IDS in "
-        "scripts/deploy/rollout.sh, merge (deploy runs),"
+        "deploy the C1 typed-capability route after verifying the prepared "
+        f"workspace {workspace_id} is seeded,"
     )
     print(
-        "verify the SERVING revision env, then run "
+        "verify the SERVING revision, then run "
         f"`typed_flip.py finish --workspace {workspace_id} --allowlist-deployed`."
     )
     print("Workspace REMAINS PAUSED.")
@@ -491,11 +491,11 @@ def run_finish(store: Any, args: argparse.Namespace) -> int:
 def _print_rollback_next_steps(workspace_id: str) -> None:
     print("ROLLBACK NEXT STEPS:")
     print(
-        "remove the workspace id from TR_TYPED_BILLING_WORKSPACE_IDS in "
-        "scripts/deploy/rollout.sh, merge (deploy runs),"
+        "roll back the deploy to the previous revision if you need the retired "
+        f"legacy gate for workspace {workspace_id},"
     )
     print(
-        "verify the SERVING revision env, then run "
+        "verify the SERVING revision, then run "
         f"`typed_flip.py finish --workspace {workspace_id} --allowlist-deployed --rollback`."
     )
     print("Workspace REMAINS PAUSED.")

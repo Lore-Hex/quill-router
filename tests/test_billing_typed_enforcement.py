@@ -1024,35 +1024,7 @@ def test_typed_finalize_race_books_once() -> None:
     assert _typed(db, ws)["total_usage"] == 900_000  # charged exactly once
 
 
-# ── 3e-2: cohort gate + store wrappers + origin detection ───────────────────
-
-from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace  # noqa: E402
-
-
-def test_cohort_gate_allowlist_denylist_wildcard() -> None:
-    f = typed_billing_enabled_for_workspace
-    assert f("ws1", allowlist_csv="ws1,ws2", denylist_csv="") is True
-    assert f("ws3", allowlist_csv="ws1,ws2", denylist_csv="") is False
-    assert f("ws9", allowlist_csv="*", denylist_csv="") is True
-    assert f("ws1", allowlist_csv="*", denylist_csv="ws1") is False  # denylist wins
-    assert f("ws1", allowlist_csv="", denylist_csv="") is False  # default off
-
-
-def test_cohort_gate_denylist_wildcard_is_global_kill_switch() -> None:
-    """"*" in the denylist = fast global kill: typed enforcement off for EVERY
-    workspace, beating even an "*" allowlist (deny always wins). This is a
-    break-glass availability brake — for already-typed workspaces the JSON
-    fallback is stale-low (#79), so it under-bills until the backsync runbook
-    (#32) runs; see typed_billing_enabled_for_workspace + test_typed_balance."""
-    f = typed_billing_enabled_for_workspace
-    # Kills a workspace that would otherwise be allowed by an explicit allowlist…
-    assert f("ws1", allowlist_csv="ws1,ws2", denylist_csv="*") is False
-    # …and one allowed by the "*" allowlist (the "everyone on" cutover state).
-    assert f("ws9", allowlist_csv="*", denylist_csv="*") is False
-    # Works alongside specific denies, and any workspace is killed.
-    assert f("anything", allowlist_csv="*", denylist_csv="ws1, *") is False
-    # Sanity: without the wildcard, a specific deny only kills that workspace.
-    assert f("ws2", allowlist_csv="*", denylist_csv="ws1") is True
+# ── 3e-2: store wrappers + origin detection ─────────────────────────────────
 
 
 def test_store_authorize_wrapper_and_origin_detection() -> None:

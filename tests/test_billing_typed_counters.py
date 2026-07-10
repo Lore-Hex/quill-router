@@ -101,21 +101,6 @@ def test_other_json_credit_writes_still_fire_mirror() -> None:
     assert _typed_credit(db, ws)["reserved"] == 0
 
 
-def test_json_credit_reserve_does_not_propagate_to_typed_reserved() -> None:
-    """A legacy JSON-path reserve updates JSON.reserved, but the mirror does NOT
-    carry it into the typed-DML-owned tr_credit_balance.reserved."""
-    store, db, _ = make_fake_store()
-    ws = "ws_legacy_reserve"
-    store._write_entity(
-        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
-    )
-    store.reserve(ws, "key_1", 250_000)
-    assert _json_credit(db, ws)["reserved_microdollars"] == 250_000
-    # total_credits still mirrored; reserved stays at the typed default (0).
-    assert_credit_total_mirrored(db, ws)
-    assert _typed_credit(db, ws)["reserved"] == 0
-
-
 def test_json_credit_write_does_not_clobber_typed_hold() -> None:
     """THE 2026-06-25 incident reproduction. A typed-DML hold sits in
     tr_credit_balance.reserved; a JSON credit write (top-up) fires the mirror.
@@ -202,12 +187,9 @@ def test_mirror_disabled_writes_no_typed_rows() -> None:
     store._write_entity(
         "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
     )
-    store.reserve(ws, "key_1", 100_000)
     assert CREDIT_BALANCE_TABLE not in db.typed or (ws, 0) not in db.typed.get(
         CREDIT_BALANCE_TABLE, {}
     )
-    # JSON path unaffected.
-    assert _json_credit(db, ws)["reserved_microdollars"] == 100_000
 
 
 def test_uncapped_key_mirrors_null_limit() -> None:
@@ -264,7 +246,15 @@ def test_compare_clean_after_mirror() -> None:
     _raw, key = store.api_keys.create(
         workspace_id=ws, name="k", creator_user_id=None, limit_microdollars=2_000_000
     )
-    store.reserve(ws, key.hash, 400_000)
+    store._write_entity(
+        "credit",
+        ws,
+        CreditAccount(
+            workspace_id=ws,
+            total_credits_microdollars=3_000_000,
+            reserved_microdollars=400_000,
+        ),
+    )
     store.reserve_key_limit(key.hash, 400_000, usage_type="Credits")
 
     report = compare(store)

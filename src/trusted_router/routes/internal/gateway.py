@@ -210,10 +210,10 @@ async def authorize_gateway(
         workspace.id, api_key.hash, request_idempotency_key
     )
     if existing_authorization is None:
-        # Typed authorizations have no JSON idempotency index; look them up
-        # INDEPENDENT of the cohort flag so a retry after a cohort flag-off /
-        # denylist rollback still replays (codex 3e route review #2).
-        _typed_store = typed_billing_store()
+        # Typed authorizations have no JSON idempotency index; whenever the
+        # active store has typed billing, retries must replay from the typed
+        # table because the legacy cohort brake no longer exists after C1.
+        _typed_store = typed_billing_store(STORE)
         if _typed_store is not None:
             existing_authorization = _typed_store.get_typed_authorization_by_idempotency(
                 workspace.id, api_key.hash, request_idempotency_key
@@ -228,22 +228,11 @@ async def authorize_gateway(
         return _replay_response(existing_authorization)
     credit_reservation_id: str | None = None
     idempotent_replay = False
-    # Typed-column billing cutover: when this workspace is in the cohort AND
-    # the store supports it (Spanner), authorize via the atomic conditional-DML
-    # path (the deadlock fix). Default-off -> the legacy path below, unchanged.
-    _typed_store = typed_billing_store()
-    _typed_cohort = False
+    # C1 removed the workspace cohort/denylist brake: GCP now always uses typed
+    # billing when the store exposes that capability. Emergency rollback is the
+    # previous deploy revision; the memory store below remains the test twin.
+    _typed_store = typed_billing_store(STORE)
     if _typed_store is not None:
-        from trusted_router.storage_gcp_authorize import (
-            typed_billing_enabled_for_workspace,
-        )
-
-        _typed_cohort = typed_billing_enabled_for_workspace(
-            workspace.id,
-            allowlist_csv=settings.typed_billing_workspace_ids,
-            denylist_csv=settings.typed_billing_workspace_denylist,
-        )
-    if _typed_store is not None and _typed_cohort:
         import datetime as _dt
 
         from trusted_router.spend_windows import (
@@ -786,17 +775,10 @@ def _settle_gateway_authorization(
         )
         generation_id = generation.id
 
-    # Typed-column billing cutover: settle by reservation ORIGIN, not the cohort
-    # flag, so a request that reserved typed settles typed and a JSON one settles
-    # JSON (codex 3e). Default: no typed reservation (or InMemory store) -> legacy
-    # path unchanged.
-    _typed_store = typed_billing_store()
-    is_typed = (
-        _typed_store is not None
-        and _typed_store.is_typed_reservation(
-            authorization.credit_reservation_id, authorization.id
-        )
-    )
+    # C1 removed the GCP legacy finalize branch; Spanner finalizes through typed
+    # billing unconditionally. The memory store still uses the single-book path.
+    _typed_store = typed_billing_store(STORE)
+    is_typed = _typed_store is not None
     intent_kind = "settle" if success else "refund"
     enqueue_ms = 0.0
     if settings.settle_outbox_enabled:
@@ -804,7 +786,7 @@ def _settle_gateway_authorization(
         try:
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
-            # the origin and exact resolved cost used by the inline finalize.
+            # the finalize path and exact resolved cost used by the inline attempt.
             spanner_settle_outbox().enqueue(
                 SettleOutboxRow(
                     authorization_id=authorization.id,

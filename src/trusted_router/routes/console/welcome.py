@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, Response
 from trusted_router.auth import SettingsDep
 from trusted_router.routes.console._shared import ConsoleDep, money, render
 from trusted_router.routes.oauth import PENDING_REVEAL_COOKIE
-from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
@@ -19,8 +19,8 @@ def register(app: FastAPI) -> None:
         settings: SettingsDep,
         first: int | None = None,
     ) -> Response:
-        credit = STORE.get_credit_account(ctx.workspace.id)
-        trial_microdollars = credit.total_credits_microdollars if credit else 0
+        summary = live_credit_summary(ctx.workspace.id)
+        trial_microdollars = summary["total_credits"] if summary else 0
         # `tr_pending_reveal` is the short-lived one-shot cookie set by
         # the OAuth callback right before its 302 here. It carries the
         # raw API key minted during STORE.signup(). We read it ONCE,

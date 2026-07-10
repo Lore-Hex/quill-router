@@ -11,10 +11,9 @@ usage/remaining — would see a stale-LOW usage and an overstated available
 balance (e.g. auto-refill would never fire → the card is never charged →
 underbill). These helpers overlay the authoritative typed counters onto the
 JSON-loaded object for typed workspaces, and are a no-op for legacy workspaces or
-stores without typed tables.
-
-Routing decision = the same cohort gate the authorize path uses
-(typed_billing_enabled_for_workspace), evaluated from the caller's Settings.
+stores without typed tables. After C1, typed-overlay eligibility is capability
+based: a typed store with a typed row wins, and the in-memory store remains the
+single-book test twin.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ import dataclasses
 from typing import Any, TypedDict
 
 from trusted_router.storage import STORE, typed_billing_store
-from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace
 from trusted_router.storage_models import CreditAccount
 
 
@@ -32,14 +30,6 @@ class LiveCreditSummary(TypedDict):
     total_usage: int
     reserved: int
     available: int
-
-
-def _typed_enabled(workspace_id: str, settings: Any) -> bool:
-    return typed_billing_enabled_for_workspace(
-        workspace_id,
-        allowlist_csv=settings.typed_billing_workspace_ids,
-        denylist_csv=settings.typed_billing_workspace_denylist,
-    )
 
 
 def typed_aware_credit_account(
@@ -59,11 +49,9 @@ def typed_aware_credit_account(
     typed_store = typed_billing_store(store)
     if account is None or typed_store is None:
         return account
-    if not _typed_enabled(workspace_id, settings):
-        return account
     typed = typed_store.typed_credit_snapshot(workspace_id)
     if typed is None:
-        return account  # typed enforcement on but row not seeded yet — JSON is the best estimate
+        return account  # typed-capable store, but no row yet — JSON is the best estimate
     return dataclasses.replace(
         account,
         total_credits_microdollars=int(typed[0]),

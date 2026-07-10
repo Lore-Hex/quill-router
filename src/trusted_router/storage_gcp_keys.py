@@ -1,9 +1,9 @@
-"""Spanner-backed API key + reservation + gateway-authorization lifecycle.
+"""Spanner-backed API key + gateway-authorization lifecycle.
 
 Sibling of InMemoryApiKeys (storage_keys.py). Both expose the same public
 surface (create / get_by_hash / get_by_raw / list_for_workspace / delete /
-update / reserve_limit / settle_limit / refund_limit / reserve / settle /
-refund / create_gateway_authorization / get_gateway_authorization /
+update / reserve_limit / settle_limit / refund_limit /
+create_gateway_authorization / get_gateway_authorization /
 mark_gateway_authorization_settled / add_usage); SpannerBigtableStore's
 public methods become thin one-line delegations.
 """
@@ -28,9 +28,7 @@ from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_models import (
     ApiKey,
-    CreditAccount,
     GatewayAuthorization,
-    Reservation,
     _is_byok,
     iso_now,
 )
@@ -240,100 +238,6 @@ class SpannerApiKeys:
             self._io.write_entity_tx(transaction, "api_key", key.hash, key)
 
         run_in_transaction_with_retry(self._io.database, txn)
-
-    # ── Credit reservations ─────────────────────────────────────────────
-    def reserve(
-        self,
-        workspace_id: str,
-        key_hash: str,
-        amount_microdollars: int,
-        *,
-        idempotency_key: str | None = None,
-    ) -> Reservation:
-        def txn(transaction: Any) -> Reservation:
-            # Idempotency first. We persist the lookup as a separate
-            # entity (kind = "reservation_idemp") with the key as the
-            # primary id. If found, fetch the original reservation and
-            # return it without re-debiting. Both writes (the lookup
-            # row + the reservation + the credit-account update)
-            # commit in the same Spanner transaction below, so a
-            # retry that finds the lookup is guaranteed to find the
-            # reservation too.
-            if idempotency_key is not None:
-                lookup = self._io.read_entity_tx(
-                    transaction,
-                    "reservation_idemp",
-                    idempotency_key,
-                    dict,
-                )
-                if lookup is not None:
-                    existing = self._io.read_entity_tx(
-                        transaction,
-                        "reservation",
-                        lookup["reservation_id"],
-                        Reservation,
-                    )
-                    if existing is not None:
-                        return existing
-            account = self._read_credit_tx(transaction, workspace_id)
-            available = (
-                account.total_credits_microdollars
-                - account.total_usage_microdollars
-                - account.reserved_microdollars
-            )
-            if amount_microdollars > available:
-                raise ValueError("insufficient credits")
-            account.reserved_microdollars += amount_microdollars
-            reservation = Reservation(
-                id=str(uuid.uuid4()),
-                workspace_id=workspace_id,
-                key_hash=key_hash,
-                amount_microdollars=amount_microdollars,
-                idempotency_key=idempotency_key,
-            )
-            self._io.write_entity_tx(transaction, "credit", workspace_id, account)
-            self._io.write_entity_tx(transaction, "reservation", reservation.id, reservation)
-            if idempotency_key is not None:
-                self._io.write_entity_tx(
-                    transaction,
-                    "reservation_idemp",
-                    idempotency_key,
-                    {"reservation_id": reservation.id},
-                )
-            return reservation
-
-        return run_in_transaction_with_retry(self._io.database, txn)
-
-    def settle(self, reservation_id: str, actual_microdollars: int) -> None:
-        self._finish_reservation(reservation_id, actual_microdollars, success=True)
-
-    def refund(self, reservation_id: str) -> None:
-        self._finish_reservation(reservation_id, 0, success=False)
-
-    def _finish_reservation(
-        self, reservation_id: str, actual_microdollars: int, *, success: bool
-    ) -> None:
-        def txn(transaction: Any) -> None:
-            reservation = self._io.read_entity_tx(
-                transaction, "reservation", reservation_id, Reservation
-            )
-            if reservation is None or reservation.settled:
-                return
-            account = self._read_credit_tx(transaction, reservation.workspace_id)
-            account.reserved_microdollars -= reservation.amount_microdollars
-            if success:
-                account.total_usage_microdollars += actual_microdollars
-            reservation.settled = True
-            self._io.write_entity_tx(transaction, "credit", account.workspace_id, account)
-            self._io.write_entity_tx(transaction, "reservation", reservation.id, reservation)
-
-        run_in_transaction_with_retry(self._io.database, txn)
-
-    def _read_credit_tx(self, transaction: Any, workspace_id: str) -> CreditAccount:
-        account = self._io.read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if account is None:
-            raise ValueError("credit account not found")
-        return account
 
     # ── Gateway authorizations ──────────────────────────────────────────
     def create_gateway_authorization(
