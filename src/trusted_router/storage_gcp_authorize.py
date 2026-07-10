@@ -20,6 +20,7 @@ debit. Replay is resume/no-execute: the caller must NOT re-run the LLM call
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -39,6 +40,8 @@ from trusted_router.storage_gcp_counter_dml import (
 )
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
+
+log = logging.getLogger(__name__)
 
 
 class AuthorizeOutcome:
@@ -243,6 +246,54 @@ class _SettleError(Exception):
     reservation claimed with the hold unreleased / charge unbooked)."""
 
 
+def _release_key_or_skip_deleted(
+    transaction: Any,
+    param_types: Any,
+    res: dict[str, Any],
+    actual_micro: int,
+    *,
+    book_to_byok: bool,
+) -> tuple[int, dict[str, Any] | None]:
+    """Shared key-release classification for settle, reaper, and drain paths.
+
+    `release_key` deliberately returns the raw UPDATE count. A 0 count is
+    ambiguous only here, after the reservation has been claimed: the key row may
+    have been deleted, or the `reserved >= hold` corruption guard may have fired.
+    Missing row is a committed-success warning; present row keeps the loud
+    row-count failure path.
+    """
+    from trusted_router.storage_gcp_counter_dml import key_limit_exists, release_key
+
+    key_hash = str(res["key_hash"])
+    key_hold = int(res["key_reserved_micro"])
+    key_shard = int(res.get("key_shard", 0) or 0)
+    count = release_key(
+        transaction,
+        param_types,
+        key_hash,
+        key_hold,
+        int(actual_micro),
+        book_to_byok=book_to_byok,
+        window_floors=window_floors(utcnow()),
+        shard=key_shard,
+    )
+    if count == 1:
+        return count, None
+    if key_limit_exists(transaction, param_types, key_hash, shard=key_shard):
+        return count, None
+    return 1, {"key_hash": key_hash, "hold_micro": key_hold}
+
+
+def _log_missing_key_releases(result: dict[str, Any]) -> None:
+    warnings = result.pop("missing_key_releases", ())
+    for warning in warnings:
+        log.warning(
+            "skipped key release for missing tr_key_limit row key_hash=%s hold_micro=%s",
+            warning["key_hash"],
+            warning["hold_micro"],
+        )
+
+
 def settle_atomic(
     database: Any,
     param_types: Any,
@@ -265,7 +316,6 @@ def settle_atomic(
         claim_reservation,
         read_reservation,
         release_credit,
-        release_key,
     )
 
     pt = param_types
@@ -299,10 +349,12 @@ def settle_atomic(
 
         # key first, then credit (single lock order everywhere — codex#2 #2).
         key_actual = book_actual  # key usage counts under both Credits and BYOK
-        key_count = release_key(
-            transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            key_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
+        missing_key_releases = []
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, key_actual, book_to_byok=book_to_byok
         )
+        if warning is not None:
+            missing_key_releases.append(warning)
         # A recorded hold MUST release; an uncapped/no-hold row (key_reserved==0)
         # may 0-row and is tolerated (best-effort usage tracking).
         if res["key_reserved_micro"] > 0 and key_count != 1:
@@ -316,10 +368,15 @@ def settle_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
-        return {"outcome": SettleOutcome.SETTLED}
+        return {
+            "outcome": SettleOutcome.SETTLED,
+            "missing_key_releases": missing_key_releases,
+        }
 
     try:
-        return run_in_transaction_with_retry(database, txn)
+        result = run_in_transaction_with_retry(database, txn)
+        _log_missing_key_releases(result)
+        return result
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
 
@@ -448,7 +505,6 @@ def typed_finalize_atomic(
         insert_entity_dml_at,
         read_reservation,
         release_credit,
-        release_key,
         update_entity_body_dml,
     )
 
@@ -468,10 +524,12 @@ def typed_finalize_atomic(
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}
 
-        key_count = release_key(
-            transaction, pt, res["key_hash"], res["key_reserved_micro"],
-            book_actual, book_to_byok=book_to_byok, window_floors=window_floors(utcnow()),
+        missing_key_releases = []
+        key_count, warning = _release_key_or_skip_deleted(
+            transaction, pt, res, book_actual, book_to_byok=book_to_byok
         )
+        if warning is not None:
+            missing_key_releases.append(warning)
         if res["key_reserved_micro"] > 0 and key_count != 1:
             raise _SettleError("key release row-count != 1")
 
@@ -494,12 +552,16 @@ def typed_finalize_atomic(
         )
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")
-        return {"outcome": SettleOutcome.SETTLED}
+        return {
+            "outcome": SettleOutcome.SETTLED,
+            "missing_key_releases": missing_key_releases,
+        }
 
     try:
         attempts_box: list[int] = []
         result = run_in_transaction_with_retry(database, txn, attempts_out=attempts_box)
         result["attempts"] = attempts_box[0] if attempts_box else 1
+        _log_missing_key_releases(result)
         return result
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}

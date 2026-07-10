@@ -21,6 +21,7 @@ from tests.fakes.spanner import make_fake_store
 from trusted_router.spend_windows import utcnow, window_floors
 from trusted_router.storage import CreditAccount
 from trusted_router.storage_gcp_counter_dml import release_credit, reserve_credit
+from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_models import Generation
 
@@ -830,6 +831,125 @@ def _typed_finalize(store, *, rid, aid, actual, settled_ut="Credits", success=Tr
         actual_micro=actual, settled_usage_type=settled_ut, now=_TS,
         auth_body_settled=auth_settled, generation_writes=writes,
     )
+
+
+def _missing_key_release_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [
+        record
+        for record in caplog.records
+        if record.name == "trusted_router.storage_gcp_authorize"
+        and "missing tr_key_limit row" in record.getMessage()
+    ]
+
+
+def test_reaper_reclaims_hold_after_api_key_deletion(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_reap_deleted_key"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    assert auth["outcome"] == AuthorizeOutcome.ACCEPTED
+
+    assert store.api_keys.delete(key.hash) is True
+    assert (key.hash, 0) not in db.typed.get(_KLT, {})
+    before = audit_typed_invariants(store)
+    assert not before.clean
+    assert before.samples[f"api_key-orphan-hold:{key.hash}:0"] == {
+        "typed_reserved": None,
+        "open_holds": 1_000_000,
+    }
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp_authorize"):
+        reaped = reap_expired_reservations(store._database, store._param_types, now=_NOW)
+
+    assert reaped == 1
+    assert db.reservations[auth["reservation_id"]]["settled"] is True
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 0
+    assert (key.hash, 0) not in db.typed.get(_KLT, {})
+    warnings = _missing_key_release_warnings(caplog)
+    assert len(warnings) == 1
+    assert key.hash in warnings[0].getMessage()
+    assert "hold_micro=1000000" in warnings[0].getMessage()
+    assert audit_typed_invariants(store).clean
+
+
+def test_typed_finalize_charges_credit_after_api_key_deletion(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_finalize_deleted_key"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid, aid = auth["reservation_id"], auth["authorization_id"]
+    assert store.api_keys.delete(key.hash) is True
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp_authorize"):
+        result = _typed_finalize(store, rid=rid, aid=aid, actual=900_000)
+
+    assert result["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 900_000
+    assert (key.hash, 0) not in db.typed.get(_KLT, {})
+    assert ("generation", f"gen-{rid}") in db.rows
+    assert _json.loads(db.rows[("gateway_authorization", aid)].body)["settled"] is True
+    warnings = _missing_key_release_warnings(caplog)
+    assert len(warnings) == 1
+    assert key.hash in warnings[0].getMessage()
+    assert "hold_micro=1000000" in warnings[0].getMessage()
+
+
+def test_key_release_guard_failure_stays_loud(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_key_guard_loud"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+    rid = auth["reservation_id"]
+    db.typed[_KLT][(key.hash, 0)]["reserved"] = 500_000
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp_authorize"):
+        result = _settle(store, rid=rid, actual=900_000)
+
+    assert result["outcome"] == SettleOutcome.ERROR
+    assert db.reservations[rid]["settled"] is False
+    assert _typed(db, ws)["reserved"] == 1_000_000
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 500_000
+    assert _missing_key_release_warnings(caplog) == []
+
+
+def test_normal_key_release_row_count_one_path_does_not_probe_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from trusted_router import storage_gcp_counter_dml
+
+    def fail_if_called(*_args, **_kwargs) -> bool:
+        raise AssertionError("row-count 1 release must not run the missing-row probe")
+
+    monkeypatch.setattr(storage_gcp_counter_dml, "key_limit_exists", fail_if_called)
+    store, db, _ = make_fake_store()
+    ws = "ws_key_release_regression"
+    _seed_credit(store, ws, 5_000_000)
+    key = _make_key(store, ws, limit=5_000_000)
+    auth = _authorize(store, ws=ws, key_hash=key.hash, estimate=1_000_000)
+
+    with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp_authorize"):
+        result = _settle(store, rid=auth["reservation_id"], actual=900_000)
+
+    assert result["outcome"] == SettleOutcome.SETTLED
+    assert _typed(db, ws)["reserved"] == 0
+    assert _typed(db, ws)["total_usage"] == 900_000
+    krow = db.typed[_KLT][(key.hash, 0)]
+    assert krow["reserved"] == 0
+    assert krow["usage"] == 900_000
+    assert krow["byok_usage"] == 0
+    assert _missing_key_release_warnings(caplog) == []
 
 
 def test_typed_finalize_full_success() -> None:
