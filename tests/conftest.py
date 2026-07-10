@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import functools
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 
+# The developer/operator shell may export production storage settings. Unit tests
+# must stay offline unless a test explicitly opts into a spanner-shaped Settings
+# object with configure_store_arg=False or a fake store.
+os.environ["TR_STORAGE_BACKEND"] = "memory"
+
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
-from trusted_router.storage import STORE, InMemoryStore
+from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
 @pytest.fixture(autouse=True)
 def reset_store() -> None:
+    if not isinstance(STORE.target, InMemoryStore):
+        configure_store(InMemoryStore())
     STORE.reset()
 
 

@@ -11,6 +11,11 @@ from trusted_router.storage import CreditAccount, Workspace
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
+@pytest.fixture(autouse=True)
+def _typed_flip_apply_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TR_STORAGE_BACKEND", "spanner-bigtable")
+
+
 def _seed_workspace(
     store: Any,
     ws: str,

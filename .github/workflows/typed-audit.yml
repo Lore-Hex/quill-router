@@ -1,0 +1,30 @@
+name: Typed Billing Invariant Audit
+
+on:
+  schedule:
+    - cron: "43 11 * * *" # 11:43 UTC daily, away from top-of-hour deploy/cron load.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # for google-github-actions/auth (Workload Identity Federation)
+
+jobs:
+  typed-billing-invariant-audit:
+    name: typed-billing-invariant-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Run typed billing audit
+        run: PYTHONPATH=src uv run python scripts/audit_typed_counters.py
