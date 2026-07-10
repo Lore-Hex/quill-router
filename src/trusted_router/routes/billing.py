@@ -29,7 +29,7 @@ from trusted_router.services.x402_billing import (
     x402_payment_required_response_body,
 )
 from trusted_router.storage import STORE
-from trusted_router.typed_balance import typed_aware_credit_account
+from trusted_router.typed_balance import live_credit_summary
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -37,23 +37,16 @@ log = logging.getLogger(__name__)
 
 def register_billing_routes(router: APIRouter) -> None:
     @router.get("/credits")
-    async def credits(
-        principal: ManagementPrincipal, settings: SettingsDep
-    ) -> dict[str, dict[str, Any]]:
-        account = typed_aware_credit_account(STORE, principal.workspace.id, settings=settings)
-        if account is None:
+    async def credits(principal: ManagementPrincipal) -> dict[str, dict[str, Any]]:
+        summary = live_credit_summary(principal.workspace.id)
+        if summary is None:
             raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
-        available_microdollars = (
-            account.total_credits_microdollars
-            - account.total_usage_microdollars
-            - account.reserved_microdollars
-        )
         return {
             "data": {
-                **money_pair("total_credits", account.total_credits_microdollars),
-                **money_pair("total_usage", account.total_usage_microdollars),
-                **money_pair("reserved", account.reserved_microdollars),
-                **money_pair("available", available_microdollars),
+                **money_pair("total_credits", summary["total_credits"]),
+                **money_pair("total_usage", summary["total_usage"]),
+                **money_pair("reserved", summary["reserved"]),
+                **money_pair("available", summary["available"]),
             }
         }
 

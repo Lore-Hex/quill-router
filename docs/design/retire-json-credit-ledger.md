@@ -6,14 +6,15 @@ resolution — shipped separately (#144).
 
 ## Verified current state (2026-07-10)
 
-- `scripts/deploy/rollout.sh` sets `TR_TYPED_COUNTER_MIRROR=1` and does **not** set
-  `TR_TYPED_BILLING_WORKSPACE_IDS` (config default `""`). Prod is therefore
-  **mirror-on, enforcement-legacy for every workspace**: the JSON `credit` entity is the
-  authoritative money book everywhere; typed `tr_credit_balance` rows carry a mirrored
-  `total_credits` and zero/unseeded `reserved`/`total_usage`.
-  - Checklist item before Phase A: confirm the SERVING revision's env agrees (bare env
-    edits don't survive here — traffic is pinned to named revisions; see the settle-outbox
-    rollout learnings in docs/runbook.md).
+- Prod has run with `TR_TYPED_BILLING_WORKSPACE_IDS=*` since 2026-06-26 via #88:
+  every workspace enforces against the typed book. That followed the #87 canary batch
+  and the #78 incident-revert recovery.
+  - The earlier "enforcement-legacy everywhere" finding was a verification error: a
+    truncated grep stopped in the mirror comment block and hid the live rollout.sh env
+    assignment around line 155.
+  - Keep checking the SERVING revision's env during rollouts (bare env edits don't
+    survive here — traffic is pinned to named revisions; see the settle-outbox rollout
+    learnings in docs/runbook.md).
 - Ownership split (2026-06-25 incident fallout) is already in code: the mirror writes
   ONLY `total_credits` (+ key config), never `reserved`/`total_usage`.
 - Full inventory of every reader/writer of both books, the mirror, and the repair
@@ -24,8 +25,9 @@ resolution — shipped separately (#144).
 Two books for the same money is the single biggest standing complexity in billing:
 per-column ownership rules, a mirror that must fire on every JSON write, documented
 "stale-low by design" fields, `backsync`/`backfill`/`compare`/`repair` operator tooling,
-and an ordering invariant that only holds within a process lifetime. All of it exists to
-support a migration that is 40% complete. Finishing the migration deletes the machinery.
+and an ordering invariant that only holds within a process lifetime. All of it now exists
+to support a migration whose enforcement cutover is complete but whose legacy book remains
+for rollback. Finishing the migration deletes the machinery.
 
 ## End state
 
@@ -39,11 +41,15 @@ support a migration that is 40% complete. Finishing the migration deletes the ma
   (`mirror_write`/`mirror_delete`), `backsync_typed_to_json`, `backfill`, `compare`,
   and their tests. `repair_typed_reserved` + `audit_typed_invariants` REMAIN (they audit
   the surviving book).
-- Console/display and `signup()` read `typed_credit_snapshot`.
+- Money display/API reads use the live typed snapshot; `signup()`'s trial-credit report
+  follows the surviving credit book once JSON money fields are deleted.
 
 ## Phases
 
-### Phase A — finish the enforcement cutover (operational; Joseph gates each ramp)
+### Phase A — finish the enforcement cutover (historical)
+Phase A was completed before this design was written; this section is retained for the
+historical record.
+
 A1. Flip tooling: a batch script wrapping the existing per-workspace runbook
     (`billing_paused` → drain to zero open holds → `reconcile_for_flip(apply=True)` →
     add to allowlist → unpause), plus a dry-run mode that reports per-workspace
@@ -60,10 +66,11 @@ Rollback story: per-workspace `pause → drain → backsync_typed_to_json → re
 allowlist → unpause` — the existing, tested runbook. This is why Phase A deletes nothing.
 
 ### Phase B — move the remaining JSON-money surfaces (code; one PR per step)
-B1. Reads: `signup()` trial-credit report, console credits/billing display, AND the MCP
-    `credits-get` tool (routes/mcp.py:172-187 — reads JSON total_credits/total_usage/
-    reserved/available; found in adversarial review) → `typed_credit_snapshot`. (Safe
-    once the workspace is typed; during the ramp, gate on membership like the routes do.)
+B1. Reads: console credits/billing display and the MCP `credits-get` tool
+    (routes/mcp.py:172-187 — reads JSON total_credits/total_usage/reserved/available;
+    found in adversarial review) → live typed snapshot with JSON/memory fallback.
+    `signup()`'s trial-credit report remains fine because JSON `total_credits` is still
+    the fresh mirrored field.
 B2. Writes: `credit_workspace_once`, stripe settlement, auto-refill outcome → typed
     `total_credits` becomes AUTHORITATIVE (idempotency event + typed write in one txn),
     but the JSON `total_credits` field is STILL written in the same txn ("kept warm").
@@ -105,9 +112,9 @@ C3. Runbook rewrite: single-book operations; keep `repair_typed_reserved` +
 - No auto-refill/stripe metadata redesign — those fields just stay JSON metadata.
 
 ## Appendix: inventory (2026-07-10; v2 additions from adversarial review marked ⊕)
-JSON readers: get_credit_account (storage_gcp.py:391) ← signup (280), console billing,
-grants verification, ⊕ MCP credits-get (routes/mcp.py:172-187),
-⊕ legacy authorize availability read (storage_gcp_keys.py:278-286).
+JSON readers: get_credit_account (storage_gcp.py:391) ← signup (280), grants
+verification, ⊕ legacy authorize availability read (storage_gcp_keys.py:278-286).
+B1 moved console billing and MCP credits-get to `live_credit_summary`.
 ⊕ JSON money writer missed in v1: SpannerApiKeys.reserve (storage_gcp_keys.py:278-295,
 called from the fallback authorize at routes/internal/gateway.py:343-351) — increments
 CreditAccount.reserved_microdollars on the legacy path; scheduled for deletion in C1. JSON writers (all mirror-firing via _write_entity_tx/batch):
@@ -128,43 +135,20 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
 · every mutating tool step uses `--apply` after a dry-run.
 
 - [x] Design merged (#145, v2 hardened after adversarial review)
-- [ ] A1 flip tool merged (#146)
-
-### A2 — canary
-1. [C] `PYTHONPATH=src uv run python scripts/typed_flip.py readiness --all`
-   (read-only) → report + canary candidates (low-traffic, verdict READY).
-2. [J] Pick the canary workspace(s).
-3. [C] `typed_flip.py prepare --workspace <id> --apply` → workspace parked PAUSED
-   (pause → drain → seed → verify). Exit 2 = still draining; re-run later.
-4. [J] THE FLIP: one-line rollout.sh edit adding the id to
-   TR_TYPED_BILLING_WORKSPACE_IDS → merge (deploy runs) → verify the SERVING
-   revision env carries it (bare env edits do not survive; traffic is
-   revision-pinned).
-5. [C] `typed_flip.py finish --workspace <id> --allowlist-deployed --apply` →
-   unpaused, typed-enforced.
-6. Bake 3-7 days: daily `audit_typed_invariants` + compare() drift + the
-   "release row-count != 1" alert. Any violation → rollback path below.
-
-### A3 / A4 — ramp
-7. Repeat 1-6 for cohorts (~10% → ~50% → all), audits clean between batches. [J]
-   gates each cohort.
-8. [J] A4: set TR_TYPED_BILLING_WORKSPACE_IDS=* in rollout.sh (config-as-code);
-   covers new signups from then on.
-
-### Phase B (each step: codex writes, Claude reviews, PR, CI, merge)
-9. B1 reads → typed_credit_snapshot, gated on allowlist membership during the
-   ramp: signup() trial report, console credits/billing, MCP credits-get.
-10. B2 writes: typed total_credits authoritative; JSON total_credits KEPT WARM
-    in the same txn (rollback safety — backsync never copies total_credits).
-11. B3 grant scripts verify against the typed snapshot.
-
-### Phase C (only after 100% flipped + 2 weeks clean audits) [J] go required
-12. C1 delete: legacy finalize, _require_credit_tx, SpannerApiKeys.reserve +
-    its gateway call site, and B2's warm-keeping write.
-13. C2 delete: mirror, backsync, backfill, compare; slim CreditAccount to
-    non-money metadata; memory-twin + test updates.
-14. C3 runbook rewrite (single book; keep repair_typed_reserved +
-    audit_typed_invariants as standing tripwires).
+- [x] A1 flip tool merged (#146)
+- [x] A2-A4 enforcement rollout completed historically: #67 synthetic canary →
+  #78 revert → #87 canary batch → #88 universal `TR_TYPED_BILLING_WORKSPACE_IDS=*`
+- [x] Orphan-hold reaper fix (#148)
+- [ ] B1 reads: live typed money snapshot for console credits/billing and MCP
+  `credits-get` (this PR)
+- [ ] B2 keep-warm writes: typed `total_credits` authoritative with JSON
+  `total_credits` still written in the same txn for rollback safety
+- [ ] B3 grant-script verification against the typed snapshot
+- [ ] Daily invariant audit scheduling
+- [ ] Stale legacy-hold cleanup for workspace `ea7dd3d8` (JSON reserved=29373,
+  3 open legacy reservations; display-only impact, fold into Phase C or a small cleanup)
+- [ ] Phase C deletions after 2 weeks of clean audits from 2026-07-10, the first
+  clean-audit day once #148 frees the orphan holds
 
 ### Rollback (any point through B)
 `typed_flip.py rollback --workspace <id> --apply` → allowlist-REMOVAL deploy →
