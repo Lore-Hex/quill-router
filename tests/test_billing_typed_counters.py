@@ -76,9 +76,29 @@ def test_credit_total_credits_is_mirrored() -> None:
     )
     assert_credit_total_mirrored(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_000_000
-    # A later credit event (top-up) re-mirrors the new total_credits.
+    # A later credit event keeps the typed total warm through the B2 direct path.
     store.credit_workspace_once(ws, 500_000, "evt_topup")
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
+
+
+def test_other_json_credit_writes_still_fire_mirror() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_credit_config_mirror"
+    store._write_entity(
+        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000)
+    )
+    db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]["total_credits"] = 123
+
+    updated = store.update_auto_refill_settings(
+        ws,
+        enabled=True,
+        threshold_microdollars=250_000,
+        amount_microdollars=2_000_000,
+    )
+
+    assert updated is not None
+    assert _typed_credit(db, ws)["total_credits"] == 1_000_000
+    assert _typed_credit(db, ws)["reserved"] == 0
 
 
 def test_json_credit_reserve_does_not_propagate_to_typed_reserved() -> None:

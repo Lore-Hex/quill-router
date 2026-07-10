@@ -194,6 +194,10 @@ class FakeSpannerDatabase:
                     _, table, pk, record = op
                     self.typed.setdefault(table, {})[pk] = record
                     self.typed_versions[(table, pk)] = new_version
+                elif op[0] == "insert_typed_dml":
+                    _, table, pk, record = op
+                    self.typed.setdefault(table, {})[pk] = record
+                    self.typed_versions[(table, pk)] = new_version
                 elif op[0] == "delete_typed":
                     _, table, pk = op
                     self.typed.get(table, {}).pop(pk, None)
@@ -311,6 +315,39 @@ class _FakeTransaction:
             )
         self._did_dml = True
         p = params or {}
+        if "UPDATE tr_credit_balance SET total_credits = total_credits + @amount" in sql:
+            _require_pred(sql, "WHERE workspace_id=@ws AND shard=@shard", "credit-top-up")
+            pk = (p["ws"], p["shard"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(
+                rec,
+                total_credits=rec["total_credits"] + p["amount"],
+                source_updated_at=p["now"],
+                updated_at=p["now"],
+            )
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if sql.startswith("INSERT INTO tr_credit_balance"):
+            pk = (p["ws"], p["shard"])
+            if pk in self.db.typed.get("tr_credit_balance", {}):
+                raise FakeAlreadyExists(f"tr_credit_balance/{pk}")
+            version_key = ("typed", "tr_credit_balance", pk)
+            if version_key not in self.read_versions:
+                self.read_versions[version_key] = 0
+            record = dict(_TYPED_DEFAULTS["tr_credit_balance"])
+            record.update(
+                {
+                    "workspace_id": p["ws"],
+                    "shard": p["shard"],
+                    "total_credits": p["total"],
+                    "source_updated_at": p["now"],
+                    "updated_at": p["now"],
+                }
+            )
+            self.pending_writes.append(("insert_typed_dml", "tr_credit_balance", pk, record))
+            return 1
         if "UPDATE tr_credit_balance SET reserved = reserved + @est" in sql:
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)

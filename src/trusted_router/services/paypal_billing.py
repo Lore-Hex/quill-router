@@ -145,7 +145,7 @@ def credit_paypal_capture(
         raise api_error(404, "Credit account not found", ErrorType.NOT_FOUND)
     amount_microdollars = parsed["amount_microdollars"]
     capture_id = parsed["capture_id"]
-    credited = STORE.credit_workspace_once(
+    credited = STORE.credit_workspace_typed_direct(
         workspace_id,
         amount_microdollars,
         f"paypal_capture:{capture_id}",

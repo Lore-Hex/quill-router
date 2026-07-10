@@ -49,6 +49,8 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
+from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
+from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
@@ -750,17 +752,83 @@ class SpannerBigtableStore:
             lease_owner=lease_owner,
         )
 
-    def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
+    def credit_workspace_typed_direct(
+        self, workspace_id: str, amount_microdollars: int, event_id: str
+    ) -> bool:
         def txn(transaction: Any) -> bool:
             if self._read_entity_tx(transaction, "stripe_event", event_id, dict) is not None:
                 return False
             account = self._require_credit_tx(transaction, workspace_id)
-            account.total_credits_microdollars += amount_microdollars
-            self._write_entity_tx(transaction, "credit", workspace_id, account)
-            self._write_entity_tx(transaction, "stripe_event", event_id, {"created_at": iso_now()})
+            amount = int(amount_microdollars)
+            new_total = int(account.total_credits_microdollars) + amount
+            now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+            created_at = now.isoformat().replace("+00:00", "Z")
+            pt = self._param_types
+
+            updated = transaction.execute_update(
+                "UPDATE tr_credit_balance "
+                "SET total_credits = total_credits + @amount, "
+                "source_updated_at=@now, updated_at=@now "
+                "WHERE workspace_id=@ws AND shard=@shard",
+                params={
+                    "amount": amount,
+                    "now": now,
+                    "ws": workspace_id,
+                    "shard": UNSHARDED,
+                },
+                param_types={
+                    "amount": pt.INT64,
+                    "now": pt.TIMESTAMP,
+                    "ws": pt.STRING,
+                    "shard": pt.INT64,
+                },
+            )
+            if updated == 0:
+                transaction.execute_update(
+                    "INSERT INTO tr_credit_balance "
+                    "(workspace_id, shard, total_credits, source_updated_at, updated_at) "
+                    "VALUES (@ws, @shard, @total, @now, @now)",
+                    params={
+                        "ws": workspace_id,
+                        "shard": UNSHARDED,
+                        "total": new_total,
+                        "now": now,
+                    },
+                    param_types={
+                        "ws": pt.STRING,
+                        "shard": pt.INT64,
+                        "total": pt.INT64,
+                        "now": pt.TIMESTAMP,
+                    },
+                )
+
+            account.total_credits_microdollars = new_total
+            # Post-B2 authoritative top-up path: typed total_credits is updated
+            # explicitly above, and JSON is kept warm directly. Do not call
+            # _write_entity_tx here or the generic mirror would double-apply.
+            if update_entity_body_dml(
+                transaction,
+                pt,
+                "credit",
+                workspace_id,
+                _json_body(account),
+                now,
+            ) != 1:
+                raise ValueError("credit account not found")
+            insert_entity_dml_at(
+                transaction,
+                pt,
+                "stripe_event",
+                event_id,
+                _json_body({"created_at": created_at}),
+                now,
+            )
             return True
 
         return self._run_in_transaction(txn)
+
+    def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
+        return self.credit_workspace_typed_direct(workspace_id, amount_microdollars, event_id)
 
     def update_auto_refill_settings(
         self,

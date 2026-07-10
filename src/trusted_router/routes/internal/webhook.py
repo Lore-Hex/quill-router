@@ -38,8 +38,8 @@ def _grant_trial_credit_on_card_attach(
     configured trial credit (settings.signup_trial_credit_microdollars).
     Idempotent across webhook replays + repeat setup_intents (e.g. user adds a
     second card later) by using a deterministic per-workspace event_id —
-    credit_workspace_once dedupes via the stripe_events ledger so the trial only
-    ever lands once.
+    credit_workspace_typed_direct dedupes via the stripe_events ledger so the
+    trial only ever lands once.
 
     Returns the amount actually credited: 0 if already granted previously, if
     the grant is disabled (amount_microdollars <= 0 — the default policy as of
@@ -54,7 +54,7 @@ def _grant_trial_credit_on_card_attach(
     if amount_microdollars <= 0:
         return 0
     event_id = f"trial:{workspace_id}"
-    if STORE.credit_workspace_once(workspace_id, amount_microdollars, event_id):
+    if STORE.credit_workspace_typed_direct(workspace_id, amount_microdollars, event_id):
         return amount_microdollars
     return 0
 
@@ -114,7 +114,7 @@ def register(router: APIRouter) -> None:
                             "trial_credit_granted_microdollars": 0,
                         }
                     }
-                credited = STORE.credit_workspace_once(
+                credited = STORE.credit_workspace_typed_direct(
                     workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
                 )
                 # Capture the Stripe customer the first time they pay so
@@ -205,7 +205,7 @@ def register(router: APIRouter) -> None:
                 and isinstance(amount_microdollars_raw, str)
             ):
                 amount_microdollars = int(amount_microdollars_raw)
-                credited = STORE.credit_workspace_once(
+                credited = STORE.credit_workspace_typed_direct(
                     workspace_id, amount_microdollars, event_id
                 )
                 STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
