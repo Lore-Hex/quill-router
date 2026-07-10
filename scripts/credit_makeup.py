@@ -4,7 +4,7 @@ Reason: Stripe webhook was firing on $5+$2 checkouts (verified via
 events evt_1TaKM6QuWGscJyRc and evt_1TaKNXQuWGscJyRc) but TR's
 handler was not crediting the ledger. Customer paid, balance stayed
 $0. Granting $107 manually ($5 + $2 makeup + $100 goodwill) via the
-production Spanner backend's `credit_workspace_once`, which is the
+production Spanner backend's `credit_workspace_typed_direct`, which is the
 SAME code path the working webhook would have used — so the credit
 appears in the ledger indistinguishably from a real grant + the
 stripe_event row is recorded for idempotency.
@@ -30,8 +30,7 @@ os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
 # Keep production manual credits safe during the typed-billing cutover. This
-# uses the normal STORE.credit_workspace_once path, but it must also update the
-# typed counter mirror that the cohort-enforced authorize path reads.
+# uses the same typed-direct top-up path as the webhook.
 os.environ["TR_TYPED_COUNTER_MIRROR"] = "1"
 
 from trusted_router.config import Settings
@@ -58,7 +57,7 @@ def main() -> int:
         return 1
     print(f"before: total_credits_microdollars = {before.total_credits_microdollars}")
 
-    granted = STORE.credit_workspace_once(
+    granted = STORE.credit_workspace_typed_direct(
         workspace_id=WORKSPACE_ID,
         amount_microdollars=AMOUNT_MICRODOLLARS,
         event_id=EVENT_ID,
@@ -76,7 +75,7 @@ def main() -> int:
     after = STORE.get_credit_account(WORKSPACE_ID)
     if after is None:
         print(
-            "ERROR: credit_workspace_once returned True but get_credit_account "
+            "ERROR: credit_workspace_typed_direct returned True but get_credit_account "
             "returned None on re-read. Inconsistent state.",
             file=sys.stderr,
         )

@@ -163,7 +163,7 @@ def credit_x402_payment_intent(
     payment_intent_id = str(payment_intent.get("id") or "")
     if not payment_intent_id:
         raise api_error(400, "PaymentIntent is missing an id", ErrorType.BAD_REQUEST)
-    credited = STORE.credit_workspace_once(
+    credited = STORE.credit_workspace_typed_direct(
         workspace_id,
         amount_microdollars,
         x402_event_id(payment_intent_id),

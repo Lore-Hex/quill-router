@@ -615,6 +615,11 @@ class InMemoryStore:
             account.total_credits_microdollars += amount_microdollars
             return True
 
+    def credit_workspace_typed_direct(
+        self, workspace_id: str, amount_microdollars: int, event_id: str
+    ) -> bool:
+        return self.credit_workspace_once(workspace_id, amount_microdollars, event_id)
+
     def update_auto_refill_settings(
         self,
         workspace_id: str,

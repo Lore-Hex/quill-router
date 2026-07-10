@@ -304,6 +304,9 @@ class Store(Protocol):
 
     # Credit ledger -----------------------------------------------------------
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None: ...
+    def credit_workspace_typed_direct(
+        self, workspace_id: str, amount_microdollars: int, event_id: str
+    ) -> bool: ...
     def credit_workspace_once(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool: ...
