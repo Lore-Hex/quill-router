@@ -20,11 +20,18 @@ Routing decision = the same cohort gate the authorize path uses
 from __future__ import annotations
 
 import dataclasses
-from typing import Any
+from typing import Any, TypedDict
 
-from trusted_router.storage import typed_billing_store
+from trusted_router.storage import STORE, typed_billing_store
 from trusted_router.storage_gcp_authorize import typed_billing_enabled_for_workspace
 from trusted_router.storage_models import CreditAccount
+
+
+class LiveCreditSummary(TypedDict):
+    total_credits: int
+    total_usage: int
+    reserved: int
+    available: int
 
 
 def _typed_enabled(workspace_id: str, settings: Any) -> bool:
@@ -63,6 +70,44 @@ def typed_aware_credit_account(
         total_usage_microdollars=int(typed[1]),
         reserved_microdollars=int(typed[2]),
     )
+
+
+def live_credit_summary(
+    workspace_id: str,
+    *,
+    store: Any | None = None,
+) -> LiveCreditSummary | None:
+    """Return the live money counters for display/API reads.
+
+    A typed counter row wins whenever it exists. Workspaces without a typed row
+    yet, plus the in-memory single-book store, fall back to the JSON
+    CreditAccount. Non-money JSON metadata remains the caller's responsibility.
+    """
+    active_store = STORE if store is None else store
+    typed_store = typed_billing_store(active_store)
+    if typed_store is not None:
+        typed = typed_store.typed_credit_snapshot(workspace_id)
+        if typed is not None:
+            return _summary(int(typed[0]), int(typed[1]), int(typed[2]))
+
+    account = active_store.get_credit_account(workspace_id)
+    if account is None:
+        return None
+    return _summary(
+        account.total_credits_microdollars,
+        account.total_usage_microdollars,
+        account.reserved_microdollars,
+    )
+
+
+def _summary(total_credits: int, total_usage: int, reserved: int) -> LiveCreditSummary:
+    return {
+        "total_credits": total_credits,
+        "total_usage": total_usage,
+        "reserved": reserved,
+        "available": max(0, total_credits - total_usage - reserved),
+    }
+
 
 # NOTE: the key-usage/remaining display overlay (typed_aware_key over tr_key_limit)
 # is the immediate follow-up — it threads Settings into the /v1/keys + console key

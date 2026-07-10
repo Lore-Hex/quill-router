@@ -18,6 +18,7 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.dashboard import docs_llms_full_txt
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MAX_MCP_CHAT_TOKENS = 512
@@ -169,22 +170,17 @@ class TrustedRouterMCP:
         api_key = STORE.get_key_by_raw(bearer)
         if api_key is None or api_key.disabled:
             raise MCPToolError("Invalid TrustedRouter API key")
-        account = STORE.get_credit_account(api_key.workspace_id)
-        if account is None:
+        summary = live_credit_summary(api_key.workspace_id)
+        if summary is None:
             raise MCPToolError("No credit account found for this workspace")
-        available = (
-            account.total_credits_microdollars
-            - account.total_usage_microdollars
-            - account.reserved_microdollars
-        )
         return _tool_json(
             {
                 "data": {
                     "workspace_id": api_key.workspace_id,
-                    "total_credits_microdollars": account.total_credits_microdollars,
-                    "total_usage_microdollars": account.total_usage_microdollars,
-                    "reserved_microdollars": account.reserved_microdollars,
-                    "available_microdollars": available,
+                    "total_credits_microdollars": summary["total_credits"],
+                    "total_usage_microdollars": summary["total_usage"],
+                    "reserved_microdollars": summary["reserved"],
+                    "available_microdollars": summary["available"],
                 }
             }
         )

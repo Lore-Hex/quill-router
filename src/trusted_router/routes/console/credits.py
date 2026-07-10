@@ -29,13 +29,14 @@ from trusted_router.services.stripe_billing import (
     remove_saved_payment_method,
 )
 from trusted_router.storage import STORE
-from trusted_router.typed_balance import typed_aware_credit_account
+from trusted_router.typed_balance import live_credit_summary
 
 
 def register(app: FastAPI) -> None:
     @app.get("/console/credits")
     async def console_credits(ctx: ConsoleDep, settings: SettingsDep) -> Response:
-        credit = typed_aware_credit_account(STORE, ctx.workspace.id, settings=settings)
+        credit = STORE.get_credit_account(ctx.workspace.id)
+        summary = live_credit_summary(ctx.workspace.id)
         # Pull the last 20 Stripe checkout sessions tagged with this
         # workspace_id from Stripe's Search API. Returns [] if Stripe is
         # unreachable / not configured / there are no payments yet — all
@@ -60,11 +61,8 @@ def register(app: FastAPI) -> None:
             active="credits",
             page_title="Credits",
             page_subtitle="Top up to keep prepaid routes flowing.",
-            credits_available=money(
-                (credit.total_credits_microdollars - credit.total_usage_microdollars - credit.reserved_microdollars)
-                if credit else 0
-            ),
-            credits_usage=money(credit.total_usage_microdollars if credit else 0),
+            credits_available=money(summary["available"] if summary else 0),
+            credits_usage=money(summary["total_usage"] if summary else 0),
             auto_refill_enabled=credit.auto_refill_enabled if credit else False,
             auto_refill_threshold_dollars=(
                 credit.auto_refill_threshold_microdollars // 1_000_000 if credit and credit.auto_refill_threshold_microdollars else 10
