@@ -226,6 +226,24 @@ def release_key(
     )
 
 
+def key_limit_exists(
+    transaction: Any,
+    param_types: Any,
+    key_hash: str,
+    *,
+    shard: int = UNSHARDED,
+) -> bool:
+    """Classify a 0-row key release inside the same read-write transaction."""
+    rows = list(
+        transaction.execute_sql(
+            "SELECT 1 FROM tr_key_limit WHERE key_hash=@kh AND shard=@shard",
+            params={"kh": key_hash, "shard": shard},
+            param_types={"kh": param_types.STRING, "shard": param_types.INT64},
+        )
+    )
+    return bool(rows)
+
+
 # ── tr_reservation: durable hold record + scoped idempotency + settle claim ──
 # The reservation row records the EXACT holds taken at authorize (so settle
 # releases exactly those, codex#1 #5), the resolved usage types (hold vs settled,
