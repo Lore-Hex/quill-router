@@ -33,8 +33,12 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
+
+from requests.adapters import HTTPAdapter  # type: ignore[import-untyped]
+from urllib3.util.retry import Retry
 
 from trusted_router.config import Settings
 from trusted_router.sentry_config import _scrub
@@ -79,13 +83,18 @@ def init_axiom(settings: Settings) -> None:
             axiom_url=settings.axiom_url,
         )
         client = axiom_py.Client(**client_kwargs)
+        _mount_axiom_retry_adapter(client)
     except Exception as exc:  # noqa: BLE001
         log.warning("axiom.disabled reason=client_init_failed err=%s", exc)
         return
 
     resolved_level = _resolve_level(settings.axiom_log_level)
-    raw_handler: logging.Handler = AxiomHandler(client, dataset)
+    raw_handler: Any = AxiomHandler(client, dataset)
     raw_handler.setLevel(logging.NOTSET)
+    # axiom-py's emit() recreates each threading.Timer with `self.flush` at
+    # Timer-creation time. Assigning the bound flush on this instance shadows
+    # the class method, so timer-thread flushes go through the safe wrapper too.
+    raw_handler.flush = _safe_flush_wrapper(raw_handler.flush)
     handler: logging.Handler = _SafeAxiomHandler(raw_handler)
     handler.setLevel(resolved_level)
     # Attach a filter that scrubs PII before the handler ships the
@@ -129,6 +138,44 @@ def _client_kwargs(*, token: str, org_id: str | None, axiom_url: str) -> dict[st
         else:
             client_kwargs["url"] = axiom_url
     return client_kwargs
+
+
+def _mount_axiom_retry_adapter(client: Any) -> None:
+    session = getattr(client, "session", None)
+    if session is None:
+        return
+
+    # Retrying log ingest can at worst duplicate a log batch; the common failure
+    # here is RemoteDisconnected on an idle keepalive socket.
+    session.mount(
+        "https://",
+        HTTPAdapter(
+            max_retries=Retry(
+                total=2,
+                connect=2,
+                read=1,
+                backoff_factor=0.2,
+                allowed_methods=frozenset({"POST"}),
+                raise_on_status=False,
+            )
+        ),
+    )
+
+
+def _safe_flush_wrapper(bound_flush: Callable[[], None]) -> Callable[[], None]:
+    last_error_log_at: float | None = None
+
+    def safe_flush() -> None:
+        nonlocal last_error_log_at
+        try:
+            bound_flush()
+        except Exception as exc:  # noqa: BLE001 - logging flushes must not break requests.
+            now = time.monotonic()
+            if last_error_log_at is None or now - last_error_log_at > 60:
+                last_error_log_at = now
+                sys.stderr.write(f"axiom.flush_failed dropped=true err={exc!r}\n")
+
+    return safe_flush
 
 
 def _resolve_level(name: str) -> int:

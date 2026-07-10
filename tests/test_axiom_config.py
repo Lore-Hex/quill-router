@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import axiom_py
 import axiom_py.logging as axiom_logging
 import pytest
+import requests
 from fastapi.testclient import TestClient
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 import trusted_router.axiom_config as axiom_config
 import trusted_router.routes.public as public_routes
@@ -79,6 +81,32 @@ class _CapturingHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.records.append(logging.makeLogRecord(record.__dict__.copy()))
+
+
+class _StubAxiomClient:
+    def __init__(self, *, fail_ingest: bool = False) -> None:
+        self.fail_ingest = fail_ingest
+        self.ingested: list[tuple[str, list[dict[str, object]]]] = []
+        self.session = requests.Session()
+        self.shutdown_callbacks: list[Callable[[], None]] = []
+
+    def before_shutdown(self, callback: Callable[[], None]) -> None:
+        self.shutdown_callbacks.append(callback)
+
+    def ingest_events(self, dataset: str, events: list[dict[str, object]]) -> None:
+        if self.fail_ingest:
+            raise RequestsConnectionError("stale keepalive socket")
+        self.ingested.append((dataset, list(events)))
+
+
+def _build_wrapped_raw_axiom_handler(
+    client: _StubAxiomClient,
+) -> axiom_logging.AxiomHandler:
+    raw_handler = axiom_logging.AxiomHandler(client, "test-logs", interval=60)
+    raw_handler.flush = axiom_config._safe_flush_wrapper(raw_handler.flush)
+    safe_handler = _SafeAxiomHandler(raw_handler)
+    assert safe_handler.inner is raw_handler
+    return raw_handler
 
 
 @contextmanager
@@ -188,6 +216,48 @@ def test_safe_axiom_handler_never_raises_from_emit(capsys) -> None:
     captured = capsys.readouterr()
     assert "axiom.emit_failed dropped=true" in captured.err
     assert captured.err.count("axiom.emit_failed") == 1
+
+
+def test_axiom_timer_flush_wrapper_never_raises_and_throttles(capsys) -> None:
+    client = _StubAxiomClient(fail_ingest=True)
+    raw_handler = _build_wrapped_raw_axiom_handler(client)
+
+    raw_handler.buffer.append({"message": "one"})
+    raw_handler.flush()
+    raw_handler.buffer.append({"message": "two"})
+    raw_handler.flush()
+
+    captured = capsys.readouterr()
+    assert "axiom.flush_failed dropped=true" in captured.err
+    assert captured.err.count("axiom.flush_failed") == 1
+
+
+def test_axiom_timer_flush_wrapper_success_delivers_buffer(capsys) -> None:
+    client = _StubAxiomClient()
+    raw_handler = _build_wrapped_raw_axiom_handler(client)
+
+    raw_handler.buffer.append({"message": "ok"})
+    raw_handler.flush()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert client.ingested == [("test-logs", [{"message": "ok"}])]
+    assert raw_handler.buffer == []
+
+
+def test_axiom_client_session_mounts_post_retry_adapter() -> None:
+    client = _StubAxiomClient()
+
+    axiom_config._mount_axiom_retry_adapter(client)
+    axiom_config._mount_axiom_retry_adapter(object())
+
+    adapter = client.session.get_adapter("https://api.axiom.co/v1/datasets/test/ingest")
+    retry = adapter.max_retries
+    assert retry.total == 2
+    assert retry.connect == 2
+    assert retry.read == 1
+    assert retry.backoff_factor == 0.2
+    assert retry.allowed_methods == frozenset({"POST"})
 
 
 def test_axiom_scrub_filter_collapses_and_redacts_positional_args() -> None:
