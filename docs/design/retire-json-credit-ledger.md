@@ -121,3 +121,51 @@ counter_reconcile.py (compare 85, backfill 140, reconcile_for_flip 221, backsync
 repair_typed_reserved 596, audit_typed_invariants 405). JSON-only metadata (stays):
 auto_refill_*, stripe_customer_id, stripe_payment_method_id, last_auto_refill_*.
 Memory twin: single `credits` dict of CreditAccount (storage_models.py:245).
+
+## Execution checklist (added 2026-07-10; update in place as steps complete)
+
+Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (SA key)
+· every mutating tool step uses `--apply` after a dry-run.
+
+- [x] Design merged (#145, v2 hardened after adversarial review)
+- [ ] A1 flip tool merged (#146)
+
+### A2 — canary
+1. [C] `PYTHONPATH=src uv run python scripts/typed_flip.py readiness --all`
+   (read-only) → report + canary candidates (low-traffic, verdict READY).
+2. [J] Pick the canary workspace(s).
+3. [C] `typed_flip.py prepare --workspace <id> --apply` → workspace parked PAUSED
+   (pause → drain → seed → verify). Exit 2 = still draining; re-run later.
+4. [J] THE FLIP: one-line rollout.sh edit adding the id to
+   TR_TYPED_BILLING_WORKSPACE_IDS → merge (deploy runs) → verify the SERVING
+   revision env carries it (bare env edits do not survive; traffic is
+   revision-pinned).
+5. [C] `typed_flip.py finish --workspace <id> --allowlist-deployed --apply` →
+   unpaused, typed-enforced.
+6. Bake 3-7 days: daily `audit_typed_invariants` + compare() drift + the
+   "release row-count != 1" alert. Any violation → rollback path below.
+
+### A3 / A4 — ramp
+7. Repeat 1-6 for cohorts (~10% → ~50% → all), audits clean between batches. [J]
+   gates each cohort.
+8. [J] A4: set TR_TYPED_BILLING_WORKSPACE_IDS=* in rollout.sh (config-as-code);
+   covers new signups from then on.
+
+### Phase B (each step: codex writes, Claude reviews, PR, CI, merge)
+9. B1 reads → typed_credit_snapshot, gated on allowlist membership during the
+   ramp: signup() trial report, console credits/billing, MCP credits-get.
+10. B2 writes: typed total_credits authoritative; JSON total_credits KEPT WARM
+    in the same txn (rollback safety — backsync never copies total_credits).
+11. B3 grant scripts verify against the typed snapshot.
+
+### Phase C (only after 100% flipped + 2 weeks clean audits) [J] go required
+12. C1 delete: legacy finalize, _require_credit_tx, SpannerApiKeys.reserve +
+    its gateway call site, and B2's warm-keeping write.
+13. C2 delete: mirror, backsync, backfill, compare; slim CreditAccount to
+    non-money metadata; memory-twin + test updates.
+14. C3 runbook rewrite (single book; keep repair_typed_reserved +
+    audit_typed_invariants as standing tripwires).
+
+### Rollback (any point through B)
+`typed_flip.py rollback --workspace <id> --apply` → allowlist-REMOVAL deploy →
+`typed_flip.py finish --workspace <id> --allowlist-deployed --rollback --apply`.
