@@ -102,6 +102,10 @@ def _typed_authorize(
     )
 
 
+def _available(row: dict[str, Any]) -> int:
+    return int(row["total_credits"]) - int(row["total_usage"]) - int(row["reserved"])
+
+
 def test_rebalance_moves_only_idle_budget_and_preserves_global_totals() -> None:
     store, database, _key = _seed([100, 100], usage=[60, 60])
 
@@ -154,16 +158,115 @@ def test_rebalance_distinguishes_not_needed_insufficient_and_incomplete() -> Non
     ] == RebalanceOutcome.INCOMPLETE
 
 
-def test_rebalance_fails_closed_on_preexisting_sub_budget_violation() -> None:
-    store, database, _key = _seed([100, 100], usage=[101, 0])
+def test_overage_settle_negative_shard_rebalance_returns_402_not_500() -> None:
+    store, database, key = _seed([100, 100], usage=[60, 60])
+
+    outcome, authorization = _typed_authorize(
+        store,
+        key,
+        estimate=60,
+        idempotency_key="pre-overage",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED
+    assert authorization is not None
+    [reservation] = database.reservations.values()
+
+    settled = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=reservation["reservation_id"],
+        actual_micro=80,
+        settled_usage_type="Credits",
+        success=True,
+    )
+    assert settled["outcome"] == "settled"
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    assert any(_available(rows[("ws-fragmented", shard)]) < 0 for shard in range(2))
+    assert any(_available(rows[("ws-fragmented", shard)]) > 0 for shard in range(2))
+
+    outcome, authorization = _typed_authorize(
+        store,
+        key,
+        estimate=30,
+        idempotency_key="post-overage",
+    )
+
+    assert outcome == AuthorizeOutcome.INSUFFICIENT_CREDITS
+    assert authorization is None
+
+
+def test_rebalance_fills_negative_target_to_exact_estimate_and_preserves_total() -> None:
+    store, database, _key = _seed([100, 100, 100], usage=[120, 50, 50])
+    rows = database.typed[CREDIT_BALANCE_TABLE]
+    before_sum = sum(row["total_credits"] for row in rows.values())
+
+    result = _rebalance(store, shard_count=3, target_shard=0, estimate=40)
+
+    assert result == {
+        "outcome": RebalanceOutcome.MOVED,
+        "moved_micro": 60,
+        "target_shard": 0,
+    }
+    assert _available(rows[("ws-fragmented", 0)]) == 40
+    assert sum(row["total_credits"] for row in rows.values()) == before_sum
+
+
+def test_rebalance_negative_headroom_insufficient_returns_normal_outcome() -> None:
+    store, database, _key = _seed([100, 100, 100], usage=[130, 85, 95])
     before = {
         key: dict(value)
         for key, value in database.typed[CREDIT_BALANCE_TABLE].items()
     }
 
-    with pytest.raises(RuntimeError, match="exceeds its sub-budget"):
-        _rebalance(store, shard_count=2, target_shard=0, estimate=50)
+    result = _rebalance(store, shard_count=3, target_shard=0, estimate=10)
 
+    assert result == {
+        "outcome": RebalanceOutcome.INSUFFICIENT,
+        "moved_micro": 0,
+        "target_shard": 0,
+    }
+    assert database.typed[CREDIT_BALANCE_TABLE] == before
+
+
+def test_rebalance_bystander_negative_shard_counts_against_affordability() -> None:
+    # Regression (overspend guard): a NON-TARGET over-spent shard's debt must
+    # count against global affordability. Target shard 0 has 0 idle; positive
+    # donors (shards 1,2) hold 60+40=100; shard 3 is overdrawn by 40. Global
+    # available is 100-40=60 < estimate 100, so the correct answer is
+    # INSUFFICIENT — NOT a MOVE that consolidates 100 onto the target and lets
+    # the workspace reserve credit it does not globally have. A feasibility
+    # check that summed only positive donor headroom would wrongly accept here.
+    store, database, _key = _seed([0, 60, 40, 0], usage=[0, 0, 0, 40])
+    before = {
+        key: dict(value)
+        for key, value in database.typed[CREDIT_BALANCE_TABLE].items()
+    }
+
+    result = _rebalance(store, shard_count=4, target_shard=0, estimate=100)
+
+    assert result == {
+        "outcome": RebalanceOutcome.INSUFFICIENT,
+        "moved_micro": 0,
+        "target_shard": 0,
+    }
+    assert database.typed[CREDIT_BALANCE_TABLE] == before
+
+
+@pytest.mark.parametrize("estimate", [0, -1])
+def test_rebalance_nonpositive_estimate_returns_not_needed(estimate: int) -> None:
+    store, database, _key = _seed([100, 100], usage=[90, 0])
+    before = {
+        key: dict(value)
+        for key, value in database.typed[CREDIT_BALANCE_TABLE].items()
+    }
+
+    result = _rebalance(store, shard_count=2, target_shard=0, estimate=estimate)
+
+    assert result == {
+        "outcome": RebalanceOutcome.NOT_NEEDED,
+        "moved_micro": 0,
+        "target_shard": 0,
+    }
     assert database.typed[CREDIT_BALANCE_TABLE] == before
 
 

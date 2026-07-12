@@ -39,7 +39,11 @@ def rebalance_credit_for_estimate(
     if target_shard < 0 or target_shard >= count:
         raise ValueError("rebalance target shard is outside configured range")
     if estimate <= 0:
-        raise ValueError("rebalance estimate must be positive")
+        return {
+            "outcome": RebalanceOutcome.NOT_NEEDED,
+            "moved_micro": 0,
+            "target_shard": target_shard,
+        }
     pt = param_types
 
     def txn(transaction: Any) -> dict[str, int | str]:
@@ -63,10 +67,6 @@ def rebalance_credit_for_estimate(
         headroom: dict[int, int] = {}
         for shard, total_credits, total_usage, reserved in rows:
             available = int(total_credits) - int(total_usage) - int(reserved)
-            if available < 0:
-                raise _RebalanceInvariantError(
-                    f"credit shard {shard} exceeds its sub-budget"
-                )
             headroom[int(shard)] = available
 
         target_available = headroom[target_shard]
@@ -76,6 +76,13 @@ def rebalance_credit_for_estimate(
                 "moved_micro": 0,
                 "target_shard": target_shard,
             }
+        # Feasibility is the SIGNED global available — sum over every shard of
+        # (credits - usage - reserved), negatives included. An over-spent shard's
+        # debt must count against affordability, otherwise we would consolidate
+        # enough onto the target for reserve to succeed while the workspace is
+        # globally overdrawn (free spend). Donors below still pull only from
+        # POSITIVE headroom; when this passes, positive donor headroom is
+        # provably >= `needed`, so the plan always completes.
         if sum(headroom.values()) < estimate:
             return {
                 "outcome": RebalanceOutcome.INSUFFICIENT,
