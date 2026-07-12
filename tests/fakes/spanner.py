@@ -138,8 +138,14 @@ class FakeSpannerDatabase:
         self._ready_barrier = ready_barrier
         self.aborts = 0
         self.commits = 0
+        self.last_timeout_secs: float | None = None
 
-    def run_in_transaction(self, fn: Any) -> Any:
+    def run_in_transaction(self, fn: Any, *, timeout_secs: float | None = None) -> Any:
+        # timeout_secs mirrors google-cloud-spanner's Database.run_in_transaction
+        # kwarg (passed by run_in_transaction_with_retry to bound the inner retry
+        # to the caller's remaining wall-clock budget). The fake commits
+        # synchronously, so it records the value for assertions but does not sleep.
+        self.last_timeout_secs = timeout_secs
         for attempt in range(50):
             txn = _FakeTransaction(self)
             try:
