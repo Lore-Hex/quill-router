@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 import logging
@@ -1856,6 +1857,14 @@ class SpannerBigtableStore:
         data = json.loads(rows[0][0])
         if cls is dict:
             return data
+        if dataclasses.is_dataclass(cls):
+            known = {f.name for f in dataclasses.fields(cls)}
+            unknown = data.keys() - known
+            if unknown:
+                # Forward/back-compat: newer releases may persist fields this
+                # class does not know yet; drop extras instead of 500ing.
+                data = {key: value for key, value in data.items() if key in known}
+            return cls(**data)
         return cls(**data)
 
     def _list_entities(

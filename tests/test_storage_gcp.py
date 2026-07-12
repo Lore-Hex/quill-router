@@ -167,6 +167,40 @@ def test_gcp_api_key_lookup_uses_index_and_never_stores_raw_key() -> None:
     assert raw not in serialized
 
 
+def test_gcp_read_gateway_authorization_ignores_unknown_dataclass_fields() -> None:
+    store, db, _ = make_fake_store()
+    auth = store.create_gateway_authorization(
+        workspace_id="ws_1",
+        key_hash="key_1",
+        model_id="anthropic/claude-haiku-4.5",
+        provider="anthropic",
+        usage_type="Credits",
+        estimated_microdollars=123,
+        credit_reservation_id="res_1",
+        requested_model_id="anthropic/claude-haiku-4.5",
+        candidate_model_ids=["anthropic/claude-haiku-4.5"],
+        region="us",
+        endpoint_id="anthropic:claude-haiku-4.5",
+        candidate_endpoint_ids=["anthropic:claude-haiku-4.5"],
+        idempotency_key="idem_1",
+        tags={"team": "x"},
+        idempotency_fingerprint="fingerprint_1",
+    )
+    row = db.rows[("gateway_authorization", auth.id)]
+    body = json.loads(row.body)
+    body["some_future_field"] = 1
+    row.body = json.dumps(body, separators=(",", ":"), sort_keys=True)
+
+    refetched = store.get_gateway_authorization(auth.id)
+
+    assert refetched is not None
+    assert refetched.id == auth.id
+    assert refetched.workspace_id == "ws_1"
+    assert refetched.key_hash == "key_1"
+    assert refetched.tags == {"team": "x"}
+    assert refetched.idempotency_fingerprint == "fingerprint_1"
+
+
 def test_gcp_byok_upsert_updates_secret_ref_and_hint() -> None:
     store, db, _ = make_fake_store()
 
