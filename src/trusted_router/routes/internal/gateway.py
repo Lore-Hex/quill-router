@@ -208,7 +208,10 @@ def _authorize_gateway_sync(
         uuid.uuid4()
     )
     fingerprint_body = dict(body_dict)
-    if request_tags:
+    # Preserve the pre-tagging router's distinction between an absent tags
+    # field and an explicitly supplied empty object. That lets an idempotent
+    # retry carrying tags={} replay an authorization created before rollout.
+    if body.tags is not None:
         fingerprint_body["tags"] = request_tags
     else:
         fingerprint_body.pop("tags", None)

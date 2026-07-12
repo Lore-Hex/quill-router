@@ -10,6 +10,7 @@ from trusted_router.request_attribution import (
     validate_request_attribution,
 )
 from trusted_router.request_tags import InvalidTags, merge_tags, validate_tags
+from trusted_router.routes.internal.gateway import _gateway_authorize_fingerprint
 from trusted_router.storage import STORE, Generation
 from trusted_router.storage_activity import summarize_activity_result
 from trusted_router.storage_gcp_generations import SpannerGenerations
@@ -321,6 +322,42 @@ def test_idempotent_retry_replays_frozen_tags_after_key_defaults_change(
     assert replay["idempotent_replay"] is True
     assert replay["request_metadata_version"] == 1
     assert replay["tags"] == {"environment": "production"}
+
+
+def test_explicit_empty_tags_preserve_legacy_idempotency_fingerprint(
+    client: TestClient, user_headers: dict[str, str]
+) -> None:
+    created = _create_tagged_key(client, user_headers)
+    key_hash = created["data"]["hash"]
+    first = _authorize(
+        client,
+        key_hash,
+        tags={},
+        idempotency_key="legacy-empty-tags",
+    )
+    authorization = STORE.get_gateway_authorization(first["authorization_id"])
+    assert authorization is not None
+    legacy_fingerprint = _gateway_authorize_fingerprint(
+        workspace_id=first["workspace_id"],
+        key_hash=key_hash,
+        body={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 12,
+            "max_output_tokens": 4,
+            "tags": {},
+        },
+    )
+    assert authorization.idempotency_fingerprint == legacy_fingerprint
+
+    replay = _authorize(
+        client,
+        key_hash,
+        tags={},
+        idempotency_key="legacy-empty-tags",
+    )
+    assert replay["authorization_id"] == first["authorization_id"]
+    assert replay["idempotent_replay"] is True
 
 
 def test_idempotency_key_rejects_different_request_tags(

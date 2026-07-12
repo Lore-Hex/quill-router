@@ -146,8 +146,11 @@ idempotency key with different tags returns `409 conflict`. This prevents a
 retry from silently changing cost attribution.
 API-key defaults are deliberately excluded from the fingerprint. A retry after
 an API-key default edit replays the original authorization and its frozen tags.
-An empty or absent request tag map is omitted from the fingerprint so tagless
-requests remain compatible across the rollout boundary.
+An absent request tag map is omitted from the fingerprint so ordinary tagless
+requests remain byte-compatible across the rollout boundary. An explicitly
+supplied empty object remains in the fingerprint because the pre-tagging
+lenient router included that unknown field; preserving it allows an
+idempotent `tags: {}` retry to span the deployment without a false conflict.
 
 ## 4. Data flow and trust boundary
 
