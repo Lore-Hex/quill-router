@@ -438,6 +438,26 @@ class Store(Protocol):
         tag_key: str | None = ...,
         tag_value: str | None = ...,
     ) -> list[dict[str, Any]]: ...
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = ...,
+        date: str | None = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+        group_by_tag: str | None = ...,
+    ) -> Any: ...
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = ...,
+        date: str | None = ...,
+        limit: int = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+    ) -> Any: ...
     def usage_series(
         self,
         workspace_id: str,
@@ -491,9 +511,9 @@ class TypedBillingStore(Protocol):
         endpoint_id: str | None,
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
-        tags: dict[str, str] | None,
         idempotency_fingerprint: str | None,
         key_usage_shards: int = ...,
+        tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         expires_at: Any = ...,

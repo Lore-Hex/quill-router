@@ -124,6 +124,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/fusion",
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
+    "/docs/tagging",
     "/llms.txt",
     "/docs/llms.txt",
     "/docs/llms-full.txt",
@@ -320,6 +321,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/migrate_from_openrouter.html",
         title="Migrate From OpenRouter",
         description="Change base_url, keep OpenAI compatible clients, and verify the hosted gateway.",
+    ),
+    "docs/tagging": PublicPage(
+        template="public/tagging.html",
+        title="Request Tagging And Cost Allocation",
+        description=(
+            "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
+            "without adding them to model prompts or provider payloads."
+        ),
     ),
     "docs/agent-setup": PublicPage(
         template="public/agent_setup.html",
@@ -1804,8 +1813,10 @@ def llms_txt(settings: Settings) -> str:
         f"- MCP server: https://{domain}/docs/mcp",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
+        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
+        f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         "",
         "## API",
         "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
@@ -1883,6 +1894,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Latency benchmarks: https://{domain}/llm-provider-latency-benchmarks",
             f"- Blog: https://{domain}/blog",
             f"- Migrate from OpenRouter: https://{domain}/docs/migrate-from-openrouter",
+            f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
             f"- Security: https://{domain}/security",
             f"- Legal/procurement packet: https://{domain}/legal",
             f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",

@@ -906,6 +906,44 @@ class InMemoryStore:
             tag_value=tag_value,
         )
 
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
+    ) -> Any:
+        return self.generation_store.activity_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
+        )
+
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> Any:
+        return self.generation_store.activity_events_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+
     def usage_series(
         self,
         workspace_id: str,

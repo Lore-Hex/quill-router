@@ -38,6 +38,10 @@ from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regions import choose_region, region_payload
+from trusted_router.request_attribution import (
+    InvalidAttribution,
+    validate_request_attribution,
+)
 from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, validate_tags
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
@@ -116,6 +120,22 @@ def _authorize_gateway_sync(
         effective_tags = merge_tags(api_key.tags, body.tags)
     except InvalidTags as exc:
         raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        raise api_error(
+            400, str(exc), ErrorType.INVALID_REQUEST_METADATA
+        ) from exc
+    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
+        body_dict.pop(key, None)
+    body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
     if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
@@ -839,8 +859,7 @@ def _settle_gateway_authorization(
                 str(exc),
             )
 
-    settle_body = body.model_dump(exclude_none=True)
-    settle_body.pop("tags", None)
+    settle_body = _settle_body_with_safe_attribution(body, authorization.id)
 
     selected_endpoint = _select_authorized_endpoint(authorization, body)
     if selected_endpoint is None:
@@ -1060,6 +1079,44 @@ def _settle_gateway_authorization(
             "region": authorization.region,
         }
     }
+
+
+def _settle_body_with_safe_attribution(
+    body: GatewaySettleRequest, authorization_id: str
+) -> dict[str, Any]:
+    settle_body = body.model_dump(exclude_none=True)
+    settle_body.pop("tags", None)
+    attribution_keys = (
+        "user",
+        "session_id",
+        "trace",
+        "app",
+        "http_referer",
+        "app_categories",
+    )
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        for key in attribution_keys:
+            settle_body.pop(key, None)
+        logger.warning(
+            "invalid gateway settlement attribution dropped authorization_id=%s "
+            "error_class=%s",
+            authorization_id,
+            type(exc).__name__,
+        )
+        return settle_body
+    for key in attribution_keys:
+        settle_body.pop(key, None)
+    settle_body.update(attribution.body_fields())
+    return settle_body
 
 
 def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:

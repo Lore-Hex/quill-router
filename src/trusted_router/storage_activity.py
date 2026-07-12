@@ -1,10 +1,23 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from trusted_router.money import microdollars_to_float
 from trusted_router.storage_models import Generation, _is_byok
+
+MAX_TAG_GROUP_VALUES = 100
+
+
+@dataclass(frozen=True)
+class ActivityResult:
+    data: list[dict[str, Any]]
+    truncated: bool = False
+    groups_truncated: bool = False
+    scanned: int = 0
+    scan_limit: int | None = None
 
 
 def generation_metrics(gen: Generation) -> dict[str, int]:
@@ -54,10 +67,32 @@ def filter_generations(
 def summarize_activity(
     generations: Iterable[Generation], *, group_by_tag: str | None = None
 ) -> list[dict[str, Any]]:
+    return summarize_activity_result(generations, group_by_tag=group_by_tag).data
+
+
+def summarize_activity_result(
+    generations: Iterable[Generation],
+    *,
+    group_by_tag: str | None = None,
+    truncated: bool = False,
+    scan_limit: int | None = None,
+) -> ActivityResult:
+    generation_rows = list(generations)
+    retained_values: set[str | None] | None = None
+    groups_truncated = False
+    if group_by_tag:
+        counts = Counter(gen.tags.get(group_by_tag) for gen in generation_rows)
+        if len(counts) > MAX_TAG_GROUP_VALUES:
+            ranked = sorted(counts, key=lambda value: (-counts[value], str(value)))
+            retained_values = set(ranked[:MAX_TAG_GROUP_VALUES])
+            groups_truncated = True
+
     grouped: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
-    for gen in generations:
+    for gen in generation_rows:
         day = gen.created_at[:10]
         grouped_tag_value = gen.tags.get(group_by_tag) if group_by_tag else None
+        if retained_values is not None and grouped_tag_value not in retained_values:
+            grouped_tag_value = "__other__"
         key = (day, gen.model, gen.provider_name, grouped_tag_value)
         item = grouped.setdefault(
             key,
@@ -90,7 +125,13 @@ def summarize_activity(
         item["byok_usage_inference_microdollars"] += metrics["byok_micro"]
         item["usage"] += microdollars_to_float(metrics["cost_micro"])
         item["byok_usage_inference"] += microdollars_to_float(metrics["byok_micro"])
-    return sorted(grouped.values(), key=lambda item: item["date"], reverse=True)
+    return ActivityResult(
+        data=sorted(grouped.values(), key=lambda item: item["date"], reverse=True),
+        truncated=truncated,
+        groups_truncated=groups_truncated,
+        scanned=len(generation_rows),
+        scan_limit=scan_limit,
+    )
 
 
 def generation_events(

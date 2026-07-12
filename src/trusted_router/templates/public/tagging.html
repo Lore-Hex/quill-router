@@ -1,0 +1,134 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Request tagging quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Cost allocation metadata</span>
+    <h2>Attribute every request without putting metadata in the prompt.</h2>
+    <p>Attach up to 50 AWS style tags to Chat Completions, Responses, Messages, or Embeddings. TrustedRouter stores the effective tag set with generation metadata and keeps it out of provider request bodies.</p>
+    <p>Use tags for environment, application, team, project, cost center, customer tier, or any other non sensitive business dimension.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>OpenAI Python SDK</span><span>extra_body</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-tr-v1-...",
+    base_url="{{ api_base_url }}"
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/zdr",
+    messages=[{
+        "role": "user",
+        "content": "Summarize this contract."
+    }],
+    user="user_123",
+    extra_body={
+        "session_id": "matter_456",
+        "tags": {
+            "environment": "production",
+            "team": "legal",
+            "cost-center": "legal-01"
+        }
+    }
+)</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">The contract</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Shape</span>
+      <h3>A string map.</h3>
+      <p>Send <code>tags</code> as a JSON object. Keys and values are case sensitive strings. Empty values are allowed. Empty keys are not.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Limits</span>
+      <h3>Fifty tags per request.</h3>
+      <p>Keys may contain 128 Unicode characters. Values may contain 256. The effective compact map is capped at 4 KiB.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Characters</span>
+      <h3>A portable AWS style set.</h3>
+      <p>Use Unicode letters, numbers, and spaces plus <code>+ - = . _ : / @</code>. The prefixes <code>aws:</code> and <code>trustedrouter:</code> are reserved.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Defaults</span>
+    <h2>Set defaults once on an API key.</h2>
+    <p><code>POST /v1/keys</code> and <code>PATCH /v1/keys/{hash}</code> accept the same tag map. Request tags override key defaults. The merged result is frozen when TrustedRouter authorizes the request, so retries and later key edits cannot rewrite historical attribution.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>API key defaults</span><span>curl</span></div>
+    <pre><code>curl {{ control_plane_api_base_url }}/keys \
+  -H "Authorization: Bearer $MANAGEMENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-legal",
+    "tags": {
+      "environment": "production",
+      "team": "legal"
+    }
+  }'</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">OpenRouter attribution compatibility</h2>
+  <div class="marketing-grid two">
+    <div class="marketing-card">
+      <h3>Body fields</h3>
+      <ul class="check-list">
+        <li><code>user</code> identifies a stable end user</li>
+        <li><code>session_id</code> groups related requests</li>
+        <li><code>trace</code> carries Broadcast metadata</li>
+        <li><code>tags</code> allocates TrustedRouter usage and cost</li>
+      </ul>
+    </div>
+    <div class="marketing-card">
+      <h3>Headers</h3>
+      <ul class="check-list">
+        <li><code>X-Session-Id</code></li>
+        <li><code>HTTP-Referer</code></li>
+        <li><code>X-OpenRouter-Title</code> and <code>X-Title</code></li>
+        <li><code>X-OpenRouter-Categories</code></li>
+        <li><code>X-OpenRouter-Metadata: enabled</code> opts into router metadata</li>
+      </ul>
+    </div>
+  </div>
+  <p class="section-center">When enabled for Chat Completions or Responses, TrustedRouter returns route metadata in <code>openrouter_metadata</code>. It never includes credentials, tags, trace contents, prompts, or outputs.</p>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Query usage</span>
+    <h2>Filter or group activity by one tag.</h2>
+    <p>Use exact matches for cost allocation. Tag filters operate on a bounded recent/date scan and the response reports whether that scan was truncated. Tag values are private to the workspace and are never included in public provider rankings.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Activity API</span><span>GET</span></div>
+    <pre><code># Individual generations
+GET /v1/activity?group_by=none&amp;tag_key=team&amp;tag_value=legal
+
+# Daily model and provider totals split by tag value
+GET /v1/activity?group_by=tag:team</code></pre>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Trust boundary</span>
+    <h2>Tags are router metadata, not model input.</h2>
+  </div>
+  <div>
+    <p>The attested gateway validates tags before authorization. Provider adapters build separate upstream payloads that omit tags, trace metadata, session identifiers, and app attribution. Generation records contain the effective tags but never the prompt or model output.</p>
+    <p><a class="btn" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
+  </div>
+</section>
+
+{% endblock %}

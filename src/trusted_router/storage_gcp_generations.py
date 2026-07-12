@@ -15,9 +15,11 @@ import logging
 from typing import Any, Protocol
 
 from trusted_router.storage_activity import (
+    ActivityResult,
     filter_generations,
     generation_events,
     summarize_activity,
+    summarize_activity_result,
 )
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
@@ -45,6 +47,7 @@ from trusted_router.storage_models import (
 )
 
 log = logging.getLogger(__name__)
+ACTIVITY_SCAN_LIMIT = 5000
 
 
 class _AddUsageCallback(Protocol):
@@ -162,7 +165,7 @@ class SpannerGenerations:
         group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
         rows = self._activity_generations(
-            workspace_id, api_key_hash=api_key_hash, date=date, limit=5000
+            workspace_id, api_key_hash=api_key_hash, date=date, limit=ACTIVITY_SCAN_LIMIT
         )
         rows = filter_generations(
             rows,
@@ -173,6 +176,47 @@ class SpannerGenerations:
             tag_value=tag_value,
         )
         return summarize_activity(rows, group_by_tag=group_by_tag)
+
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
+    ) -> ActivityResult:
+        rows = self._activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=ACTIVITY_SCAN_LIMIT + 1,
+        )
+        truncated = len(rows) > ACTIVITY_SCAN_LIMIT
+        rows = rows[:ACTIVITY_SCAN_LIMIT]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        result = summarize_activity_result(
+            rows,
+            group_by_tag=group_by_tag,
+            truncated=truncated,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+        return ActivityResult(
+            data=result.data,
+            truncated=result.truncated,
+            groups_truncated=result.groups_truncated,
+            scanned=scanned,
+            scan_limit=result.scan_limit,
+        )
 
     def activity_events(
         self,
@@ -188,7 +232,7 @@ class SpannerGenerations:
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
-            limit=5000 if tag_key is not None else limit,
+            limit=ACTIVITY_SCAN_LIMIT if tag_key is not None else limit,
         )
         rows = filter_generations(
             rows,
@@ -199,6 +243,41 @@ class SpannerGenerations:
             tag_value=tag_value,
         )
         return generation_events(rows, limit=limit)
+
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> ActivityResult:
+        scan_limit = ACTIVITY_SCAN_LIMIT if tag_key is not None else limit
+        rows = self._activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=scan_limit + 1,
+        )
+        truncated = len(rows) > scan_limit
+        rows = rows[:scan_limit]
+        scanned = len(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return ActivityResult(
+            data=generation_events(rows, limit=limit),
+            truncated=truncated,
+            scanned=scanned,
+            scan_limit=scan_limit,
+        )
 
     def usage_series(
         self,

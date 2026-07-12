@@ -86,7 +86,7 @@ def _portable_tag_text(value: str) -> bool:
         if char in _PORTABLE_PUNCTUATION:
             continue
         category = unicodedata.category(char)
-        if category[0] in {"L", "N", "Z"}:
+        if category[0] in {"L", "N"} or category == "Zs":
             continue
         return False
     return True

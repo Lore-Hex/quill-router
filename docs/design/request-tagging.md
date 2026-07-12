@@ -1,17 +1,6 @@
 # Request tagging and OpenRouter attribution compatibility
 
-Status: proposed for implementation
-
-> 🔎 **FABLE REVIEW (2026-07-11) — verdict: sound design, approve with changes.**
-> The trust boundary, AWS-shape limits, and freeze-at-authorization are right.
-> Blocking items before implementation: (1) §4's settle-rejection-on-tag-mismatch
-> is a money-risk — settlement must NEVER fail over metadata; (2) §3.3's
-> idempotency fingerprint must cover REQUEST tags only (not effective tags) and
-> must be backward-compatible for tagless retries across the deploy boundary;
-> (3) add a TOTAL tag-bytes cap — 50×(128+256) chars/request inflates every
-> Bigtable activity-scan and settle-outbox row; (4) §6.3 tag group-by needs the
-> same truncation honesty we just shipped for usage graphs (#142). Inline
-> comments marked 🔎 below; remove them when addressed.
+Status: reviewed; implementation in pull request 157
 
 Owner: Lore Hex Corp / TrustedRouter
 
@@ -54,18 +43,9 @@ TrustedRouter will accept these fields on Chat Completions, Responses,
 Anthropic Messages, and Embeddings wherever their request shape permits it.
 Compatibility metadata is consumed by the attested gateway and control plane;
 only provider-native fields explicitly allowed by an adapter may reach an
-upstream provider. In particular, `trace`, `session_id`, app attribution, and
-TrustedRouter tags are never forwarded upstream.
-
-> 🔎 **FABLE:** `user` is conspicuously absent from the never-forwarded list —
-> decide it explicitly. OpenAI's native API has a `user` param used for abuse
-> detection, and some OpenAI-compat providers accept it, so "forward" is
-> defensible — but the privacy-preserving default for an attested router is
-> STRIP everywhere and state it here. Whichever way, name it in this paragraph
-> and add a trust-boundary test for it (§11 currently tests tags/trace/session/
-> app headers but not `user`). Also specify the fusion/synth panel path: internal
-> panel subrequests must not inherit `user`/`session_id` into provider payloads
-> either.
+upstream provider. `user`, `trace`, `session_id`, app attribution, and
+TrustedRouter tags are never forwarded upstream. This also applies to internal
+panel and advisor calls made by combination models.
 
 ### 2.1 Precedence
 
@@ -80,17 +60,8 @@ TrustedRouter tags are never forwarded upstream.
 
 - `user`: 128 Unicode characters.
 - `session_id`: 128 Unicode characters.
-- `trace`: JSON object, at most 32 KiB after compact UTF-8 encoding, depth at
+- `trace`: JSON object, at most 8 KiB after compact UTF-8 encoding, depth at
   most 8, and at most 256 total object keys and array elements.
-
-> 🔎 **FABLE:** 32 KiB is too generous once you trace where `trace` actually
-> transits DURABLY: the settle body is frozen into the tr_settle_outbox row
-> (enqueue-at-settle) and into the broadcast delivery queue entity until
-> drained. So "broadcast-only, not persisted" is not quite true — it is
-> persisted in two Spanner queues for the life of the row. Either exclude
-> `trace` from the frozen settle body (rebuild it for broadcast from a separate
-> channel) or cut the cap to something queue-friendly (4–8 KiB). State the
-> chosen transit path in §4's diagram.
 - App title: 120 Unicode characters.
 - Referer: 2,048 Unicode characters and a valid `http` or `https` URL.
 - Categories: at most 2 values per request, each lowercase kebab-case and at
@@ -136,17 +107,11 @@ The contract follows the common AWS tag limits documented for EC2 and ECS:
 - Values must be strings. Nested values, arrays, numbers, booleans, and null
   are rejected rather than coerced.
 - Empty values are allowed; empty keys are not.
-
-> 🔎 **FABLE:** Add two things here. (1) A TOTAL-size cap, e.g. "the compact
-> UTF-8 encoding of the effective tag map must not exceed 4 KiB". The per-field
-> AWS limits allow ~19 KB of tags per request; tags ride the generation body
-> that every Bigtable activity/usage scan reads (usage_series reads FULL bodies
-> at up to 200k rows/scan — we sized those scans before tags existed), plus the
-> outbox settle body. AWS charges nothing for fat tags; our scan path does.
-> (2) State Unicode comparison semantics explicitly: keys are compared by raw
-> codepoints — no NFC/NFKC normalization, consistent with case-sensitivity —
-> so visually identical keys can be distinct; docs should warn alongside the
-> `Team`/`team` example.
+- The compact UTF-8 encoding of the effective map may not exceed 4 KiB.
+- Unicode space separators use category `Zs`; line and paragraph separators
+  are rejected.
+- Keys are compared as raw code points with no Unicode normalization. Teams
+  should standardize spelling because visually identical keys may be distinct.
 
 Reference: <https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Using_Tags.html>
 
@@ -168,37 +133,21 @@ effective_tags = key_default_tags overlaid by request_tags
 ```
 
 Request values win for duplicate keys. Validation runs after the merge, so the
-effective set may never exceed 50. Updating an API key changes only future
+effective set must not exceed 50. Updating an API key changes only future
 requests; historical generations remain immutable.
-
-> 🔎 **FABLE:** The merged-limit rejection needs its own error string: a caller
-> sending 3 tags can be rejected because the key silently carries 48 defaults
-> they can't see from the error. Add to §9: `effective tags exceed 50 after
-> merging key default tags (key defaults: N, request: M)` — counts only, never
-> the tag contents. Also "may never exceed" reads as permission; say "must not
-> exceed 50; requests violating this after merge are rejected".
 
 The key list/get responses return default tags. Raw API keys and tag values are
 never included in logs.
 
 ### 3.3 Idempotency
 
-Tags are part of the authorization idempotency fingerprint. Reusing an
+Caller-supplied request tags are part of the authorization idempotency fingerprint. Reusing an
 idempotency key with different tags returns `409 conflict`. This prevents a
 retry from silently changing cost attribution.
-
-> 🔎 **FABLE — blocking, two corrections:**
-> 1. Fingerprint the **request tags as sent**, NOT the effective (merged) set.
->    If key defaults are in the fingerprint, a `PATCH /v1/keys` between a
->    request and its innocent retry changes the fingerprint and turns the retry
->    into a spurious 409 — and retry-replay is our recovery mechanism for lost
->    responses (the committed reservation must be returned, not refused).
-> 2. Deploy-boundary compatibility: a tagless request authorized on the OLD
->    revision and retried on the NEW one must produce the SAME fingerprint.
->    Canonicalize "no tags" as the absence of the field (not `{}` hashed in),
->    i.e. the new fingerprint function must be byte-identical to the old one
->    whenever tags are absent. Add both cases to §11's tests.
-> Also name the 409's `error.type` (e.g. `idempotency_conflict`) in §9.
+API-key defaults are deliberately excluded from the fingerprint. A retry after
+an API-key default edit replays the original authorization and its frozen tags.
+An empty or absent request tag map is omitted from the fingerprint so tagless
+requests remain compatible across the rollout boundary.
 
 ## 4. Data flow and trust boundary
 
@@ -208,7 +157,7 @@ client request
   -> control-plane authorize validates again and merges API-key defaults
   -> authorization response returns effective tags
   -> gateway invokes provider without TrustedRouter tags/trace/app fields
-  -> gateway settlement carries effective tags and compatibility metadata
+  -> gateway settlement carries compatibility metadata, but not tags
   -> Spanner generation record + Bigtable activity body store metadata
   -> optional metadata-only Broadcast exports tag attributes asynchronously
 ```
@@ -220,21 +169,11 @@ Validation is duplicated deliberately:
 - The control plane treats the enclave as authenticated but still validates at
   its persistence boundary.
 
-The effective tag set is frozen on the gateway authorization. Settlement may
-echo it, but the control plane rejects any settlement whose tags differ from
-the authorization. Refunds do not create generation rows.
-
-> 🔎 **FABLE — blocking (money-safety):** do NOT reject settlement over a tag
-> mismatch. A rejected settle is a charge that fails to book — that trips the
-> settle-outbox lost-charge machinery and pages a human, all for metadata. The
-> authorization already holds the frozen, authoritative tag set, so the control
-> plane should **ignore settlement-supplied tags entirely** (or better: don't
-> carry tags in the settle body at all) and build the generation from the
-> authorization's stored tags, logging a metadata-only WARNING with tag_count
-> on mismatch. Settlement outcome must be a pure function of money state,
-> never of metadata equality. Update §11's "Settlement cannot alter
-> authorization-frozen effective tags" test to assert tags-ignored-with-warning
-> rather than settle-rejected.
+The effective tag set is frozen on the gateway authorization. The gateway does
+not send tags during settlement. If an older or third-party gateway supplies
+settlement tags, the control plane ignores them and logs counts only. Billing
+and settlement never fail because metadata differs. Refunds do not create
+generation rows.
 
 ## 5. Storage and scale
 
@@ -301,15 +240,12 @@ Headers accepted on all four routes:
 - `group_by=tag:<key>`: groups request count, tokens, and integer microdollar
   cost by the selected tag value.
 
-> 🔎 **FABLE:** two launch requirements for `group_by=tag:<key>` on a bounded
-> scan. (1) Truncation honesty: when the underlying scan is truncated, the
-> grouped sums are lower bounds — return `truncated: true` and have any UI
-> render totals with the same "≥" treatment we shipped for usage graphs (#142);
-> a partial sum presented as exact is precisely the bug class we just fixed.
-> (2) Cardinality bound: a tag like `request-id` yields unbounded groups; cap
-> at e.g. 100 groups + an `other` bucket + `groups_truncated: true`. Also note
-> rare-tag filters over a bounded recent scan can legitimately return empty —
-> point users to the future rollup for long-horizon allocation.
+Activity responses include `meta.truncated`, `meta.groups_truncated`,
+`meta.scanned`, and `meta.scan_limit`. Tag grouping keeps the 100 most frequent
+values and combines the rest into `__other__`. Tag filters are exact but run
+over the bounded recent/date scan; `meta.tag_filter_scope=recent_window` makes
+that limitation explicit. Activated-tag rollups will provide exact long-horizon
+allocation in a later release.
 
 `group_by=none|request|generation` returns `tags`, `user`, `session_id`,
 `http_referer`, and `app_categories` on each metadata-only event.
@@ -343,16 +279,10 @@ OTLP attributes:
 Tag values are metadata and are exported even when content export is disabled.
 The UI and docs warn users not to place secrets, personal data, client names,
 matter names, prompts, or output in tags.
-
-> 🔎 **FABLE:** name the tension explicitly so implementers don't "fix" it in
-> either direction: §10 bans tag VALUES from our own logs (Sentry/Axiom/Cloud
-> Logging — keep them out of the #141 scrub surface entirely, not scrubbed),
-> while this section intentionally exports them to customer-configured third
-> parties (PostHog/OTLP) because export is their purpose. Both are correct;
-> the boundary is "our observability: never — customer's chosen destinations:
-> by design". One addition: since KEY-DEFAULT tags are set by the key owner but
-> exported on every requester's traffic, the key-management UI should show the
-> broadcast warning at default-tag creation too.
+The boundary is deliberate: TrustedRouter's own logs never contain tag values,
+while a customer's configured PostHog or OTLP destination receives tags by
+design. Key management surfaces show the same warning because key defaults are
+exported on every request that uses that key.
 
 ## 8. Response routing metadata
 
@@ -443,15 +373,9 @@ Native Messages requests receive the equivalent Anthropic-shaped 400 error.
    defaults.
 2. Land the enclave parser and settlement propagation.
 3. Deploy control plane before enclave so old gateways remain accepted.
-
-> 🔎 **FABLE:** add the reverse-skew case to step 3's acceptance: NEW control
-> plane + OLD enclave means authorize arrives with no tags while the API key
-> has defaults — the CP must still apply key defaults (defaults are CP-side)
-> and the idempotency fingerprint for those tagless authorizes must match what
-> the old enclave's retries produce (see §3.3 comment). And per the §4 comment,
-> settlement propagation (step 2) should shrink to "no tag propagation at
-> settle" if the CP builds generations from the authorization's frozen tags —
-> that removes the skew surface entirely.
+   Acceptance includes a new control plane with an old enclave: API-key
+   defaults still apply, tagless request fingerprints remain unchanged, and
+   settlement uses authorization-frozen tags without gateway propagation.
 4. Roll enclave regions one at a time and run tagged Chat, Responses, Messages,
    and Embeddings smokes.
 5. Publish `https://trustedrouter.com/docs/tagging` and add it to `/docs`,
