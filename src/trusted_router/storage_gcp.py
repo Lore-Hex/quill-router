@@ -1403,11 +1403,14 @@ class SpannerBigtableStore:
         if not getattr(self, "_counter_mirror_enabled", False):
             return None
         pt = self._param_types
-        try:
-            shard_count = self._credit_shard_count(workspace_id)
-        except CreditShardConfigurationMissingError:
-            return None
-        with self._database.snapshot() as snapshot:
+        # This exact snapshot also feeds auto-refill decisions. Do not reuse the
+        # allow-stale authorize cache here: after a split, a stale smaller count
+        # could understate available credit and charge a card prematurely.
+        with self._database.snapshot(multi_use=True) as snapshot:
+            account = self._read_entity_from(snapshot, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            shard_count = credit_shard_count(account)
             rows = list(snapshot.execute_sql(
                 "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
                 "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",

@@ -939,19 +939,24 @@ def _execute_sql(
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:
             cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
-            recs = list(db.typed.get(typed_table, {}).values())
+            items = list(db.typed.get(typed_table, {}).items())
             if "@pk" in sql and "pk" in params:
                 pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
-                recs = [r for r in recs if r.get(pk_col) == params["pk"]]
+                items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
-                    recs = [r for r in recs if r.get("shard", 0) == 0]
+                    items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == 0]
                 if "shard<@shard_count" in sql.replace(" ", ""):
-                    recs = [
-                        r for r in recs
-                        if 0 <= int(r.get("shard", 0)) < int(params["shard_count"])
+                    items = [
+                        (pk, rec) for pk, rec in items
+                        if 0 <= int(rec.get("shard", 0)) < int(params["shard_count"])
                     ]
                 if "ORDER BY shard" in sql:
-                    recs.sort(key=lambda r: int(r.get("shard", 0)))
+                    items.sort(key=lambda item: int(item[1].get("shard", 0)))
+            recs = [
+                txn._typed_current(typed_table, pk) if txn is not None else dict(rec)
+                for pk, rec in items
+            ]
+            recs = [rec for rec in recs if rec is not None]
             return [[rec.get(c) for c in cols] for rec in recs]
     if "AND id=@id" in sql:
         entity_id = params["id"]
