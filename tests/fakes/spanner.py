@@ -1033,6 +1033,9 @@ def make_fake_store(
     store._database = db
     store._bt_table = bt
     store._counter_mirror_enabled = True  # exercise the Step-1 typed-counter mirror
+    from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
+
+    store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,
         write_entity_batch=store._write_entity_batch,

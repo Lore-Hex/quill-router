@@ -57,6 +57,10 @@ from trusted_router.storage_gcp_counters import (
 )
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
+from trusted_router.storage_gcp_credit_shards import (
+    CreditShardCountCache,
+    randomized_credit_shards,
+)
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
@@ -195,6 +199,14 @@ class SpannerBigtableStore:
         # TR_TYPED_COUNTER_MIRROR=1 only once tr_credit_balance / tr_key_limit
         # exist, or the mirror writes would fail the billing transactions.
         self._counter_mirror_enabled = os.environ.get("TR_TYPED_COUNTER_MIRROR", "") == "1"
+        self._credit_shard_counts = CreditShardCountCache(
+            ttl_seconds=float(
+                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")
+            ),
+            max_entries=int(
+                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")
+            ),
+        )
         io = SpannerIO(
             database=self._database,
             write_entity_batch=self._write_entity_batch,
@@ -396,6 +408,19 @@ class SpannerBigtableStore:
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
+
+    def _credit_shard_candidates(self, workspace_id: str) -> tuple[int, ...]:
+        def load() -> int:
+            account = self.get_credit_account(workspace_id)
+            if account is None:
+                # The typed balance cannot be administered safely without its
+                # control-plane account/config row. Treat this as drift, not as
+                # an implicit one-shard account.
+                raise RuntimeError("credit account not found while selecting shard")
+            return credit_shard_count(account)
+
+        shard_count = self._credit_shard_counts.get(workspace_id, load)
+        return randomized_credit_shards(shard_count)
 
     def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
         members: list[Member] = []
@@ -1249,6 +1274,11 @@ class SpannerBigtableStore:
                 # gateway route splits on ':'.
                 return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
 
+        credit_shard_candidates = (
+            self._credit_shard_candidates(workspace_id)
+            if has_credit_candidate
+            else (UNSHARDED,)
+        )
         result = authorize_atomic(
             self._database,
             self._param_types,
@@ -1261,6 +1291,7 @@ class SpannerBigtableStore:
             idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
             build_auth_body=build_body,
+            credit_shard_candidates=credit_shard_candidates,
         )
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None

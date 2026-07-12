@@ -27,6 +27,7 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 
 # Long tail lives entirely on shard 0; sharding a whale is a data change later.
 UNSHARDED = 0
+MAX_CREDIT_SHARDS = 64
 
 # OWNERSHIP SPLIT (2026-06-25 incident). The JSON->typed mirror writes ONLY the
 # columns JSON owns. `total_credits` is set by credit events (top-ups / grants /
@@ -80,6 +81,8 @@ def credit_shard_count(value: Any) -> int:
     count = int(raw)
     if count < 1:
         raise ValueError("credit shard_count must be a positive integer")
+    if count > MAX_CREDIT_SHARDS:
+        raise ValueError(f"credit shard_count must not exceed {MAX_CREDIT_SHARDS}")
     return count
 
 

@@ -249,8 +249,8 @@ class CreditAccount:
     total_usage_microdollars: int = 0
     reserved_microdollars: int = 0
     # Number of independent tr_credit_balance sub-ledgers owned by this
-    # workspace. Increment 1 keeps every account at one shard; later increments
-    # add selection/rebalancing and an operator-only activation path.
+    # workspace. The default preserves the original one-row behavior; only the
+    # pause/drain operator path may activate more shards for a hot workspace.
     shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
