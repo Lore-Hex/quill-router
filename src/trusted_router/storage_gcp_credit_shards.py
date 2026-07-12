@@ -18,6 +18,7 @@ from trusted_router.storage_gcp_counters import credit_shard_count
 
 DEFAULT_CACHE_TTL_SECONDS = 60.0
 DEFAULT_CACHE_MAX_ENTRIES = 10_000
+REFRESH_MIN_INTERVAL_SECONDS = 2.0
 _LOAD_LOCK_STRIPES = 64
 
 
@@ -47,6 +48,7 @@ def randomized_credit_shards(
 class _CacheEntry:
     shard_count: int
     expires_at: float
+    loaded_at: float
 
 
 class CreditShardCountCache:
@@ -97,6 +99,26 @@ class CreditShardCountCache:
         with self._lock:
             self._entries.pop(workspace_id, None)
 
+    def refresh(self, workspace_id: str, loader: Callable[[], int]) -> int:
+        """Force-reload the shard count, deduped under the stripe lock."""
+        load_lock = self._load_locks[hash(workspace_id) % len(self._load_locks)]
+        with load_lock:
+            now = self._clock()
+            with self._lock:
+                entry = self._entries.get(workspace_id)
+                if (
+                    entry is not None
+                    and now - entry.loaded_at < REFRESH_MIN_INTERVAL_SECONDS
+                    # Never serve an expired entry (only possible when the TTL
+                    # is configured below the refresh interval).
+                    and now < entry.expires_at
+                ):
+                    self._entries.move_to_end(workspace_id)
+                    return entry.shard_count
+            loaded = credit_shard_count({"shard_count": loader()})
+            self._put(workspace_id, loaded)
+            return loaded
+
     def _get_fresh(self, workspace_id: str) -> int | None:
         now = self._clock()
         with self._lock:
@@ -110,9 +132,11 @@ class CreditShardCountCache:
             return entry.shard_count
 
     def _put(self, workspace_id: str, shard_count: int) -> None:
+        now = self._clock()
         entry = _CacheEntry(
             shard_count=shard_count,
-            expires_at=self._clock() + self._ttl_seconds,
+            expires_at=now + self._ttl_seconds,
+            loaded_at=now,
         )
         with self._lock:
             self._entries[workspace_id] = entry

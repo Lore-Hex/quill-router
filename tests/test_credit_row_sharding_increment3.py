@@ -12,7 +12,10 @@ from trusted_router.storage_gcp_credit_rebalance import (
     RebalanceOutcome,
     rebalance_credit_for_estimate,
 )
-from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
+from trusted_router.storage_gcp_credit_shards import (
+    REFRESH_MIN_INTERVAL_SECONDS,
+    CreditShardCountCache,
+)
 from trusted_router.storage_models import CreditAccount
 
 
@@ -323,8 +326,13 @@ def test_true_insufficient_store_authorize_rolls_back_every_hold() -> None:
 
 def test_stale_smaller_cache_refreshes_and_uses_newly_activated_shards() -> None:
     store, database, key = _seed([0, 0, 100])
-    store._credit_shard_counts = CreditShardCountCache(ttl_seconds=600)
+    now = [100.0]
+    store._credit_shard_counts = CreditShardCountCache(
+        ttl_seconds=600,
+        clock=lambda: now[0],
+    )
     assert store._credit_shard_counts.get("ws-fragmented", lambda: 1) == 1
+    now[0] += REFRESH_MIN_INTERVAL_SECONDS + 0.1
 
     outcome, authorization = _typed_authorize(store, key, estimate=50)
 
@@ -336,8 +344,13 @@ def test_stale_smaller_cache_refreshes_and_uses_newly_activated_shards() -> None
 
 def test_stale_larger_cache_refreshes_after_rejection_without_drift_error() -> None:
     store, _database, key = _seed([40])
-    store._credit_shard_counts = CreditShardCountCache(ttl_seconds=600)
+    now = [100.0]
+    store._credit_shard_counts = CreditShardCountCache(
+        ttl_seconds=600,
+        clock=lambda: now[0],
+    )
     assert store._credit_shard_counts.get("ws-fragmented", lambda: 3) == 3
+    now[0] += REFRESH_MIN_INTERVAL_SECONDS + 0.1
 
     outcome, authorization = _typed_authorize(store, key, estimate=60)
 
