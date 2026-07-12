@@ -80,6 +80,24 @@ async def authorize_gateway(
     body: GatewayAuthorizeRequest,
     settings: Settings,
 ) -> dict[str, Any]:
+    """Async entrypoint for the authorize path.
+
+    The work below is entirely synchronous storage IO (no awaits), so run it in a
+    worker thread via ``run_in_threadpool``. Left on the event loop, ONE contended
+    workspace's slow authorize/reserve transaction stalls EVERY in-flight request
+    sharing the loop (head-of-line blocking) — so unrelated requests fail even
+    though they have nothing to do with the slow one. Offloading keeps the loop
+    free while this request's blocking storage runs; the response is byte-identical.
+    Kept ``async`` so callers/tests await it unchanged.
+    """
+    return await run_in_threadpool(_authorize_gateway_sync, request, body, settings)
+
+
+def _authorize_gateway_sync(
+    request: Request,
+    body: GatewayAuthorizeRequest,
+    settings: Settings,
+) -> dict[str, Any]:
     """Core gateway-authorize logic, extracted from the route closure so it is a
     named, directly unit-testable function (#40). The registered route handler is
     a thin wrapper; behavior is byte-identical to the prior inline handler."""
@@ -411,31 +429,111 @@ async def authorize_gateway(
     )
 
 
+def _gateway_validate_sync(
+    request: Request,
+    body: GatewayValidateRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    api_key = _api_key_for_gateway_lookup(
+        api_key_hash=body.api_key_hash,
+        api_key_lookup_hash=body.api_key_lookup_hash,
+    )
+    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+    workspace = STORE.get_workspace(api_key.workspace_id)
+    if workspace is None:
+        raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+    assert_workspace_billing_active(workspace)
+    return {
+        "data": {
+            "workspace_id": workspace.id,
+            "api_key_hash": api_key.hash,
+            "route_type": body.route_type,
+        }
+    }
+
+
+def _gateway_key_info_sync(
+    request: Request,
+    body: GatewayValidateRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Key self-introspection for the enclave: the /v1/key passthrough.
+
+    The enclave NEVER forwards the raw bearer to the control plane (the
+    attested contract; authorize sends a lookup hash) — so agent budget
+    reads come through here keyed by the same lookup hash + internal
+    token. Deliberately no billing-pause gate: reading your own limits
+    while paused is a harmless, useful read."""
+    require_internal_gateway(request, settings)
+    api_key = _api_key_for_gateway_lookup(
+        api_key_hash=body.api_key_hash,
+        api_key_lookup_hash=body.api_key_lookup_hash,
+    )
+    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+    from trusted_router.routes.keys import _enriched_key_shape
+
+    return {"data": _enriched_key_shape(api_key)}
+
+
+def _gateway_resolve_custom_model_sync(
+    request: Request,
+    body: GatewayResolveCustomModelRequest,
+    settings: Settings,
+) -> dict[str, Any]:
+    require_internal_gateway(request, settings)
+    api_key = _api_key_for_gateway_lookup(
+        api_key_hash=body.api_key_hash,
+        api_key_lookup_hash=body.api_key_lookup_hash,
+    )
+    if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
+        raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
+    workspace = STORE.get_workspace(api_key.workspace_id)
+    if workspace is None:
+        raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
+    assert_workspace_billing_active(workspace)
+    if not is_custom_model_id(body.model):
+        raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
+    custom_model = STORE.get_custom_model(normalize_custom_model_id(body.model))
+    if custom_model is None or not custom_model.enabled:
+        raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
+    return {
+        "data": {
+            "workspace_id": workspace.id,
+            "api_key_hash": api_key.hash,
+            "route_type": body.route_type,
+            "custom_model": {
+                "id": custom_model.id,
+                "name": custom_model.name,
+                "base_model_id": custom_model.base_model_id,
+                "hidden_prompt": custom_model.hidden_prompt,
+                "revision": custom_model.revision,
+            },
+        }
+    }
+
+
 def register(router: APIRouter) -> None:
+    # Every handler below does synchronous storage IO. They run it via
+    # run_in_threadpool so a slow/contended transaction on one request never
+    # blocks the shared event loop for all others.
+    #
+    # These share AnyIO's default worker pool (40 tokens) with FastAPI's other
+    # sync dependencies — deliberately, NOT a dedicated CapacityLimiter. Cloud
+    # Run runs this service at --concurrency=2 (rollout.sh), so at most ~2
+    # offloads are ever in flight per instance (far under 40); load scales out
+    # across instances, not up per-instance, and prod inference never touches
+    # this service (it goes through the enclave). Give gateway storage its own
+    # limiter only if TR_CLOUD_RUN_CONCURRENCY is raised toward the pool size.
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
         request: Request,
         body: GatewayValidateRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        api_key = _api_key_for_gateway_lookup(
-            api_key_hash=body.api_key_hash,
-            api_key_lookup_hash=body.api_key_lookup_hash,
-        )
-        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
-        workspace = STORE.get_workspace(api_key.workspace_id)
-        if workspace is None:
-            raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
-        assert_workspace_billing_active(workspace)
-        return {
-            "data": {
-                "workspace_id": workspace.id,
-                "api_key_hash": api_key.hash,
-                "route_type": body.route_type,
-            }
-        }
+        return await run_in_threadpool(_gateway_validate_sync, request, body, settings)
 
     @router.post("/internal/gateway/key")
     async def gateway_key_info(
@@ -443,23 +541,7 @@ def register(router: APIRouter) -> None:
         body: GatewayValidateRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        """Key self-introspection for the enclave: the /v1/key passthrough.
-
-        The enclave NEVER forwards the raw bearer to the control plane (the
-        attested contract; authorize sends a lookup hash) — so agent budget
-        reads come through here keyed by the same lookup hash + internal
-        token. Deliberately no billing-pause gate: reading your own limits
-        while paused is a harmless, useful read."""
-        require_internal_gateway(request, settings)
-        api_key = _api_key_for_gateway_lookup(
-            api_key_hash=body.api_key_hash,
-            api_key_lookup_hash=body.api_key_lookup_hash,
-        )
-        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
-        from trusted_router.routes.keys import _enriched_key_shape
-
-        return {"data": _enriched_key_shape(api_key)}
+        return await run_in_threadpool(_gateway_key_info_sync, request, body, settings)
 
     @router.post("/internal/gateway/resolve-custom-model")
     async def gateway_resolve_custom_model(
@@ -467,36 +549,9 @@ def register(router: APIRouter) -> None:
         body: GatewayResolveCustomModelRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        require_internal_gateway(request, settings)
-        api_key = _api_key_for_gateway_lookup(
-            api_key_hash=body.api_key_hash,
-            api_key_lookup_hash=body.api_key_lookup_hash,
+        return await run_in_threadpool(
+            _gateway_resolve_custom_model_sync, request, body, settings
         )
-        if api_key is None or api_key.disabled or is_api_key_expired(api_key.expires_at):
-            raise api_error(401, "Invalid API key", ErrorType.UNAUTHORIZED)
-        workspace = STORE.get_workspace(api_key.workspace_id)
-        if workspace is None:
-            raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
-        assert_workspace_billing_active(workspace)
-        if not is_custom_model_id(body.model):
-            raise api_error(400, "Model is not a custom model", ErrorType.BAD_REQUEST)
-        custom_model = STORE.get_custom_model(normalize_custom_model_id(body.model))
-        if custom_model is None or not custom_model.enabled:
-            raise api_error(404, "Custom model not found", ErrorType.NOT_FOUND)
-        return {
-            "data": {
-                "workspace_id": workspace.id,
-                "api_key_hash": api_key.hash,
-                "route_type": body.route_type,
-                "custom_model": {
-                    "id": custom_model.id,
-                    "name": custom_model.name,
-                    "base_model_id": custom_model.base_model_id,
-                    "hidden_prompt": custom_model.hidden_prompt,
-                    "revision": custom_model.revision,
-                },
-            }
-        }
 
     @router.post("/internal/gateway/authorize")
     async def gateway_authorize(
@@ -514,7 +569,10 @@ def register(router: APIRouter) -> None:
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        return _settle_gateway_authorization(
+        # background_tasks.add_task is a plain list append inside the sync core;
+        # the tasks themselves still run on the loop after the response.
+        return await run_in_threadpool(
+            _settle_gateway_authorization,
             body,
             success=True,
             settings=settings,
@@ -529,7 +587,8 @@ def register(router: APIRouter) -> None:
         background_tasks: BackgroundTasks,
     ) -> dict[str, Any]:
         require_internal_gateway(request, settings)
-        return _settle_gateway_authorization(
+        return await run_in_threadpool(
+            _settle_gateway_authorization,
             body,
             success=False,
             settings=settings,
