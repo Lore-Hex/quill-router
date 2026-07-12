@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
@@ -37,8 +38,9 @@ def register(router: APIRouter) -> None:
         if not isinstance(raw_samples, list):
             raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
         samples = [_sample_from_body(item) for item in raw_samples]
-        for sample in samples:
-            STORE.record_synthetic_probe_sample(sample)
+        # Offload the blocking storage writes so a slow write never stalls the
+        # shared event loop; still awaited so `recorded` stays truthful.
+        await run_in_threadpool(_record_probe_samples, samples)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/benchmark")
@@ -53,8 +55,7 @@ def register(router: APIRouter) -> None:
         if not isinstance(raw_samples, list):
             raise api_error(400, "samples must be an array", ErrorType.BAD_REQUEST)
         samples = [_benchmark_from_body(item) for item in raw_samples]
-        for sample in samples:
-            STORE.record_provider_benchmark(sample)
+        await run_in_threadpool(_record_benchmark_samples, samples)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/run")
@@ -94,9 +95,18 @@ def register(router: APIRouter) -> None:
                         model=settings.synthetic_monitor_model,
                     )
                 )
-        for sample in samples:
-            STORE.record_synthetic_probe_sample(sample)
+        await run_in_threadpool(_record_probe_samples, samples)
         return {"data": {"recorded": len(samples), "samples": [s.public_dict() for s in samples]}}
+
+
+def _record_probe_samples(samples: list[SyntheticProbeSample]) -> None:
+    for sample in samples:
+        STORE.record_synthetic_probe_sample(sample)
+
+
+def _record_benchmark_samples(samples: list[ProviderBenchmarkSample]) -> None:
+    for sample in samples:
+        STORE.record_provider_benchmark(sample)
 
 
 def _sample_from_body(body: Any) -> SyntheticProbeSample:
