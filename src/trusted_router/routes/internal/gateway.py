@@ -517,6 +517,14 @@ def register(router: APIRouter) -> None:
     # Every handler below does synchronous storage IO. They run it via
     # run_in_threadpool so a slow/contended transaction on one request never
     # blocks the shared event loop for all others.
+    #
+    # These share AnyIO's default worker pool (40 tokens) with FastAPI's other
+    # sync dependencies — deliberately, NOT a dedicated CapacityLimiter. Cloud
+    # Run runs this service at --concurrency=2 (rollout.sh), so at most ~2
+    # offloads are ever in flight per instance (far under 40); load scales out
+    # across instances, not up per-instance, and prod inference never touches
+    # this service (it goes through the enclave). Give gateway storage its own
+    # limiter only if TR_CLOUD_RUN_CONCURRENCY is raised toward the pool size.
     @router.post("/internal/gateway/validate")
     async def gateway_validate(
         request: Request,
