@@ -8,6 +8,8 @@ from trusted_router.storage_gcp_counter_dml import transfer_credit_budget
 from trusted_router.storage_gcp_counters import credit_shard_count
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 
+REBALANCE_COOLDOWN_SECONDS = 0.5
+
 
 class RebalanceOutcome:
     MOVED = "moved"
@@ -18,6 +20,50 @@ class RebalanceOutcome:
 
 class _RebalanceInvariantError(RuntimeError):
     """Rollback a transfer plan if any guarded DML does not affect one row."""
+
+
+def rebalance_precheck(
+    database: Any,
+    param_types: Any,
+    *,
+    workspace_id: str,
+    shard_count: int,
+    target_shard: int,
+    estimate: int,
+) -> str:
+    """Advisory, lock-free verdict from a read-only snapshot."""
+    count = credit_shard_count({"shard_count": shard_count})
+    if target_shard < 0 or target_shard >= count:
+        raise ValueError("rebalance target shard is outside configured range")
+    if estimate <= 0:
+        return RebalanceOutcome.NOT_NEEDED
+    pt = param_types
+
+    with database.snapshot() as snapshot:
+        rows = list(
+            snapshot.execute_sql(
+                "SELECT shard, total_credits, total_usage, reserved "
+                "FROM tr_credit_balance WHERE workspace_id=@pk "
+                "AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                params={"pk": workspace_id, "shard_count": count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
+            )
+        )
+    observed = [int(row[0]) for row in rows]
+    if observed != list(range(count)):
+        return RebalanceOutcome.INCOMPLETE
+
+    headroom: dict[int, int] = {}
+    for shard, total_credits, total_usage, reserved in rows:
+        available = int(total_credits) - int(total_usage) - int(reserved)
+        headroom[int(shard)] = available
+
+    target_available = headroom[target_shard]
+    if target_available >= estimate:
+        return RebalanceOutcome.NOT_NEEDED
+    if sum(headroom.values()) < estimate:
+        return RebalanceOutcome.INSUFFICIENT
+    return RebalanceOutcome.MOVED
 
 
 def rebalance_credit_for_estimate(

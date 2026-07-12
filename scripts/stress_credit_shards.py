@@ -160,30 +160,36 @@ def run_stress(
 
     def authorize(index: int) -> bool:
         started = time.perf_counter()
-        try:
-            outcome, authorization = store.authorize_gateway_typed(
-                workspace_id=workspace_id,
-                key_hash=key.hash,
-                estimate=estimate_micro,
-                has_credit_candidate=True,
-                reservation_usage_type="Credits",
-                model_id="stress-model",
-                provider="stress-provider",
-                requested_model_id=None,
-                candidate_model_ids=["stress-model"],
-                region="test",
-                endpoint_id="stress-endpoint",
-                candidate_endpoint_ids=["stress-endpoint"],
-                idempotency_key=f"stress-{index}",
-                idempotency_fingerprint="stress-body-v1",
-                key_usage_shards=key.usage_shard_count,
-            )
-        except Exception as exc:  # noqa: BLE001 - stress harness classifies failures.
-            elapsed = time.perf_counter() - started
-            with authorization_lock:
-                authorize_latencies.append(elapsed)
-                authorize_errors[type(exc).__name__] += 1
-            return False
+        outcome = ""
+        authorization = None
+        for attempt in range(8):
+            try:
+                outcome, authorization = store.authorize_gateway_typed(
+                    workspace_id=workspace_id,
+                    key_hash=key.hash,
+                    estimate=estimate_micro,
+                    has_credit_candidate=True,
+                    reservation_usage_type="Credits",
+                    model_id="stress-model",
+                    provider="stress-provider",
+                    requested_model_id=None,
+                    candidate_model_ids=["stress-model"],
+                    region="test",
+                    endpoint_id="stress-endpoint",
+                    candidate_endpoint_ids=["stress-endpoint"],
+                    idempotency_key=f"stress-{index}",
+                    idempotency_fingerprint="stress-body-v1",
+                    key_usage_shards=key.usage_shard_count,
+                )
+            except Exception as exc:  # noqa: BLE001 - stress harness classifies failures.
+                elapsed = time.perf_counter() - started
+                with authorization_lock:
+                    authorize_latencies.append(elapsed)
+                    authorize_errors[type(exc).__name__] += 1
+                return False
+            if outcome != AuthorizeOutcome.INSUFFICIENT_CREDITS or attempt == 7:
+                break
+            time.sleep(0.002)
         elapsed = time.perf_counter() - started
         with authorization_lock:
             authorize_latencies.append(elapsed)

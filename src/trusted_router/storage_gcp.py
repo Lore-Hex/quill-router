@@ -5,8 +5,10 @@ import datetime as dt
 import json
 import logging
 import os
+import threading
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any, TypeVar
 
 from trusted_router.storage import (
@@ -210,6 +212,8 @@ class SpannerBigtableStore:
                 os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")
             ),
         )
+        self._rebalance_last_attempt: dict[str, float] = {}
+        self._rebalance_last_attempt_lock = threading.Lock()
         io = SpannerIO(
             database=self._database,
             write_entity_batch=self._write_entity_batch,
@@ -412,7 +416,7 @@ class SpannerBigtableStore:
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
 
-    def _credit_shard_count(self, workspace_id: str) -> int:
+    def _credit_shard_count_loader(self, workspace_id: str) -> Callable[[], int]:
         def load() -> int:
             account = self.get_credit_account(workspace_id)
             if account is None:
@@ -424,10 +428,48 @@ class SpannerBigtableStore:
                 )
             return credit_shard_count(account)
 
-        return self._credit_shard_counts.get(workspace_id, load)
+        return load
+
+    def _credit_shard_count(self, workspace_id: str) -> int:
+        return self._credit_shard_counts.get(
+            workspace_id,
+            self._credit_shard_count_loader(workspace_id),
+        )
 
     def _credit_shard_candidates(self, workspace_id: str) -> tuple[int, ...]:
         return randomized_credit_shards(self._credit_shard_count(workspace_id))
+
+    def _refresh_credit_shard_candidates(self, workspace_id: str) -> tuple[int, ...]:
+        count = self._credit_shard_counts.refresh(
+            workspace_id,
+            self._credit_shard_count_loader(workspace_id),
+        )
+        return randomized_credit_shards(count)
+
+    def _credit_rebalance_cooldown_allows(self, workspace_id: str) -> bool:
+        from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
+
+        if not hasattr(self, "_rebalance_last_attempt"):
+            self._rebalance_last_attempt = {}
+        if not hasattr(self, "_rebalance_last_attempt_lock"):
+            self._rebalance_last_attempt_lock = threading.Lock()
+        attempts = self._rebalance_last_attempt
+        now = time.monotonic()
+        with self._rebalance_last_attempt_lock:
+            last = attempts.get(workspace_id, float("-inf"))
+            if now - last < rebalance_mod.REBALANCE_COOLDOWN_SECONDS:
+                return False
+            attempts[workspace_id] = now
+            if len(attempts) > 10_000:
+                cutoff = now - 60.0
+                stale = [
+                    stale_workspace
+                    for stale_workspace, attempted_at in attempts.items()
+                    if attempted_at < cutoff
+                ]
+                for stale_workspace in stale:
+                    attempts.pop(stale_workspace, None)
+            return True
 
     def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
         members: list[Member] = []
@@ -1319,23 +1361,28 @@ class SpannerBigtableStore:
             result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
             and has_credit_candidate
         ):
-            from trusted_router.storage_gcp_credit_rebalance import (
-                RebalanceOutcome,
-                rebalance_credit_for_estimate,
-            )
+            from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
             # An all-shards rejection is cold. Refresh once so a remote
             # pause/drain split or unshard cannot produce a false 402 until the
             # normal TTL expires. The accepted hot path never pays this read.
             previous_count = len(credit_shard_candidates)
-            self._credit_shard_counts.invalidate(workspace_id)
-            refreshed_candidates = self._credit_shard_candidates(workspace_id)
+            try:
+                refreshed_candidates = self._refresh_credit_shard_candidates(workspace_id)
+            except Exception:
+                log.warning(
+                    "credit shard-count refresh failed on reject path; "
+                    "keeping cached count workspace=%s",
+                    workspace_id,
+                    exc_info=True,
+                )
+                refreshed_candidates = credit_shard_candidates
             if len(refreshed_candidates) != previous_count:
                 credit_shard_candidates = refreshed_candidates
                 result = run_authorize(credit_shard_candidates)
 
             def rebalance(candidates: tuple[int, ...]) -> dict[str, int | str]:
-                return rebalance_credit_for_estimate(
+                return rebalance_mod.rebalance_credit_for_estimate(
                     self._database,
                     self._param_types,
                     workspace_id=workspace_id,
@@ -1346,22 +1393,87 @@ class SpannerBigtableStore:
 
             # A concurrent request can consume the newly consolidated target
             # between rebalance commit and our retry. Retry this cold path a
-            # small bounded number of times; true aggregate exhaustion returns
-            # INSUFFICIENT on the first rebalance and exits immediately.
+            # small bounded number of times; true aggregate exhaustion exits
+            # from the snapshot precheck before entering the RW repair.
+            forced_reload_done = False
+            cooldown_passed = False
             for _attempt in range(3):
                 if (
                     result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
                     or len(credit_shard_candidates) <= 1
                 ):
                     break
+                verdict = rebalance_mod.rebalance_precheck(
+                    self._database,
+                    self._param_types,
+                    workspace_id=workspace_id,
+                    shard_count=len(credit_shard_candidates),
+                    target_shard=credit_shard_candidates[0],
+                    estimate=estimate,
+                )
+                if verdict == rebalance_mod.RebalanceOutcome.INSUFFICIENT:
+                    break
+                if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
+                    result = run_authorize(credit_shard_candidates)
+                    continue
+                if (
+                    verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE
+                    and not forced_reload_done
+                ):
+                    # The observed shard set doesn't match the count we hold —
+                    # most likely a remote unshard/split behind the refresh's
+                    # dedupe window, not corruption. Force ONE dedupe-bypassing
+                    # reload before treating it as fail-closed: a real count
+                    # change re-runs authorize on the true shard set (a clean
+                    # 402/accept), while an unchanged count falls through to
+                    # the authoritative RW rebalance on the next iteration.
+                    forced_reload_done = True
+                    try:
+                        self._credit_shard_counts.invalidate(workspace_id)
+                        reloaded_candidates = self._credit_shard_candidates(
+                            workspace_id
+                        )
+                    except Exception:
+                        log.warning(
+                            "credit shard-count forced reload failed after "
+                            "incomplete precheck workspace=%s",
+                            workspace_id,
+                            exc_info=True,
+                        )
+                        break
+                    if len(reloaded_candidates) != len(credit_shard_candidates):
+                        credit_shard_candidates = reloaded_candidates
+                        result = run_authorize(credit_shard_candidates)
+                    continue
+                # The cooldown gates only a request's FIRST repair. Later loop
+                # iterations of the same request are the steal-race retries this
+                # loop exists for (a concurrent request drained our consolidated
+                # target between rebalance commit and re-authorize) and must not
+                # be blocked by our own just-recorded timestamp.
+                if not cooldown_passed:
+                    if not self._credit_rebalance_cooldown_allows(workspace_id):
+                        break
+                    cooldown_passed = True
                 rebalance_result = rebalance(credit_shard_candidates)
-                if rebalance_result["outcome"] == RebalanceOutcome.INCOMPLETE:
+                log.info(
+                    "credit rebalance workspace=%s outcome=%s moved_micro=%s "
+                    "estimate=%s attempt=%d",
+                    workspace_id,
+                    rebalance_result["outcome"],
+                    rebalance_result.get("moved_micro", 0),
+                    estimate,
+                    _attempt + 1,
+                )
+                if (
+                    rebalance_result["outcome"]
+                    == rebalance_mod.RebalanceOutcome.INCOMPLETE
+                ):
                     raise RuntimeError(
                         "configured credit shard set is incomplete after cache refresh"
                     )
                 if rebalance_result["outcome"] in {
-                    RebalanceOutcome.MOVED,
-                    RebalanceOutcome.NOT_NEEDED,
+                    rebalance_mod.RebalanceOutcome.MOVED,
+                    rebalance_mod.RebalanceOutcome.NOT_NEEDED,
                 }:
                     result = run_authorize(credit_shard_candidates)
                     continue
