@@ -73,8 +73,8 @@ class _ProxyDatabase:
     def snapshot(self, **kwargs: Any) -> _ProxySnapshot:
         return _ProxySnapshot(self._inner.snapshot(**kwargs), self._on_execute)
 
-    def run_in_transaction(self, fn: Any) -> Any:
-        return self._inner.run_in_transaction(fn)
+    def run_in_transaction(self, fn: Any, *, timeout_secs: Any = None) -> Any:
+        return self._inner.run_in_transaction(fn, timeout_secs=timeout_secs)
 
 
 def _row(aid: str, rid: str, *, cost: int = 900_000) -> SettleOutboxRow:
