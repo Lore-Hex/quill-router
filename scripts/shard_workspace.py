@@ -6,6 +6,9 @@ silently resume billing:
   # Pause, drain-check, and atomically split. Re-run while parked if draining.
   python scripts/shard_workspace.py prepare --workspace WS --shards 16 --apply
 
+  # Owner email is accepted only when it resolves to exactly one workspace.
+  python scripts/shard_workspace.py status --owner-email owner@example.com --shards 16
+
   # Verify the committed shape + global billing invariants, then unpause.
   python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 
@@ -45,6 +48,26 @@ from trusted_router.storage_gcp_key_shard_admin import (
     reshard_key_usage,
 )
 from trusted_router.storage_models import ApiKey
+
+
+def _resolve_workspace(store: Any, args: argparse.Namespace) -> str:
+    """Resolve the operator target without guessing among workspaces."""
+    if args.workspace:
+        return str(args.workspace)
+
+    user = store.find_user_by_email(str(args.owner_email))
+    if user is None:
+        raise ValueError("owner email does not match a user")
+    workspaces = [
+        workspace
+        for workspace in store.list_workspaces_for_user(user.id)
+        if workspace.owner_user_id == user.id
+    ]
+    if len(workspaces) != 1:
+        raise ValueError(
+            f"owner has {len(workspaces)} workspaces; select one with --workspace"
+        )
+    return str(workspaces[0].id)
 
 
 def _print_status(status: CreditReshardResult) -> None:
@@ -217,7 +240,9 @@ def _parser() -> argparse.ArgumentParser:
         ("finish", run_finish),
     ):
         command = sub.add_parser(name)
-        command.add_argument("--workspace", required=True)
+        target = command.add_mutually_exclusive_group(required=True)
+        target.add_argument("--workspace")
+        target.add_argument("--owner-email")
         command.add_argument("--shards", required=True, type=_shard_count_arg)
         if name != "status":
             command.add_argument("--apply", action="store_true")
@@ -228,6 +253,12 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     store = create_store(Settings())
+    try:
+        args.workspace = _resolve_workspace(store, args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(f"resolved workspace: {args.workspace}")
     return int(args.handler(store, args))
 
 
