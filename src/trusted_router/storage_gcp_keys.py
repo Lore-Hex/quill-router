@@ -58,6 +58,7 @@ class SpannerApiKeys:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = True,
+        tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         raw = raw_key or new_api_key()
         key_id = new_key_id()
@@ -81,6 +82,7 @@ class SpannerApiKeys:
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
+            tags=dict(tags or {}),
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)
@@ -172,6 +174,8 @@ class SpannerApiKeys:
             key.budget_alert_only = bool(patch["budget_alert_only"])
         if "budget_alerted" in patch:
             key.budget_alerted = dict(patch["budget_alerted"] or {})
+        if "tags" in patch:
+            key.tags = dict(patch["tags"] or {})
         key.updated_at = iso_now()
         self._io.write_entity("api_key", key.hash, key)
         return key
@@ -365,6 +369,7 @@ class SpannerApiKeys:
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
+        tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -393,6 +398,7 @@ class SpannerApiKeys:
             endpoint_id=endpoint_id,
             candidate_endpoint_ids=list(candidate_endpoint_ids or []),
             idempotency_key=idempotency_key,
+            tags=dict(tags or {}),
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,

@@ -106,6 +106,7 @@ class InMemoryApiKeys:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = True,
+        tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         with self._lock:
             key = raw_key or new_api_key()
@@ -131,6 +132,7 @@ class InMemoryApiKeys:
                 limit_weekly_microdollars=limit_weekly_microdollars,
                 limit_monthly_microdollars=limit_monthly_microdollars,
                 budget_alert_only=budget_alert_only,
+                tags=dict(tags or {}),
             )
             self.keys[key_id] = api_key
             self.key_ids_by_lookup_hash[lookup_hash] = key_id
@@ -197,6 +199,8 @@ class InMemoryApiKeys:
                 key.budget_alert_only = bool(patch["budget_alert_only"])
             if "budget_alerted" in patch:
                 key.budget_alerted = dict(patch["budget_alerted"] or {})
+            if "tags" in patch:
+                key.tags = dict(patch["tags"] or {})
             key.updated_at = iso_now()
             return key
 
@@ -383,6 +387,7 @@ class InMemoryApiKeys:
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
+        tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -411,6 +416,7 @@ class InMemoryApiKeys:
                 endpoint_id=endpoint_id,
                 candidate_endpoint_ids=list(candidate_endpoint_ids or []),
                 idempotency_key=idempotency_key,
+                tags=dict(tags or {}),
                 idempotency_fingerprint=idempotency_fingerprint,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,

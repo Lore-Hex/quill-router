@@ -12,10 +12,12 @@ import threading
 from typing import Any, Protocol
 
 from trusted_router.storage_activity import (
+    ActivityResult,
     filter_generations,
     generation_events,
     generation_metrics,
     summarize_activity,
+    summarize_activity_result,
     usage_bucket_key,
 )
 from trusted_router.storage_models import (
@@ -91,6 +93,9 @@ class InMemoryGenerations:
         *,
         api_key_hash: str | None = None,
         date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
         with self._lock:
             rows = filter_generations(
@@ -98,8 +103,31 @@ class InMemoryGenerations:
                 workspace_id=workspace_id,
                 api_key_hash=api_key_hash,
                 date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
             )
-        return summarize_activity(rows)
+        return summarize_activity(rows, group_by_tag=group_by_tag)
+
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
+    ) -> ActivityResult:
+        with self._lock:
+            rows = filter_generations(
+                self.generations.values(),
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+        return summarize_activity_result(rows, group_by_tag=group_by_tag)
 
     def activity_events(
         self,
@@ -108,6 +136,8 @@ class InMemoryGenerations:
         api_key_hash: str | None = None,
         date: str | None = None,
         limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
         with self._lock:
             rows = filter_generations(
@@ -115,8 +145,32 @@ class InMemoryGenerations:
                 workspace_id=workspace_id,
                 api_key_hash=api_key_hash,
                 date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
             )
         return generation_events(rows, limit=limit)
+
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> ActivityResult:
+        with self._lock:
+            rows = filter_generations(
+                self.generations.values(),
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+        events = generation_events(rows, limit=limit)
+        return ActivityResult(data=events, scanned=len(rows))
 
     def usage_series(
         self,

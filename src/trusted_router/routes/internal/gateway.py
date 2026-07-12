@@ -38,6 +38,11 @@ from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regions import choose_region, region_payload
+from trusted_router.request_attribution import (
+    InvalidAttribution,
+    validate_request_attribution,
+)
+from trusted_router.request_tags import InvalidTags, merge_tags, tags_match, validate_tags
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.routing import (
     chat_route_endpoint_candidates,
@@ -73,6 +78,7 @@ from trusted_router.storage_models import SettleOutboxRow
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
+REQUEST_METADATA_VERSION = 1
 
 
 async def authorize_gateway(
@@ -110,6 +116,27 @@ def _authorize_gateway_sync(
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     assert_workspace_billing_active(workspace)
     body_dict = body.model_dump(exclude_none=True)
+    try:
+        request_tags = validate_tags(body.tags)
+        effective_tags = merge_tags(api_key.tags, body.tags)
+    except InvalidTags as exc:
+        raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        raise api_error(
+            400, str(exc), ErrorType.INVALID_REQUEST_METADATA
+        ) from exc
+    for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
+        body_dict.pop(key, None)
+    body_dict.update(attribution.body_fields())
     _require_monitor_model_key(body_dict, api_key.lookup_hash, settings)
     requested_model_id = body.model
     if any(is_custom_model_id(model_id) for model_id in (body.models or [])):
@@ -180,10 +207,19 @@ def _authorize_gateway_sync(
     request_idempotency_key = _gateway_idempotency_key(request, body) or str(
         uuid.uuid4()
     )
+    fingerprint_body = dict(body_dict)
+    # Preserve the pre-tagging router's distinction between an absent tags
+    # field and an explicitly supplied empty object. That lets an idempotent
+    # retry carrying tags={} replay an authorization created before rollout.
+    if body.tags is not None:
+        fingerprint_body["tags"] = request_tags
+    else:
+        fingerprint_body.pop("tags", None)
+    body_dict["tags"] = effective_tags
     request_fingerprint = _gateway_authorize_fingerprint(
         workspace_id=workspace.id,
         key_hash=api_key.hash,
-        body=body_dict,
+        body=fingerprint_body,
     )
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
         # Build the replay response from the STORED authorization (NOT current
@@ -298,6 +334,7 @@ def _authorize_gateway_sync(
             endpoint_id=endpoint.id,
             candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
             idempotency_key=request_idempotency_key,
+            tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
             key_usage_shards=key_usage_shard_count(api_key),
             custom_model_id=custom_model.id if custom_model else None,
@@ -394,6 +431,7 @@ def _authorize_gateway_sync(
                 for _candidate_model, candidate_endpoint in endpoint_candidates
             ],
             idempotency_key=request_idempotency_key,
+            tags=effective_tags,
             idempotency_fingerprint=request_fingerprint,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
@@ -709,6 +747,8 @@ def _gateway_authorize_response(
             "regions": region_payload(settings),
             "broadcast_destinations": broadcast_destinations,
             "idempotent_replay": idempotent_replay,
+            "request_metadata_version": REQUEST_METADATA_VERSION,
+            "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None
             else {
@@ -805,6 +845,27 @@ def _settle_gateway_authorization(
             }
         }
 
+    if body.tags is not None:
+        try:
+            if not tags_match(body.tags, authorization.tags):
+                logger.warning(
+                    "gateway settlement tags ignored authorization_id=%s "
+                    "authorized_tag_count=%d supplied_tag_count=%d",
+                    authorization.id,
+                    len(authorization.tags),
+                    len(body.tags),
+                )
+        except InvalidTags as exc:
+            logger.warning(
+                "invalid gateway settlement tags ignored authorization_id=%s "
+                "authorized_tag_count=%d error=%s",
+                authorization.id,
+                len(authorization.tags),
+                str(exc),
+            )
+
+    settle_body = _settle_body_with_safe_attribution(body, authorization.id)
+
     selected_endpoint = _select_authorized_endpoint(authorization, body)
     if selected_endpoint is None:
         raise api_error(
@@ -840,7 +901,7 @@ def _settle_gateway_authorization(
             model_id=model.id,
             usage_type=selected_usage_type,
             provider=selected_endpoint.provider,
-            body=body.model_dump(exclude_none=True),
+            body=settle_body,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             actual_cost_microdollars=actual_cost,
@@ -876,7 +937,7 @@ def _settle_gateway_authorization(
                     selected_endpoint_id=selected_endpoint.id,
                     model_id=model.id,
                     selected_usage_type=str(selected_usage_type),
-                    settle_body=body.model_dump_json(exclude_none=True),
+                    settle_body=json.dumps(settle_body, separators=(",", ":")),
                 ),
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
@@ -970,7 +1031,6 @@ def _settle_gateway_authorization(
                 settings=settings,
             )
     if success and generation is not None:
-        settle_body = body.model_dump(exclude_none=True)
         enqueue_metadata_broadcast(generation, settle_body=settle_body)
         if should_drain_inline(settings) and background_tasks is not None:
             background_tasks.add_task(
@@ -1024,6 +1084,44 @@ def _settle_gateway_authorization(
             "region": authorization.region,
         }
     }
+
+
+def _settle_body_with_safe_attribution(
+    body: GatewaySettleRequest, authorization_id: str
+) -> dict[str, Any]:
+    settle_body = body.model_dump(exclude_none=True)
+    settle_body.pop("tags", None)
+    attribution_keys = (
+        "user",
+        "session_id",
+        "trace",
+        "app",
+        "http_referer",
+        "app_categories",
+    )
+    try:
+        attribution = validate_request_attribution(
+            user=body.user,
+            session_id=body.session_id,
+            trace=body.trace,
+            app=body.app,
+            http_referer=body.http_referer,
+            app_categories=body.app_categories,
+        )
+    except InvalidAttribution as exc:
+        for key in attribution_keys:
+            settle_body.pop(key, None)
+        logger.warning(
+            "invalid gateway settlement attribution dropped authorization_id=%s "
+            "error_class=%s",
+            authorization_id,
+            type(exc).__name__,
+        )
+        return settle_body
+    for key in attribution_keys:
+        settle_body.pop(key, None)
+    settle_body.update(attribution.body_fields())
+    return settle_body
 
 
 def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:

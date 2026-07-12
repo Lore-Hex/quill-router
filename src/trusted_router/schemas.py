@@ -103,6 +103,7 @@ class CreateKeyRequest(_Lenient):
     expires_at: str | None = None
     workspace_id: str | None = None
     management: bool = False
+    tags: dict[str, Any] | None = None
 
     @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
@@ -120,6 +121,7 @@ class PatchKeyRequest(_Lenient):
     limit_monthly: Decimal | None = None
     budget_alert_only: bool | None = None
     include_byok_in_limit: bool | None = None
+    tags: dict[str, Any] | None = None
 
     @field_validator("limit", "limit_daily", "limit_weekly", "limit_monthly", mode="before")
     @classmethod
@@ -192,6 +194,10 @@ class GatewayAuthorizeRequest(_Lenient):
     session_id: str | None = Field(default=None, max_length=256)
     trace: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    app: str | None = Field(default=None, max_length=120)
+    http_referer: str | None = Field(default=None, max_length=2048)
+    app_categories: list[str] | None = None
     route_type: str | None = None
 
     @model_validator(mode="after")
@@ -279,6 +285,9 @@ class GatewaySettleRequest(_Lenient):
     session_id: str | None = Field(default=None, max_length=256)
     trace: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    http_referer: str | None = Field(default=None, max_length=2048)
+    app_categories: list[str] | None = None
     route_type: str | None = None
 
     @property

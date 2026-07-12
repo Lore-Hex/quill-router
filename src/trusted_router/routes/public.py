@@ -324,6 +324,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def agent_setup() -> str:
         return public_page_html(settings, "docs/agent-setup")
 
+    @public_html_route("/docs/tagging")
+    async def tagging_docs() -> str:
+        return public_page_html(settings, "docs/tagging")
+
     @public_html_route("/docs/mcp")
     async def mcp_docs() -> str:
         return public_page_html(settings, "docs/mcp")

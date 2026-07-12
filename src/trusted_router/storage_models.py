@@ -131,6 +131,7 @@ class ApiKey:
     # with any lifetime/window spend limit must remain at one shard so their
     # hard cap keeps its existing exact semantics.
     usage_shard_count: int = 1
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -308,6 +309,7 @@ class GatewayAuthorization:
     endpoint_id: str | None = None
     candidate_endpoint_ids: list[str] = field(default_factory=list)
     idempotency_key: str | None = None
+    tags: dict[str, str] = field(default_factory=dict)
     idempotency_fingerprint: str | None = None
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
@@ -348,6 +350,11 @@ class Generation:
     # first_token_milliseconds which is time to first CONTENT token (TTFT).
     ttfb_milliseconds: int | None = None
     region: str | None = None
+    user: str | None = None
+    session_id: str | None = None
+    http_referer: str | None = None
+    app_categories: list[str] = field(default_factory=list)
+    tags: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.usage_type, UsageType):
@@ -497,6 +504,17 @@ class Generation:
                 _seconds_to_milliseconds(first_byte) if first_byte is not None else None
             ),
             region=authorization.region,
+            user=str(body["user"]) if body.get("user") is not None else None,
+            session_id=(
+                str(body["session_id"]) if body.get("session_id") is not None else None
+            ),
+            http_referer=(
+                str(body["http_referer"])
+                if body.get("http_referer") is not None
+                else None
+            ),
+            app_categories=[str(item) for item in body.get("app_categories") or []],
+            tags=dict(authorization.tags),
         )
 
     def to_openrouter_generation(self) -> dict[str, Any]:
@@ -507,8 +525,12 @@ class Generation:
             "model": self.model,
             "provider_name": self.provider_name,
             "app_id": None,
-            "http_referer": None,
+            "http_referer": self.http_referer,
             "origin": self.app,
+            "user": self.user,
+            "session_id": self.session_id,
+            "app_categories": list(self.app_categories),
+            "tags": dict(self.tags),
             "usage": microdollars_to_float(self.total_cost_microdollars),
             "usage_microdollars": self.total_cost_microdollars,
             "total_cost": microdollars_to_float(self.total_cost_microdollars),

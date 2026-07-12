@@ -371,6 +371,7 @@ class InMemoryStore:
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
         budget_alert_only: bool = True,
+        tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(
             workspace_id=workspace_id,
@@ -386,6 +387,7 @@ class InMemoryStore:
             limit_weekly_microdollars=limit_weekly_microdollars,
             limit_monthly_microdollars=limit_monthly_microdollars,
             budget_alert_only=budget_alert_only,
+            tags=tags,
         )
 
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -721,6 +723,7 @@ class InMemoryStore:
         endpoint_id: str | None = None,
         candidate_endpoint_ids: list[str] | None = None,
         idempotency_key: str | None = None,
+        tags: dict[str, str] | None = None,
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
@@ -739,6 +742,7 @@ class InMemoryStore:
             endpoint_id=endpoint_id,
             candidate_endpoint_ids=candidate_endpoint_ids,
             idempotency_key=idempotency_key,
+            tags=tags,
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
@@ -870,9 +874,17 @@ class InMemoryStore:
         *,
         api_key_hash: str | None = None,
         date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.generation_store.activity(
-            workspace_id, api_key_hash=api_key_hash, date=date
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
         )
 
     def activity_events(
@@ -882,9 +894,54 @@ class InMemoryStore:
         api_key_hash: str | None = None,
         date: str | None = None,
         limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.generation_store.activity_events(
-            workspace_id, api_key_hash=api_key_hash, date=date, limit=limit
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
+    ) -> Any:
+        return self.generation_store.activity_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            group_by_tag=group_by_tag,
+        )
+
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> Any:
+        return self.generation_store.activity_events_result(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+            tag_key=tag_key,
+            tag_value=tag_value,
         )
 
     def usage_series(

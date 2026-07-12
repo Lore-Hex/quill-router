@@ -180,6 +180,7 @@ class Store(Protocol):
         limit_weekly_microdollars: int | None = ...,
         limit_monthly_microdollars: int | None = ...,
         budget_alert_only: bool = ...,
+        tags: dict[str, str] | None = ...,
     ) -> tuple[str, ApiKey]: ...
     def get_key_by_hash(self, key_hash: str) -> ApiKey | None: ...
     def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None: ...
@@ -357,6 +358,7 @@ class Store(Protocol):
         endpoint_id: str | None = ...,
         candidate_endpoint_ids: list[str] | None = ...,
         idempotency_key: str | None = ...,
+        tags: dict[str, str] | None = ...,
         idempotency_fingerprint: str | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
@@ -422,6 +424,9 @@ class Store(Protocol):
         *,
         api_key_hash: str | None = ...,
         date: str | None = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+        group_by_tag: str | None = ...,
     ) -> list[dict[str, Any]]: ...
     def activity_events(
         self,
@@ -430,7 +435,29 @@ class Store(Protocol):
         api_key_hash: str | None = ...,
         date: str | None = ...,
         limit: int = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
     ) -> list[dict[str, Any]]: ...
+    def activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = ...,
+        date: str | None = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+        group_by_tag: str | None = ...,
+    ) -> Any: ...
+    def activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = ...,
+        date: str | None = ...,
+        limit: int = ...,
+        tag_key: str | None = ...,
+        tag_value: str | None = ...,
+    ) -> Any: ...
     def usage_series(
         self,
         workspace_id: str,
@@ -486,6 +513,7 @@ class TypedBillingStore(Protocol):
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
         key_usage_shards: int = ...,
+        tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         expires_at: Any = ...,
