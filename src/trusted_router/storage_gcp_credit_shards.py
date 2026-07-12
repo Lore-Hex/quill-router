@@ -21,6 +21,10 @@ DEFAULT_CACHE_MAX_ENTRIES = 10_000
 _LOAD_LOCK_STRIPES = 64
 
 
+class CreditShardConfigurationMissingError(RuntimeError):
+    """The typed balance exists without its authoritative shard configuration."""
+
+
 def randomized_credit_shards(
     shard_count: int,
     *,

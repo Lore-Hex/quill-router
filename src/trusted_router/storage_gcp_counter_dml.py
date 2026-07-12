@@ -58,6 +58,60 @@ def reserve_credit(
     return count == 1
 
 
+def transfer_credit_budget(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    donor_shard: int,
+    target_shard: int,
+) -> bool:
+    """Atomically move idle sub-budget from one credit shard to another.
+
+    The donor predicate permits moving only current headroom, never usage or a
+    live reservation. Both DML statements run in the caller's transaction; a
+    failure must make the caller roll the whole transaction back so the global
+    sum of ``total_credits`` cannot change.
+    """
+    if amount <= 0:
+        raise ValueError("credit budget transfer amount must be positive")
+    if donor_shard == target_shard:
+        raise ValueError("credit budget donor and target must differ")
+    donor_count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
+        "WHERE workspace_id=@ws AND shard=@donor "
+        "AND (total_credits-total_usage-reserved)>=@move",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "donor": donor_shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "donor": param_types.INT64,
+        },
+    )
+    if donor_count != 1:
+        return False
+    target_count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits+@move "
+        "WHERE workspace_id=@ws AND shard=@target",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "target": target_shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "target": param_types.INT64,
+        },
+    )
+    return target_count == 1
+
+
 def release_credit(
     transaction: Any,
     param_types: Any,

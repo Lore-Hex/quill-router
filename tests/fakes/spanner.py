@@ -329,6 +329,37 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
             return 1
+        if "UPDATE tr_credit_balance SET total_credits=total_credits-@move" in sql:
+            _require_pred(
+                sql,
+                "(total_credits-total_usage-reserved)>=@move",
+                "credit-rebalance-donor",
+            )
+            pk = (p["ws"], p["donor"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            available = (
+                rec["total_credits"] - rec["total_usage"] - rec["reserved"]
+                if rec is not None
+                else -1
+            )
+            if rec is None or available < p["move"]:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] - p["move"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if "UPDATE tr_credit_balance SET total_credits=total_credits+@move" in sql:
+            _require_pred(
+                sql,
+                "WHERE workspace_id=@ws AND shard=@target",
+                "credit-rebalance-target",
+            )
+            pk = (p["ws"], p["target"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] + p["move"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
         if sql.startswith("INSERT INTO tr_credit_balance"):
             pk = (p["ws"], p["shard"])
             if pk in self.db.typed.get("tr_credit_balance", {}):

@@ -185,6 +185,10 @@ ensure_column tr_key_limit month_start "TIMESTAMP"
 # Credit-row sharding increment 1. Existing reservations retain ws_shard=0;
 # old rows read NULL for the additive column and the application falls back to
 # ws_shard. New rows write both during the rolling-compatibility window.
+# Existing databases intentionally add this as nullable: adding NOT NULL would
+# force a synchronous backfill. Fresh installs use NOT NULL DEFAULT(0); a later
+# post-backfill migration may tighten existing databases after the fallback is
+# retired. Do not "fix" this rolling-schema divergence in this additive step.
 ensure_column tr_reservation credit_shard "INT64 DEFAULT (0)"
 
 # ── Durable settle outbox (docs/design/durable-settle-outbox.md) ────────────
