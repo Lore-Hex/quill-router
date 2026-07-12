@@ -1,0 +1,95 @@
+name: Reshard Billing Workspace
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Read status, pause/drain/split, or verify/unpause"
+        type: choice
+        required: true
+        options: [status, prepare, finish]
+        default: status
+      workspace_id:
+        description: "Exact workspace ID (preferred after initial lookup)"
+        type: string
+        required: false
+      owner_email:
+        description: "Owner email; accepted only when it has exactly one workspace"
+        type: string
+        required: false
+      shards:
+        description: "Target shard count; use 1 to consolidate"
+        type: choice
+        required: true
+        options: ["1", "4", "8", "16", "32", "64"]
+        default: "16"
+      confirmation:
+        description: "Type APPLY for prepare/finish; status is always read-only"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+# Billing maintenance is globally serialized. A second dispatch waits instead
+# of racing a workspace that may be paused between prepare and finish.
+concurrency:
+  group: production-billing-workspace-reshard
+  cancel-in-progress: false
+
+jobs:
+  operate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      - name: Sync
+        run: uv sync --frozen
+      - name: Run guarded workspace operator
+        env:
+          OPERATION: ${{ inputs.operation }}
+          WORKSPACE_ID: ${{ inputs.workspace_id }}
+          OWNER_EMAIL: ${{ inputs.owner_email }}
+          SHARDS: ${{ inputs.shards }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [ -n "${WORKSPACE_ID}" ] && [ -n "${OWNER_EMAIL}" ]; then
+            echo "Provide workspace_id or owner_email, not both."
+            exit 2
+          fi
+          if [ -z "${WORKSPACE_ID}" ] && [ -z "${OWNER_EMAIL}" ]; then
+            echo "Provide workspace_id or owner_email."
+            exit 2
+          fi
+
+          args=("${OPERATION}" --shards "${SHARDS}")
+          if [ -n "${WORKSPACE_ID}" ]; then
+            args+=(--workspace "${WORKSPACE_ID}")
+          else
+            args+=(--owner-email "${OWNER_EMAIL}")
+          fi
+
+          case "${OPERATION}" in
+            status) ;;
+            prepare|finish)
+              if [ "${CONFIRMATION}" != "APPLY" ]; then
+                echo "Mutation refused: type APPLY in confirmation."
+                exit 2
+              fi
+              args+=(--apply)
+              ;;
+            *) echo "Unknown operation: ${OPERATION}"; exit 2 ;;
+          esac
+
+          PYTHONPATH=src uv run python scripts/shard_workspace.py "${args[@]}"
