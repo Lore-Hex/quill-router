@@ -78,6 +78,7 @@ from trusted_router.storage_models import SettleOutboxRow
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
+REQUEST_METADATA_VERSION = 1
 
 
 async def authorize_gateway(
@@ -743,6 +744,7 @@ def _gateway_authorize_response(
             "regions": region_payload(settings),
             "broadcast_destinations": broadcast_destinations,
             "idempotent_replay": idempotent_replay,
+            "request_metadata_version": REQUEST_METADATA_VERSION,
             "tags": dict(authorization.tags),
             "custom_model": None
             if custom_model is None

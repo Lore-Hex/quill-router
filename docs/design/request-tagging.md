@@ -153,7 +153,7 @@ requests remain compatible across the rollout boundary.
 
 ```text
 client request
-  -> attested gateway validates body/header metadata
+  -> attested gateway observes, sanitizes, and optionally enforces body/header metadata
   -> control-plane authorize validates again and merges API-key defaults
   -> authorization response returns effective tags
   -> gateway invokes provider without TrustedRouter tags/trace/app fields
@@ -164,8 +164,11 @@ client request
 
 Validation is duplicated deliberately:
 
-- The enclave rejects malformed or oversized metadata before authorization and
-  guarantees it is not sent to providers.
+- The enclave initially runs metadata validation in observe mode: malformed
+  metadata is dropped and logged by error class only, while inference remains
+  compatible. `TR_REQUEST_METADATA_ENFORCEMENT=enforce` enables stable 400s
+  after production telemetry is clean. In both modes, router-only metadata is
+  excluded from every provider wire serializer.
 - The control plane treats the enclave as authenticated but still validates at
   its persistence boundary.
 
@@ -292,13 +295,17 @@ and Responses also receive an `openrouter_metadata` compatibility object built
 from the same selected route and fallback attempts. Streaming sends it on the
 final metadata-bearing event before `[DONE]`.
 
-The compatibility object never contains tags, user/session IDs, secrets,
-prompts, or outputs.
+The compatibility object contains attempted routes only and never contains
+tags, user/session IDs, secrets, prompts, or outputs. Custom models expose only
+their published model ID and the `trustedrouter` provider label; base routes,
+BYOK status, and region are masked.
 
 ## 9. Error contract
 
-Invalid tags return an OpenAI-shaped `400 invalid_request_error` with a stable
-`error.type` of `invalid_tags`. Examples:
+After strict enforcement is enabled, invalid tags return an OpenAI-shaped
+`400 invalid_request_error` with a stable `error.type` of `invalid_tags`.
+During the initial observe phase they are omitted from attribution and the
+inference request continues. Examples:
 
 - `tags must be an object`
 - `tags may contain at most 50 entries`
@@ -369,18 +376,24 @@ Native Messages requests receive the equivalent Anthropic-shaped 400 error.
 
 ## 12. Rollout
 
-1. Land the control-plane schema/storage changes with backwards-compatible
-   defaults.
-2. Land the enclave parser and settlement propagation.
+1. Merge and deploy the control-plane schema/storage changes with
+   backwards-compatible defaults. Verify authorize responses advertise
+   `request_metadata_version: 1` before any enclave merge.
+2. Merge the enclave parser in observe mode only after the new control plane is
+   serving. A tagged request against an older control plane is refunded and
+   fails with a retryable 503 instead of silently losing attribution.
 3. Deploy control plane before enclave so old gateways remain accepted.
    Acceptance includes a new control plane with an old enclave: API-key
    defaults still apply, tagless request fingerprints remain unchanged, and
    settlement uses authorization-frozen tags without gateway propagation.
 4. Roll enclave regions one at a time and run tagged Chat, Responses, Messages,
    and Embeddings smokes.
-5. Publish `https://trustedrouter.com/docs/tagging` and add it to `/docs`,
+5. Review counts-only observe logs. Enable
+   `TR_REQUEST_METADATA_ENFORCEMENT=enforce` region by region only after legacy
+   shapes and invalid referers are understood.
+6. Publish `https://trustedrouter.com/docs/tagging` and add it to `/docs`,
    `llms.txt`, `llms-full.txt`, and the core sitemap.
-6. Release SDK updates after production accepts the field.
+7. Release SDK updates after production accepts the field.
 
 Rollback is code-only. Old generation rows deserialize with empty/default tag
 fields, and new rows remain readable by code that ignores unknown JSON fields.

@@ -154,8 +154,8 @@ def test_openrouter_attribution_validation_and_referer_fallback() -> None:
 @pytest.mark.parametrize(
     "kwargs, message",
     [
-        ({"user": "u" * 129}, "user may contain at most 128"),
-        ({"session_id": "s" * 129}, "session_id may contain at most 128"),
+        ({"user": "u" * 257}, "user may contain at most 256"),
+        ({"session_id": "s" * 257}, "session_id may contain at most 256"),
         ({"http_referer": "file:///etc/passwd"}, "http or https"),
         ({"app_categories": ["one", "two", "three"]}, "at most 2"),
         ({"app_categories": ["Legal Ops"]}, "lowercase kebab-case"),
@@ -246,6 +246,7 @@ def test_authorize_freezes_merged_tags_and_settle_cannot_change_them(
         created["data"]["hash"],
         tags={"team": "legal", "project": "atlas"},
     )
+    assert auth["request_metadata_version"] == 1
     assert auth["tags"] == {
         "environment": "production",
         "team": "legal",
@@ -318,6 +319,7 @@ def test_idempotent_retry_replays_frozen_tags_after_key_defaults_change(
     replay = _authorize(client, key_hash, idempotency_key="tag-default-drift")
     assert replay["authorization_id"] == first["authorization_id"]
     assert replay["idempotent_replay"] is True
+    assert replay["request_metadata_version"] == 1
     assert replay["tags"] == {"environment": "production"}
 
 

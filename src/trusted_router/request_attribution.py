@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-MAX_USER_CHARS = 128
-MAX_SESSION_CHARS = 128
+MAX_USER_CHARS = 256
+MAX_SESSION_CHARS = 256
 MAX_APP_CHARS = 120
 MAX_REFERER_CHARS = 2048
 MAX_CATEGORIES = 2
