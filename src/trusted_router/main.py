@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from google.api_core.exceptions import Aborted
 
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
@@ -100,6 +101,18 @@ def create_app(
         )
         message = first.get("msg") or "Invalid request body"
         return error_response(400, f"{loc}: {message}", ErrorType.BAD_REQUEST)
+
+    @app.exception_handler(Aborted)
+    async def aborted_exception_handler(_request: Request, exc: Aborted) -> Response:
+        # A Spanner transaction exhausted its retry budget under contention. This is
+        # transient, so signal the caller to retry rather than surfacing a 500.
+        response = error_response(
+            503,
+            "The request was aborted due to transient database contention; retry.",
+            ErrorType.SERVICE_UNAVAILABLE,
+        )
+        response.headers["Retry-After"] = "1"
+        return response
 
     register_public_routes(app, settings)
     api = _make_api_router(settings)
