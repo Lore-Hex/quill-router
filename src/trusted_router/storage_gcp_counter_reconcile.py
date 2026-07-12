@@ -32,7 +32,7 @@ from trusted_router.storage_gcp_counters import (
 from trusted_router.storage_models import ApiKey, CreditAccount, Workspace
 
 _CREDIT_TYPED_SCAN = (
-    "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
+    "SELECT workspace_id, shard, total_credits, total_usage, reserved FROM tr_credit_balance"
 )
 _KEY_TYPED_SCAN = (
     "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok, "
@@ -96,10 +96,14 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
     with store._database.snapshot(multi_use=True) as snapshot:
         json_credit = _scan_json(snapshot, "credit", "workspace_id", pt)
         json_key = _scan_json(snapshot, "api_key", "hash", pt)
-        typed_credit = {
-            r[0]: {"total_credits": r[1], "total_usage": r[2], "reserved": r[3]}
-            for r in snapshot.execute_sql(_CREDIT_TYPED_SCAN)
-        }
+        typed_credit: dict[str, dict[str, int]] = {}
+        for row in snapshot.execute_sql(_CREDIT_TYPED_SCAN):
+            aggregate = typed_credit.setdefault(
+                row[0], {"total_credits": 0, "total_usage": 0, "reserved": 0}
+            )
+            aggregate["total_credits"] += int(row[2])
+            aggregate["total_usage"] += int(row[3])
+            aggregate["reserved"] += int(row[4])
         typed_key = {
             r[0]: {
                 "limit_micro": r[1], "usage": r[2], "byok_usage": r[3],
@@ -373,8 +377,10 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
 # Shard-aware (the typed counter PK is (scope, shard); reservations carry the
 # per-scope shard), COALESCE so an empty SUM reads 0.
 _OPEN_CREDIT_HOLDS = (
-    "SELECT workspace_id, ws_shard, COALESCE(SUM(credit_reserved_micro), 0) "
-    "FROM tr_reservation WHERE settled = false GROUP BY workspace_id, ws_shard"
+    "SELECT workspace_id, credit_shard, ws_shard, "
+    "COALESCE(SUM(credit_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false "
+    "GROUP BY workspace_id, credit_shard, ws_shard"
 )
 _OPEN_KEY_HOLDS = (
     "SELECT key_hash, key_shard, COALESCE(SUM(key_reserved_micro), 0) "
@@ -421,9 +427,11 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                 "SELECT key_hash, shard, reserved FROM tr_key_limit"
             )
         }
-        credit_holds = {
-            (r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_CREDIT_HOLDS)
-        }
+        credit_holds: dict[tuple[str, int], int] = {}
+        for row in snap.execute_sql(_OPEN_CREDIT_HOLDS):
+            shard = int(row[1] if row[1] is not None else (row[2] or 0))
+            scope = (str(row[0]), shard)
+            credit_holds[scope] = credit_holds.get(scope, 0) + int(row[3] or 0)
         key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
 
     def _sample(key: str, value: dict) -> None:

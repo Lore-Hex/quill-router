@@ -50,7 +50,11 @@ from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
 from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
-from trusted_router.storage_gcp_counters import UNSHARDED
+from trusted_router.storage_gcp_counters import (
+    UNSHARDED,
+    credit_shard_count,
+    distribute_credit_amount,
+)
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
@@ -761,29 +765,37 @@ class SpannerBigtableStore:
             account = self._require_credit_tx(transaction, workspace_id)
             amount = int(amount_microdollars)
             new_total = int(account.total_credits_microdollars) + amount
+            shard_count = credit_shard_count(account)
+            shard_deltas = distribute_credit_amount(amount, shard_count)
             now = dt.datetime.now(dt.UTC).replace(microsecond=0)
             created_at = now.isoformat().replace("+00:00", "Z")
             pt = self._param_types
 
-            updated = transaction.execute_update(
-                "UPDATE tr_credit_balance "
-                "SET total_credits = total_credits + @amount, "
-                "source_updated_at=@now, updated_at=@now "
-                "WHERE workspace_id=@ws AND shard=@shard",
-                params={
-                    "amount": amount,
-                    "now": now,
-                    "ws": workspace_id,
-                    "shard": UNSHARDED,
-                },
-                param_types={
-                    "amount": pt.INT64,
-                    "now": pt.TIMESTAMP,
-                    "ws": pt.STRING,
-                    "shard": pt.INT64,
-                },
-            )
-            if updated == 0:
+            for shard, shard_delta in enumerate(shard_deltas):
+                updated = transaction.execute_update(
+                    "UPDATE tr_credit_balance "
+                    "SET total_credits = total_credits + @amount, "
+                    "source_updated_at=@now, updated_at=@now "
+                    "WHERE workspace_id=@ws AND shard=@shard",
+                    params={
+                        "amount": shard_delta,
+                        "now": now,
+                        "ws": workspace_id,
+                        "shard": shard,
+                    },
+                    param_types={
+                        "amount": pt.INT64,
+                        "now": pt.TIMESTAMP,
+                        "ws": pt.STRING,
+                        "shard": pt.INT64,
+                    },
+                )
+                if updated != 0:
+                    continue
+                if shard_count != 1:
+                    raise RuntimeError(
+                        f"missing tr_credit_balance shard {shard} for sharded workspace"
+                    )
                 transaction.execute_update(
                     "INSERT INTO tr_credit_balance "
                     "(workspace_id, shard, total_credits, source_updated_at, updated_at) "
@@ -1299,23 +1311,39 @@ class SpannerBigtableStore:
         }
 
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
-        """One point-read of the authoritative typed tr_credit_balance row:
-        (total_credits, total_usage, reserved) microdollars, or None when the
-        typed tables are off or the row isn't seeded. Lets typed-aware balance
-        reads use the Store contract instead of reaching into `_database`."""
+        """Sum the workspace's active authoritative credit sub-ledgers.
+
+        Returns (total_credits, total_usage, reserved) microdollars, or None
+        when the typed tables are off or a one-shard row is not seeded. A
+        configured multi-shard workspace fails closed if any active row is
+        missing; falling back to stale JSON usage would overstate availability.
+        """
         if not getattr(self, "_counter_mirror_enabled", False):
             return None
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        with self._database.snapshot(multi_use=True) as snapshot:
+            account = self._read_entity_from(snapshot, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            shard_count = credit_shard_count(account)
             rows = list(snapshot.execute_sql(
-                "SELECT total_credits, total_usage, reserved FROM tr_credit_balance "
-                "WHERE workspace_id=@pk AND shard=0",
-                params={"pk": workspace_id},
-                param_types={"pk": pt.STRING},
+                "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
+                "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                params={"pk": workspace_id, "shard_count": shard_count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             ))
         if not rows:
             return None
-        return (int(rows[0][0]), int(rows[0][1]), int(rows[0][2]))
+        observed_shards = [int(row[0]) for row in rows]
+        if observed_shards != list(range(shard_count)):
+            if shard_count == 1:
+                return None
+            raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+        return (
+            sum(int(row[1]) for row in rows),
+            sum(int(row[2]) for row in rows),
+            sum(int(row[3]) for row in rows),
+        )
 
     def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:
         """Point-read a typed reservation for outbox lost-claim disambiguation.

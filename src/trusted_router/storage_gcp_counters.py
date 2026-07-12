@@ -67,10 +67,43 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
+def credit_shard_count(value: Any) -> int:
+    """Return the configured credit-ledger shard count.
+
+    Legacy CreditAccount JSON omits this field and therefore remains exactly
+    one-shard. Invalid persisted values fail closed instead of silently
+    changing which sub-ledgers enforce the workspace cap.
+    """
+    raw = _field(value, "shard_count", 1)
+    if isinstance(raw, bool):
+        raise ValueError("credit shard_count must be a positive integer")
+    count = int(raw)
+    if count < 1:
+        raise ValueError("credit shard_count must be a positive integer")
+    return count
+
+
+def distribute_credit_amount(amount: int, shard_count: int) -> tuple[int, ...]:
+    """Evenly partition a grant delta, putting the remainder on shard zero."""
+    if shard_count < 1:
+        raise ValueError("credit shard_count must be a positive integer")
+    sign = -1 if amount < 0 else 1
+    per_shard, remainder = divmod(abs(int(amount)), shard_count)
+    values = [sign * per_shard for _ in range(shard_count)]
+    values[UNSHARDED] += sign * remainder
+    return tuple(values)
+
+
 def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> tuple:
     """Mirror the JSON-owned `total_credits` of a `credit` row into
     tr_credit_balance. reserved + total_usage are typed-DML-owned and are
-    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS)."""
+    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS).
+
+    This generic absolute-value mirror is intentionally one-shard only. Once a
+    workspace is explicitly sharded, credit deltas are distributed by
+    credit_workspace_typed_direct; replaying the global JSON total into shard 0
+    would multiply its budget.
+    """
     return (
         workspace_id,
         UNSHARDED,
@@ -110,6 +143,8 @@ def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: 
     writer, so the mirror commits atomically with it. No-op for other kinds.
     """
     if kind == "credit":
+        if credit_shard_count(value) != 1:
+            return
         writer.insert_or_update(
             table=CREDIT_BALANCE_TABLE,
             columns=CREDIT_BALANCE_COLUMNS,

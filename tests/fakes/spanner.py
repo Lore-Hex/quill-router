@@ -841,9 +841,16 @@ def _execute_sql(
         sums: dict[tuple, int] = {}
         for rec in db.reservations.values():
             if not rec.get("settled") and rec.get("workspace_id") is not None:
-                grp = (rec["workspace_id"], rec.get("ws_shard", 0))
+                grp = (
+                    rec["workspace_id"],
+                    rec.get("credit_shard"),
+                    rec.get("ws_shard", 0),
+                )
                 sums[grp] = sums.get(grp, 0) + (rec.get("credit_reserved_micro") or 0)
-        return [[ws, shard, total] for (ws, shard), total in sums.items()]
+        return [
+            [ws, credit_shard, ws_shard, total]
+            for (ws, credit_shard, ws_shard), total in sums.items()
+        ]
     if "SUM(key_reserved_micro)" in sql:
         ksums: dict[tuple, int] = {}
         for rec in db.reservations.values():
@@ -907,6 +914,13 @@ def _execute_sql(
                 recs = [r for r in recs if r.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
                     recs = [r for r in recs if r.get("shard", 0) == 0]
+                if "shard<@shard_count" in sql.replace(" ", ""):
+                    recs = [
+                        r for r in recs
+                        if 0 <= int(r.get("shard", 0)) < int(params["shard_count"])
+                    ]
+                if "ORDER BY shard" in sql:
+                    recs.sort(key=lambda r: int(r.get("shard", 0)))
             return [[rec.get(c) for c in cols] for rec in recs]
     if "AND id=@id" in sql:
         entity_id = params["id"]

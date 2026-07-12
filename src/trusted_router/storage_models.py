@@ -248,6 +248,10 @@ class CreditAccount:
     total_credits_microdollars: int = 0
     total_usage_microdollars: int = 0
     reserved_microdollars: int = 0
+    # Number of independent tr_credit_balance sub-ledgers owned by this
+    # workspace. Increment 1 keeps every account at one shard; later increments
+    # add selection/rebalancing and an operator-only activation path.
+    shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
     # All four are required to be non-zero/non-None for auto-refill to fire.
