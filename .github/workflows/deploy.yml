@@ -200,8 +200,30 @@ jobs:
             sleep 5
           done
 
+  migrate-schema:
+    # Runs inside the same serialized deploy workflow, after CI and before any
+    # serving revision changes. The script is idempotent; normally this is only
+    # read-only INFORMATION_SCHEMA verification. A newly added column therefore
+    # always exists before code that writes it can receive traffic.
+    needs: [gate-on-ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
+          service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Apply idempotent Spanner schema prerequisites
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/migrate_typed_counters.sh
+
   deploy:
-    needs: [gate-on-ci, build-image]
+    needs: [gate-on-ci, build-image, migrate-schema]
     runs-on: ubuntu-latest
     env:
       PROJECT_ID: quill-cloud-proxy
