@@ -252,6 +252,7 @@ async def authorize_gateway(
             window_resets_at,
         )
         from trusted_router.storage_gcp_authorize import AuthorizeOutcome
+        from trusted_router.storage_gcp_counters import key_usage_shard_count
 
         # expires_at = generous execution deadline (> max stream + settle
         # retry window) so the reaper only reclaims genuinely-abandoned holds.
@@ -280,6 +281,7 @@ async def authorize_gateway(
             candidate_endpoint_ids=[e.id for _m, e in endpoint_candidates],
             idempotency_key=request_idempotency_key,
             idempotency_fingerprint=request_fingerprint,
+            key_usage_shards=key_usage_shard_count(api_key),
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
             expires_at=expires_at,

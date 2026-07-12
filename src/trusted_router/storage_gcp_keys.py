@@ -138,6 +138,19 @@ class SpannerApiKeys:
         key = self.get_by_hash(key_hash)
         if key is None:
             return None
+        if key.usage_shard_count > 1:
+            requested_limits = [
+                patch.get("limit_microdollars"),
+                patch.get("limit_daily_microdollars"),
+                patch.get("limit_weekly_microdollars"),
+                patch.get("limit_monthly_microdollars"),
+            ]
+            if patch.get("limit") is not None or any(
+                value is not None for value in requested_limits
+            ):
+                raise ValueError(
+                    "consolidate API-key usage to one shard before adding a spend limit"
+                )
         if "name" in patch and patch["name"]:
             key.name = str(patch["name"])
         if "disabled" in patch:

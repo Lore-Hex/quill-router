@@ -58,6 +58,60 @@ def reserve_credit(
     return count == 1
 
 
+def transfer_credit_budget(
+    transaction: Any,
+    param_types: Any,
+    workspace_id: str,
+    amount: int,
+    *,
+    donor_shard: int,
+    target_shard: int,
+) -> bool:
+    """Atomically move idle sub-budget from one credit shard to another.
+
+    The donor predicate permits moving only current headroom, never usage or a
+    live reservation. Both DML statements run in the caller's transaction; a
+    failure must make the caller roll the whole transaction back so the global
+    sum of ``total_credits`` cannot change.
+    """
+    if amount <= 0:
+        raise ValueError("credit budget transfer amount must be positive")
+    if donor_shard == target_shard:
+        raise ValueError("credit budget donor and target must differ")
+    donor_count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits-@move "
+        "WHERE workspace_id=@ws AND shard=@donor "
+        "AND (total_credits-total_usage-reserved)>=@move",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "donor": donor_shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "donor": param_types.INT64,
+        },
+    )
+    if donor_count != 1:
+        return False
+    target_count = transaction.execute_update(
+        "UPDATE tr_credit_balance SET total_credits=total_credits+@move "
+        "WHERE workspace_id=@ws AND shard=@target",
+        params={
+            "move": int(amount),
+            "ws": workspace_id,
+            "target": target_shard,
+        },
+        param_types={
+            "move": param_types.INT64,
+            "ws": param_types.STRING,
+            "target": param_types.INT64,
+        },
+    )
+    return target_count == 1
+
+
 def release_credit(
     transaction: Any,
     param_types: Any,
@@ -252,7 +306,7 @@ def key_limit_exists(
 # DML-only authorize/settle transactions (no mutation mixing).
 
 RESERVATION_COLUMNS = (
-    "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
+    "reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
     "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
     "authorization_id", "idempotency_scope", "idempotency_fingerprint", "expires_at",
 )
@@ -269,7 +323,8 @@ def read_reservation_by_idempotency(
     rows = list(
         transaction.execute_sql(
             "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
-            "hold_usage_type, authorization_id, idempotency_fingerprint, settled "
+            "hold_usage_type, authorization_id, idempotency_fingerprint, settled, "
+            "credit_shard, ws_shard, key_shard "
             "FROM tr_reservation WHERE idempotency_scope=@scope",
             params={"scope": idempotency_scope},
             param_types={"scope": param_types.STRING},
@@ -278,6 +333,7 @@ def read_reservation_by_idempotency(
     if not rows:
         return None
     r = rows[0]
+    credit_shard = r[7] if r[7] is not None else (r[8] or UNSHARDED)
     return {
         "reservation_id": r[0],
         "credit_reserved_micro": r[1],
@@ -286,6 +342,8 @@ def read_reservation_by_idempotency(
         "authorization_id": r[4],
         "idempotency_fingerprint": r[5],
         "settled": r[6],
+        "credit_shard": int(credit_shard),
+        "key_shard": int(r[9] or UNSHARDED),
     }
 
 
@@ -293,7 +351,7 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
     """Point-read a reservation by id (for settle/refund and the reaper)."""
     rows = list(
         transaction.execute_sql(
-            "SELECT reservation_id, workspace_id, key_hash, ws_shard, key_shard, "
+            "SELECT reservation_id, workspace_id, key_hash, ws_shard, credit_shard, key_shard, "
             "credit_reserved_micro, key_reserved_micro, hold_usage_type, "
             "settled_usage_type, actual_micro, authorization_id, settled "
             "FROM tr_reservation WHERE reservation_id=@rid",
@@ -305,11 +363,16 @@ def read_reservation(transaction: Any, param_types: Any, reservation_id: str) ->
         return None
     r = rows[0]
     keys = (
-        "reservation_id", "workspace_id", "key_hash", "ws_shard", "key_shard",
+        "reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
         "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
         "settled_usage_type", "actual_micro", "authorization_id", "settled",
     )
-    return dict(zip(keys, r, strict=True))
+    result = dict(zip(keys, r, strict=True))
+    raw_credit_shard = result.get("credit_shard")
+    result["credit_shard"] = int(
+        raw_credit_shard if raw_credit_shard is not None else (result.get("ws_shard") or UNSHARDED)
+    )
+    return result
 
 
 def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> None:
@@ -318,7 +381,7 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
     pt = param_types
     types = {
         "reservation_id": pt.STRING, "workspace_id": pt.STRING, "key_hash": pt.STRING,
-        "ws_shard": pt.INT64, "key_shard": pt.INT64,
+        "ws_shard": pt.INT64, "credit_shard": pt.INT64, "key_shard": pt.INT64,
         "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
         "hold_usage_type": pt.STRING, "authorization_id": pt.STRING,
         "idempotency_scope": pt.STRING, "idempotency_fingerprint": pt.STRING,
@@ -326,9 +389,13 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
     }
     cols = ", ".join(RESERVATION_COLUMNS)
     binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
+    values = {c: fields.get(c) for c in RESERVATION_COLUMNS}
+    values["credit_shard"] = fields.get(
+        "credit_shard", fields.get("ws_shard", UNSHARDED)
+    )
     transaction.execute_update(
         f"INSERT INTO tr_reservation ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
-        params={c: fields.get(c) for c in RESERVATION_COLUMNS},
+        params=values,
         param_types={c: types[c] for c in RESERVATION_COLUMNS},
     )
 

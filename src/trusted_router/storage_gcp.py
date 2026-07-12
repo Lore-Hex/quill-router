@@ -50,9 +50,19 @@ from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
 from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
-from trusted_router.storage_gcp_counters import UNSHARDED
+from trusted_router.storage_gcp_counters import (
+    UNSHARDED,
+    credit_shard_count,
+    distribute_credit_amount,
+    key_usage_shard_count,
+)
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
+from trusted_router.storage_gcp_credit_shards import (
+    CreditShardConfigurationMissingError,
+    CreditShardCountCache,
+    randomized_credit_shards,
+)
 from trusted_router.storage_gcp_custom_models import SpannerCustomModels
 from trusted_router.storage_gcp_email_blocks import SpannerEmailBlocks
 from trusted_router.storage_gcp_generations import SpannerGenerations
@@ -191,6 +201,14 @@ class SpannerBigtableStore:
         # TR_TYPED_COUNTER_MIRROR=1 only once tr_credit_balance / tr_key_limit
         # exist, or the mirror writes would fail the billing transactions.
         self._counter_mirror_enabled = os.environ.get("TR_TYPED_COUNTER_MIRROR", "") == "1"
+        self._credit_shard_counts = CreditShardCountCache(
+            ttl_seconds=float(
+                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")
+            ),
+            max_entries=int(
+                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")
+            ),
+        )
         io = SpannerIO(
             database=self._database,
             write_entity_batch=self._write_entity_batch,
@@ -392,6 +410,23 @@ class SpannerBigtableStore:
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
+
+    def _credit_shard_count(self, workspace_id: str) -> int:
+        def load() -> int:
+            account = self.get_credit_account(workspace_id)
+            if account is None:
+                # The typed balance cannot be administered safely without its
+                # control-plane account/config row. Treat this as drift, not as
+                # an implicit one-shard account.
+                raise CreditShardConfigurationMissingError(
+                    "credit account not found while selecting shard"
+                )
+            return credit_shard_count(account)
+
+        return self._credit_shard_counts.get(workspace_id, load)
+
+    def _credit_shard_candidates(self, workspace_id: str) -> tuple[int, ...]:
+        return randomized_credit_shards(self._credit_shard_count(workspace_id))
 
     def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
         members: list[Member] = []
@@ -761,29 +796,37 @@ class SpannerBigtableStore:
             account = self._require_credit_tx(transaction, workspace_id)
             amount = int(amount_microdollars)
             new_total = int(account.total_credits_microdollars) + amount
+            shard_count = credit_shard_count(account)
+            shard_deltas = distribute_credit_amount(amount, shard_count)
             now = dt.datetime.now(dt.UTC).replace(microsecond=0)
             created_at = now.isoformat().replace("+00:00", "Z")
             pt = self._param_types
 
-            updated = transaction.execute_update(
-                "UPDATE tr_credit_balance "
-                "SET total_credits = total_credits + @amount, "
-                "source_updated_at=@now, updated_at=@now "
-                "WHERE workspace_id=@ws AND shard=@shard",
-                params={
-                    "amount": amount,
-                    "now": now,
-                    "ws": workspace_id,
-                    "shard": UNSHARDED,
-                },
-                param_types={
-                    "amount": pt.INT64,
-                    "now": pt.TIMESTAMP,
-                    "ws": pt.STRING,
-                    "shard": pt.INT64,
-                },
-            )
-            if updated == 0:
+            for shard, shard_delta in enumerate(shard_deltas):
+                updated = transaction.execute_update(
+                    "UPDATE tr_credit_balance "
+                    "SET total_credits = total_credits + @amount, "
+                    "source_updated_at=@now, updated_at=@now "
+                    "WHERE workspace_id=@ws AND shard=@shard",
+                    params={
+                        "amount": shard_delta,
+                        "now": now,
+                        "ws": workspace_id,
+                        "shard": shard,
+                    },
+                    param_types={
+                        "amount": pt.INT64,
+                        "now": pt.TIMESTAMP,
+                        "ws": pt.STRING,
+                        "shard": pt.INT64,
+                    },
+                )
+                if updated != 0:
+                    continue
+                if shard_count != 1:
+                    raise RuntimeError(
+                        f"missing tr_credit_balance shard {shard} for sharded workspace"
+                    )
                 transaction.execute_update(
                     "INSERT INTO tr_credit_balance "
                     "(workspace_id, shard, total_credits, source_updated_at, updated_at) "
@@ -1170,6 +1213,7 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        key_usage_shards: int = 1,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         expires_at: Any = None,
@@ -1187,6 +1231,10 @@ class SpannerBigtableStore:
         )
 
         usage = UsageType.coerce(reservation_usage_type)
+        key_counter_shards = key_usage_shard_count(
+            {"usage_shard_count": key_usage_shards}
+        )
+        key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
             _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
             if idempotency_key is not None
@@ -1237,19 +1285,80 @@ class SpannerBigtableStore:
                 # gateway route splits on ':'.
                 return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
 
-        result = authorize_atomic(
-            self._database,
-            self._param_types,
-            workspace_id=workspace_id,
-            key_hash=key_hash,
-            estimate=estimate,
-            has_credit_candidate=has_credit_candidate,
-            reservation_usage_type=str(usage),
-            idempotency_scope=scope,
-            idempotency_fingerprint=idempotency_fingerprint,
-            expires_at=expires_at,
-            build_auth_body=build_body,
+        credit_shard_candidates = (
+            self._credit_shard_candidates(workspace_id)
+            if has_credit_candidate
+            else (UNSHARDED,)
         )
+        def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
+            return authorize_atomic(
+                self._database,
+                self._param_types,
+                workspace_id=workspace_id,
+                key_hash=key_hash,
+                estimate=estimate,
+                has_credit_candidate=has_credit_candidate,
+                reservation_usage_type=str(usage),
+                idempotency_scope=scope,
+                idempotency_fingerprint=idempotency_fingerprint,
+                expires_at=expires_at,
+                build_auth_body=build_body,
+                credit_shard_candidates=candidates,
+                key_shard_candidates=key_shard_candidates,
+            )
+
+        result = run_authorize(credit_shard_candidates)
+        if (
+            result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
+            and has_credit_candidate
+        ):
+            from trusted_router.storage_gcp_credit_rebalance import (
+                RebalanceOutcome,
+                rebalance_credit_for_estimate,
+            )
+
+            # An all-shards rejection is cold. Refresh once so a remote
+            # pause/drain split or unshard cannot produce a false 402 until the
+            # normal TTL expires. The accepted hot path never pays this read.
+            previous_count = len(credit_shard_candidates)
+            self._credit_shard_counts.invalidate(workspace_id)
+            refreshed_candidates = self._credit_shard_candidates(workspace_id)
+            if len(refreshed_candidates) != previous_count:
+                credit_shard_candidates = refreshed_candidates
+                result = run_authorize(credit_shard_candidates)
+
+            def rebalance(candidates: tuple[int, ...]) -> dict[str, int | str]:
+                return rebalance_credit_for_estimate(
+                    self._database,
+                    self._param_types,
+                    workspace_id=workspace_id,
+                    shard_count=len(candidates),
+                    target_shard=candidates[0],
+                    estimate=estimate,
+                )
+
+            # A concurrent request can consume the newly consolidated target
+            # between rebalance commit and our retry. Retry this cold path a
+            # small bounded number of times; true aggregate exhaustion returns
+            # INSUFFICIENT on the first rebalance and exits immediately.
+            for _attempt in range(3):
+                if (
+                    result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
+                    or len(credit_shard_candidates) <= 1
+                ):
+                    break
+                rebalance_result = rebalance(credit_shard_candidates)
+                if rebalance_result["outcome"] == RebalanceOutcome.INCOMPLETE:
+                    raise RuntimeError(
+                        "configured credit shard set is incomplete after cache refresh"
+                    )
+                if rebalance_result["outcome"] in {
+                    RebalanceOutcome.MOVED,
+                    RebalanceOutcome.NOT_NEEDED,
+                }:
+                    result = run_authorize(credit_shard_candidates)
+                    continue
+                break
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
@@ -1273,49 +1382,83 @@ class SpannerBigtableStore:
         from trusted_router.spend_windows import utcnow, window_floors
 
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        with self._database.snapshot(multi_use=True) as snapshot:
+            key = self._read_entity_from(snapshot, "api_key", key_hash, ApiKey)
+            if key is None:
+                return None
+            shard_count = key_usage_shard_count(key)
             rows = list(snapshot.execute_sql(
-                "SELECT usage, byok_usage, reserved, day_usage, day_start, "
+                "SELECT shard, usage, byok_usage, reserved, day_usage, day_start, "
                 "week_usage, week_start, month_usage, month_start "
-                "FROM tr_key_limit WHERE key_hash=@kh AND shard=0",
-                params={"kh": key_hash},
-                param_types={"kh": pt.STRING},
+                "FROM tr_key_limit WHERE key_hash=@pk AND shard>=0 "
+                "AND shard<@shard_count ORDER BY shard",
+                params={"pk": key_hash, "shard_count": shard_count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             ))
         if not rows:
             return None
-        usage, byok, reserved, day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
+        if [int(row[0]) for row in rows] != list(range(shard_count)):
+            raise RuntimeError("configured tr_key_limit usage shard set is incomplete")
         floors = window_floors(utcnow())
+        usage = sum(int(row[1]) for row in rows)
+        byok = sum(int(row[2]) for row in rows)
+        reserved = sum(int(row[3]) for row in rows)
+
+        def current_window_usage(usage_index: int, start_index: int, window: str) -> int:
+            return sum(
+                int(row[usage_index] or 0)
+                for row in rows
+                if row[start_index] is not None and row[start_index] >= floors[window]
+            )
+
         return {
-            "usage": int(usage),
-            "byok_usage": int(byok),
-            "reserved": int(reserved),
+            "usage": usage,
+            "byok_usage": byok,
+            "reserved": reserved,
             "windows": {
-                "daily": int(day_u) if day_s is not None and day_s >= floors["daily"] else 0,
-                "weekly": int(week_u) if week_s is not None and week_s >= floors["weekly"] else 0,
-                "monthly": (
-                    int(month_u) if month_s is not None and month_s >= floors["monthly"] else 0
-                ),
+                "daily": current_window_usage(4, 5, "daily"),
+                "weekly": current_window_usage(6, 7, "weekly"),
+                "monthly": current_window_usage(8, 9, "monthly"),
             },
         }
 
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
-        """One point-read of the authoritative typed tr_credit_balance row:
-        (total_credits, total_usage, reserved) microdollars, or None when the
-        typed tables are off or the row isn't seeded. Lets typed-aware balance
-        reads use the Store contract instead of reaching into `_database`."""
+        """Sum the workspace's active authoritative credit sub-ledgers.
+
+        Returns (total_credits, total_usage, reserved) microdollars, or None
+        when the typed tables are off or a one-shard row is not seeded. A
+        configured multi-shard workspace fails closed if any active row is
+        missing; falling back to stale JSON usage would overstate availability.
+        """
         if not getattr(self, "_counter_mirror_enabled", False):
             return None
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        # This exact snapshot also feeds auto-refill decisions. Do not reuse the
+        # allow-stale authorize cache here: after a split, a stale smaller count
+        # could understate available credit and charge a card prematurely.
+        with self._database.snapshot(multi_use=True) as snapshot:
+            account = self._read_entity_from(snapshot, "credit", workspace_id, CreditAccount)
+            if account is None:
+                return None
+            shard_count = credit_shard_count(account)
             rows = list(snapshot.execute_sql(
-                "SELECT total_credits, total_usage, reserved FROM tr_credit_balance "
-                "WHERE workspace_id=@pk AND shard=0",
-                params={"pk": workspace_id},
-                param_types={"pk": pt.STRING},
+                "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
+                "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                params={"pk": workspace_id, "shard_count": shard_count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             ))
         if not rows:
             return None
-        return (int(rows[0][0]), int(rows[0][1]), int(rows[0][2]))
+        observed_shards = [int(row[0]) for row in rows]
+        if observed_shards != list(range(shard_count)):
+            if shard_count == 1:
+                return None
+            raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+        return (
+            sum(int(row[1]) for row in rows),
+            sum(int(row[2]) for row in rows),
+            sum(int(row[3]) for row in rows),
+        )
 
     def read_typed_reservation(self, reservation_id: str) -> dict[str, Any] | None:
         """Point-read a typed reservation for outbox lost-claim disambiguation.

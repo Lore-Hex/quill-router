@@ -132,7 +132,13 @@ def register(app: FastAPI) -> None:
                 patch[f"limit_{window}_microdollars"] = _parse_limit(value)
         except ValueError:
             return RedirectResponse(url="/console/api-keys?error=limit", status_code=303)
-        STORE.update_key(key_hash, patch)
+        try:
+            STORE.update_key(key_hash, patch)
+        except ValueError:
+            return RedirectResponse(
+                url="/console/api-keys?error=consolidate_key_usage",
+                status_code=303,
+            )
         return RedirectResponse(url="/console/api-keys?saved=limit", status_code=303)
 
     @app.post("/console/api-keys/{key_hash}/disable")

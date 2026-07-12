@@ -329,6 +329,37 @@ class _FakeTransaction:
             )
             self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
             return 1
+        if "UPDATE tr_credit_balance SET total_credits=total_credits-@move" in sql:
+            _require_pred(
+                sql,
+                "(total_credits-total_usage-reserved)>=@move",
+                "credit-rebalance-donor",
+            )
+            pk = (p["ws"], p["donor"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            available = (
+                rec["total_credits"] - rec["total_usage"] - rec["reserved"]
+                if rec is not None
+                else -1
+            )
+            if rec is None or available < p["move"]:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] - p["move"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
+        if "UPDATE tr_credit_balance SET total_credits=total_credits+@move" in sql:
+            _require_pred(
+                sql,
+                "WHERE workspace_id=@ws AND shard=@target",
+                "credit-rebalance-target",
+            )
+            pk = (p["ws"], p["target"])
+            rec = self._typed_current("tr_credit_balance", pk)
+            if rec is None:
+                return 0
+            new = dict(rec, total_credits=rec["total_credits"] + p["move"])
+            self.pending_writes.append(("update_typed", "tr_credit_balance", pk, new))
+            return 1
         if sql.startswith("INSERT INTO tr_credit_balance"):
             pk = (p["ws"], p["shard"])
             if pk in self.db.typed.get("tr_credit_balance", {}):
@@ -818,6 +849,12 @@ def _execute_sql(
             1 for rec in db.reservations.values()
             if rec.get("workspace_id") == ws and not rec.get("settled")
         )]]
+    if "COUNT(*) FROM tr_reservation WHERE key_hash=@kh AND settled = false" in sql:
+        kh = params["kh"]
+        return [[sum(
+            1 for rec in db.reservations.values()
+            if rec.get("key_hash") == kh and not rec.get("settled")
+        )]]
     # Flip-reconcile: does this workspace have ANY typed reservation history?
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
         ws = params["ws"]
@@ -841,9 +878,16 @@ def _execute_sql(
         sums: dict[tuple, int] = {}
         for rec in db.reservations.values():
             if not rec.get("settled") and rec.get("workspace_id") is not None:
-                grp = (rec["workspace_id"], rec.get("ws_shard", 0))
+                grp = (
+                    rec["workspace_id"],
+                    rec.get("credit_shard"),
+                    rec.get("ws_shard", 0),
+                )
                 sums[grp] = sums.get(grp, 0) + (rec.get("credit_reserved_micro") or 0)
-        return [[ws, shard, total] for (ws, shard), total in sums.items()]
+        return [
+            [ws, credit_shard, ws_shard, total]
+            for (ws, credit_shard, ws_shard), total in sums.items()
+        ]
     if "SUM(key_reserved_micro)" in sql:
         ksums: dict[tuple, int] = {}
         for rec in db.reservations.values():
@@ -901,12 +945,24 @@ def _execute_sql(
     for typed_table in ("tr_credit_balance", "tr_key_limit"):
         if f"FROM {typed_table}" in sql:
             cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
-            recs = list(db.typed.get(typed_table, {}).values())
+            items = list(db.typed.get(typed_table, {}).items())
             if "@pk" in sql and "pk" in params:
                 pk_col = "workspace_id" if typed_table == "tr_credit_balance" else "key_hash"
-                recs = [r for r in recs if r.get(pk_col) == params["pk"]]
+                items = [(pk, rec) for pk, rec in items if rec.get(pk_col) == params["pk"]]
                 if "shard=0" in sql.replace(" ", ""):
-                    recs = [r for r in recs if r.get("shard", 0) == 0]
+                    items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == 0]
+                if "shard<@shard_count" in sql.replace(" ", ""):
+                    items = [
+                        (pk, rec) for pk, rec in items
+                        if 0 <= int(rec.get("shard", 0)) < int(params["shard_count"])
+                    ]
+                if "ORDER BY shard" in sql:
+                    items.sort(key=lambda item: int(item[1].get("shard", 0)))
+            recs = [
+                txn._typed_current(typed_table, pk) if txn is not None else dict(rec)
+                for pk, rec in items
+            ]
+            recs = [rec for rec in recs if rec is not None]
             return [[rec.get(c) for c in cols] for rec in recs]
     if "AND id=@id" in sql:
         entity_id = params["id"]
@@ -1019,6 +1075,9 @@ def make_fake_store(
     store._database = db
     store._bt_table = bt
     store._counter_mirror_enabled = True  # exercise the Step-1 typed-counter mirror
+    from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
+
+    store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,
         write_entity_batch=store._write_entity_batch,

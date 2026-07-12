@@ -120,6 +120,7 @@ if table_exists tr_reservation; then log "tr_reservation exists, skip"; else
     workspace_id STRING(64),
     key_hash STRING(64),
     ws_shard INT64,
+    credit_shard INT64 NOT NULL DEFAULT (0),
     key_shard INT64,
     credit_reserved_micro INT64,
     key_reserved_micro INT64,
@@ -180,6 +181,15 @@ ensure_column tr_key_limit week_usage  "INT64 DEFAULT (0)"
 ensure_column tr_key_limit week_start  "TIMESTAMP"
 ensure_column tr_key_limit month_usage "INT64 DEFAULT (0)"
 ensure_column tr_key_limit month_start "TIMESTAMP"
+
+# Credit-row sharding increment 1. Existing reservations retain ws_shard=0;
+# old rows read NULL for the additive column and the application falls back to
+# ws_shard. New rows write both during the rolling-compatibility window.
+# Existing databases intentionally add this as nullable: adding NOT NULL would
+# force a synchronous backfill. Fresh installs use NOT NULL DEFAULT(0); a later
+# post-backfill migration may tighten existing databases after the fallback is
+# retired. Do not "fix" this rolling-schema divergence in this additive step.
+ensure_column tr_reservation credit_shard "INT64 DEFAULT (0)"
 
 # ── Durable settle outbox (docs/design/durable-settle-outbox.md) ────────────
 # Recovers completed-but-settle-lost charges. Additive + guarded; safe to apply

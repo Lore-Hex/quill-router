@@ -38,6 +38,7 @@ from trusted_router.storage_gcp_counter_dml import (
     reserve_credit,
     reserve_key,
 )
+from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
 
@@ -138,6 +139,9 @@ def authorize_atomic(
     idempotency_fingerprint: str | None,
     expires_at: Any,
     build_auth_body: Callable[[str, str], str],
+    credit_shard: int = UNSHARDED,
+    credit_shard_candidates: tuple[int, ...] | None = None,
+    key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -145,6 +149,9 @@ def authorize_atomic(
     construct the gateway_authorization body once the ids are known.
     `reservation_usage_type` is the HOLD usage type (Credits if any credit
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
+    `credit_shard_candidates` is a bounded, pre-randomized order built outside
+    the transaction so Spanner retries use the same order. The first shard with
+    enough independent sub-budget is recorded durably on the reservation.
 
     Per-window key caps are checked by the CALLER via check_key_window_limits on
     a lock-free snapshot BEFORE this transaction — deliberately NOT in here: a
@@ -153,6 +160,28 @@ def authorize_atomic(
     transaction exists to eliminate (codex #93 review).
     """
     pt = param_types
+    shard_candidates: tuple[int, ...]
+    if credit_shard_candidates is None:
+        shard_candidates = (credit_shard,)
+    else:
+        shard_candidates = tuple(credit_shard_candidates)
+        if credit_shard != UNSHARDED:
+            raise ValueError("pass credit_shard or credit_shard_candidates, not both")
+    if not shard_candidates:
+        raise ValueError("credit_shard_candidates must not be empty")
+    if any(shard < 0 for shard in shard_candidates):
+        raise ValueError("credit shards must be non-negative")
+    if len(set(shard_candidates)) != len(shard_candidates):
+        raise ValueError("credit_shard_candidates must be unique")
+    if not has_credit_candidate and shard_candidates != (UNSHARDED,):
+        raise ValueError("BYOK-only authorization must use credit shard zero")
+    key_candidates = tuple(key_shard_candidates)
+    if not key_candidates:
+        raise ValueError("key_shard_candidates must not be empty")
+    if any(shard < 0 for shard in key_candidates):
+        raise ValueError("key shards must be non-negative")
+    if len(set(key_candidates)) != len(key_candidates):
+        raise ValueError("key_shard_candidates must be unique")
     is_byok = not has_credit_candidate
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())
@@ -163,6 +192,8 @@ def authorize_atomic(
             "outcome": AuthorizeOutcome.REPLAY,
             "reservation_id": existing["reservation_id"],
             "authorization_id": existing["authorization_id"],
+            "credit_shard": int(existing.get("credit_shard", UNSHARDED)),
+            "key_shard": int(existing.get("key_shard", UNSHARDED)),
         }
 
     def txn(transaction: Any) -> dict:
@@ -173,23 +204,50 @@ def authorize_atomic(
                     raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
                 return _replay(existing)
 
-        key_result = reserve_key(transaction, pt, key_hash, estimate, is_byok=is_byok)
-        if key_result == KEY_INSUFFICIENT:
-            raise _Reject(AuthorizeOutcome.KEY_LIMIT_EXCEEDED)
+        key_result = KEY_MISSING
+        selected_key_shard = UNSHARDED
+        saw_key_row = False
+        for candidate in key_candidates:
+            candidate_result = reserve_key(
+                transaction,
+                pt,
+                key_hash,
+                estimate,
+                is_byok=is_byok,
+                shard=candidate,
+            )
+            if candidate_result == KEY_MISSING:
+                continue
+            saw_key_row = True
+            if candidate_result == KEY_INSUFFICIENT:
+                continue
+            key_result = candidate_result
+            selected_key_shard = candidate
+            break
         if key_result == KEY_MISSING:
-            raise _Reject(AuthorizeOutcome.KEY_MISSING)
+            raise _Reject(
+                AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+                if saw_key_row
+                else AuthorizeOutcome.KEY_MISSING
+            )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
         credit_hold = 0
+        selected_credit_shard = UNSHARDED
         if has_credit_candidate:
-            if not reserve_credit(transaction, pt, workspace_id, estimate):
+            for candidate in shard_candidates:
+                if reserve_credit(transaction, pt, workspace_id, estimate, shard=candidate):
+                    selected_credit_shard = candidate
+                    break
+            else:
                 raise _Reject(AuthorizeOutcome.INSUFFICIENT_CREDITS)
             credit_hold = estimate
 
         insert_reservation(
             transaction, pt,
             reservation_id=reservation_id, workspace_id=workspace_id, key_hash=key_hash,
-            ws_shard=0, key_shard=0,
+            ws_shard=selected_credit_shard, credit_shard=selected_credit_shard,
+            key_shard=selected_key_shard,
             credit_reserved_micro=credit_hold, key_reserved_micro=key_hold,
             hold_usage_type=reservation_usage_type, authorization_id=authorization_id,
             idempotency_scope=idempotency_scope, idempotency_fingerprint=idempotency_fingerprint,
@@ -203,6 +261,8 @@ def authorize_atomic(
             "outcome": AuthorizeOutcome.ACCEPTED,
             "reservation_id": reservation_id,
             "authorization_id": authorization_id,
+            "credit_shard": selected_credit_shard,
+            "key_shard": selected_key_shard,
         }
 
     try:
@@ -365,6 +425,7 @@ def settle_atomic(
             credit_count = release_credit(
                 transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
                 credit_actual,
+                shard=res["credit_shard"],
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
@@ -538,6 +599,7 @@ def typed_finalize_atomic(
             credit_count = release_credit(
                 transaction, pt, res["workspace_id"], res["credit_reserved_micro"],
                 credit_actual,
+                shard=res["credit_shard"],
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")

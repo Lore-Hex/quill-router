@@ -127,6 +127,10 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
+    # Independent usage-counter rows for a high-throughput UNCAPPED key. Keys
+    # with any lifetime/window spend limit must remain at one shard so their
+    # hard cap keeps its existing exact semantics.
+    usage_shard_count: int = 1
 
 
 @dataclass
@@ -248,6 +252,10 @@ class CreditAccount:
     total_credits_microdollars: int = 0
     total_usage_microdollars: int = 0
     reserved_microdollars: int = 0
+    # Number of independent tr_credit_balance sub-ledgers owned by this
+    # workspace. The default preserves the original one-row behavior; only the
+    # pause/drain operator path may activate more shards for a hot workspace.
+    shard_count: int = 1
     # Auto-refill: when available drops below threshold, charge the saved
     # Stripe payment method off-session for `auto_refill_amount_microdollars`.
     # All four are required to be non-zero/non-None for auto-refill to fire.

@@ -27,6 +27,8 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 
 # Long tail lives entirely on shard 0; sharding a whale is a data change later.
 UNSHARDED = 0
+MAX_CREDIT_SHARDS = 64
+MAX_KEY_USAGE_SHARDS = 64
 
 # OWNERSHIP SPLIT (2026-06-25 incident). The JSON->typed mirror writes ONLY the
 # columns JSON owns. `total_credits` is set by credit events (top-ups / grants /
@@ -67,10 +69,76 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
+def credit_shard_count(value: Any) -> int:
+    """Return the configured credit-ledger shard count.
+
+    Legacy CreditAccount JSON omits this field and therefore remains exactly
+    one-shard. Invalid persisted values fail closed instead of silently
+    changing which sub-ledgers enforce the workspace cap.
+    """
+    raw = _field(value, "shard_count", 1)
+    if isinstance(raw, bool):
+        raise ValueError("credit shard_count must be a positive integer")
+    count = int(raw)
+    if count < 1:
+        raise ValueError("credit shard_count must be a positive integer")
+    if count > MAX_CREDIT_SHARDS:
+        raise ValueError(f"credit shard_count must not exceed {MAX_CREDIT_SHARDS}")
+    return count
+
+
+def key_usage_shard_count(value: Any) -> int:
+    """Return and validate an API key's usage-counter shard count.
+
+    Only fully uncapped keys may fan usage writes across rows. Partitioning
+    spend limits needs separate sub-budget/rebalance semantics; accepting such
+    a mixed configuration here could weaken a hard user budget, so it fails
+    closed instead.
+    """
+    raw = _field(value, "usage_shard_count", 1)
+    if isinstance(raw, bool):
+        raise ValueError("key usage_shard_count must be a positive integer")
+    count = int(raw)
+    if count < 1:
+        raise ValueError("key usage_shard_count must be a positive integer")
+    if count > MAX_KEY_USAGE_SHARDS:
+        raise ValueError(
+            f"key usage_shard_count must not exceed {MAX_KEY_USAGE_SHARDS}"
+        )
+    if count > 1 and any(
+        _field(value, field_name, None) is not None
+        for field_name in (
+            "limit_microdollars",
+            "limit_daily_microdollars",
+            "limit_weekly_microdollars",
+            "limit_monthly_microdollars",
+        )
+    ):
+        raise ValueError("only uncapped API keys may use sharded usage counters")
+    return count
+
+
+def distribute_credit_amount(amount: int, shard_count: int) -> tuple[int, ...]:
+    """Evenly partition a grant delta, putting the remainder on shard zero."""
+    if shard_count < 1:
+        raise ValueError("credit shard_count must be a positive integer")
+    sign = -1 if amount < 0 else 1
+    per_shard, remainder = divmod(abs(int(amount)), shard_count)
+    values = [sign * per_shard for _ in range(shard_count)]
+    values[UNSHARDED] += sign * remainder
+    return tuple(values)
+
+
 def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> tuple:
     """Mirror the JSON-owned `total_credits` of a `credit` row into
     tr_credit_balance. reserved + total_usage are typed-DML-owned and are
-    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS)."""
+    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS).
+
+    This generic absolute-value mirror is intentionally one-shard only. Once a
+    workspace is explicitly sharded, credit deltas are distributed by
+    credit_workspace_typed_direct; replaying the global JSON total into shard 0
+    would multiply its budget.
+    """
     return (
         workspace_id,
         UNSHARDED,
@@ -102,6 +170,13 @@ def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:
     )
 
 
+def key_limit_mirror_rows(key_hash: str, value: Any, commit_ts: Any) -> list[tuple]:
+    """Mirror config to every active usage row without touching typed counters."""
+    shard_count = key_usage_shard_count(value)
+    base = key_limit_mirror_row(key_hash, value, commit_ts)
+    return [base[:1] + (shard,) + base[2:] for shard in range(shard_count)]
+
+
 def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: Any) -> None:
     """If `kind` is a hot counter, mirror it onto its typed table via `writer`.
 
@@ -110,6 +185,8 @@ def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: 
     writer, so the mirror commits atomically with it. No-op for other kinds.
     """
     if kind == "credit":
+        if credit_shard_count(value) != 1:
+            return
         writer.insert_or_update(
             table=CREDIT_BALANCE_TABLE,
             columns=CREDIT_BALANCE_COLUMNS,
@@ -119,7 +196,7 @@ def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: 
         writer.insert_or_update(
             table=KEY_LIMIT_TABLE,
             columns=KEY_LIMIT_COLUMNS,
-            values=[key_limit_mirror_row(entity_id, value, commit_ts)],
+            values=key_limit_mirror_rows(entity_id, value, commit_ts),
         )
 
 
@@ -141,9 +218,16 @@ def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module:
     table = _typed_table_for(kind)
     if table is None:
         return
+    max_shards = MAX_CREDIT_SHARDS if kind == "credit" else MAX_KEY_USAGE_SHARDS
     writer.delete(
         table,
-        spanner_module.KeySet(keys=[(entity_id, UNSHARDED) for entity_id in entity_ids]),
+        spanner_module.KeySet(
+            keys=[
+                (entity_id, shard)
+                for entity_id in entity_ids
+                for shard in range(max_shards)
+            ]
+        ),
     )
 
 

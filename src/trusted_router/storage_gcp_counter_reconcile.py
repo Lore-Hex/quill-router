@@ -26,16 +26,18 @@ from typing import Any
 
 from trusted_router.storage_gcp_counters import (
     credit_drift,
+    credit_shard_count,
     key_drift,
+    key_usage_shard_count,
     mirror_write,
 )
 from trusted_router.storage_models import ApiKey, CreditAccount, Workspace
 
 _CREDIT_TYPED_SCAN = (
-    "SELECT workspace_id, total_credits, total_usage, reserved FROM tr_credit_balance"
+    "SELECT workspace_id, shard, total_credits, total_usage, reserved FROM tr_credit_balance"
 )
 _KEY_TYPED_SCAN = (
-    "SELECT key_hash, limit_micro, usage, byok_usage, reserved, include_byok, "
+    "SELECT key_hash, shard, limit_micro, usage, byok_usage, reserved, include_byok, "
     "day_limit_micro, week_limit_micro, month_limit_micro "
     "FROM tr_key_limit"
 )
@@ -96,19 +98,28 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
     with store._database.snapshot(multi_use=True) as snapshot:
         json_credit = _scan_json(snapshot, "credit", "workspace_id", pt)
         json_key = _scan_json(snapshot, "api_key", "hash", pt)
-        typed_credit = {
-            r[0]: {"total_credits": r[1], "total_usage": r[2], "reserved": r[3]}
-            for r in snapshot.execute_sql(_CREDIT_TYPED_SCAN)
-        }
-        typed_key = {
-            r[0]: {
-                "limit_micro": r[1], "usage": r[2], "byok_usage": r[3],
-                "reserved": r[4], "include_byok": r[5],
-                "day_limit_micro": r[6], "week_limit_micro": r[7],
-                "month_limit_micro": r[8],
-            }
-            for r in snapshot.execute_sql(_KEY_TYPED_SCAN)
-        }
+        typed_credit: dict[str, dict[str, int]] = {}
+        for row in snapshot.execute_sql(_CREDIT_TYPED_SCAN):
+            aggregate = typed_credit.setdefault(
+                row[0], {"total_credits": 0, "total_usage": 0, "reserved": 0}
+            )
+            aggregate["total_credits"] += int(row[2])
+            aggregate["total_usage"] += int(row[3])
+            aggregate["reserved"] += int(row[4])
+        typed_key: dict[str, dict[str, Any]] = {}
+        typed_key_counts: dict[str, int] = {}
+        for row in snapshot.execute_sql(_KEY_TYPED_SCAN):
+            key_hash = str(row[0])
+            typed_key_counts[key_hash] = typed_key_counts.get(key_hash, 0) + 1
+            typed_key.setdefault(
+                key_hash,
+                {
+                    "limit_micro": row[2], "usage": row[3], "byok_usage": row[4],
+                    "reserved": row[5], "include_byok": row[6],
+                    "day_limit_micro": row[7], "week_limit_micro": row[8],
+                    "month_limit_micro": row[9],
+                },
+            )
 
     def _sample(key: str, value: dict) -> None:
         if len(report.samples) < max_samples:
@@ -127,6 +138,10 @@ def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
     report.key_rows = len(json_key)
     for key_hash, body in json_key.items():
         drift = key_drift(body, typed_key.get(key_hash))
+        expected_shards = key_usage_shard_count(body)
+        observed_shards = typed_key_counts.get(key_hash, 0)
+        if observed_shards != expected_shards:
+            drift["usage_shard_count"] = (expected_shards, observed_shards)
         if drift:
             report.key_drift += 1
             _sample(f"api_key:{key_hash}", drift)
@@ -373,8 +388,10 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
 # Shard-aware (the typed counter PK is (scope, shard); reservations carry the
 # per-scope shard), COALESCE so an empty SUM reads 0.
 _OPEN_CREDIT_HOLDS = (
-    "SELECT workspace_id, ws_shard, COALESCE(SUM(credit_reserved_micro), 0) "
-    "FROM tr_reservation WHERE settled = false GROUP BY workspace_id, ws_shard"
+    "SELECT workspace_id, credit_shard, ws_shard, "
+    "COALESCE(SUM(credit_reserved_micro), 0) "
+    "FROM tr_reservation WHERE settled = false "
+    "GROUP BY workspace_id, credit_shard, ws_shard"
 )
 _OPEN_KEY_HOLDS = (
     "SELECT key_hash, key_shard, COALESCE(SUM(key_reserved_micro), 0) "
@@ -421,9 +438,11 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
                 "SELECT key_hash, shard, reserved FROM tr_key_limit"
             )
         }
-        credit_holds = {
-            (r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_CREDIT_HOLDS)
-        }
+        credit_holds: dict[tuple[str, int], int] = {}
+        for row in snap.execute_sql(_OPEN_CREDIT_HOLDS):
+            shard = int(row[1] if row[1] is not None else (row[2] or 0))
+            scope = (str(row[0]), shard)
+            credit_holds[scope] = credit_holds.get(scope, 0) + int(row[3] or 0)
         key_holds = {(r[0], r[1]): int(r[2] or 0) for r in snap.execute_sql(_OPEN_KEY_HOLDS)}
 
     def _sample(key: str, value: dict) -> None:
@@ -491,11 +510,13 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
     credit_sql = "SELECT total_usage, reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
     key_sql = "SELECT usage, byok_usage, reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
 
-    key_hashes = [
-        b["hash"] for b in store._list_entities("api_key", cls=dict)
+    key_bodies = [
+        b for b in store._list_entities("api_key", cls=dict)
         if b.get("workspace_id") == workspace_id
     ]
+    key_hashes = [str(body["hash"]) for body in key_bodies]
     workspace = store.get_workspace(workspace_id)
+    credit_account = store.get_credit_account(workspace_id)
     # multi_use: two reads on one snapshot (a single-use snapshot raises on the
     # second read on real Spanner — the fa9f5d4 class the fake now models).
     with store._database.snapshot(multi_use=True) as snap:
@@ -508,6 +529,10 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
 
     if workspace is None or not getattr(workspace, "billing_paused", False):
         res.reasons.append("workspace not billing-paused — pause (quiesce) it before rollback")
+    if credit_account is not None and credit_shard_count(credit_account) != 1:
+        res.reasons.append("credit ledger is sharded — consolidate to one shard before rollback")
+    if any(key_usage_shard_count(body) != 1 for body in key_bodies):
+        res.reasons.append("API-key usage is sharded — consolidate keys before rollback")
     if int(open_holds) != 0:
         res.reasons.append(f"{open_holds} open typed holds — drain before rollback backsync")
     if not credit_rows:
@@ -533,13 +558,15 @@ def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False
             credit_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
         ))
         credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if not tc or credit is None:
+        if not tc or credit is None or credit_shard_count(credit) != 1:
             return None
         plan: list[tuple] = []
         for kh in key_hashes:
             key_obj = store._read_entity_tx(transaction, "api_key", kh, ApiKey)
             if key_obj is None:
                 continue  # key deleted since assess (pause blocks creation, not deletion)
+            if key_usage_shard_count(key_obj) != 1:
+                return None
             kt = list(transaction.execute_sql(
                 key_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
             ))
@@ -621,10 +648,12 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
     )
 
     workspace = store.get_workspace(workspace_id)
-    key_hashes = [
-        b["hash"] for b in store._list_entities("api_key", cls=dict)
+    credit_account = store.get_credit_account(workspace_id)
+    key_bodies = [
+        b for b in store._list_entities("api_key", cls=dict)
         if b.get("workspace_id") == workspace_id
     ]
+    key_hashes = [str(body["hash"]) for body in key_bodies]
     with store._database.snapshot(multi_use=True) as snap:  # 3 reads below — must be multi-use
         cb = list(snap.execute_sql(
             credit_row_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
@@ -638,6 +667,10 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
 
     if workspace is None or not getattr(workspace, "billing_paused", False):
         res.reasons.append("workspace not billing-paused — pause it before repair")
+    if credit_account is not None and credit_shard_count(credit_account) != 1:
+        res.reasons.append("credit ledger is sharded — consolidate before shard-zero repair")
+    if any(key_usage_shard_count(body) != 1 for body in key_bodies):
+        res.reasons.append("API-key usage is sharded — consolidate before shard-zero repair")
     if not cb:
         res.reasons.append("no typed credit row")
     if int(nonzero_shard) != 0:
@@ -658,6 +691,9 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
         if ws is None or not ws.billing_paused:
             return None
+        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
+        if credit is not None and credit_shard_count(credit) != 1:
+            return None
         if int(list(transaction.execute_sql(
             nonzero_shard_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
         ))[0][0]) != 0:
@@ -671,6 +707,9 @@ def repair_typed_reserved(store: Any, workspace_id: str, *, apply: bool = False)
         ))[0][0]
         plan: list[tuple[str, int]] = []
         for kh in key_hashes:
+            key_obj = store._read_entity_tx(transaction, "api_key", kh, ApiKey)
+            if key_obj is None or key_usage_shard_count(key_obj) != 1:
+                return None
             if not list(transaction.execute_sql(
                 key_row_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
             )):
