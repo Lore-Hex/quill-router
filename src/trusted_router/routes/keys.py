@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from trusted_router.auth import InferencePrincipal, ManagementPrincipal, Principal
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import dollars_to_microdollars
+from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.schemas import CreateKeyRequest, PatchKeyRequest, model_to_dict
 from trusted_router.serialization import key_shape
 from trusted_router.storage import STORE, ApiKey
@@ -55,6 +56,10 @@ def register_key_routes(router: APIRouter) -> None:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
         # Quiesce: no new keys while paused, so the key set is stable through a flip.
         assert_workspace_billing_active(principal.workspace)
+        try:
+            tags = validate_tags(body.tags)
+        except InvalidTags as exc:
+            raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
         raw, k = STORE.create_api_key(
             workspace_id=workspace_id,
             name=body.name,
@@ -74,6 +79,7 @@ def register_key_routes(router: APIRouter) -> None:
                 None if body.limit_monthly is None else dollars_to_microdollars(body.limit_monthly)
             ),
             budget_alert_only=body.budget_alert_only,
+            tags=tags,
         )
         return JSONResponse({"data": key_shape(k), "key": raw}, status_code=201)
 
@@ -89,6 +95,11 @@ def register_key_routes(router: APIRouter) -> None:
     ) -> dict[str, Any]:
         _require_key_in_workspace(hash, principal)
         patch = model_to_dict(body)
+        if "tags" in patch:
+            try:
+                patch["tags"] = validate_tags(patch["tags"])
+            except InvalidTags as exc:
+                raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
         if "limit" in patch:
             limit_microdollars = dollars_to_microdollars(patch.pop("limit"))
             if limit_microdollars < 0:

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from trusted_router.auth import AuthenticatedPrincipal, ManagementPrincipal
 from trusted_router.errors import api_error, error_response
+from trusted_router.request_tags import InvalidTags, validate_tags
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -19,7 +20,23 @@ def register_activity_routes(router: APIRouter) -> None:
         api_key_hash: str | None = None,
         group_by: str | None = None,
         limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
+        if tag_value is not None and tag_key is None:
+            raise api_error(400, "tag_value requires tag_key", ErrorType.INVALID_TAGS)
+        try:
+            if tag_key is not None:
+                validate_tags({tag_key: tag_value or ""})
+            group_by_tag = (
+                group_by.removeprefix("tag:")
+                if group_by and group_by.startswith("tag:")
+                else None
+            )
+            if group_by_tag is not None:
+                validate_tags({group_by_tag: ""})
+        except InvalidTags as exc:
+            raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
         if group_by in {"none", "request", "generation"}:
             normalized_limit = max(1, min(limit, 1000))
             return {
@@ -28,9 +45,20 @@ def register_activity_routes(router: APIRouter) -> None:
                     api_key_hash=api_key_hash,
                     date=date,
                     limit=normalized_limit,
+                    tag_key=tag_key,
+                    tag_value=tag_value,
                 )
             }
-        return {"data": STORE.activity(principal.workspace.id, api_key_hash=api_key_hash, date=date)}
+        return {
+            "data": STORE.activity(
+                principal.workspace.id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            )
+        }
 
     @router.get("/generation")
     async def generation(id: str, principal: AuthenticatedPrincipal) -> dict[str, Any]:  # noqa: A002

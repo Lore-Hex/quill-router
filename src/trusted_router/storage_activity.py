@@ -37,6 +37,8 @@ def filter_generations(
     workspace_id: str,
     api_key_hash: str | None = None,
     date: str | None = None,
+    tag_key: str | None = None,
+    tag_value: str | None = None,
 ) -> list[Generation]:
     return [
         gen
@@ -44,14 +46,19 @@ def filter_generations(
         if gen.workspace_id == workspace_id
         and (api_key_hash is None or gen.key_hash == api_key_hash)
         and (date is None or gen.created_at.startswith(date))
+        and (tag_key is None or tag_key in gen.tags)
+        and (tag_value is None or gen.tags.get(tag_key or "") == tag_value)
     ]
 
 
-def summarize_activity(generations: Iterable[Generation]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+def summarize_activity(
+    generations: Iterable[Generation], *, group_by_tag: str | None = None
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str | None], dict[str, Any]] = {}
     for gen in generations:
         day = gen.created_at[:10]
-        key = (day, gen.model, gen.provider_name)
+        grouped_tag_value = gen.tags.get(group_by_tag) if group_by_tag else None
+        key = (day, gen.model, gen.provider_name, grouped_tag_value)
         item = grouped.setdefault(
             key,
             {
@@ -67,6 +74,11 @@ def summarize_activity(generations: Iterable[Generation]) -> list[dict[str, Any]
                 "usage_microdollars": 0,
                 "byok_usage_inference": 0.0,
                 "byok_usage_inference_microdollars": 0,
+                **(
+                    {"tag_key": group_by_tag, "tag_value": grouped_tag_value}
+                    if group_by_tag
+                    else {}
+                ),
             },
         )
         metrics = generation_metrics(gen)
@@ -98,6 +110,11 @@ def generation_events(
             "model": gen.model,
             "provider_name": gen.provider_name,
             "app": gen.app,
+            "user": gen.user,
+            "session_id": gen.session_id,
+            "http_referer": gen.http_referer,
+            "app_categories": list(gen.app_categories),
+            "tags": dict(gen.tags),
             "input_tokens": gen.tokens_prompt,
             "output_tokens": gen.tokens_completion,
             "cost": microdollars_to_float(gen.total_cost_microdollars),

@@ -62,3 +62,4 @@ class ErrorType(StrEnum):
     INTERNAL_ERROR = "internal_error"
     HTTP_ERROR = "http_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    INVALID_TAGS = "invalid_tags"

@@ -14,7 +14,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
-from trusted_router.storage_activity import generation_events, summarize_activity
+from trusted_router.storage_activity import (
+    filter_generations,
+    generation_events,
+    summarize_activity,
+)
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
 )
@@ -153,11 +157,22 @@ class SpannerGenerations:
         *,
         api_key_hash: str | None = None,
         date: str | None = None,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+        group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
         rows = self._activity_generations(
             workspace_id, api_key_hash=api_key_hash, date=date, limit=5000
         )
-        return summarize_activity(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return summarize_activity(rows, group_by_tag=group_by_tag)
 
     def activity_events(
         self,
@@ -166,14 +181,24 @@ class SpannerGenerations:
         api_key_hash: str | None = None,
         date: str | None = None,
         limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
         rows = self._activity_generations(
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
-            limit=limit,
+            limit=5000 if tag_key is not None else limit,
         )
-        return generation_events(rows)
+        rows = filter_generations(
+            rows,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+        return generation_events(rows, limit=limit)
 
     def usage_series(
         self,
