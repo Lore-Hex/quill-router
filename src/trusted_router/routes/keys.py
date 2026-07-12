@@ -100,7 +100,10 @@ def register_key_routes(router: APIRouter) -> None:
                 if micro < 0:
                     raise api_error(400, "limit must be non-negative", ErrorType.BAD_REQUEST)
                 patch[f"limit_{window}_microdollars"] = micro
-        updated = STORE.update_key(hash, patch)
+        try:
+            updated = STORE.update_key(hash, patch)
+        except ValueError as exc:
+            raise api_error(409, str(exc), ErrorType.CONFLICT) from exc
         if updated is None:
             raise api_error(404, "Resource not found", ErrorType.NOT_FOUND)
         return {"data": key_shape(updated)}

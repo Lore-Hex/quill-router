@@ -54,6 +54,7 @@ from trusted_router.storage_gcp_counters import (
     UNSHARDED,
     credit_shard_count,
     distribute_credit_amount,
+    key_usage_shard_count,
 )
 from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
 from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
@@ -1212,6 +1213,7 @@ class SpannerBigtableStore:
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        key_usage_shards: int = 1,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
         expires_at: Any = None,
@@ -1229,6 +1231,10 @@ class SpannerBigtableStore:
         )
 
         usage = UsageType.coerce(reservation_usage_type)
+        key_counter_shards = key_usage_shard_count(
+            {"usage_shard_count": key_usage_shards}
+        )
+        key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
             _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
             if idempotency_key is not None
@@ -1298,6 +1304,7 @@ class SpannerBigtableStore:
                 expires_at=expires_at,
                 build_auth_body=build_body,
                 credit_shard_candidates=candidates,
+                key_shard_candidates=key_shard_candidates,
             )
 
         result = run_authorize(credit_shard_candidates)
@@ -1330,10 +1337,16 @@ class SpannerBigtableStore:
                     estimate=estimate,
                 )
 
-            if (
-                result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
-                and len(credit_shard_candidates) > 1
-            ):
+            # A concurrent request can consume the newly consolidated target
+            # between rebalance commit and our retry. Retry this cold path a
+            # small bounded number of times; true aggregate exhaustion returns
+            # INSUFFICIENT on the first rebalance and exits immediately.
+            for _attempt in range(3):
+                if (
+                    result["outcome"] != AuthorizeOutcome.INSUFFICIENT_CREDITS
+                    or len(credit_shard_candidates) <= 1
+                ):
+                    break
                 rebalance_result = rebalance(credit_shard_candidates)
                 if rebalance_result["outcome"] == RebalanceOutcome.INCOMPLETE:
                     raise RuntimeError(
@@ -1344,6 +1357,8 @@ class SpannerBigtableStore:
                     RebalanceOutcome.NOT_NEEDED,
                 }:
                     result = run_authorize(credit_shard_candidates)
+                    continue
+                break
         outcome = result["outcome"]
         authorization: GatewayAuthorization | None = None
         if outcome in (AuthorizeOutcome.ACCEPTED, AuthorizeOutcome.REPLAY):
@@ -1367,28 +1382,43 @@ class SpannerBigtableStore:
         from trusted_router.spend_windows import utcnow, window_floors
 
         pt = self._param_types
-        with self._database.snapshot() as snapshot:
+        with self._database.snapshot(multi_use=True) as snapshot:
+            key = self._read_entity_from(snapshot, "api_key", key_hash, ApiKey)
+            if key is None:
+                return None
+            shard_count = key_usage_shard_count(key)
             rows = list(snapshot.execute_sql(
-                "SELECT usage, byok_usage, reserved, day_usage, day_start, "
+                "SELECT shard, usage, byok_usage, reserved, day_usage, day_start, "
                 "week_usage, week_start, month_usage, month_start "
-                "FROM tr_key_limit WHERE key_hash=@kh AND shard=0",
-                params={"kh": key_hash},
-                param_types={"kh": pt.STRING},
+                "FROM tr_key_limit WHERE key_hash=@pk AND shard>=0 "
+                "AND shard<@shard_count ORDER BY shard",
+                params={"pk": key_hash, "shard_count": shard_count},
+                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             ))
         if not rows:
             return None
-        usage, byok, reserved, day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
+        if [int(row[0]) for row in rows] != list(range(shard_count)):
+            raise RuntimeError("configured tr_key_limit usage shard set is incomplete")
         floors = window_floors(utcnow())
+        usage = sum(int(row[1]) for row in rows)
+        byok = sum(int(row[2]) for row in rows)
+        reserved = sum(int(row[3]) for row in rows)
+
+        def current_window_usage(usage_index: int, start_index: int, window: str) -> int:
+            return sum(
+                int(row[usage_index] or 0)
+                for row in rows
+                if row[start_index] is not None and row[start_index] >= floors[window]
+            )
+
         return {
-            "usage": int(usage),
-            "byok_usage": int(byok),
-            "reserved": int(reserved),
+            "usage": usage,
+            "byok_usage": byok,
+            "reserved": reserved,
             "windows": {
-                "daily": int(day_u) if day_s is not None and day_s >= floors["daily"] else 0,
-                "weekly": int(week_u) if week_s is not None and week_s >= floors["weekly"] else 0,
-                "monthly": (
-                    int(month_u) if month_s is not None and month_s >= floors["monthly"] else 0
-                ),
+                "daily": current_window_usage(4, 5, "daily"),
+                "weekly": current_window_usage(6, 7, "weekly"),
+                "monthly": current_window_usage(8, 9, "monthly"),
             },
         }
 

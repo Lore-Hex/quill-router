@@ -324,7 +324,7 @@ def read_reservation_by_idempotency(
         transaction.execute_sql(
             "SELECT reservation_id, credit_reserved_micro, key_reserved_micro, "
             "hold_usage_type, authorization_id, idempotency_fingerprint, settled, "
-            "credit_shard, ws_shard "
+            "credit_shard, ws_shard, key_shard "
             "FROM tr_reservation WHERE idempotency_scope=@scope",
             params={"scope": idempotency_scope},
             param_types={"scope": param_types.STRING},
@@ -343,6 +343,7 @@ def read_reservation_by_idempotency(
         "idempotency_fingerprint": r[5],
         "settled": r[6],
         "credit_shard": int(credit_shard),
+        "key_shard": int(r[9] or UNSHARDED),
     }
 
 

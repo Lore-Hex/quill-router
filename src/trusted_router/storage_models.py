@@ -127,6 +127,10 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
+    # Independent usage-counter rows for a high-throughput UNCAPPED key. Keys
+    # with any lifetime/window spend limit must remain at one shard so their
+    # hard cap keeps its existing exact semantics.
+    usage_shard_count: int = 1
 
 
 @dataclass

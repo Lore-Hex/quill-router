@@ -485,6 +485,7 @@ class TypedBillingStore(Protocol):
         candidate_endpoint_ids: list[str],
         idempotency_key: str | None,
         idempotency_fingerprint: str | None,
+        key_usage_shards: int = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
         expires_at: Any = ...,

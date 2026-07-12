@@ -28,6 +28,7 @@ KEY_LIMIT_TABLE = "tr_key_limit"
 # Long tail lives entirely on shard 0; sharding a whale is a data change later.
 UNSHARDED = 0
 MAX_CREDIT_SHARDS = 64
+MAX_KEY_USAGE_SHARDS = 64
 
 # OWNERSHIP SPLIT (2026-06-25 incident). The JSON->typed mirror writes ONLY the
 # columns JSON owns. `total_credits` is set by credit events (top-ups / grants /
@@ -86,6 +87,37 @@ def credit_shard_count(value: Any) -> int:
     return count
 
 
+def key_usage_shard_count(value: Any) -> int:
+    """Return and validate an API key's usage-counter shard count.
+
+    Only fully uncapped keys may fan usage writes across rows. Partitioning
+    spend limits needs separate sub-budget/rebalance semantics; accepting such
+    a mixed configuration here could weaken a hard user budget, so it fails
+    closed instead.
+    """
+    raw = _field(value, "usage_shard_count", 1)
+    if isinstance(raw, bool):
+        raise ValueError("key usage_shard_count must be a positive integer")
+    count = int(raw)
+    if count < 1:
+        raise ValueError("key usage_shard_count must be a positive integer")
+    if count > MAX_KEY_USAGE_SHARDS:
+        raise ValueError(
+            f"key usage_shard_count must not exceed {MAX_KEY_USAGE_SHARDS}"
+        )
+    if count > 1 and any(
+        _field(value, field_name, None) is not None
+        for field_name in (
+            "limit_microdollars",
+            "limit_daily_microdollars",
+            "limit_weekly_microdollars",
+            "limit_monthly_microdollars",
+        )
+    ):
+        raise ValueError("only uncapped API keys may use sharded usage counters")
+    return count
+
+
 def distribute_credit_amount(amount: int, shard_count: int) -> tuple[int, ...]:
     """Evenly partition a grant delta, putting the remainder on shard zero."""
     if shard_count < 1:
@@ -138,6 +170,13 @@ def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:
     )
 
 
+def key_limit_mirror_rows(key_hash: str, value: Any, commit_ts: Any) -> list[tuple]:
+    """Mirror config to every active usage row without touching typed counters."""
+    shard_count = key_usage_shard_count(value)
+    base = key_limit_mirror_row(key_hash, value, commit_ts)
+    return [base[:1] + (shard,) + base[2:] for shard in range(shard_count)]
+
+
 def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: Any) -> None:
     """If `kind` is a hot counter, mirror it onto its typed table via `writer`.
 
@@ -157,7 +196,7 @@ def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: 
         writer.insert_or_update(
             table=KEY_LIMIT_TABLE,
             columns=KEY_LIMIT_COLUMNS,
-            values=[key_limit_mirror_row(entity_id, value, commit_ts)],
+            values=key_limit_mirror_rows(entity_id, value, commit_ts),
         )
 
 
@@ -179,9 +218,16 @@ def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module:
     table = _typed_table_for(kind)
     if table is None:
         return
+    max_shards = MAX_CREDIT_SHARDS if kind == "credit" else MAX_KEY_USAGE_SHARDS
     writer.delete(
         table,
-        spanner_module.KeySet(keys=[(entity_id, UNSHARDED) for entity_id in entity_ids]),
+        spanner_module.KeySet(
+            keys=[
+                (entity_id, shard)
+                for entity_id in entity_ids
+                for shard in range(max_shards)
+            ]
+        ),
     )
 
 

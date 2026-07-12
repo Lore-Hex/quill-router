@@ -141,6 +141,7 @@ def authorize_atomic(
     build_auth_body: Callable[[str, str], str],
     credit_shard: int = UNSHARDED,
     credit_shard_candidates: tuple[int, ...] | None = None,
+    key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
@@ -174,6 +175,13 @@ def authorize_atomic(
         raise ValueError("credit_shard_candidates must be unique")
     if not has_credit_candidate and shard_candidates != (UNSHARDED,):
         raise ValueError("BYOK-only authorization must use credit shard zero")
+    key_candidates = tuple(key_shard_candidates)
+    if not key_candidates:
+        raise ValueError("key_shard_candidates must not be empty")
+    if any(shard < 0 for shard in key_candidates):
+        raise ValueError("key shards must be non-negative")
+    if len(set(key_candidates)) != len(key_candidates):
+        raise ValueError("key_shard_candidates must be unique")
     is_byok = not has_credit_candidate
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())
@@ -185,6 +193,7 @@ def authorize_atomic(
             "reservation_id": existing["reservation_id"],
             "authorization_id": existing["authorization_id"],
             "credit_shard": int(existing.get("credit_shard", UNSHARDED)),
+            "key_shard": int(existing.get("key_shard", UNSHARDED)),
         }
 
     def txn(transaction: Any) -> dict:
@@ -195,11 +204,32 @@ def authorize_atomic(
                     raise _Reject(AuthorizeOutcome.IDEMPOTENCY_MISMATCH)
                 return _replay(existing)
 
-        key_result = reserve_key(transaction, pt, key_hash, estimate, is_byok=is_byok)
-        if key_result == KEY_INSUFFICIENT:
-            raise _Reject(AuthorizeOutcome.KEY_LIMIT_EXCEEDED)
+        key_result = KEY_MISSING
+        selected_key_shard = UNSHARDED
+        saw_key_row = False
+        for candidate in key_candidates:
+            candidate_result = reserve_key(
+                transaction,
+                pt,
+                key_hash,
+                estimate,
+                is_byok=is_byok,
+                shard=candidate,
+            )
+            if candidate_result == KEY_MISSING:
+                continue
+            saw_key_row = True
+            if candidate_result == KEY_INSUFFICIENT:
+                continue
+            key_result = candidate_result
+            selected_key_shard = candidate
+            break
         if key_result == KEY_MISSING:
-            raise _Reject(AuthorizeOutcome.KEY_MISSING)
+            raise _Reject(
+                AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+                if saw_key_row
+                else AuthorizeOutcome.KEY_MISSING
+            )
         key_hold = estimate if key_result == KEY_ACCEPTED else 0
 
         credit_hold = 0
@@ -216,7 +246,8 @@ def authorize_atomic(
         insert_reservation(
             transaction, pt,
             reservation_id=reservation_id, workspace_id=workspace_id, key_hash=key_hash,
-            ws_shard=selected_credit_shard, credit_shard=selected_credit_shard, key_shard=0,
+            ws_shard=selected_credit_shard, credit_shard=selected_credit_shard,
+            key_shard=selected_key_shard,
             credit_reserved_micro=credit_hold, key_reserved_micro=key_hold,
             hold_usage_type=reservation_usage_type, authorization_id=authorization_id,
             idempotency_scope=idempotency_scope, idempotency_fingerprint=idempotency_fingerprint,
@@ -231,6 +262,7 @@ def authorize_atomic(
             "reservation_id": reservation_id,
             "authorization_id": authorization_id,
             "credit_shard": selected_credit_shard,
+            "key_shard": selected_key_shard,
         }
 
     try:
