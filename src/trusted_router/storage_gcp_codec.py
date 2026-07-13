@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import json
 from dataclasses import asdict
@@ -7,10 +8,21 @@ from typing import Any
 
 from trusted_router.storage_models import Generation
 
+_SENTINEL = object()
+
 
 def json_body(value: Any) -> str:
     if hasattr(value, "__dataclass_fields__"):
-        value = asdict(value)
+        data = asdict(value)
+        for field in dataclasses.fields(value):
+            field_value = data.get(field.name, _SENTINEL)
+            if field_value is None and field.default is None:
+                data.pop(field.name)
+            elif field_value == [] and field.default_factory is list:
+                data.pop(field.name)
+            elif field_value == {} and field.default_factory is dict:
+                data.pop(field.name)
+        value = data
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 

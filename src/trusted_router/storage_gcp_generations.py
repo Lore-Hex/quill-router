@@ -12,17 +12,23 @@ index, not Spanner."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any, Protocol
 
+import trusted_router.storage_activity as storage_activity
 from trusted_router.storage_activity import (
     ActivityResult,
     filter_generations,
     generation_events,
+    generation_matches_filter,
     summarize_activity,
     summarize_activity_result,
 )
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
+)
+from trusted_router.storage_gcp_activity_index import (
+    iter_activity_generations as _bt_iter_activity_generations,
 )
 from trusted_router.storage_gcp_activity_index import (
     usage_series as _bt_usage_series,
@@ -164,6 +170,15 @@ class SpannerGenerations:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> list[dict[str, Any]]:
+        if tag_key is not None:
+            return self.activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            ).data
         rows = self._activity_generations(
             workspace_id, api_key_hash=api_key_hash, date=date, limit=ACTIVITY_SCAN_LIMIT
         )
@@ -187,6 +202,30 @@ class SpannerGenerations:
         tag_value: str | None = None,
         group_by_tag: str | None = None,
     ) -> ActivityResult:
+        if tag_key is not None:
+            cache_key = _activity_tag_cache_key(
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                group_by=group_by_tag,
+                limit=None,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            cached = storage_activity.ACTIVITY_TAG_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            result = self._tagged_activity_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                group_by_tag=group_by_tag,
+            )
+            storage_activity.ACTIVITY_TAG_CACHE.put(cache_key, result)
+            return result
+
         rows = self._activity_generations(
             workspace_id,
             api_key_hash=api_key_hash,
@@ -228,6 +267,15 @@ class SpannerGenerations:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> list[dict[str, Any]]:
+        if tag_key is not None:
+            return self.activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ).data
         rows = self._activity_generations(
             workspace_id,
             api_key_hash=api_key_hash,
@@ -254,6 +302,30 @@ class SpannerGenerations:
         tag_key: str | None = None,
         tag_value: str | None = None,
     ) -> ActivityResult:
+        if tag_key is not None:
+            cache_key = _activity_tag_cache_key(
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                group_by="events",
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            cached = storage_activity.ACTIVITY_TAG_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            result = self._tagged_activity_events_result(
+                workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                limit=limit,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            )
+            storage_activity.ACTIVITY_TAG_CACHE.put(cache_key, result)
+            return result
+
         scan_limit = ACTIVITY_SCAN_LIMIT if tag_key is not None else limit
         rows = self._activity_generations(
             workspace_id,
@@ -352,3 +424,134 @@ class SpannerGenerations:
             date=date,
             limit=limit,
         )
+
+    def _iter_activity_generations(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+    ) -> Iterator[Generation]:
+        return _bt_iter_activity_generations(
+            self._bt_table,
+            self._family,
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=limit,
+        )
+
+    def _tagged_activity_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        tag_key: str,
+        tag_value: str | None,
+        group_by_tag: str | None,
+    ) -> ActivityResult:
+        rows, truncated, scanned = self._tagged_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            stop_after_matches=None,
+        )
+        result = summarize_activity_result(
+            rows,
+            group_by_tag=group_by_tag,
+            truncated=truncated,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+        return ActivityResult(
+            data=result.data,
+            truncated=result.truncated,
+            groups_truncated=result.groups_truncated,
+            scanned=scanned,
+            scan_limit=result.scan_limit,
+        )
+
+    def _tagged_activity_events_result(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        limit: int,
+        tag_key: str,
+        tag_value: str | None,
+    ) -> ActivityResult:
+        # Early-exit is only correct on the ws_recent (date=None) path, whose
+        # reverse-time keys stream newest-first, so the first `limit` matches
+        # are exactly the rows the full-scan-then-truncate would return. The
+        # date-scoped prefix streams OLDEST-first; early-exiting there would
+        # return the oldest matches of the day instead of the newest, so it
+        # scans the full bounded window and sorts downstream (old behavior).
+        rows, truncated, scanned = self._tagged_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+            stop_after_matches=limit + 1 if date is None else None,
+        )
+        return ActivityResult(
+            data=generation_events(rows, limit=limit),
+            truncated=truncated,
+            scanned=scanned,
+            scan_limit=ACTIVITY_SCAN_LIMIT,
+        )
+
+    def _tagged_activity_generations(
+        self,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None,
+        date: str | None,
+        tag_key: str,
+        tag_value: str | None,
+        stop_after_matches: int | None,
+    ) -> tuple[list[Generation], bool, int]:
+        rows: list[Generation] = []
+        scanned = 0
+        truncated = False
+        for generation in self._iter_activity_generations(
+            workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            limit=ACTIVITY_SCAN_LIMIT + 1,
+        ):
+            if scanned >= ACTIVITY_SCAN_LIMIT:
+                truncated = True
+                break
+            scanned += 1
+            if not generation_matches_filter(
+                generation,
+                workspace_id=workspace_id,
+                api_key_hash=api_key_hash,
+                date=date,
+                tag_key=tag_key,
+                tag_value=tag_value,
+            ):
+                continue
+            rows.append(generation)
+            if stop_after_matches is not None and len(rows) >= stop_after_matches:
+                truncated = True
+                break
+        return rows, truncated, scanned
+
+
+def _activity_tag_cache_key(
+    *,
+    workspace_id: str,
+    api_key_hash: str | None,
+    date: str | None,
+    group_by: str | None,
+    limit: int | None,
+    tag_key: str,
+    tag_value: str | None,
+) -> storage_activity.ActivityTagCacheKey:
+    return (workspace_id, api_key_hash, date, group_by, limit, tag_key, tag_value)

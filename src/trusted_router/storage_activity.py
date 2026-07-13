@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from collections import Counter
-from collections.abc import Iterable
+import copy
+import dataclasses
+import threading
+import time
+from collections import Counter, OrderedDict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +13,18 @@ from trusted_router.money import microdollars_to_float
 from trusted_router.storage_models import Generation, _is_byok
 
 MAX_TAG_GROUP_VALUES = 100
+ACTIVITY_TAG_CACHE_TTL_SECONDS = 15.0
+ACTIVITY_TAG_CACHE_MAX_ENTRIES = 512
+
+ActivityTagCacheKey = tuple[
+    str,
+    str | None,
+    str | None,
+    str | None,
+    int | None,
+    str,
+    str | None,
+]
 
 
 @dataclass(frozen=True)
@@ -18,6 +34,69 @@ class ActivityResult:
     groups_truncated: bool = False
     scanned: int = 0
     scan_limit: int | None = None
+
+
+@dataclass(frozen=True)
+class _ActivityTagCacheEntry:
+    result: ActivityResult
+    expires_at: float
+
+
+class ActivityTagCache:
+    """Small per-process cache for repeated tag-filtered dashboard polls."""
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = ACTIVITY_TAG_CACHE_TTL_SECONDS,
+        max_entries: int = ACTIVITY_TAG_CACHE_MAX_ENTRIES,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("activity tag cache TTL must be positive")
+        if max_entries < 1:
+            raise ValueError("activity tag cache max_entries must be positive")
+        self._ttl_seconds = float(ttl_seconds)
+        self._max_entries = int(max_entries)
+        self._clock = clock
+        self._entries: OrderedDict[ActivityTagCacheKey, _ActivityTagCacheEntry] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: ActivityTagCacheKey) -> ActivityResult | None:
+        now = self._clock()
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            if entry.expires_at <= now:
+                self._entries.pop(key, None)
+                return None
+            self._entries.move_to_end(key)
+            result = entry.result
+        # Hand every hit its own copy of the payload: callers mutate returned
+        # event dicts in place (e.g. console cost_display annotation), and a
+        # shared cached list would leak one caller's mutations into the next.
+        return dataclasses.replace(result, data=copy.deepcopy(result.data))
+
+    def put(self, key: ActivityTagCacheKey, result: ActivityResult) -> None:
+        entry = _ActivityTagCacheEntry(
+            result=result,
+            expires_at=self._clock() + self._ttl_seconds,
+        )
+        with self._lock:
+            self._entries[key] = entry
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+
+# 15s staleness is acceptable for analytics polling and avoids repeated
+# tag-filtered Bigtable scans. Mutating writes do not invalidate this cache.
+ACTIVITY_TAG_CACHE = ActivityTagCache()
 
 
 def generation_metrics(gen: Generation) -> dict[str, int]:
@@ -56,12 +135,33 @@ def filter_generations(
     return [
         gen
         for gen in generations
-        if gen.workspace_id == workspace_id
+        if generation_matches_filter(
+            gen,
+            workspace_id=workspace_id,
+            api_key_hash=api_key_hash,
+            date=date,
+            tag_key=tag_key,
+            tag_value=tag_value,
+        )
+    ]
+
+
+def generation_matches_filter(
+    gen: Generation,
+    *,
+    workspace_id: str,
+    api_key_hash: str | None = None,
+    date: str | None = None,
+    tag_key: str | None = None,
+    tag_value: str | None = None,
+) -> bool:
+    return (
+        gen.workspace_id == workspace_id
         and (api_key_hash is None or gen.key_hash == api_key_hash)
         and (date is None or gen.created_at.startswith(date))
         and (tag_key is None or tag_key in gen.tags)
         and (tag_value is None or gen.tags.get(tag_key or "") == tag_value)
-    ]
+    )
 
 
 def summarize_activity(

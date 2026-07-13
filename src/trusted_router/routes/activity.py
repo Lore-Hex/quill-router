@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from trusted_router.auth import AuthenticatedPrincipal, ManagementPrincipal
 from trusted_router.errors import api_error, error_response
@@ -39,7 +40,8 @@ def register_activity_routes(router: APIRouter) -> None:
             raise api_error(400, str(exc), ErrorType.INVALID_TAGS) from exc
         if group_by in {"none", "request", "generation"}:
             normalized_limit = max(1, min(limit, 1000))
-            result = STORE.activity_events_result(
+            result = await run_in_threadpool(
+                STORE.activity_events_result,
                 principal.workspace.id,
                 api_key_hash=api_key_hash,
                 date=date,
@@ -51,7 +53,8 @@ def register_activity_routes(router: APIRouter) -> None:
                 "data": result.data,
                 "meta": _activity_meta(result, tag_filter=tag_key is not None),
             }
-        result = STORE.activity_result(
+        result = await run_in_threadpool(
+            STORE.activity_result,
             principal.workspace.id,
             api_key_hash=api_key_hash,
             date=date,
