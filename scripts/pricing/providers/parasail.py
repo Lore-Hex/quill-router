@@ -1,25 +1,41 @@
-"""Parasail — human-only provider config.
+"""Parasail — public pricing-page scraper + /v1/models liveness gate.
 
-Parasail's dashboard pricing lives behind a SaaS login
-(saas.parasail.io/info/pricing) that the Jina-markdown scraper
-can't see, and api.parasail.io's /v1/models endpoint doesn't
-include a pricing block. Static `_PRICES` table below is
-operator-pasted from the dashboard.
+History: this module used to be a hand-pasted price table because
+Parasail's pricing lived behind a SaaS login (saas.parasail.io) and
+api.parasail.io's /v1/models has no pricing block (still true —
+re-verified 2026-07-13). Parasail has since published a public
+pricing page at https://www.parasail.io/pricing (Astro-rendered,
+server-side HTML), so prices now parse from the "Per-token model
+pricing" table there, hourly, like every other scraped provider.
 
-Format: OR-canonical-id → (prompt_micro_per_m, completion_micro_per_m,
-prompt_cached_micro_per_m). Every row carries a trailing comment
-with the date the row was pasted, the operator initials, and (when
-visible) the per-MTok dollar values exactly as they appeared in
-the dashboard. When you add/change a row, keep that audit trail —
-the next person to look will need to know what to distrust.
+Two-source rule (unchanged from the hand-table era): a model is
+priced only if it appears on BOTH the pricing page AND /v1/models.
+Page-only rows (e.g. Nemotron 3 Ultra as of 2026-07-13) and
+API-only models (e.g. qwen3.5-9b) surface as notes so an operator
+notices, but never produce a price.
 
-When Parasail publishes a machine-readable price feed, swap this
-scraper to the API-direct pattern used by lightning.py / gmi.py /
-deepinfra.py.
+The pricing page's row structure this parser depends on:
+
+    <div class="ptbl-row" ...>
+      <div class="mdl" ...><span class="ep" ...>DISPLAY NAME</span></div>
+      <div ...><span class="num" ...>$IN</span></div>
+      <div ...><span class="num" ...>$OUT</span></div>
+      <div ...><span class="num" ...>$CACHED</span></div>
+    </div>
+
+scoped to the section between "Per-token model pricing" and
+"Reserved GPU pricing" (the later "Self-service batch pricing"
+tables reuse the same row markup for per-param-size tiers and must
+not be parsed as models).
 """
 from __future__ import annotations
 
+import json
 import os
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -35,7 +51,22 @@ from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_ups
 
 SLUG = "parasail"
 URL = "https://api.parasail.io/v1/models"
+PRICING_URL = "https://www.parasail.io/pricing"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "parasail.json"
+)
 
+# Models we expect on BOTH the pricing page and /v1/models. Drift
+# detector only — a miss lands in notes, it does not fail the run.
+# 2026-07-13 sweep: kimi-k2.5, glm-4.7, deepseek-v3.2 and
+# step-3.5-flash disappeared from the public pricing page (k2.5 and
+# glm-4.7 from /v1/models too) — removed here; mappings kept below
+# so they light back up if Parasail restores them.
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
     "google/gemma-4-26b-a4b-it",
@@ -43,30 +74,28 @@ EXPECTED_MODELS = [
     "meta-llama/llama-3.3-70b-instruct",
     "meta-llama/llama-4-maverick",
     "qwen/qwen2.5-vl-72b-instruct",
-    "deepseek/deepseek-v3.2",
-    "deepseek/deepseek-v4-flash",
-    "deepseek/deepseek-v4-pro",
-    "z-ai/glm-4.7",
-    "z-ai/glm-5",
-    "z-ai/glm-5.1",
-    "z-ai/glm-5.2",
-    "moonshotai/kimi-k2.5",
-    "moonshotai/kimi-k2.6",
-    "minimax/minimax-m2.5",
-    "openai/gpt-oss-120b",
-    "openai/gpt-oss-20b",
-    "qwen/qwen3-235b-a22b-2507",
-    "qwen/qwen3-coder-next",
     "qwen/qwen3-vl-235b-a22b-instruct",
     "qwen/qwen3-vl-8b-instruct",
+    "qwen/qwen3-235b-a22b-2507",
+    "qwen/qwen3-coder-next",
     "qwen/qwen3.5-397b-a17b",
     "qwen/qwen3.5-35b-a3b",
     "qwen/qwen3.6-35b-a3b",
     "qwen/qwen3-next-80b-a3b-instruct",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
+    "z-ai/glm-5",
+    "z-ai/glm-5.1",
+    "z-ai/glm-5.2",
+    "moonshotai/kimi-k2.6",
+    "moonshotai/kimi-k2.7-code",
+    "minimax/minimax-m2.5",
+    "minimax/minimax-m3",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "mistralai/mistral-small-3.2-24b-instruct",
     "thedrummer/cydonia-24b-v4.1",
     "thedrummer/skyfall-36b-v2",
-    "stepfun/step-3.5-flash",
     "arcee-ai/trinity-large-thinking",
     "bytedance/ui-tars-1.5-7b",
 ]
@@ -75,11 +104,11 @@ EXPECTED_MODELS = [
 # Parasail-native id → OR-canonical id. The /v1/models endpoint
 # returns BOTH forms for every model: a `parasail-X` slug AND the
 # upstream-author form (e.g. both `parasail-gemma-4-31b-it` and
-# `google/gemma-4-31B-it`). We map both to the same OR-canonical
-# entry so route lookup works whichever alias is on the wire.
-# Source: live probe of https://api.parasail.io/v1/models on
-# 2026-05-12 cross-checked against the saas.parasail.io dashboard
-# pricing page the operator pasted.
+# `google/gemma-4-31B-it`), occasionally with case-variant dupes
+# (`MiniMaxAI/MiniMax-M3` and `MiniMaxAI/Minimax-M3`). We map every
+# observed alias to the same OR-canonical entry so route lookup works
+# whichever alias is on the wire. Last swept against the live API
+# 2026-07-13.
 _NATIVE_TO_OR_ID = {
     # gemma-4 family
     "parasail-gemma-4-31b-it": "google/gemma-4-31b-it",
@@ -143,9 +172,14 @@ _NATIVE_TO_OR_ID = {
     "moonshotai/kimi-k2.5": "moonshotai/kimi-k2.5",
     "parasail-kimi-k26": "moonshotai/kimi-k2.6",
     "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "parasail-kimi-k27-code": "moonshotai/kimi-k2.7-code",
+    "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     # minimax
     "parasail-minimax-m25": "minimax/minimax-m2.5",
     "MiniMaxAI/MiniMax-M2.5": "minimax/minimax-m2.5",
+    "parasail-minimax-m3": "minimax/minimax-m3",
+    "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
+    "MiniMaxAI/Minimax-M3": "minimax/minimax-m3",
     # gpt-oss
     "parasail-gpt-oss-120b": "openai/gpt-oss-120b",
     "openai/gpt-oss-120b": "openai/gpt-oss-120b",
@@ -174,71 +208,112 @@ UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.ite
 
 # SKIPPED — not yet supported by TR's chat-completions path:
 #   - parasail-bge-m3 / BAAI/bge-m3 (embedding model)
+#   - parasail-qwen3-embedding-4b / -8b (embedding models)
 #   - parasail-resemble-tts-en (text-to-speech, priced per MChar)
 # SKIPPED — Parasail-only / not in OR snapshot:
-#   - parasail-skyfall-31b-v42 (OR has the 36b-v2 sibling but not 31b-v42)
-#   - parasail-nemotron-3-nano-30b-a3b-fp8
-#   - parasail-nemotron-3-super-120b-a12b-fp8
-# Revisit once OR adds them or operator wants parasail-only TR catalog entries.
+#   - parasail-mimo-v25 / XiaomiMiMo/MiMo-V2.5 (catalog has only the
+#     -pro variants via xiaomi; base v2.5 is a different checkpoint)
+#   - parasail-qwen35-9b (present in OR snapshot but page doesn't
+#     price it yet — lights up automatically when the page adds it)
+#   - "Skyfall 31B v4.2" page row (OR has the 36b-v2 sibling only)
+# Revisit once OR adds them or operator wants parasail-only TR entries.
 
 
-# Operator-pasted rates from saas.parasail.io/info/pricing
-# (cross-checked 2026-05-12 against live api.parasail.io/v1/models).
-# Format: OR-canonical-id → (prompt_$/M, completion_$/M, cached_input_$/M | None).
-# Every row carries an audit comment with the dashboard's displayed
-# per-MTok dollar values exactly as they appeared, so a future
-# operator can spot drift on the next paste.
-_RATES_USD_PER_M: dict[str, tuple[float, float, float | None]] = {
-    # gemma family — jp 2026-05-11 / 2026-05-12 dashboard
-    "google/gemma-4-31b-it": (0.14, 0.40, 0.10),
-    "google/gemma-4-26b-a4b-it": (0.13, 0.40, 0.05),
-    "google/gemma-3-27b-it": (0.08, 0.45, 0.04),
-    # llama — jp 2026-05-12
-    "meta-llama/llama-3.3-70b-instruct": (0.22, 0.50, 0.11),
-    "meta-llama/llama-4-maverick": (0.35, 1.00, 0.17),
-    # qwen
-    "qwen/qwen2.5-vl-72b-instruct": (0.80, 1.00, 0.40),
-    "qwen/qwen3-vl-235b-a22b-instruct": (0.21, 1.90, 0.10),
-    "qwen/qwen3-vl-8b-instruct": (0.25, 0.75, 0.12),
-    "qwen/qwen3-235b-a22b-2507": (0.10, 0.60, 0.05),
-    "qwen/qwen3-coder-next": (0.12, 0.80, 0.07),
-    "qwen/qwen3.5-397b-a17b": (0.50, 3.60, 0.30),
-    "qwen/qwen3.5-35b-a3b": (0.15, 1.00, 0.05),
-    "qwen/qwen3.6-35b-a3b": (0.15, 1.00, 0.05),
-    "qwen/qwen3-next-80b-a3b-instruct": (0.10, 1.10, 0.07),
-    # deepseek
-    "deepseek/deepseek-v3.2": (0.28, 0.45, 0.13),
-    "deepseek/deepseek-v4-flash": (0.14, 0.28, 0.07),
-    "deepseek/deepseek-v4-pro": (1.74, 3.48, 0.87),
-    # z-ai
-    "z-ai/glm-5": (1.00, 3.20, 0.20),
-    "z-ai/glm-5.1": (1.40, 4.40, 0.26),
-    "z-ai/glm-5.2": (1.40, 4.40, 0.26),
-    "z-ai/glm-4.7": (0.45, 2.10, 0.11),
-    # moonshot
-    "moonshotai/kimi-k2.5": (0.60, 2.80, 0.20),
-    "moonshotai/kimi-k2.6": (0.80, 3.50, 0.20),
-    # minimax
-    "minimax/minimax-m2.5": (0.30, 1.20, 0.03),
-    # gpt-oss
-    "openai/gpt-oss-120b": (0.10, 0.75, 0.055),
-    "openai/gpt-oss-20b": (0.04, 0.20, 0.02),
-    # mistral
-    "mistralai/mistral-small-3.2-24b-instruct": (0.09, 0.60, 0.05),
-    # thedrummer / arcee / stepfun / bytedance
-    "thedrummer/cydonia-24b-v4.1": (0.30, 0.50, 0.15),
-    "thedrummer/skyfall-36b-v2": (0.55, 0.80, 0.25),
-    "stepfun/step-3.5-flash": (0.10, 0.30, 0.03),
-    "arcee-ai/trinity-large-thinking": (0.22, 0.85, 0.06),
-    "bytedance/ui-tars-1.5-7b": (0.10, 0.20, 0.10),
+# Pricing-page display name → OR-canonical id. The page is the price
+# SOURCE; /v1/models is the liveness gate. A display name here that
+# stops appearing on the page just drops out of pricing (both-rule);
+# a page row NOT in this map lands in notes as "unmapped" so the
+# operator adds it deliberately.
+_DISPLAY_TO_OR_ID = {
+    "GLM-5.2": "z-ai/glm-5.2",
+    "GLM-5.1": "z-ai/glm-5.1",
+    "GLM-5": "z-ai/glm-5",
+    "GLM-4.7": "z-ai/glm-4.7",
+    "MiniMax M3": "minimax/minimax-m3",
+    "MiniMax M2.5": "minimax/minimax-m2.5",
+    "DeepSeek V4 Pro": "deepseek/deepseek-v4-pro",
+    "DeepSeek V4 Flash": "deepseek/deepseek-v4-flash",
+    "DeepSeek V3.2": "deepseek/deepseek-v3.2",
+    "Kimi K2.7 Code": "moonshotai/kimi-k2.7-code",
+    "Kimi K2.6": "moonshotai/kimi-k2.6",
+    "Kimi K2.5": "moonshotai/kimi-k2.5",
+    "Qwen3.6 35B-A3B": "qwen/qwen3.6-35b-a3b",
+    "Qwen3.5 397B-A17B": "qwen/qwen3.5-397b-a17b",
+    "Qwen3.5 35B-A3B": "qwen/qwen3.5-35b-a3b",
+    "Qwen3-Coder-Next": "qwen/qwen3-coder-next",
+    "Qwen3-VL 235B-A22B": "qwen/qwen3-vl-235b-a22b-instruct",
+    "Qwen3-VL 8B": "qwen/qwen3-vl-8b-instruct",
+    "Qwen3-Next 80B": "qwen/qwen3-next-80b-a3b-instruct",
+    "Qwen3 235B-A22B (2507)": "qwen/qwen3-235b-a22b-2507",
+    "Qwen2.5-VL 72B": "qwen/qwen2.5-vl-72b-instruct",
+    "Mistral Small 3.2 24B": "mistralai/mistral-small-3.2-24b-instruct",
+    "Llama 4 Maverick (FP8)": "meta-llama/llama-4-maverick",
+    "Llama 3.3 70B (FP8)": "meta-llama/llama-3.3-70b-instruct",
+    "Nemotron 3 Ultra 550B (NVFP4)": "nvidia/nvidia-nemotron-3-ultra-550b-a55b",
+    "Trinity Large (Thinking)": "arcee-ai/trinity-large-thinking",
+    "Gemma 4 26B-A4B": "google/gemma-4-26b-a4b-it",
+    "Gemma 4 31B": "google/gemma-4-31b-it",
+    "Gemma 3 27B": "google/gemma-3-27b-it",
+    "Skyfall 36B v2 (FP8)": "thedrummer/skyfall-36b-v2",
+    "Cydonia 24B v4.1": "thedrummer/cydonia-24b-v4.1",
+    "gpt-oss-120b": "openai/gpt-oss-120b",
+    "gpt-oss-20b": "openai/gpt-oss-20b",
+    "UI-TARS 1.5 7B": "bytedance/ui-tars-1.5-7b",
+    "Step 3.5 Flash": "stepfun/step-3.5-flash",
 }
+
+# Page rows we deliberately do not price (kept out of "unmapped" noise).
+_DISPLAY_SKIP = {
+    "Resemble TTS (English)",  # TTS, priced per MChar not MTok
+    "BGE-M3",  # embedding model, single price column
+    "gpt-oss-120b (Fast)",  # speed-tier variant of the same catalog entry
+    "Skyfall 31B v4.2",  # not in OR catalog (36b-v2 sibling only)
+    "MiMo v2.5",  # catalog carries only the -pro variants (xiaomi direct)
+}
+
+_SECTION_START = "Per-token model pricing"
+_SECTION_END = "Reserved GPU pricing"
+
+_ROW_RE = re.compile(
+    r'<div class="ptbl-row"[^>]*>\s*'
+    r'<div class="mdl"[^>]*><span class="ep"[^>]*>([^<]+)</span></div>'
+    r"(.*?)</div>\s*</div>",
+    re.S,
+)
+_NUM_RE = re.compile(r"\$([0-9]+(?:\.[0-9]+)?)")
+
+
+def _parse_pricing_page(html: str) -> tuple[dict[str, tuple[float, float, float | None]], list[str]]:
+    """Parse the per-token table into display-name → ($/M in, $/M out,
+    $/M cached | None). Returns (rows, notes)."""
+    notes: list[str] = []
+    start = html.find(_SECTION_START)
+    if start < 0:
+        raise ValueError(f"pricing page missing section marker {_SECTION_START!r}")
+    end = html.find(_SECTION_END, start)
+    section = html[start : end if end > start else len(html)]
+
+    rows: dict[str, tuple[float, float, float | None]] = {}
+    for match in _ROW_RE.finditer(section):
+        display = match.group(1).strip()
+        nums = [float(n) for n in _NUM_RE.findall(match.group(2))]
+        if display in _DISPLAY_SKIP:
+            continue
+        if len(nums) < 2:
+            notes.append(f"page row {display!r} has {len(nums)} price column(s) — skipped")
+            continue
+        cached = nums[2] if len(nums) >= 3 else None
+        rows[display] = (nums[0], nums[1], cached)
+    if not rows:
+        raise ValueError("pricing page parsed to zero model rows — layout changed?")
+    return rows, notes
 
 
 def _model_price_from_usd_per_m(
     prompt: float, completion: float, cached: float | None
 ) -> ModelPrice:
     """Convert per-MTok dollar values to a ModelPrice in micro/M.
-    $1 = 1_000_000 micro = $1.00 per MTok = 1_000_000 micro per MTok."""
+    $1.00 per MTok = 1_000_000 micro per MTok."""
     return ModelPrice(
         prompt_micro_per_m=int(round(prompt * 1_000_000)),
         completion_micro_per_m=int(round(completion * 1_000_000)),
@@ -248,24 +323,48 @@ def _model_price_from_usd_per_m(
     )
 
 
+def _http_client() -> httpx.Client:
+    transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
+    return httpx.Client(
+        timeout=PROVIDER_FETCH_TIMEOUT,
+        follow_redirects=True,
+        transport=transport,
+    )
+
+
 def fetch() -> ProviderPricingResult:
-    """Hit /v1/models for liveness, then look up each served
-    OR-canonical id in `_RATES_USD_PER_M`. Returns prices only for
-    models that appear in BOTH (Parasail serving it AND operator
-    has pasted a rate)."""
+    """Scrape prices from the public pricing page, gate on /v1/models
+    liveness, and return prices only for models that appear in BOTH."""
+    notes: list[str] = []
+
+    # Price source: the public pricing page. A fetch/parse failure
+    # raises so the refresh pipeline falls back to the last-known
+    # snapshot prices instead of publishing an empty provider.
+    with _http_client() as client:
+        page = client.get(PRICING_URL, headers={"User-Agent": PROVIDER_FETCH_UA})
+        page.raise_for_status()
+    display_rows, parse_notes = _parse_pricing_page(page.text)
+    notes.extend(parse_notes)
+
+    page_prices: dict[str, tuple[float, float, float | None]] = {}
+    for display, rates in display_rows.items():
+        or_id = _DISPLAY_TO_OR_ID.get(display)
+        if or_id is None:
+            notes.append(
+                f"page row {display!r} not in _DISPLAY_TO_OR_ID — map it to enable"
+            )
+            continue
+        page_prices[or_id] = rates
+
+    # Liveness gate: /v1/models (auth optional). On failure, treat all
+    # known natives as live — same degraded behavior as the hand-table era.
     api_key = os.environ.get("PARASAIL_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    notes: list[str] = []
     live_native: set[str] = set()
     try:
-        transport = httpx.HTTPTransport(retries=PROVIDER_FETCH_TRANSPORT_RETRIES)
-        with httpx.Client(
-            timeout=PROVIDER_FETCH_TIMEOUT,
-            follow_redirects=True,
-            transport=transport,
-        ) as client:
+        with _http_client() as client:
             response = client.get(URL, headers=headers)
             response.raise_for_status()
             payload = response.json()
@@ -284,20 +383,19 @@ def fetch() -> ProviderPricingResult:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         or_ids_live.add(or_id)
+
     prices: dict[str, ModelPrice] = {}
-    for or_id, rates in _RATES_USD_PER_M.items():
+    for or_id, rates in sorted(page_prices.items()):
         if or_id not in or_ids_live:
-            notes.append(f"have a price for {or_id} but /v1/models doesn't list it — skipped")
+            notes.append(f"page prices {or_id} but /v1/models doesn't list it — skipped")
             continue
         prices[or_id] = _model_price_from_usd_per_m(*rates)
 
-    # Surface models Parasail serves that we don't yet have rates
-    # for so the operator notices and pastes them.
-    unpriced = sorted(or_ids_live - set(_RATES_USD_PER_M.keys()))
+    unpriced = sorted(or_ids_live - set(page_prices.keys()))
     if unpriced:
         notes.append(
-            f"Parasail serves {len(unpriced)} mapped model(s) without rates in "
-            f"_RATES_USD_PER_M: {', '.join(unpriced)} — paste from dashboard to enable"
+            f"Parasail serves {len(unpriced)} mapped model(s) the pricing page "
+            f"doesn't list: {', '.join(unpriced)}"
         )
 
     errors = validate(prices, EXPECTED_MODELS)
@@ -308,6 +406,144 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         prices=prices,
         source="api",
-        fetched_url=URL,
+        fetched_url=PRICING_URL,
         notes=notes,
     )
+
+
+# Rows for models Parasail serves AHEAD of the shared OR snapshot.
+# The manifest makes them routable at runtime before OpenRouter's
+# feed catches up; prices are injected hourly from the scrape. Keys
+# absent from `fetch()` prices simply keep their previous values.
+# Metadata (context/modalities) mirrors the OR snapshot entries for
+# the same checkpoints served by other providers.
+_MANIFEST_ROW_TEMPLATES: dict[str, dict[str, Any]] = {
+    "z-ai/glm-5.2": {
+        "id": "z-ai/glm-5.2",
+        "upstream_id": "parasail-glm-52",
+        "display_name": "Parasail GLM 5.2",
+        "title": "z-ai/glm-5.2",
+        "context_length": 262144,
+        "max_output_tokens": 262144,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
+    "qwen/qwen3.5-397b-a17b": {
+        "id": "qwen/qwen3.5-397b-a17b",
+        "upstream_id": "parasail-qwen35-397b-a17b",
+        "display_name": "Parasail Qwen3.5 397B A17B",
+        "title": "qwen/qwen3.5-397b-a17b",
+        "context_length": 262144,
+        "max_output_tokens": 65536,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "serverless"],
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
+    "moonshotai/kimi-k2.7-code": {
+        "id": "moonshotai/kimi-k2.7-code",
+        "upstream_id": "parasail-kimi-k27-code",
+        "display_name": "Parasail Kimi K2.7 Code",
+        "title": "moonshotai/kimi-k2.7-code",
+        "context_length": 262144,
+        "max_output_tokens": 65536,
+        "model_type": "chat",
+        "features": ["function-calling", "structured-outputs", "serverless"],
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
+    "minimax/minimax-m3": {
+        "id": "minimax/minimax-m3",
+        "upstream_id": "parasail-minimax-m3",
+        "display_name": "Parasail MiniMax M3",
+        "title": "minimax/minimax-m3",
+        "context_length": 1048576,
+        "max_output_tokens": 65536,
+        "model_type": "chat",
+        "features": ["reasoning", "function-calling", "serverless"],
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+    },
+}
+
+# Manifest rows that must always end up priced after a refresh.
+_MANIFEST_EXPECTED = [
+    "z-ai/glm-5.2",
+    "qwen/qwen3.5-397b-a17b",
+    "moonshotai/kimi-k2.7-code",
+    "minimax/minimax-m3",
+]
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    """Refresh `provider_models/parasail.json` from scraped prices.
+
+    Mirrors the wafer.py hook: update existing supplement rows in
+    place, append templates for newly-served ahead-of-snapshot models,
+    and stamp provenance. Rows are NOT removed when a model temporarily
+    drops off the page — the runtime treats stale supplement prices as
+    better than delisting a routable model mid-day; removal is an
+    operator decision."""
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        raise RuntimeError("parasail manifest has no models list")
+
+    existing_by_id: dict[str, dict[str, Any]] = {
+        row["id"]: row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    updated: list[str] = []
+    appended: list[str] = []
+    for model_id, price in sorted(result.prices.items()):
+        row = existing_by_id.get(model_id)
+        if row is None:
+            template = _MANIFEST_ROW_TEMPLATES.get(model_id)
+            if template is None:
+                continue
+            row = dict(template)
+            rows.append(row)
+            existing_by_id[model_id] = row
+            appended.append(model_id)
+        tier = price.tiers[0]
+        row["input_token_price_per_m"] = tier.prompt_micro_per_m
+        row["output_token_price_per_m"] = tier.completion_micro_per_m
+        if tier.prompt_cached_micro_per_m is not None:
+            row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
+        else:
+            row.pop("cached_input_token_price_per_m", None)
+        updated.append(model_id)
+
+    missing = sorted(set(_MANIFEST_EXPECTED) - set(updated))
+    if missing:
+        raise RuntimeError(f"parasail manifest did not update expected model(s): {missing}")
+
+    raw["_about"] = (
+        "Provider-native supplement for Parasail models live ahead of the "
+        "shared snapshot. Prices refreshed hourly from the public pricing "
+        "page (www.parasail.io/pricing); model liveness gated on "
+        "api.parasail.io/v1/models."
+    )
+    raw["source"] = PRICING_URL
+    raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    raw["model_count"] = len(rows)
+    MANIFEST_PATH.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    suffix = f", appended {len(appended)}" if appended else ""
+    return [f"parasail: refreshed provider_models/parasail.json ({len(updated)} priced rows{suffix})"]
