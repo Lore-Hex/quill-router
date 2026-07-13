@@ -42,7 +42,7 @@ class FakeClient:
     def __init__(self, responses: dict[str, FakeResponse]) -> None:
         self._responses = responses
 
-    def __enter__(self) -> "FakeClient":
+    def __enter__(self) -> FakeClient:
         return self
 
     def __exit__(self, *args: object) -> None:
