@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 from trusted_router.storage_activity import generation_metrics, usage_bucket_key
@@ -48,6 +49,43 @@ def activity_generations(
         generations.extend(_generations_from_rows(legacy_rows, family, api_key_hash=api_key_hash))
     generations.sort(key=lambda item: item.created_at, reverse=True)
     return generations[:limit]
+
+
+def iter_activity_generations(
+    table: Any,
+    family: str,
+    workspace_id: str,
+    *,
+    api_key_hash: str | None,
+    date: str | None,
+    limit: int,
+) -> Iterator[Generation]:
+    if date is None:
+        prefix = f"ws_recent#{workspace_id}#".encode()
+        rows = table.read_rows(start_key=prefix, end_key=prefix + b"~", limit=limit)
+        yielded = 0
+        for generation in _iter_generations_from_rows(rows, family, api_key_hash=api_key_hash):
+            yielded += 1
+            yield generation
+        if yielded == 0:
+            legacy_prefix = f"ws#{workspace_id}#".encode()
+            legacy_rows = table.read_rows(
+                start_key=legacy_prefix,
+                end_key=legacy_prefix + b"~",
+                limit=limit,
+            )
+            legacy_generations = _generations_from_rows(
+                legacy_rows,
+                family,
+                api_key_hash=api_key_hash,
+            )
+            legacy_generations.sort(key=lambda item: item.created_at, reverse=True)
+            yield from legacy_generations[:limit]
+        return
+
+    prefix = f"ws#{workspace_id}#{date}#".encode()
+    rows = table.read_rows(start_key=prefix, end_key=prefix + b"~", limit=limit)
+    yield from _iter_generations_from_rows(rows, family, api_key_hash=api_key_hash)
 
 
 def usage_series(
@@ -119,15 +157,22 @@ def _generations_from_rows(
     *,
     api_key_hash: str | None,
 ) -> list[Generation]:
-    generations: list[Generation] = []
+    return list(_iter_generations_from_rows(rows, family, api_key_hash=api_key_hash))
+
+
+def _iter_generations_from_rows(
+    rows: Any,
+    family: str,
+    *,
+    api_key_hash: str | None,
+) -> Iterator[Generation]:
     for row in rows:
         cells = row.cells.get(family, {}).get(b"body", [])
         if not cells:
             continue
         generation = Generation(**json.loads(cells[0].value.decode("utf-8")))
         if api_key_hash is None or generation.key_hash == api_key_hash:
-            generations.append(generation)
-    return generations
+            yield generation
 
 
 def _generation_from_row(row: Any, family: str) -> Generation | None:

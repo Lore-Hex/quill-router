@@ -63,7 +63,7 @@ def assert_key_config_mirrored(db, key_hash: str) -> None:
     include_byok). usage / byok_usage / reserved are typed-DML-owned."""
     j = _json_key(db, key_hash)
     t = _typed_key(db, key_hash)
-    assert t["limit_micro"] == j["limit_microdollars"], (j, t)
+    assert t["limit_micro"] == j.get("limit_microdollars"), (j, t)
     assert t["include_byok"] == j["include_byok_in_limit"], (j, t)
     assert t["shard"] == 0
 
