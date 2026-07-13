@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Verified against https://api.parasail.io/v1/models on 2026-06-22.",
+  "_about": "Provider-native supplement for Parasail models live ahead of the shared snapshot. Prices refreshed hourly from the public pricing page (www.parasail.io/pricing); model liveness gated on api.parasail.io/v1/models.",
   "provider": "parasail",
-  "source": "https://api.parasail.io/v1/models",
-  "generated_at": "2026-06-22T00:00:00Z",
-  "model_count": 2,
+  "source": "https://www.parasail.io/pricing",
+  "generated_at": "2026-07-13T18:24:17Z",
+  "model_count": 4,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -16,10 +16,21 @@
       "output_token_price_per_m": 4400000,
       "cached_input_token_price_per_m": 260000,
       "model_type": "chat",
-      "features": ["reasoning", "function-calling", "structured-outputs", "serverless"],
-      "input_modalities": ["text"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     },
     {
@@ -31,13 +42,79 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3600000,
-      "cached_input_token_price_per_m": 50000,
+      "cached_input_token_price_per_m": 300000,
       "model_type": "chat",
-      "features": ["reasoning", "function-calling", "serverless"],
-      "input_modalities": ["text", "image"],
-      "output_modalities": ["text"],
-      "endpoints": ["chat/completions"],
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
+    },
+    {
+      "id": "minimax/minimax-m3",
+      "upstream_id": "parasail-minimax-m3",
+      "display_name": "Parasail MiniMax M3",
+      "title": "minimax/minimax-m3",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "parasail-kimi-k27-code",
+      "display_name": "Parasail Kimi K2.7 Code",
+      "title": "moonshotai/kimi-k2.7-code",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 160000
     }
   ]
 }
