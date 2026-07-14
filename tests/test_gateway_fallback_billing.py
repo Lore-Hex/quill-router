@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from trusted_router.catalog import MODELS, endpoint_for_id
+from tests.fakes.spanner import make_fake_store
+from trusted_router.catalog import MODELS, default_endpoint_for_model, endpoint_for_id
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
 from trusted_router.routes.helpers import cost_microdollars
-from trusted_router.storage import STORE
+from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
 
 
 def _client_and_key() -> tuple[TestClient, dict]:
@@ -20,6 +21,99 @@ def _client_and_key() -> tuple[TestClient, dict]:
     )
     assert created.status_code == 201, created.text
     return client, created.json()["data"]
+
+
+def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_gcp_capability_authorize"
+    store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
+    store._write_entity(
+        "credit",
+        ws,
+        CreditAccount(workspace_id=ws, total_credits_microdollars=10_000_000),
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=ws,
+        name="gateway typed",
+        creator_user_id="u",
+    )
+    configure_store(store)
+    settings = Settings(environment="test")
+    client = TestClient(
+        create_app(settings, configure_store_arg=False, init_observability=False)
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 1_000,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["credit_reservation_id"] in db.reservations
+    assert ("reservation", data["credit_reservation_id"]) not in db.rows
+
+
+def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_gcp_ancient_legacy_settle"
+    store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
+    store._write_entity(
+        "credit",
+        ws,
+        CreditAccount(workspace_id=ws, total_credits_microdollars=10_000_000),
+    )
+    _raw, api_key = store.create_api_key(
+        workspace_id=ws,
+        name="gateway legacy",
+        creator_user_id="u",
+    )
+    model = MODELS["anthropic/claude-opus-4.7"]
+    endpoint = default_endpoint_for_model(model)
+    assert endpoint is not None
+    auth = store.create_gateway_authorization(
+        workspace_id=ws,
+        key_hash=api_key.hash,
+        model_id=model.id,
+        provider=endpoint.provider,
+        usage_type="Credits",
+        estimated_microdollars=100_000,
+        credit_reservation_id="legacy-reservation-never-in-typed",
+        requested_model_id=model.id,
+        candidate_model_ids=[model.id],
+        region="us-central1",
+        endpoint_id=endpoint.id,
+        candidate_endpoint_ids=[endpoint.id],
+    )
+    assert auth.credit_reservation_id not in db.reservations
+    configure_store(store)
+    client = TestClient(
+        create_app(Settings(environment="test"), configure_store_arg=False, init_observability=False)
+    )
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth.id,
+            "selected_endpoint": endpoint.id,
+            "actual_input_tokens": 1,
+            "actual_output_tokens": 1,
+            "request_id": "ancient-legacy-settle",
+        },
+    )
+
+    assert settle.status_code == 200, settle.text
+    assert settle.json()["data"] == {
+        "authorization_id": auth.id,
+        "settled": False,
+        "already_settled": True,
+    }
+    assert auth.credit_reservation_id not in db.reservations
 
 
 def test_gateway_settle_can_bill_authorized_fallback_model() -> None:

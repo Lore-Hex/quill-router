@@ -19,6 +19,7 @@ from trusted_router.storage_gcp_counters import (
     distribute_credit_amount,
 )
 from trusted_router.storage_models import CreditAccount
+from trusted_router.typed_balance import live_credit_summary
 
 
 def _credit_row(
@@ -224,6 +225,7 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
 
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(3)] == [44, 33, 33]
+    assert live_credit_summary(workspace_id, store=store)["total_credits"] == 110
     assert store.get_credit_account(workspace_id).total_credits_microdollars == 110
 
 

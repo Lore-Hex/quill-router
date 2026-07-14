@@ -28,6 +28,7 @@ Design choices:
 """
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import re
@@ -37,13 +38,13 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-from requests.adapters import HTTPAdapter  # type: ignore[import-untyped]
 from urllib3.util.retry import Retry
 
 from trusted_router.config import Settings
 from trusted_router.sentry_config import _scrub
 
 log = logging.getLogger(__name__)
+HTTPAdapter: Any = importlib.import_module("requests.adapters").HTTPAdapter
 
 # Key-based `_scrub` cannot see positional-arg VALUES; collapsing + regex is
 # the args-safe complement (PR #124 review P2).

@@ -142,7 +142,11 @@ def _legacy_authorization(
     key_hash: str,
     estimate: int = ESTIMATE,
 ) -> GatewayAuthorization:
-    reservation = store.reserve(workspace_id, key_hash, estimate)
+    reservation_id = f"legacy-res-{workspace_id}-{key_hash}"
+    credit = store.get_credit_account(workspace_id)
+    if credit is not None:
+        credit.reserved_microdollars += estimate
+        store._write_entity("credit", workspace_id, credit)
     store.reserve_key_limit(key_hash, estimate, usage_type="Credits")
     return store.create_gateway_authorization(
         workspace_id=workspace_id,
@@ -151,7 +155,7 @@ def _legacy_authorization(
         provider=PROVIDER,
         usage_type="Credits",
         estimated_microdollars=estimate,
-        credit_reservation_id=reservation.id,
+        credit_reservation_id=reservation_id,
         requested_model_id=MODEL_ID,
         candidate_model_ids=[MODEL_ID],
         region="us",

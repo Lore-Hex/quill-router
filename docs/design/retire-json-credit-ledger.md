@@ -145,11 +145,17 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   `total_credits` still written in the same txn for rollback safety
 - [x] B3 grant-script verification against the typed snapshot — already satisfied: scripts/credit_grant_*.py have verified the typed counter since inception
 - [x] Daily invariant audit scheduling (.github/workflows/typed-audit.yml, 11:43 UTC; failing run = alert)
+- [x] C1 deletions (2026-07-14): legacy JSON reserve/finalize and the
+  cohort/denylist brake are removed; rollback-to-legacy is retired, so
+  emergency rollback means the previous deploy revision. The shard=0-only
+  backsync was already unusable for sharded workspaces, which is part of why
+  C1 landed.
 - [ ] Stale legacy-hold cleanup for workspace `ea7dd3d8` (JSON reserved=29373,
   3 open legacy reservations; display-only impact, fold into Phase C or a small cleanup)
 - [ ] Phase C deletions after 2 weeks of clean audits from 2026-07-10, the first
   clean-audit day once #148 frees the orphan holds
 
-### Rollback (any point through B)
+### Rollback (any point through B; retired by C1)
 `typed_flip.py rollback --workspace <id> --apply` → allowlist-REMOVAL deploy →
 `typed_flip.py finish --workspace <id> --allowlist-deployed --rollback --apply`.
+After C1, rollback-to-legacy is retired; emergency rollback is the previous deploy revision.

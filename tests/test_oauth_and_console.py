@@ -24,6 +24,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routes.console.activity import _USAGE_CACHE
 from trusted_router.storage import STORE, Generation, InMemoryStore
+from trusted_router.typed_balance import live_credit_summary
 
 
 @pytest.fixture
@@ -402,7 +403,7 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_cred
     assert user.email_verified is False
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert data["workspace_id"] == workspace.id
-    assert STORE.get_credit_account(workspace.id).total_credits_microdollars == 0
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
     session_cookie = client.cookies.get("tr_session")
     assert session_cookie is not None
     session = STORE.get_auth_session_by_raw(session_cookie)
@@ -458,7 +459,7 @@ def test_wallet_user_created_workspaces_do_not_receive_trial_credits(
 
     assert created.status_code == 201, created.text
     workspace_id = created.json()["data"]["id"]
-    assert STORE.get_credit_account(workspace_id).total_credits_microdollars == 0
+    assert live_credit_summary(workspace_id)["total_credits"] == 0
 
 
 def test_wallet_verify_rejects_wrong_address(client: TestClient) -> None:
