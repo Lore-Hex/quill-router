@@ -3,7 +3,7 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /Private, reliable LLM routing/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Own your alpha." })).toBeVisible();
   await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -95,7 +95,7 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: /Private, reliable LLM routing/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Own your alpha." })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 });
