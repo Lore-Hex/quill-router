@@ -63,9 +63,15 @@ def validate_tags(value: Any, *, field_name: str = "tags") -> dict[str, str]:
 
 
 def merge_tags(defaults: Any, request_tags: Any) -> dict[str, str]:
-    """Overlay request tags on API-key defaults and validate the result."""
-    merged = validate_tags(defaults, field_name="API key tags")
+    """Overlay request tags on API-key defaults and validate the result.
+
+    API-key defaults are validated when written; the effective map is still
+    validated after merging to enforce aggregate limits and catch corruption.
+    """
     supplied = validate_tags(request_tags)
+    # Non-dict stored defaults can only mean row corruption (writes validate);
+    # treat them as absent rather than 500ing the authorize path.
+    merged = dict(defaults) if isinstance(defaults, dict) else {}
     merged.update(supplied)
     try:
         return validate_tags(merged, field_name="effective tags")

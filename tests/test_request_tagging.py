@@ -209,6 +209,18 @@ def test_merge_tags_overlays_request_values_without_mutating_defaults() -> None:
     assert defaults == {"environment": "production", "team": "platform"}
 
 
+def test_merge_tags_rejects_effective_map_over_entry_limit() -> None:
+    defaults = {f"default-{index:02d}": "value" for index in range(50)}
+    with pytest.raises(
+        InvalidTags,
+        match=(
+            r"effective tags are invalid after merging key defaults \(50\) "
+            r"and request tags \(1\): effective tags may contain at most 50 entries"
+        ),
+    ):
+        merge_tags(defaults, {"request": "value"})
+
+
 def test_api_key_default_tags_round_trip_and_patch(
     client: TestClient, user_headers: dict[str, str]
 ) -> None:
