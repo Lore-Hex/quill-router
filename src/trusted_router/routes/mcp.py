@@ -323,7 +323,7 @@ def _tool_schema(
         "annotations": {
             "readOnlyHint": read_only,
             "openWorldHint": False,
-            "destructiveHint": False,
+            "destructiveHint": not read_only,
         },
     }
 
