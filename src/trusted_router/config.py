@@ -41,21 +41,6 @@ class Settings(BaseSettings):
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
 
-    # Typed-column billing enforcement cutover (docs/design/billing-typed-counters).
-    # Per-workspace allowlist (CSV) that authorize uses the typed conditional-DML
-    # path for; settle/refund route by reservation ORIGIN, not this flag. Default
-    # empty = legacy path everywhere (zero behavior change). "*" = all workspaces.
-    # The denylist is an emergency kill switch that always wins; "*" in the
-    # DENYLIST is the FAST GLOBAL kill-switch — it disables typed enforcement for
-    # every workspace on the next request (no deploy). It is a break-glass
-    # AVAILABILITY brake (keeps the app serving via the legacy path), NOT a
-    # billing-clean rollback: already-typed workspaces have stale-low JSON usage
-    # (#79) so the fallback under-bills until re-enabled or reconciled via the
-    # pause->drain->backsync runbook (#32). Flip via
-    # TR_TYPED_BILLING_WORKSPACE_DENYLIST=*, then run the backsync.
-    typed_billing_workspace_ids: str = ""
-    typed_billing_workspace_denylist: str = ""
-
     # Free "trial" credit granted to a new workspace the first time a valid
     # payment card is attached (routes/internal/webhook.py). Default 0 = NO free
     # credit for new users (policy as of 2026-06-25); a card attach saves the

@@ -118,41 +118,6 @@ ENV_VARS=(
   # typed tables before the enforcement cohort flag. The typed tables already
   # exist (migrate_typed_counters.sh). Remove to revert the dual-write.
   "TR_TYPED_COUNTER_MIRROR=1"
-  # Billing typed-counter migration cutover — ENFORCEMENT. A workspace's gateway
-  # authorize/settle goes through the typed conditional-DML path (the deadlock
-  # fix) when this gate passes. Settle/refund route by reservation ORIGIN, so
-  # straddling requests stay matched. The denylist env
-  # (TR_TYPED_BILLING_WORKSPACE_DENYLIST) ALWAYS wins → per-workspace emergency
-  # kill switch (revert one workspace to legacy without a code change).
-  #
-  # 2026-06-25: REVERTED from the universal "*" default back to the validated
-  # cohort. The "*" flip exposed a latent bug — the one-way JSON->typed exact
-  # mirror copied reserved/total_usage, which the typed DML owns; any JSON write
-  # on a typed workspace clobbered the in-flight hold -> "typed finalize failed:
-  # release row-count != 1". The mirror itself is fixed by the ownership-split PR
-  # (#79: mirror only JSON-owned columns). BUT THE MIRROR FIX ALONE DOES NOT MAKE
-  # "*" SAFE. After the split, backfill() no longer seeds typed reserved/usage,
-  # so flipping a not-yet-typed workspace would leave typed.reserved blind to its
-  # open holds -> SILENT OVERSPEND (no row-count error). Re-enabling "*" requires
-  # the separate ledger-derived flip reconciliation + fail-closed seed
-  # verification (the "Step 6" safe-cutover effort).
-  #
-  # 2026-06-26: Step 6 LANDED + prod-validated — ownership-split mirror (#79),
-  # reconcile_for_flip seed (#80), typed-aware reads (#81), workspace billing-pause
-  # (#82), invariant auditor (#83/#84), reserved-clobber repair (#86). The live
-  # cohort was repaired; the CANARY (cohort + 5 seeded never-typed) deployed,
-  # converged across all regions, and the auditor stayed CLEAN through
-  # pause→flip→unpause with the typed path healthy (synthetic reserving normally,
-  # bounded open holds, zero "release row-count" errors).
-  #
-  # UNIVERSAL FLIP: every remaining workspace was reconcile_for_flip-seeded while
-  # paused (typed total_usage=JSON, reserved=0; auditor CLEAN) before this "*" went
-  # in; they stay paused through the full cross-region rollout, then unpause. The
-  # latent bug that broke the FIRST "*" is fixed at the root (ownership-split mirror
-  # no longer clobbers typed-owned columns) and every workspace is seeded, so
-  # typed.reserved is never blind to its open holds. Denylist still wins for an
-  # emergency per-workspace revert.
-  "TR_TYPED_BILLING_WORKSPACE_IDS=*"
   # Durable settle outbox (docs/design/durable-settle-outbox.md §5.4, §8):
   # every gateway settle/refund durably records its frozen intent BEFORE the
   # inline finalize, and /internal/gateway/settle-outbox/drain recovers any

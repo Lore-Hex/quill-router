@@ -7,7 +7,7 @@ import pytest
 
 from scripts import typed_flip
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, Workspace
+from trusted_router.storage import CreditAccount, Reservation, Workspace
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
@@ -42,6 +42,23 @@ def _seed_workspace(
     )
 
 
+def _add_legacy_hold(store: Any, ws: str, amount: int = 100_000) -> None:
+    credit = store.get_credit_account(ws)
+    assert credit is not None
+    credit.reserved_microdollars += amount
+    store._write_entity("credit", ws, credit)
+    store._write_entity(
+        "reservation",
+        f"legacy-{ws}",
+        Reservation(
+            id=f"legacy-{ws}",
+            workspace_id=ws,
+            key_hash="key",
+            amount_microdollars=amount,
+        ),
+    )
+
+
 def _typed_credit(db: Any, ws: str) -> dict:
     return db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]
 
@@ -57,7 +74,7 @@ def test_readiness_verdicts_ready_not_ready_and_already_typed() -> None:
     assert typed_flip.assess_readiness(store, "ws_ready").verdict == "READY"
 
     _seed_workspace(store, "ws_reserved", paused=True)
-    store.reserve("ws_reserved", "key", 100_000)
+    _add_legacy_hold(store, "ws_reserved")
     reserved = typed_flip.assess_readiness(store, "ws_reserved")
     assert reserved.verdict == "NOT_READY"
     assert any("reserved" in reason for reason in reserved.reasons)
@@ -112,7 +129,7 @@ def test_prepare_apply_pauses_and_parks_on_existing_legacy_hold(
     store, db, _ = make_fake_store()
     ws = "ws_prepare_hold"
     _seed_workspace(store, ws, paused=False)
-    store.reserve(ws, "key", 100_000)
+    _add_legacy_hold(store, ws)
     typed_before = deepcopy(db.typed)
 
     rc = typed_flip.main(["prepare", "--workspace", ws, "--apply"], store=store)
@@ -162,7 +179,7 @@ def test_prepare_apply_exits_2_when_hold_appears_after_pause(
     def update_workspace_with_racing_hold(*args: Any, **kwargs: Any) -> Any:
         result = original_update(*args, **kwargs)
         if kwargs.get("billing_paused") is True:
-            store.reserve(ws, "key", 100_000)
+            _add_legacy_hold(store, ws)
         return result
 
     monkeypatch.setattr(store, "update_workspace", update_workspace_with_racing_hold)
@@ -181,7 +198,7 @@ def test_prepare_dry_run_with_existing_legacy_hold_would_pause_and_park(
     store, db, _ = make_fake_store()
     ws = "ws_prepare_dry_hold"
     _seed_workspace(store, ws, paused=False)
-    store.reserve(ws, "key", 100_000)
+    _add_legacy_hold(store, ws)
     before = _snapshot_state(db)
 
     rc = typed_flip.main(["prepare", "--workspace", ws], store=store)

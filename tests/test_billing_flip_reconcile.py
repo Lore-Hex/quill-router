@@ -77,7 +77,15 @@ def test_reconcile_refuses_open_credit_hold() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_hold"
     _seed_drained_workspace(store, ws, total_credits=1_000_000, total_usage=0)
-    store.reserve(ws, "key_1", 250_000)  # open legacy credit hold
+    store._write_entity(
+        "credit",
+        ws,
+        CreditAccount(
+            workspace_id=ws,
+            total_credits_microdollars=1_000_000,
+            reserved_microdollars=250_000,
+        ),
+    )
 
     result = reconcile_for_flip(store, ws, apply=True)
     assert not result.ready

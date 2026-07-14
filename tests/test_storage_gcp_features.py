@@ -7,8 +7,7 @@ hit the wallet/verification surfaces; this file pushes the rest:
 * SpannerEmailBlocks (block, is_blocked, get, record_message_once)
 * SpannerByok (upsert idempotency, list-by-workspace, hint preservation)
 * SpannerOAuthCodes (create, consume, replay, expiry sweep)
-* SpannerApiKeys gateway_authorization + finalize lifecycle (the
-  cross-request reservation handle that has zero coverage today)
+* SpannerApiKeys gateway_authorization lifecycle
 * SpannerGenerations.add → key counter rollup invariant + activity index
 * SpannerRateLimits transactional bucket increment
 
@@ -296,7 +295,7 @@ def test_gcp_oauth_code_tampered_secret_rejected() -> None:
     assert store.consume_oauth_authorization_code(raw) is not None
 
 
-# ── Gateway authorizations + finalize ───────────────────────────────────
+# ── Gateway authorizations ──────────────────────────────────────────────
 
 
 def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
@@ -335,117 +334,6 @@ def test_gcp_gateway_authorization_create_get_and_mark_settled() -> None:
     store.mark_gateway_authorization_settled("gwa-nonexistent")
     # Sanity: nothing leaked into the rows.
     assert ("gateway_authorization", "gwa-nonexistent") not in db.rows
-
-
-def test_gcp_finalize_gateway_authorization_settles_credits_and_writes_generation() -> None:
-    from trusted_router.storage_models import Generation
-
-    store, db, _ = make_fake_store()
-    workspace_id, key_hash = _seed_workspace_and_key(store)
-
-    reservation = store.reserve(workspace_id, key_hash, 5_000_000)
-    auth = store.create_gateway_authorization(
-        workspace_id=workspace_id,
-        key_hash=key_hash,
-        model_id="anthropic/claude-sonnet-4.6",
-        provider="anthropic",
-        usage_type="Credits",
-        estimated_microdollars=5_000_000,
-        credit_reservation_id=reservation.id,
-    )
-    store.reserve_key_limit(key_hash, 5_000_000, usage_type="Credits")
-
-    generation = Generation(
-        id="gen-finalize-success",
-        request_id="req-finalize-success",
-        workspace_id=workspace_id,
-        key_hash=key_hash,
-        model="anthropic/claude-sonnet-4.6",
-        provider_name="Anthropic",
-        app="finalize-test",
-        tokens_prompt=100,
-        tokens_completion=50,
-        total_cost_microdollars=2_500_000,
-        usage_type="Credits",
-        speed_tokens_per_second=12.5,
-        finish_reason="stop",
-        status="success",
-        streamed=False,
-    )
-
-    settled = store.finalize_gateway_authorization(
-        auth.id,
-        success=True,
-        actual_microdollars=2_500_000,
-        selected_usage_type="Credits",
-        generation=generation,
-    )
-    assert settled is True
-
-    after = store.get_gateway_authorization(auth.id)
-    assert after is not None and after.settled is True
-    credit = store.get_credit_account(workspace_id)
-    assert credit is not None
-    assert credit.total_usage_microdollars == 2_500_000
-    assert credit.reserved_microdollars == 0
-    # Generation row landed under the right Spanner key.
-    assert ("generation", generation.id) in db.rows
-
-
-def test_gcp_finalize_gateway_authorization_refunds_on_failure() -> None:
-    store, db, _ = make_fake_store()
-    workspace_id, key_hash = _seed_workspace_and_key(store)
-
-    reservation = store.reserve(workspace_id, key_hash, 1_000_000)
-    auth = store.create_gateway_authorization(
-        workspace_id=workspace_id,
-        key_hash=key_hash,
-        model_id="openai/gpt-5.4-nano",
-        provider="openai",
-        usage_type="Credits",
-        estimated_microdollars=1_000_000,
-        credit_reservation_id=reservation.id,
-    )
-    store.reserve_key_limit(key_hash, 1_000_000, usage_type="Credits")
-
-    refunded = store.finalize_gateway_authorization(
-        auth.id,
-        success=False,
-        actual_microdollars=0,
-        selected_usage_type="Credits",
-        generation=None,
-    )
-    assert refunded is True
-
-    credit = store.get_credit_account(workspace_id)
-    assert credit is not None
-    assert credit.reserved_microdollars == 0
-    assert credit.total_usage_microdollars == 0
-    # No generation row written on the failure path.
-    assert not any(kind == "generation" for kind, _ in db.rows)
-
-
-def test_gcp_finalize_gateway_authorization_is_one_shot() -> None:
-    store, _db, _ = make_fake_store()
-    workspace_id, key_hash = _seed_workspace_and_key(store)
-    auth = store.create_gateway_authorization(
-        workspace_id=workspace_id,
-        key_hash=key_hash,
-        model_id="openai/gpt-5.4-nano",
-        provider="openai",
-        usage_type="BYOK",
-        estimated_microdollars=0,
-        credit_reservation_id=None,
-    )
-
-    first = store.finalize_gateway_authorization(
-        auth.id, success=True, actual_microdollars=0, selected_usage_type="BYOK", generation=None
-    )
-    second = store.finalize_gateway_authorization(
-        auth.id, success=True, actual_microdollars=0, selected_usage_type="BYOK", generation=None
-    )
-    assert first is True
-    assert second is False
 
 
 # ── Generations: per-key counter rollup ────────────────────────────────

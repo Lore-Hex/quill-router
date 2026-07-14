@@ -16,6 +16,8 @@ from __future__ import annotations
 import inspect
 from typing import get_type_hints
 
+import pytest
+
 from trusted_router.storage import InMemoryStore
 from trusted_router.store_protocol import Store
 
@@ -137,6 +139,14 @@ def test_spanner_store_satisfies_typed_billing_store() -> None:
         if not hasattr(SpannerBigtableStore, name)
     ]
     assert not missing, f"SpannerBigtableStore missing TypedBillingStore members: {missing}"
+
+
+def test_spanner_legacy_json_reserve_path_removed() -> None:
+    from trusted_router.storage_gcp import SpannerBigtableStore
+
+    store = SpannerBigtableStore.__new__(SpannerBigtableStore)
+    with pytest.raises(RuntimeError, match="legacy JSON reserve path removed"):
+        store.reserve("ws", "key", 1)
 
 
 def test_in_memory_store_is_not_a_typed_billing_store() -> None:
