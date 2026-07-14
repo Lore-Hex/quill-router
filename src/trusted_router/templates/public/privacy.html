@@ -1,0 +1,53 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Effective</strong><span>July 13, 2026</span></div>
+  <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
+  <div><strong>Prompt storage</strong><span>Off by default</span></div>
+  <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
+</section>
+
+<section class="model-catalog legal-copy">
+  <div class="model-catalog-head"><div><span class="eyebrow">Scope</span><h2>What this policy covers</h2></div></div>
+  <p>This Privacy Policy explains how {{ entity.name }}, a {{ entity.type }}, collects, uses, discloses, and protects information when you use TrustedRouter websites, dashboards, APIs, SDKs, plugins, and related services.</p>
+
+  <h2>Information we collect</h2>
+  <h3>Account and contact information</h3>
+  <p>We may collect your email address, authentication identifiers, wallet address when you use wallet sign-in, workspace and organization membership, support communications, and preferences.</p>
+  <h3>Billing information</h3>
+  <p>Payment processors handle payment-card, PayPal, and supported stablecoin payment details. TrustedRouter receives transaction identifiers, payment status, amounts, and limited payment-method metadata needed for billing, fraud prevention, refunds, and accounting.</p>
+  <h3>API and service metadata</h3>
+  <p>We collect operational metadata such as request and generation identifiers, selected model and provider, token counts, latency, status, cost, region, API-key hash and display hint, rate-limit state, and security events. Raw API keys are shown once and stored only as protected hashes. BYOK provider credentials are encrypted.</p>
+  <h3>Prompts and outputs</h3>
+  <p>TrustedRouter does not store prompt or output content by default. Prompt traffic is designed to terminate inside the attested gateway. If a workspace explicitly enables a content-bearing Broadcast destination or another content feature, the selected content is sent to that destination under the workspace's configuration and the destination's terms. Downstream model providers process content according to the selected route and provider terms.</p>
+  <h3>Website information</h3>
+  <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service.</p>
+
+  <h2>How we use information</h2>
+  <p>We use information to provide and secure the service, authenticate users, route requests, meter usage, process payments, prevent abuse, respond to support, maintain reliability, comply with law, and improve product performance. We do not use customer prompts or outputs to train our own models.</p>
+
+  <h2>How we disclose information</h2>
+  <p>We disclose information to infrastructure, authentication, payment, communications, monitoring, and model-provider subprocessors as needed to provide the service. The current platform and downstream model-provider list is published at <a href="/legal/subprocessors">/legal/subprocessors</a>. We may also disclose information when required by law, to protect rights and safety, during a corporate transaction, or with your direction or consent.</p>
+
+  <h2>Retention</h2>
+  <p>We retain account, billing, security, and service metadata only as reasonably necessary for the purposes described above, including legal, tax, accounting, fraud-prevention, dispute, and security obligations. Retention periods vary by record type and contractual requirements. Prompt and output content is not retained by TrustedRouter by default. Deleting an account does not require us to delete records that law, security, fraud prevention, or financial controls require us to preserve.</p>
+
+  <h2>Security</h2>
+  <p>We use access controls, encryption, secret isolation, security monitoring, and an attested prompt gateway. No system is perfectly secure. Review current architecture and attestation evidence at <a href="/security">/security</a> and <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
+
+  <h2>Your choices and rights</h2>
+  <p>You may request access, correction, deletion, or export of personal information, or object to or restrict certain processing, where applicable. You may disable optional content exports and revoke API keys in the console. Contact <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>. We may verify identity before completing a request.</p>
+
+  <h2>International processing</h2>
+  <p>TrustedRouter and its providers may process information in the United States and other countries. Available regions and provider routes have different locations and legal terms. Customers requiring a specific region or provider must use the corresponding route controls and contractual terms.</p>
+
+  <h2>Children</h2>
+  <p>The service is not directed to children under 13, and we do not knowingly collect their personal information. Users must be able to form a binding contract for the service in their jurisdiction.</p>
+
+  <h2>Changes</h2>
+  <p>We may update this policy as the service changes. We will post the updated policy here and change the effective date. Material changes may also be communicated through the service or account email.</p>
+
+  <h2>Contact</h2>
+  <p>{{ entity.name }}<br>{{ entity.address }}<br>{{ entity.phone }}<br><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></p>
+</section>
+{% endblock %}

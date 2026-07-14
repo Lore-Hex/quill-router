@@ -88,6 +88,9 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/eu",
     "/trustedos",
     "/legal",
+    "/privacy",
+    "/terms",
+    "/support",
     "/legal/dpa",
     "/legal/baa",
     "/legal/soc2-readiness",
@@ -1035,6 +1038,62 @@ def public_legal_html(settings: Settings) -> str:
             packet=packet,
             entity=legal_entity(settings),
             subprocessors=subprocessor_packet(),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_privacy_html(settings: Settings) -> str:
+    return (
+        _env()
+        .get_template("public/privacy.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/privacy",
+            title="Privacy Policy | TrustedRouter",
+            heading="Privacy policy",
+            description=(
+                "How Lore Hex Corp collects, uses, shares, and protects information when you use TrustedRouter."
+            ),
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_terms_html(settings: Settings) -> str:
+    return (
+        _env()
+        .get_template("public/terms.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/terms",
+            title="Terms of Service | TrustedRouter",
+            heading="Terms of service",
+            description="Terms governing access to and use of TrustedRouter services.",
+            entity=legal_entity(settings),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_support_html(settings: Settings) -> str:
+    return (
+        _env()
+        .get_template("public/support.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}/support",
+            title="Support | TrustedRouter",
+            heading="TrustedRouter support",
+            description="Get product, account, billing, plugin, and security support.",
+            entity=legal_entity(settings),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
