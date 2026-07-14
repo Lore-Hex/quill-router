@@ -190,9 +190,22 @@ def _alibaba_model_id(native_id: str) -> str | None:
     return None
 
 
+def _kimi_model_id(native_id: str) -> str | None:
+    value = native_id.strip().casefold()
+    if value.startswith(("kimi-", "moonshot-v1-")):
+        return f"moonshotai/{value}"
+    return None
+
+
 _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     tuple[str, str, tuple[str, ...], Callable[[str], str | None]], ...
 ] = (
+    (
+        "kimi",
+        "https://api.moonshot.ai/v1/models",
+        ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+        _kimi_model_id,
+    ),
     (
         "cerebras",
         "https://api.cerebras.ai/v1/models",
@@ -623,6 +636,7 @@ def _run_audit(
             warning
             for warning in discovery_warnings
             if warning.startswith("zai:")
+            or warning.startswith("kimi:")
             or "live GLM current model API lists unpublished" in warning
         )
         info.extend(discovery_info)

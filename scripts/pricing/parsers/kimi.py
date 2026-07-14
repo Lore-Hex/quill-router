@@ -1,10 +1,9 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses the concatenation of all Kimi pricing sub-pages
-# (chat-k26.md / chat-k25.md / chat-k2.md / chat-v1.md). The
-# providers/kimi.py orchestrator fetches each .md and joins them
-# before calling parse(); we just need to handle the JSX-shaped
-# table rows.
+# Parses the concatenation of all Kimi chat-pricing pages discovered from
+# Moonshot's official llms.txt index. The providers/kimi.py orchestrator
+# allowlists each URL and joins the pages before calling parse(); we just need
+# to handle the JSX-shaped table rows.
 #
 # Row format (5- and 4-cell variants):
 #
@@ -19,9 +18,11 @@
 # fresh request pays). Cache hit is irrelevant for our billing —
 # we don't track cache state per-request.
 """Kimi/Moonshot pricing parser (multi-subpage markdown)."""
+
 from __future__ import annotations
 
 import re
+from decimal import ROUND_HALF_UP, Decimal
 
 # Native model id → OR-canonical id.
 _NAME_TO_OR_ID = {
@@ -52,15 +53,15 @@ def _or_id(native_id: str) -> str | None:
 # OR  : ["model-id", "1M tokens", <>{"$"}X.X</>, <>{"$"}Y.Y</>, "context"]
 _ROW_RE = re.compile(
     r'\["([^"]+)"\s*,\s*"1M tokens"\s*,'
-    r'\s*<>\{"\$"\}([\d.]+)</>\s*,'      # column A (cache hit OR input)
-    r'\s*<>\{"\$"\}([\d.]+)</>\s*,'      # column B (cache miss OR output)
-    r'(?:\s*<>\{"\$"\}([\d.]+)</>\s*,)?' # column C (output, only K2 family)
-    r'\s*"([^"]+)"\s*\]'                  # context window
+    r'\s*<>\{"\$"\}([\d.]+)</>\s*,'  # column A (cache hit OR input)
+    r'\s*<>\{"\$"\}([\d.]+)</>\s*,'  # column B (cache miss OR output)
+    r'(?:\s*<>\{"\$"\}([\d.]+)</>\s*,)?'  # column C (output, only K2 family)
+    r'\s*"([^"]+)"\s*\]'  # context window
 )
 
 
 def _to_micro_per_m(usd: str) -> int:
-    return int(round(float(usd) * 1_000_000))
+    return int((Decimal(usd) * Decimal(1_000_000)).quantize(Decimal("1"), ROUND_HALF_UP))
 
 
 def parse(text: str) -> dict:

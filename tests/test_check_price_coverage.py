@@ -9,6 +9,8 @@ from scripts.check_price_coverage import audit
 
 
 def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict:
+    if "api.moonshot.ai" in url:
+        return {"data": [{"id": "kimi-k2.7-code"}]}
     if "cerebras.ai" in url:
         return {"data": [{"id": "gpt-oss-120b"}]}
     if "generativelanguage.googleapis.com" in url:

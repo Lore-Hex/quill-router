@@ -1,0 +1,174 @@
+{
+  "provider": "kimi",
+  "models": [
+    {
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "kimi-k2.5",
+      "display_name": "Kimi K2.5",
+      "title": "kimi-k2.5",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 262144,
+      "supports_image_in": true,
+      "supports_video_in": true,
+      "supports_reasoning": true,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "kimi-k2.6",
+      "display_name": "Kimi K2.6",
+      "title": "kimi-k2.6",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 262144,
+      "supports_image_in": true,
+      "supports_video_in": true,
+      "supports_reasoning": true,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "kimi-k2.7-code",
+      "display_name": "Kimi K2.7 Code",
+      "title": "kimi-k2.7-code",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 262144,
+      "supports_image_in": true,
+      "supports_video_in": true,
+      "supports_reasoning": true,
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 190000
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code-highspeed",
+      "upstream_id": "kimi-k2.7-code-highspeed",
+      "display_name": "Kimi K2.7 Code HighSpeed",
+      "title": "kimi-k2.7-code-highspeed",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 262144,
+      "supports_image_in": true,
+      "supports_video_in": true,
+      "supports_reasoning": true,
+      "input_token_price_per_m": 1900000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 380000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-128k",
+      "upstream_id": "moonshot-v1-128k",
+      "display_name": "Moonshot V1 128K",
+      "title": "moonshot-v1-128k",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 131072,
+      "supports_image_in": false,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 5000000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-128k-vision-preview",
+      "upstream_id": "moonshot-v1-128k-vision-preview",
+      "display_name": "Moonshot V1 128K Vision Preview",
+      "title": "moonshot-v1-128k-vision-preview",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 131072,
+      "supports_image_in": true,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 5000000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-32k",
+      "upstream_id": "moonshot-v1-32k",
+      "display_name": "Moonshot V1 32K",
+      "title": "moonshot-v1-32k",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 32768,
+      "supports_image_in": false,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-32k-vision-preview",
+      "upstream_id": "moonshot-v1-32k-vision-preview",
+      "display_name": "Moonshot V1 32K Vision Preview",
+      "title": "moonshot-v1-32k-vision-preview",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 32768,
+      "supports_image_in": true,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 3000000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-8k",
+      "upstream_id": "moonshot-v1-8k",
+      "display_name": "Moonshot V1 8K",
+      "title": "moonshot-v1-8k",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 8192,
+      "supports_image_in": false,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2000000
+    },
+    {
+      "id": "moonshotai/moonshot-v1-8k-vision-preview",
+      "upstream_id": "moonshot-v1-8k-vision-preview",
+      "display_name": "Moonshot V1 8K Vision Preview",
+      "title": "moonshot-v1-8k-vision-preview",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 8192,
+      "supports_image_in": true,
+      "supports_video_in": false,
+      "supports_reasoning": false,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 2000000
+    }
+  ],
+  "_about": "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models present in both the official pricing docs and authenticated /v1/models feed.",
+  "source": "https://api.moonshot.ai/v1/models",
+  "pricing_source": "https://platform.kimi.ai/docs/llms.txt",
+  "generated_at": "2026-07-14T20:08:46Z",
+  "model_count": 10
+}
