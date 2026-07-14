@@ -23,6 +23,7 @@ Index:
 - [Rotating a provider API key](#rotate-key)
 - [Spinning up Phala / RedPill again after a key issue](#phala-revive)
 - [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
+- [Credit ledger operations (single typed book)](#credit-ledger)
 - [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 
@@ -575,13 +576,75 @@ the next flip or via `release_approved`.
 
 ---
 
+## <a id="credit-ledger"></a>Credit ledger operations (single typed book)
+
+As of 2026-07 the JSON credit ledger is **retired**. Money lives in exactly one
+book: the typed Spanner tables `tr_credit_balance` (workspace credit, keyed
+`(workspace_id, shard)`) and `tr_key_limit` (per-key spend caps + usage, keyed
+`(key_hash, shard)`), written only by conditional DML (reserve/release/finalize/
+rebalance). The JSON `credit` / `api_key` entities in `tr_entities` are
+**metadata only** now (auto-refill config, Stripe ids, key name/flags) — their
+old money fields are stale and must never be read for money. There is no mirror,
+no `backsync`, no dual-book `compare`, and no rollback-to-legacy: emergency
+rollback is redeploying the previous revision (the typed book is authoritative
+across the flip).
+
+**Inspect a workspace's live balance** (sums all active shards):
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT SUM(total_credits) credits, SUM(total_usage) usage,
+         SUM(reserved) reserved, SUM(total_credits-total_usage-reserved) available
+         FROM tr_credit_balance WHERE workspace_id='<ws>'"
+```
+
+Never read `total_credits_microdollars` off the JSON `credit` row for money — it
+is frozen/stale. App money reads go through `live_credit_summary` /
+`typed_aware_credit_account`.
+
+**The two standing tripwires (kept when the reconcile tooling was deleted):**
+
+- `audit_typed_invariants` — the daily audit (`.github/workflows/typed-audit.yml`,
+  11:43 UTC; a failing run alerts). It is now purely typed-INTERNAL: `reserved`
+  equals the sum of that workspace/key's open typed-origin holds (both
+  directions — it also flags an orphan open-hold group with no typed row), and
+  `reserved >= 0`. It does NOT compare against JSON (that book is dead), so a
+  stale JSON total can never false-alarm it. A failure means real drift between
+  the reserved counter and live holds — investigate, do not just re-run.
+- `repair_typed_reserved` — the fix for a drifted `reserved` (e.g. holds the
+  reaper freed without decrementing under some past bug). Recomputes `reserved`
+  from live open holds. Run read-only/dry first, then `--apply`. It still refuses
+  nonzero-shard rows it can't reconcile — do not force it.
+
+**Grant / adjust credit**: use the grant scripts (`scripts/credit_grant_*.py`)
+or the Stripe webhook path — both go typed-direct (`credit_workspace_typed_direct`)
+and are idempotent on a `stripe_event` row, distributing the delta across active
+shards. Do not hand-write `tr_credit_balance`.
+
+**Known residual (display-only)**: workspace `ea7dd3d8` carries 3 open legacy
+(JSON-era) reservations with `reserved=29373` on its dead JSON row. It is
+invisible to the typed book and the audit, harmless (display-only), and can be
+cleaned up opportunistically — do not let it distract from a real audit failure.
+
+---
+
 ## <a id="authorize-deadlock-burst"></a>Sentry "Aborted ... deadlock/wounded" burst on gateway authorize
 
-Symptom: Sentry issues on `gateway_authorize` / `authorize_atomic` with
-Spanner messages like "Deadlock with higher priority transaction" or "wounded
-by a higher priority transaction", in a burst. Each event is one request that
-exhausted all 8 in-request retries. Scattered singles are retry-tail noise;
-bursts deserve triage.
+Symptom: Sentry issues on `gateway_authorize` / `gateway_settle` /
+`authorize_atomic` with Spanner messages like "Deadlock with higher priority
+transaction" or "wounded by a higher priority transaction", in a burst. Each
+event is one request whose retry loop exhausted its 20s wall-clock budget
+(`TXN_BUDGET_SECONDS`, well under the 30s enclave HTTP timeout). Scattered
+singles are retry-tail noise; bursts deserve triage.
+
+Note (2026-07): the client impact of these is now a retryable **503 +
+`Retry-After`**, not a 500 — a global `Aborted` handler maps the exhausted
+transaction to `service_unavailable`, and the enclave's settlement-retry queue
+absorbs the settle side. The Sentry `Aborted` groups (`QUILL-ROUTER-8/K/D/E/H`)
+are marked resolved and will auto-reopen as *regressed* if the handler ever
+stops catching one — so a NEW unhandled `Aborted` 500 means the handler
+regressed, not just contention.
 
 1. Check for operational churn first. Was a deploy rolling, or was DDL being
    applied? Schema changes wound in-flight read-write transactions. Receipt:
@@ -614,13 +677,18 @@ bursts deserve triage.
    Client impact is a handful of 500s the enclave retries. Do NOT restart
    services or roll back deploys for this signature.
 
-Structural fix if a tenant does this chronically: shard spreading — but note
-it is NOT currently operable. The `ws_shard`/`key_shard` columns exist as
-schema headroom only: `authorize_atomic()` pins every reservation to shard 0
-and `repair_typed_reserved()` refuses nonzero shards. Enabling spreading is
-an engineering change (write path + repair path together, per
-`docs/design/billing-typed-counters.md`), not an ops action — do not hand-set
-shard values.
+Structural fix if a tenant does this chronically: **shard spreading is now
+operable** (as of the 2026-07 credit/key row-sharding work). A hot workspace's
+credit and per-key-usage rows can be split across N sub-ledgers via the guarded
+operator (`.github/workflows/reshard-billing-workspace.yml` →
+`scripts/shard_workspace.py`, two-phase pause → drain → atomic transition →
+unpause; requires an explicit `--apply`). The authorize reject path also does a
+lock-free precheck + bounded repair so no-move verdicts no longer take
+whole-shard-set write locks. Do NOT hand-set shard columns; always go through
+the operator. Before activating spreading on any workspace, confirm the
+credit-shard rebalance fix is deployed (a negative per-shard headroom from an
+overage settle must return a clean 402, never a `_RebalanceInvariantError`
+500 — fixed 2026-07).
 
 ---
 
