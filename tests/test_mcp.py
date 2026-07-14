@@ -52,7 +52,7 @@ def test_mcp_initialize_and_tool_list(client: TestClient) -> None:
         annotations = tool["annotations"]
         assert annotations["readOnlyHint"] is (name != "chat-send")
         assert annotations["openWorldHint"] is False
-        assert annotations["destructiveHint"] is False
+        assert annotations["destructiveHint"] is (name == "chat-send")
 
 
 def test_mcp_models_list_includes_sonnet_5_and_subagent(client: TestClient) -> None:
