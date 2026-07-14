@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -462,7 +463,20 @@ def test_read_only_bypasses_rate_limit_writes() -> None:
     )
 
 
-def test_rate_limit_returns_stable_openrouter_style_error() -> None:
+def test_rate_limit_returns_stable_openrouter_style_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_rate_limits
+
+    # Keep both requests in the same bucket. Without a fixed clock this test
+    # flakes when the first request lands just before a wall-clock minute and
+    # the second just after it, which correctly starts a fresh rate-limit
+    # window and returns 200.
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 7, 14, 20, 48, 30, tzinfo=dt.UTC),
+    )
     STORE.rate_limit_store.reset()
     limited_app = create_app(
         Settings(
