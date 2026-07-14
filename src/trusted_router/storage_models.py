@@ -107,9 +107,9 @@ class ApiKey:
     limit_microdollars: int | None = None
     limit_reset: str | None = None
     # Optional per-window spend limits (fixed UTC calendar windows, lazily
-    # reset — see spend_windows.py). NULL = window unlimited. JSON-owned config
-    # mirrored to tr_key_limit *_limit_micro; the window USAGE counters are
-    # typed-DML-owned and live only on the typed row.
+    # reset — see spend_windows.py). NULL = window unlimited. Creation-time
+    # config is seeded to tr_key_limit *_limit_micro; the window USAGE counters
+    # are typed-DML-owned and live only on the typed row.
     limit_daily_microdollars: int | None = None
     limit_weekly_microdollars: int | None = None
     limit_monthly_microdollars: int | None = None
@@ -221,7 +221,7 @@ class SettleOutboxRow:
     inline attempt is lost. The FROZEN inputs (actual_cost_micro / selected_* /
     model_id / settle_origin / reservation_id) are captured from the SAME decision
     the inline attempt used, so a drain applies a deterministic amount and origin
-    no matter what pricing or the typed-mirror flag do afterward. The PK is
+    no matter what pricing or serving env changes afterward. The PK is
     (authorization_id, intent_kind) so a settle and a refund never clobber.
 
     status: pending -> done (charged, terminal) | dead (drain gave up, FREEZES the

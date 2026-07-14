@@ -234,8 +234,8 @@ def reshard_credit_account(
         account.total_credits_microdollars = total_credits
         account.total_usage_microdollars = total_usage
         account.reserved_microdollars = 0
-        # Deliberately bypass _write_entity_tx: when consolidating to one shard,
-        # its generic credit mirror would emit a second mutation for shard zero.
+        # Deliberately bypass _write_entity_tx: this admin transaction already
+        # owns the exact typed-row mutations above.
         transaction.insert_or_update(
             table=store.entity_table,
             columns=("kind", "id", "body", "updated_at"),

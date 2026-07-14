@@ -1,11 +1,11 @@
 """Daily read-only typed-billing invariant audit.
 
-Runs the typed-side reserved invariant auditor and the JSON-vs-typed comparator
-against the production Spanner/Bigtable store. Exit codes are intentionally
-distinct for scheduled workflow alerting:
+Runs the typed-side reserved invariant auditor against the production
+Spanner/Bigtable store. Exit codes are intentionally distinct for scheduled
+workflow alerting:
 
-  0: both reports clean
-  1: invariant violation or comparator drift
+  0: invariant report clean
+  1: invariant violation
   2: infrastructure/configuration failure
 """
 
@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 from trusted_router.config import Settings
 from trusted_router.storage import create_store
-from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants, compare
+from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
 
 _DEFAULT_ENV = {
     "TR_STORAGE_BACKEND": "spanner-bigtable",
@@ -27,7 +27,6 @@ _DEFAULT_ENV = {
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
     "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
-    "TR_TYPED_COUNTER_MIRROR": "1",
 }
 _MAX_SAMPLES = 100_000
 
@@ -60,15 +59,11 @@ def run_audit(
     store: Any,
     *,
     invariant_audit: AuditFunc = audit_typed_invariants,
-    drift_compare: AuditFunc = compare,
 ) -> int:
     invariant_report = invariant_audit(store, max_samples=_MAX_SAMPLES)
     _print_report("audit_typed_invariants", "VIOLATION", invariant_report)
 
-    drift_report = drift_compare(store, max_samples=_MAX_SAMPLES)
-    _print_report("compare", "DRIFT", drift_report)
-
-    return 0 if invariant_report.clean and drift_report.clean else 1
+    return 0 if invariant_report.clean else 1
 
 
 def main(
@@ -77,7 +72,6 @@ def main(
     settings_factory: Callable[[], Any] = Settings,
     store_factory: Callable[[Any], Any] = create_store,
     invariant_audit: AuditFunc = audit_typed_invariants,
-    drift_compare: AuditFunc = compare,
 ) -> int:
     _bootstrap_prod_env()
     try:
@@ -92,11 +86,7 @@ def main(
             return 2
         if store is None:
             store = store_factory(settings)
-        return run_audit(
-            store,
-            invariant_audit=invariant_audit,
-            drift_compare=drift_compare,
-        )
+        return run_audit(store, invariant_audit=invariant_audit)
     except Exception as exc:
         print(f"ERROR: infrastructure failure during typed-counter audit: {exc}", file=sys.stderr)
         return 2

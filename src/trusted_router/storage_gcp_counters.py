@@ -1,21 +1,10 @@
-"""Typed-counter mirror — Step 1 of the billing typed-column migration.
+"""Typed-counter table constants and creation-time row builders.
 
-See docs/design/billing-typed-counters.md.
-
-During Step 1 the JSON ``tr_entities`` rows for kind ``credit`` and ``api_key``
-stay **authoritative**. Every write of one of those rows ALSO mirrors the exact
-post-write counter values into typed Spanner tables (``tr_credit_balance`` /
-``tr_key_limit``) as a **mutation in the SAME transaction/batch** as the JSON
-write. Same-transaction mutation + mutation (never DML here) means the typed row
-can never *tear* from the JSON row — they commit atomically or not at all.
-
-Deliberately there are **no conditional predicates** in this mirror: a shadow
-that ran accept/reject logic would manufacture drift by design (red-team P2).
-The mirror writes absolute post-transaction values (idempotent under the JSON
-RMW retry), so re-running the transaction yields the same typed row.
-
-Enforcement stays on the JSON path until Step 3 flips it to conditional DML on
-these same typed tables.
+The retired JSON-to-typed mirror used these builders for every credit/api_key
+entity write. C2a keeps the builders but makes seeding explicit: callers may use
+them only while creating a new credit/api_key entity, never while updating
+metadata on an existing entity. After creation, the typed conditional-DML paths
+own money/usage state.
 """
 
 from __future__ import annotations
@@ -30,13 +19,9 @@ UNSHARDED = 0
 MAX_CREDIT_SHARDS = 64
 MAX_KEY_USAGE_SHARDS = 64
 
-# OWNERSHIP SPLIT (2026-06-25 incident). The JSON->typed mirror writes ONLY the
-# columns JSON owns. `total_credits` is set by credit events (top-ups / grants /
-# refunds-as-credit, all via credit_workspace_once). `reserved` + `total_usage`
-# are owned by the typed authorize/finalize DML, so the mirror must NOT write
-# them — a full-row mirror clobbers an in-flight typed hold and the next finalize
-# fails "release row-count != 1". Columns dropped from the mirror keep their
-# NOT NULL DEFAULT(0), so a first-write insert still lands reserved/total_usage=0.
+# Creation-time credit seed columns. `reserved` + `total_usage` are deliberately
+# omitted so a new row gets the Spanner defaults (0) and later typed DML owns
+# those counters exclusively.
 CREDIT_BALANCE_COLUMNS = (
     "workspace_id",
     "shard",
@@ -45,10 +30,8 @@ CREDIT_BALANCE_COLUMNS = (
     "updated_at",
 )
 
-# Same split for keys: JSON owns config (limit_micro, the per-window
-# *_limit_micro caps, include_byok); the typed DML owns usage / byok_usage /
-# reserved AND the window usage state (day/week/month usage + starts). Mirror
-# config only — mirroring a window counter would re-create the #79 clobber.
+# Creation-time key seed columns. Usage/reserved/window usage are omitted so a
+# new row starts at defaults and subsequent typed DML owns them.
 KEY_LIMIT_COLUMNS = (
     "key_hash",
     "shard",
@@ -171,125 +154,7 @@ def key_limit_mirror_row(key_hash: str, value: Any, commit_ts: Any) -> tuple:
 
 
 def key_limit_mirror_rows(key_hash: str, value: Any, commit_ts: Any) -> list[tuple]:
-    """Mirror config to every active usage row without touching typed counters."""
+    """Build initial config rows for every active usage shard."""
     shard_count = key_usage_shard_count(value)
     base = key_limit_mirror_row(key_hash, value, commit_ts)
     return [base[:1] + (shard,) + base[2:] for shard in range(shard_count)]
-
-
-def mirror_write(writer: Any, kind: str, entity_id: str, value: Any, commit_ts: Any) -> None:
-    """If `kind` is a hot counter, mirror it onto its typed table via `writer`.
-
-    `writer` is a Spanner transaction or batch exposing ``insert_or_update``.
-    Called immediately after the authoritative ``tr_entities`` write on the same
-    writer, so the mirror commits atomically with it. No-op for other kinds.
-    """
-    if kind == "credit":
-        if credit_shard_count(value) != 1:
-            return
-        writer.insert_or_update(
-            table=CREDIT_BALANCE_TABLE,
-            columns=CREDIT_BALANCE_COLUMNS,
-            values=[credit_balance_mirror_row(entity_id, value, commit_ts)],
-        )
-    elif kind == "api_key":
-        writer.insert_or_update(
-            table=KEY_LIMIT_TABLE,
-            columns=KEY_LIMIT_COLUMNS,
-            values=key_limit_mirror_rows(entity_id, value, commit_ts),
-        )
-
-
-def _typed_table_for(kind: str) -> str | None:
-    if kind == "credit":
-        return CREDIT_BALANCE_TABLE
-    if kind == "api_key":
-        return KEY_LIMIT_TABLE
-    return None
-
-
-def mirror_delete(writer: Any, kind: str, entity_ids: list[str], spanner_module: Any) -> None:
-    """Mirror a credit/api_key delete onto its typed table on the same writer.
-
-    Without this, deleting the authoritative JSON row leaves a stale typed row
-    behind — exact-mirror drift that would poison Step 2 reconciliation. No-op
-    for non-counter kinds.
-    """
-    table = _typed_table_for(kind)
-    if table is None:
-        return
-    max_shards = MAX_CREDIT_SHARDS if kind == "credit" else MAX_KEY_USAGE_SHARDS
-    writer.delete(
-        table,
-        spanner_module.KeySet(
-            keys=[
-                (entity_id, shard)
-                for entity_id in entity_ids
-                for shard in range(max_shards)
-            ]
-        ),
-    )
-
-
-# ── Step 2: reconciliation (pure drift detection) ───────────────────────────
-# The per-write mirror is atomic (same txn) so it cannot tear, but an INDEPENDENT
-# full-row comparator is the red-team P2 defense: it catches a missing typed row
-# (pre-flag rows not yet backfilled) or any value divergence, which the per-write
-# path is structurally blind to. The flip to typed enforcement (Step 3) is gated
-# on this comparator reading zero across production.
-
-# (json body field, typed column, default-when-the-json-field-is-absent).
-# Defaults MUST match the model + the mirror writer so legacy JSON rows that
-# omit a field don't read as false drift.
-# OWNERSHIP SPLIT (2026-06-25): only the JSON-owned columns are comparable. The
-# typed DML owns reserved/total_usage (credit) and usage/byok_usage/reserved
-# (key); JSON is intentionally stale for those after typed enforcement, so they
-# are NOT drift-checked (and the mirror/backfill no longer write them).
-CREDIT_DRIFT_FIELDS = (
-    ("total_credits_microdollars", "total_credits", 0),
-)
-KEY_DRIFT_FIELDS = (
-    ("limit_microdollars", "limit_micro", None),
-    ("limit_daily_microdollars", "day_limit_micro", None),
-    ("limit_weekly_microdollars", "week_limit_micro", None),
-    ("limit_monthly_microdollars", "month_limit_micro", None),
-    ("include_byok_in_limit", "include_byok", True),
-)
-
-
-def _norm(value: Any, default: Any) -> Any:
-    """Normalize a value to its default's type for an apples-to-apples compare.
-
-    bool default -> bool; int default -> int; None-default (nullable limit) keeps
-    None or coerces to int. A None json value falls back to the field default.
-    """
-    if isinstance(default, bool):
-        return default if value is None else bool(value)
-    if value is None:
-        return None if default is None else int(default)
-    return int(value)
-
-
-def _drift(json_body: dict, typed_row: dict | None, fields: tuple) -> dict:
-    """Return {typed_col: (json_value, typed_value)} for every mismatch.
-
-    typed_row None (missing mirror) reports drift on every field whose default is
-    not None (so a missing mirror is always flagged via at least one field).
-    """
-    out: dict[str, tuple] = {}
-    for json_field, typed_col, default in fields:
-        jv = _norm(json_body.get(json_field, default), default)
-        tv = None if typed_row is None else _norm(typed_row.get(typed_col), default)
-        if jv != tv:
-            out[typed_col] = (jv, tv)
-    return out
-
-
-def credit_drift(json_body: dict, typed_row: dict | None) -> dict:
-    """Mismatched credit counters between the authoritative JSON and typed row."""
-    return _drift(json_body, typed_row, CREDIT_DRIFT_FIELDS)
-
-
-def key_drift(json_body: dict, typed_row: dict | None) -> dict:
-    """Mismatched api_key counters between the authoritative JSON and typed row."""
-    return _drift(json_body, typed_row, KEY_DRIFT_FIELDS)

@@ -173,8 +173,8 @@ cohort.
 `POST /internal/gateway/settle-outbox/drain?limit=N` (internal-token auth),
 lease-claims due `pending` rows and for each:
 
-- Routes on the **stored `settle_origin`**, immune to a `TR_TYPED_COUNTER_MIRROR`
-  kill-switch flip after enqueue (MF4). If `settle_origin='typed'` but the typed
+- Routes on the **stored `settle_origin`**, immune to serving-env changes after
+  enqueue (MF4). If `settle_origin='typed'` but the typed
   store is currently unavailable, **PARK** the row (retry later) — never reroute to
   legacy, never dead-letter.
 - Applies the **frozen `actual_cost_micro`** through a **narrow finalize primitive**

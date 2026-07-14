@@ -114,6 +114,7 @@ def run_in_transaction_with_retry(
 @dataclass(frozen=True)
 class SpannerIO:
     database: Any
+    spanner_module: Any
     write_entity_batch: Callable[[Any, str, str, Any], None]
     read_entity_tx: Callable[[Any, str, str, type], Any]
     write_entity_tx: Callable[[Any, str, str, Any], None]

@@ -18,6 +18,15 @@ def test_credit_overlay_uses_typed_row_when_store_has_capability() -> None:
         "credit", ws,
         CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000, total_usage_microdollars=0),
     )
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": 1_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
     # Simulate the typed DML having booked usage + a hold ahead of stale JSON.
     db.typed[CREDIT_BALANCE_TABLE][(ws, 0)].update({"total_usage": 300_000, "reserved": 150_000})
 
@@ -30,7 +39,6 @@ def test_credit_overlay_uses_typed_row_when_store_has_capability() -> None:
 
 def test_credit_typed_but_unseeded_falls_back_to_json() -> None:
     store, _db, _ = make_fake_store()
-    store._counter_mirror_enabled = False  # no typed row written
     ws = "ws_unseeded"
     store._write_entity(
         "credit", ws,

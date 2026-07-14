@@ -22,8 +22,8 @@ class _ParamTypes:
 
 # Real Spanner column DEFAULTs for the typed counter tables (every counter is
 # NOT NULL DEFAULT(0) in the DDL). The fake fills these on INSERT so a
-# subset-column insert_or_update — which is what the ownership-split mirror does
-# now, writing only the JSON-owned columns — still yields a complete row whose
+# subset-column insert_or_update — which is what creation-time seeding uses,
+# writing only the create-owned columns — still yields a complete row whose
 # typed-DML-owned counters start at 0.
 _TYPED_DEFAULTS: dict[str, dict[str, Any]] = {
     "tr_credit_balance": {"total_credits": 0, "total_usage": 0, "reserved": 0},
@@ -54,8 +54,8 @@ def _apply_upsert_typed(
     """Model real Spanner insert_or_update on a typed counter table: on INSERT
     fill the NOT NULL DEFAULT columns the write omitted; on UPDATE touch ONLY
     the supplied columns and leave the rest intact. Shared by the transaction
-    and batch commit paths so the ownership-split mirror behaves identically
-    through either writer (a partial mirror must never clobber typed counters)."""
+    and batch commit paths so partial typed-row seed/update mutations behave
+    identically through either writer."""
     pk = (value_tuple[0], value_tuple[1])
     incoming = dict(zip(columns, value_tuple, strict=True))
     table_rows = typed.setdefault(table, {})
@@ -847,8 +847,8 @@ def _execute_sql(
             1 for rec in db.reservations.values()
             if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) != 0
         )]]
-    # Rollback backsync: how many OPEN typed holds remain for this workspace?
-    # (checked BEFORE the generic count below, which this query string contains.)
+    # Open typed holds for this workspace. Checked BEFORE the generic count
+    # below, which this query string contains.
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false" in sql:
         ws = params["ws"]
         return [[sum(
@@ -1080,12 +1080,12 @@ def make_fake_store(
     store._param_types = _ParamTypes
     store._database = db
     store._bt_table = bt
-    store._counter_mirror_enabled = True  # exercise the Step-1 typed-counter mirror
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()
     io = SpannerIO(
         database=db,
+        spanner_module=_SpannerModule,
         write_entity_batch=store._write_entity_batch,
         read_entity_tx=store._read_entity_tx,
         write_entity_tx=store._write_entity_tx,

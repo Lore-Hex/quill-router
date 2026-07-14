@@ -1,205 +1,22 @@
-"""Step 2 of the billing typed-column migration: backfill + drift comparator.
+"""Typed counter operator helpers that remain after JSON money retirement.
 
-See docs/design/billing-typed-counters.md.
-
-- ``compare`` is the INDEPENDENT full-row comparator (red-team P2): it scans both
-  the authoritative JSON rows and the typed mirror and reports any row whose
-  counters diverge (or whose typed mirror is missing). The per-write mirror is
-  atomic so it cannot tear, but this comparator is the defense-in-depth that the
-  Step 3 enforcement flip is gated on — flip only when it reports zero drift.
-
-- ``backfill`` writes the typed mirror for pre-flag JSON rows (rows that existed
-  before TR_TYPED_COUNTER_MIRROR was turned on). Each row is mirrored inside a
-  transaction that re-reads the authoritative JSON row, so it writes a
-  json-consistent typed row atomically and cannot clobber a concurrent
-  dual-write with a stale read. Idempotent and re-runnable to convergence.
-
-Both operate on a live SpannerBigtableStore (``store``), using its existing JSON
-scan plus a direct typed-table scan.
+The surviving tools either prepare a drained never-typed workspace for
+activation or audit/repair the typed-side reserved invariant.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from trusted_router.storage_gcp_counters import (
-    credit_drift,
-    credit_shard_count,
-    key_drift,
-    key_usage_shard_count,
-    mirror_write,
-)
+from trusted_router.storage_gcp_counters import credit_shard_count, key_usage_shard_count
 from trusted_router.storage_models import ApiKey, CreditAccount, Workspace
 
-_CREDIT_TYPED_SCAN = (
-    "SELECT workspace_id, shard, total_credits, total_usage, reserved FROM tr_credit_balance"
-)
-_KEY_TYPED_SCAN = (
-    "SELECT key_hash, shard, limit_micro, usage, byok_usage, reserved, include_byok, "
-    "day_limit_micro, week_limit_micro, month_limit_micro "
-    "FROM tr_key_limit"
-)
-
-
-@dataclass
-class DriftReport:
-    credit_rows: int = 0
-    key_rows: int = 0
-    credit_drift: int = 0
-    key_drift: int = 0
-    credit_orphans: int = 0  # typed rows with no JSON authority
-    key_orphans: int = 0
-    # up to a few examples for triage: {id: {col: (json, typed)}}
-    samples: dict[str, dict] = field(default_factory=dict)
-
-    @property
-    def clean(self) -> bool:
-        return (
-            self.credit_drift == 0
-            and self.key_drift == 0
-            and self.credit_orphans == 0
-            and self.key_orphans == 0
-        )
-
-    def summary(self) -> str:
-        return (
-            f"credit: {self.credit_drift}/{self.credit_rows} drift, "
-            f"{self.credit_orphans} orphan | "
-            f"key: {self.key_drift}/{self.key_rows} drift, {self.key_orphans} orphan | "
-            f"{'CLEAN' if self.clean else 'DRIFT'}"
-        )
-
-
-def _scan_json(snapshot: Any, kind: str, id_field: str, pt: Any) -> dict[str, dict]:
-    out: dict[str, dict] = {}
-    for row in snapshot.execute_sql(
-        "SELECT body FROM tr_entities WHERE kind=@kind",
-        params={"kind": kind},
-        param_types={"kind": pt.STRING},
-    ):
-        body = json.loads(row[0])
-        out[body[id_field]] = body
-    return out
-
-
-def compare(store: Any, *, max_samples: int = 20) -> DriftReport:
-    """Scan JSON vs typed in ONE consistent snapshot and report drift + orphans.
-
-    Read-only. A single multi-use snapshot reads JSON and typed at the same
-    timestamp, so a live dual-write in flight cannot produce a transient false
-    positive (codex Step-2 #3). Reports value drift, missing mirrors, AND orphan
-    typed rows that have no JSON authority (codex Step-2 #1).
-    """
-    report = DriftReport()
-    pt = store._param_types
-
-    with store._database.snapshot(multi_use=True) as snapshot:
-        json_credit = _scan_json(snapshot, "credit", "workspace_id", pt)
-        json_key = _scan_json(snapshot, "api_key", "hash", pt)
-        typed_credit: dict[str, dict[str, int]] = {}
-        for row in snapshot.execute_sql(_CREDIT_TYPED_SCAN):
-            aggregate = typed_credit.setdefault(
-                row[0], {"total_credits": 0, "total_usage": 0, "reserved": 0}
-            )
-            aggregate["total_credits"] += int(row[2])
-            aggregate["total_usage"] += int(row[3])
-            aggregate["reserved"] += int(row[4])
-        typed_key: dict[str, dict[str, Any]] = {}
-        typed_key_counts: dict[str, int] = {}
-        for row in snapshot.execute_sql(_KEY_TYPED_SCAN):
-            key_hash = str(row[0])
-            typed_key_counts[key_hash] = typed_key_counts.get(key_hash, 0) + 1
-            typed_key.setdefault(
-                key_hash,
-                {
-                    "limit_micro": row[2], "usage": row[3], "byok_usage": row[4],
-                    "reserved": row[5], "include_byok": row[6],
-                    "day_limit_micro": row[7], "week_limit_micro": row[8],
-                    "month_limit_micro": row[9],
-                },
-            )
-
-    def _sample(key: str, value: dict) -> None:
-        if len(report.samples) < max_samples:
-            report.samples[key] = value
-
-    report.credit_rows = len(json_credit)
-    for ws_id, body in json_credit.items():
-        drift = credit_drift(body, typed_credit.get(ws_id))
-        if drift:
-            report.credit_drift += 1
-            _sample(f"credit:{ws_id}", drift)
-    for ws_id in typed_credit.keys() - json_credit.keys():
-        report.credit_orphans += 1
-        _sample(f"credit-orphan:{ws_id}", {"orphan_typed_row": True})
-
-    report.key_rows = len(json_key)
-    for key_hash, body in json_key.items():
-        drift = key_drift(body, typed_key.get(key_hash))
-        expected_shards = key_usage_shard_count(body)
-        observed_shards = typed_key_counts.get(key_hash, 0)
-        if observed_shards != expected_shards:
-            drift["usage_shard_count"] = (expected_shards, observed_shards)
-        if drift:
-            report.key_drift += 1
-            _sample(f"api_key:{key_hash}", drift)
-    for key_hash in typed_key.keys() - json_key.keys():
-        report.key_orphans += 1
-        _sample(f"api_key-orphan:{key_hash}", {"orphan_typed_row": True})
-
-    return report
-
-
-def backfill(store: Any, *, dry_run: bool = False) -> dict[str, int]:
-    """Mirror the JSON-owned columns of the typed row for every JSON credit/
-    api_key row. Idempotent; safe to run repeatedly.
-
-    OWNERSHIP SPLIT (2026-06-25 incident) — READ BEFORE USING AS A FLIP GATE:
-    this delegates to ``mirror_write``, which now writes ONLY JSON-owned columns
-    (total_credits; key limit_micro/include_byok). It therefore does NOT seed the
-    typed-DML-owned reserved / total_usage / usage / byok_usage, and a clean
-    ``compare`` (which now audits only those JSON-owned columns) does NOT mean a
-    workspace is safe to flip to typed enforcement. Flipping requires a SEPARATE
-    ledger-derived reconciliation that computes reserved from open holds (legacy +
-    typed) and seeds total_usage, atomic with the gate flip — otherwise the typed
-    reserve gate over-admits by the sum of open/historical holds (silent
-    overspend). Do NOT "fix" this by re-adding reserved/usage to the mirror: that
-    full-row copy WAS the clobber.
-    """
-    counts = {"credit": 0, "api_key": 0}
-    spanner_module = store._spanner
-
-    plan: list[tuple[str, str]] = []
-    plan += [("credit", b["workspace_id"]) for b in store._list_entities("credit", cls=dict)]
-    plan += [("api_key", b["hash"]) for b in store._list_entities("api_key", cls=dict)]
-
-    for kind, entity_id in plan:
-        if dry_run:
-            counts[kind] += 1
-            continue
-
-        def _txn(transaction: Any, _kind: str = kind, _id: str = entity_id) -> bool:
-            body = store._read_entity_tx(transaction, _kind, _id, dict)
-            if body is None:
-                return False
-            mirror_write(
-                transaction, _kind, _id, body, spanner_module.COMMIT_TIMESTAMP
-            )
-            return True
-
-        if store._run_in_transaction(_txn):
-            counts[kind] += 1
-
-    return counts
-
-
 # ── Step 6: ledger-derived flip reconciliation ──────────────────────────────
-# Seeds the typed-DML-owned counters for a workspace at the moment it is flipped
-# to typed enforcement. This is the FULL-ROW seed that backfill()/mirror_write no
-# longer do after the 2026-06-25 ownership split — and the ONLY sanctioned writer
-# of typed reserved/total_usage outside the typed authorize/finalize DML.
+# Seeds the typed-DML-owned counters for a workspace at the moment it is
+# activated. This is the full-row seed for drained never-typed workspaces and
+# the only sanctioned writer of typed reserved/total_usage outside the typed
+# authorize/finalize DML.
 #
 # Safe ONLY for a NEVER-TYPED, DRAINED workspace (fail-closed). A workspace with
 # prior typed-origin history (the cohort, or a rolled-back ws like the incident's
@@ -376,14 +193,12 @@ def reconcile_for_flip(store: Any, workspace_id: str, *, apply: bool = False) ->
 
 
 # ── Standing typed-side invariant auditor ───────────────────────────────────
-# compare() audits JSON-vs-typed and was correctly NARROWED to JSON-owned columns
-# after the ownership split — so it can no longer see a typed `reserved` leak (the
-# exact incident class). This auditor is the typed-side tripwire that replaces it:
-# for every typed counter row, `reserved` MUST equal the sum of that scope's OPEN
-# typed-origin holds (tr_reservation, settled=false), and MUST be >= 0. A drift
-# means a hold leaked or a release double-applied. Run it on a schedule + before
-# each ramp batch; wire an alert on the "release row-count != 1" log line as the
-# live signal between audits.
+# This auditor is the standing typed-side tripwire: for every typed counter row,
+# `reserved` MUST equal the sum of that scope's OPEN typed-origin holds
+# (tr_reservation, settled=false), and MUST be >= 0. A violation means a hold
+# leaked or a release double-applied. Run it on a schedule + before each ramp
+# batch; wire an alert on the "release row-count != 1" log line as the live
+# signal between audits.
 
 # Shard-aware (the typed counter PK is (scope, shard); reservations carry the
 # per-scope shard), COALESCE so an empty SUM reads 0.
@@ -470,132 +285,6 @@ def audit_typed_invariants(store: Any, *, max_samples: int = 20) -> InvariantRep
     report.credit_rows, report.credit_violations = _check(typed_credit, credit_holds, "credit")
     report.key_rows, report.key_violations = _check(typed_key, key_holds, "api_key")
     return report
-
-
-# ── Rollback: typed → JSON backsync ─────────────────────────────────────────
-# The INVERSE of reconcile_for_flip. Denylisting a workspace back to legacy is NOT
-# rollback-correct on its own: once typed usage exists, the JSON counters are
-# stale-low, so the legacy path would over-admit. Before rolling back, copy the
-# typed-DML-owned gross counters back into JSON so the legacy path is authoritative
-# and correct. Fail-closed: the workspace must have NO open typed holds (pause +
-# drain first); writing JSON re-fires the ownership-split mirror, which only writes
-# total_credits/config, so it does NOT re-clobber the typed counters mid-backsync.
-
-
-@dataclass
-class BacksyncResult:
-    workspace_id: str
-    ready: bool
-    reasons: list[str] = field(default_factory=list)
-    applied: bool = False
-    credit: dict | None = None
-    keys: int = 0
-
-
-def backsync_typed_to_json(store: Any, workspace_id: str, *, apply: bool = False) -> BacksyncResult:
-    """Copy the typed gross counters back into JSON for a drained workspace so a
-    rollback to legacy is correct. Fail-closed: refuses unless the workspace is
-    billing-PAUSED and has NO open typed holds (settled=false). With apply=True
-    it re-reads everything INSIDE one transaction (the paused gate, the open-hold
-    count, the FRESH typed credit + key counters) — because typed usage can still
-    advance via an in-flight settle between an outer snapshot and the txn — builds
-    a COMPLETE plan (failing if any active JSON key has no typed row, rather than
-    silently skipping it), and only then writes JSON credit total_usage/reserved +
-    key usage/byok_usage/reserved. Read-only when apply=False."""
-    pt = store._param_types
-    res = BacksyncResult(workspace_id=workspace_id, ready=False)
-    open_holds_sql = (
-        "SELECT COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false"
-    )
-    credit_sql = "SELECT total_usage, reserved FROM tr_credit_balance WHERE workspace_id=@pk AND shard=0"
-    key_sql = "SELECT usage, byok_usage, reserved FROM tr_key_limit WHERE key_hash=@pk AND shard=0"
-
-    key_bodies = [
-        b for b in store._list_entities("api_key", cls=dict)
-        if b.get("workspace_id") == workspace_id
-    ]
-    key_hashes = [str(body["hash"]) for body in key_bodies]
-    workspace = store.get_workspace(workspace_id)
-    credit_account = store.get_credit_account(workspace_id)
-    # multi_use: two reads on one snapshot (a single-use snapshot raises on the
-    # second read on real Spanner — the fa9f5d4 class the fake now models).
-    with store._database.snapshot(multi_use=True) as snap:
-        open_holds = list(snap.execute_sql(
-            open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
-        ))[0][0]
-        credit_rows = list(snap.execute_sql(
-            credit_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
-        ))
-
-    if workspace is None or not getattr(workspace, "billing_paused", False):
-        res.reasons.append("workspace not billing-paused — pause (quiesce) it before rollback")
-    if credit_account is not None and credit_shard_count(credit_account) != 1:
-        res.reasons.append("credit ledger is sharded — consolidate to one shard before rollback")
-    if any(key_usage_shard_count(body) != 1 for body in key_bodies):
-        res.reasons.append("API-key usage is sharded — consolidate keys before rollback")
-    if int(open_holds) != 0:
-        res.reasons.append(f"{open_holds} open typed holds — drain before rollback backsync")
-    if not credit_rows:
-        res.reasons.append("no typed credit row to backsync")
-    res.ready = not res.reasons
-    if credit_rows:
-        res.credit = {"total_usage": int(credit_rows[0][0]), "reserved": int(credit_rows[0][1])}
-    if not res.ready or not apply:
-        return res
-
-    def _txn(transaction: Any) -> dict | None:
-        # Re-read ALL preconditions + values INSIDE the txn (no stale outer reads).
-        # Issue ZERO mutations until the complete plan is validated.
-        ws = store._read_entity_tx(transaction, "workspace", workspace_id, Workspace)
-        if ws is None or not ws.billing_paused:
-            return None
-        oh = list(transaction.execute_sql(
-            open_holds_sql, params={"ws": workspace_id}, param_types={"ws": pt.STRING},
-        ))[0][0]
-        if int(oh) != 0:
-            return None
-        tc = list(transaction.execute_sql(
-            credit_sql, params={"pk": workspace_id}, param_types={"pk": pt.STRING},
-        ))
-        credit = store._read_entity_tx(transaction, "credit", workspace_id, CreditAccount)
-        if not tc or credit is None or credit_shard_count(credit) != 1:
-            return None
-        plan: list[tuple] = []
-        for kh in key_hashes:
-            key_obj = store._read_entity_tx(transaction, "api_key", kh, ApiKey)
-            if key_obj is None:
-                continue  # key deleted since assess (pause blocks creation, not deletion)
-            if key_usage_shard_count(key_obj) != 1:
-                return None
-            kt = list(transaction.execute_sql(
-                key_sql, params={"pk": kh}, param_types={"pk": pt.STRING},
-            ))
-            if not kt:
-                return None  # active JSON key with NO typed row — unsafe to backsync, abort
-            plan.append((key_obj, int(kt[0][0]), int(kt[0][1]), int(kt[0][2])))
-        # All checks passed — write credit + every key (no mutation was issued above).
-        typed_total_usage, typed_reserved = int(tc[0][0]), int(tc[0][1])
-        credit.total_usage_microdollars = typed_total_usage
-        credit.reserved_microdollars = typed_reserved
-        store._write_entity_tx(transaction, "credit", workspace_id, credit)
-        for key_obj, usage, byok, reserved in plan:
-            key_obj.usage_microdollars = usage
-            key_obj.byok_usage_microdollars = byok
-            key_obj.reserved_microdollars = reserved
-            store._write_entity_tx(transaction, "api_key", key_obj.hash, key_obj)
-        return {"total_usage": typed_total_usage, "reserved": typed_reserved, "keys": len(plan)}
-
-    result = store._run_in_transaction(_txn)
-    if result is None:
-        res.ready = False
-        res.reasons.append(
-            "aborted: not paused / a hold appeared / an active key lacked a typed row (re-drain and retry)"
-        )
-        return res
-    res.applied = True
-    res.keys = result["keys"]
-    res.credit = {"total_usage": result["total_usage"], "reserved": result["reserved"]}
-    return res
 
 
 # ── Repair: clobbered typed `reserved` ──────────────────────────────────────

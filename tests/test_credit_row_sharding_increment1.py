@@ -12,7 +12,7 @@ from trusted_router.storage_gcp_authorize import (
     authorize_atomic,
     settle_atomic,
 )
-from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants, compare
+from trusted_router.storage_gcp_counter_reconcile import audit_typed_invariants
 from trusted_router.storage_gcp_counters import (
     CREDIT_BALANCE_TABLE,
     credit_shard_count,
@@ -226,7 +226,7 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(3)] == [44, 33, 33]
     assert live_credit_summary(workspace_id, store=store)["total_credits"] == 110
-    assert store.get_credit_account(workspace_id).total_credits_microdollars == 110
+    assert store.get_credit_account(workspace_id).total_credits_microdollars == 100
 
 
 def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
@@ -268,7 +268,7 @@ def test_typed_credit_snapshot_fails_closed_on_missing_configured_shard() -> Non
         store.typed_credit_snapshot(workspace_id)
 
 
-def test_generic_credit_mirror_does_not_overwrite_sharded_sub_budgets() -> None:
+def test_generic_credit_metadata_write_does_not_overwrite_sharded_sub_budgets() -> None:
     store, database, _ = make_fake_store()
     workspace_id = "ws-mirror-shards"
     account = CreditAccount(
@@ -282,7 +282,7 @@ def test_generic_credit_mirror_does_not_overwrite_sharded_sub_budgets() -> None:
     assert database.typed.get(CREDIT_BALANCE_TABLE, {}) == {}
 
 
-def test_compare_and_invariant_audit_are_credit_shard_aware() -> None:
+def test_invariant_audit_is_credit_shard_aware() -> None:
     store, database, _ = make_fake_store()
     workspace_id = "ws-audit-shards"
     _seed_sharded_credit(store, database, workspace_id, [60, 40])
@@ -310,9 +310,7 @@ def test_compare_and_invariant_audit_are_credit_shard_aware() -> None:
         "settled": False,
     }
 
-    drift = compare(store)
     invariant = audit_typed_invariants(store)
 
-    assert drift.clean, drift.samples
     assert invariant.clean, invariant.samples
     assert invariant.credit_rows == 2

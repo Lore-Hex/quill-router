@@ -83,6 +83,7 @@ def test_gcp_list_keys_uses_workspace_index() -> None:
 
     io = SpannerIO(
         database=None,
+        spanner_module=None,
         write_entity_batch=lambda *_a, **_kw: None,
         read_entity_tx=lambda *_a, **_kw: None,
         write_entity_tx=lambda *_a, **_kw: None,
@@ -752,6 +753,7 @@ def test_gcp_reconcile_generation_activity_rewrites_existing_generations(monkeyp
 
     io = SpannerIO(
         database=None,
+        spanner_module=None,
         write_entity_batch=lambda *_a, **_kw: None,
         read_entity_tx=lambda *_a, **_kw: None,
         write_entity_tx=lambda *_a, **_kw: None,

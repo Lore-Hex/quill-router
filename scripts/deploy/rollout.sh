@@ -111,13 +111,6 @@ ENV_VARS=(
   # Empty AXIOM_API_TOKEN at runtime → handler is not registered (graceful no-op).
   "TR_AXIOM_DATASET=trusted-router-logs"
   "TR_AXIOM_URL=https://eu-central-1.aws.edge.axiom.co"
-  # Billing typed-counter migration cutover, step 2 (docs/design/
-  # billing-typed-counters.md): dual-write the hot credit/api_key counters to
-  # the typed Spanner tables. Enforcement stays on the JSON path; this only
-  # turns on the exact-mirror so backfill + the drift comparator can verify the
-  # typed tables before the enforcement cohort flag. The typed tables already
-  # exist (migrate_typed_counters.sh). Remove to revert the dual-write.
-  "TR_TYPED_COUNTER_MIRROR=1"
   # Durable settle outbox (docs/design/durable-settle-outbox.md §5.4, §8):
   # every gateway settle/refund durably records its frozen intent BEFORE the
   # inline finalize, and /internal/gateway/settle-outbox/drain recovers any

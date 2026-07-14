@@ -7,7 +7,7 @@
 
 ## 0. Where we are (one paragraph)
 
-The TrustedRouter Spanner billing **deadlock is fixed** and the **universal typed-billing flip is LIVE fleet-wide** as of 2026-06-26: `TR_TYPED_BILLING_WORKSPACE_IDS=*` (rollout.sh), every workspace authorizes/settles through the typed conditional-DML path (`storage_gcp_counter_dml.py`, `storage_gcp_authorize.py`). The reserved-invariant auditor is **CLEAN (0/53 credit, 0/93 key)**, open holds are **bounded** (~1.1k fleet-wide, the deadlock signature is gone), 0 workspaces paused. What remains is the **dual-system**: typed and legacy still coexist (env gate, typed-aware read overlays, JSON→typed mirror, backsync rollback path, and the **legacy settle/finalize path** that still mutates JSON counters). The end state (codex-endorsed) is **ONE source of truth**: typed owns all counters, JSON holds metadata/config only. **This doc = delete the dual-system, then mop up two residuals that are blocked on it.**
+The TrustedRouter Spanner billing **deadlock is fixed** and the **universal typed-billing flip is LIVE fleet-wide** as of 2026-06-26: every workspace authorizes/settles through the typed conditional-DML path (`storage_gcp_counter_dml.py`, `storage_gcp_authorize.py`). C1 removed the legacy reserve/finalize path and C2a removed the generic JSON→typed mirror plus typed-to-JSON rollback helpers. The end state (codex-endorsed) is **ONE source of truth**: typed owns all counters, JSON holds metadata/config only. **This doc = historical deletion handoff plus residual cleanup notes.**
 
 Two residuals that DISSOLVE once legacy is gone (do NOT try to fix them before Step 1b):
 - **`ea7dd3d8` $3.42 usage under-count** (a `tmxubench` test workspace). Blocked because it still has live/abandoned **legacy** reservations (`reserved_microdollars=141485`); reconciling its usage while a legacy settle can still fire would re-stale the fix.
@@ -17,7 +17,7 @@ Two residuals that DISSOLVE once legacy is gone (do NOT try to fix them before S
 
 ## 1. NON-NEGOTIABLE guardrails (the same discipline that got us here safely)
 
-1. **NEVER raw-DML / ad-hoc-script prod billing tables.** Use tested tooling only: the operator CLI `scripts/deploy/ramp_typed_billing.py` (subcommands `audit｜status｜pause｜unpause｜reconcile｜repair｜usage｜rollback`) and merged store methods. An ad-hoc `settle_atomic` loop was correctly **blocked by the safety classifier** — don't repeat it. If you need a new prod operation, add it as a reviewed CLI subcommand first.
+1. **NEVER raw-DML / ad-hoc-script prod billing tables.** Use tested tooling only: the operator CLI `scripts/deploy/ramp_typed_billing.py` (subcommands `audit｜status｜pause｜unpause｜reconcile｜repair｜usage`) and merged store methods. An ad-hoc `settle_atomic` loop was correctly **blocked by the safety classifier** — don't repeat it. If you need a new prod operation, add it as a reviewed CLI subcommand first.
 2. **Every code change: its own PR → codex-cli review → CI green → `gh pr merge --squash`. Keep main green.** One reviewable increment per PR. Invoke review with `codex exec --skip-git-repo-check -c service_tier="fast" '<prompt>'` (backgrounds; read its output file).
 3. **The deploy is automatic and ~1h.** `.github/workflows/deploy.yml` fires on **push-to-main touching `src/**` or `scripts/deploy/**`** (Workload Identity Federation — no gcloud needed), gated on `ci.yml` green, ~1h canary across regions. **Docs-only changes do NOT deploy.** Plan for the ~1h tail on any enforcement-affecting merge.
 4. **ADC expires ~1h.** Python prod-Spanner **writes/reads** use ADC. It WILL expire mid-session → `503 Reauthentication is needed`. Fix: ask Joseph to run `gcloud auth application-default login`. (This bit us mid-flip and stranded 45 paused workspaces.) The deploy itself uses WIF, not ADC, so deploys are unaffected.
@@ -88,10 +88,10 @@ print("tr_reservation total", tot, "open", opn, "topopen", [(w[:8], c) for w, c 
 - `src/trusted_router/typed_balance.py` (`typed_aware_credit_account`, `_read_typed_credit`, etc.) — now that typed is universal + authoritative, read typed counters directly instead of overlaying.
 - Call sites to switch to a plain typed read: `auto_refill.py` (`maybe_charge_after_settle`), `routes/billing.py` `/credits`, `routes/console/credits.py`.
 
-### 1d — Remove backsync + the one-way mirror
-- `storage_gcp_counter_reconcile.py`: `backsync_typed_to_json` (+ its CLI `rollback` subcommand) — the typed→JSON rollback is dead once legacy can't enforce.
-- `storage_gcp_counters.py` mirror (`mirror_write`/`mirror_delete`) + its chokepoint calls in `storage_gcp.py`: with typed authoritative, the JSON→typed mirror of `total_credits` is no longer needed **IF** top-ups/grants are changed to write `tr_credit_balance.total_credits` directly. Do that change in the same PR (don't strand `total_credits`). The drift comparator (`backfill_typed_counters.py --audit` paths) goes too.
-- `TR_TYPED_COUNTER_MIRROR` flag retires here. **NEVER disable the mirror while it's still the only writer of `total_credits`** — flip the writer first, then remove.
+### 1d — Removed the one-way mirror and rollback helpers
+- `storage_gcp_counter_reconcile.py`: the typed-to-JSON helper and drift/backfill helpers are gone.
+- `storage_gcp_counters.py` generic mirror + its chokepoint calls in `storage_gcp.py` are gone.
+- New-workspace/new-key typed-row seeding is explicit on entity create, and top-ups write typed `total_credits` directly.
 
 ### 1e — Retire legacy JSON counter fields
 - `CreditAccount.reserved_microdollars` / `total_usage_microdollars`, `ApiKey.usage` etc. (`storage_models.py`): stop reading/writing them. Leave the columns in place for one release (don't DROP COLUMN in the same wave), then a follow-up removes them.
@@ -113,7 +113,7 @@ Now JSON usage is frozen, so `typed total_usage = JSON.total_usage + Σ settled-
 
 ## 5. STEP 3 — Remaining follow-ups (lower priority, independent)
 
-- **#29 API-key deletion drain/tombstone.** Deleting a key with open typed holds leaves an unreapable orphan. The fix needs an **atomic count+delete in ONE read-write txn** (count `tr_reservation` for the key `settled=false` + delete entities + `mirror_delete` together; the count's read-lock serializes vs a concurrent authorize's tr_reservation insert). Disable-first-then-check is INSUFFICIENT (TOCTOU → unreapable orphan; reaper only reclaims SETTLED). Prior WIP on closed PR #85 / branch `billing-key-delete-drain`. Also fix `scripts/cleanup_smoke_signups.py` (deletes api_key+tr_key_limit directly, bypassing any guard).
+- **#29 API-key deletion drain/tombstone.** Deleting a key with open typed holds leaves an unreapable orphan. The fix needs an **atomic count+delete in ONE read-write txn** (count `tr_reservation` for the key `settled=false` + delete entities + typed tombstone/delete handling together; the count's read-lock serializes vs a concurrent authorize's tr_reservation insert). Disable-first-then-check is INSUFFICIENT (TOCTOU → unreapable orphan; reaper only reclaims SETTLED). Prior WIP on closed PR #85 / branch `billing-key-delete-drain`. Also fix `scripts/cleanup_smoke_signups.py` (deletes api_key+tr_key_limit directly, bypassing any guard).
 - **#33 durable per-ws kill-switch + settle outbox** (before any whale/high-value workspace). The fast kill-switch avoids the 25-min–1h deploy for an emergency single-workspace revert; the outbox recovers a completed-but-settle-lost charge instead of the reaper releasing it free.
 - **Fake-fidelity gaps** (each masked a real prod bug this session — see the spawned task): make the fake `database.snapshot()` **single-use** by default (real Spanner raises `Cannot re-use single-use snapshot`; only `multi_use=True` allows multiple reads — caught `repair`'s 3-read snapshot bug); make a missing `tr_credit_balance` point-read return `[]` not a default-0 row (real Spanner returns no rows).
 - **Step 5 sharding** (`shard` in PKs, dormant) — only if per-whale contention metrics ever demand it. The repair/usage/reconcile tools are shard-0-only and abort on nonzero shard, so revisit them if sharding is ever turned on.

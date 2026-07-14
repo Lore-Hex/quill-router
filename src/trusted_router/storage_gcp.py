@@ -52,15 +52,16 @@ from trusted_router.storage_gcp_codec import (
 from trusted_router.storage_gcp_codec import (
     normalize_email as _normalize_email,
 )
-from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at, update_entity_body_dml
+from trusted_router.storage_gcp_counter_dml import insert_entity_dml_at
 from trusted_router.storage_gcp_counters import (
+    CREDIT_BALANCE_COLUMNS,
+    CREDIT_BALANCE_TABLE,
     UNSHARDED,
+    credit_balance_mirror_row,
     credit_shard_count,
     distribute_credit_amount,
     key_usage_shard_count,
 )
-from trusted_router.storage_gcp_counters import mirror_delete as mirror_counter_delete
-from trusted_router.storage_gcp_counters import mirror_write as mirror_counter_write
 from trusted_router.storage_gcp_credit_shards import (
     CreditShardConfigurationMissingError,
     CreditShardCountCache,
@@ -196,13 +197,6 @@ class SpannerBigtableStore:
         # on its own — keeps the core SpannerBigtableStore body focused on
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
 
-        # Step 1 of the typed-counter migration: when enabled, every credit /
-        # api_key write also mirrors exact values onto the typed tables in the
-        # same transaction (see storage_gcp_counters + docs). Default OFF so the
-        # code is safe to deploy BEFORE the DDL is applied; flip
-        # TR_TYPED_COUNTER_MIRROR=1 only once tr_credit_balance / tr_key_limit
-        # exist, or the mirror writes would fail the billing transactions.
-        self._counter_mirror_enabled = os.environ.get("TR_TYPED_COUNTER_MIRROR", "") == "1"
         self._credit_shard_counts = CreditShardCountCache(
             ttl_seconds=float(
                 os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")
@@ -215,6 +209,7 @@ class SpannerBigtableStore:
         self._rebalance_last_attempt_lock = threading.Lock()
         io = SpannerIO(
             database=self._database,
+            spanner_module=self._spanner,
             write_entity_batch=self._write_entity_batch,
             read_entity_tx=self._read_entity_tx,
             write_entity_tx=self._write_entity_tx,
@@ -278,6 +273,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
+            self._seed_credit_balance_on_create(transaction, workspace.id, credit)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -310,6 +306,24 @@ class SpannerBigtableStore:
             raw_key=raw_key,
             api_key=api_key,
             trial_credit_microdollars=summary["total_credits"] if summary else 0,
+        )
+
+    def _seed_credit_balance_on_create(
+        self,
+        writer: Any,
+        workspace_id: str,
+        credit: CreditAccount,
+    ) -> None:
+        writer.insert_or_update(
+            table=CREDIT_BALANCE_TABLE,
+            columns=CREDIT_BALANCE_COLUMNS,
+            values=[
+                credit_balance_mirror_row(
+                    workspace_id,
+                    credit,
+                    self._spanner.COMMIT_TIMESTAMP,
+                )
+            ],
         )
 
     # Auth sessions delegate to storage_gcp_auth_sessions.SpannerAuthSessions.
@@ -369,6 +383,7 @@ class SpannerBigtableStore:
             self._write_entity_batch(batch, "workspace", workspace.id, workspace)
             self._write_entity_batch(batch, "member", _member_id(workspace.id, owner_user_id), member)
             self._write_entity_batch(batch, "credit", workspace.id, credit)
+            self._seed_credit_balance_on_create(batch, workspace.id, credit)
         return workspace
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
@@ -544,6 +559,7 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
+            self._seed_credit_balance_on_create(transaction, workspace.id, credit)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -874,7 +890,7 @@ class SpannerBigtableStore:
                     raise RuntimeError(
                         f"missing tr_credit_balance shard {shard} for sharded workspace"
                     )
-                # Seed path for pre-mirror rows; JSON credit money dies in C2.
+                # Seed path for legacy/missing typed rows; JSON credit money is stale.
                 new_total = int(account.total_credits_microdollars) + amount
                 transaction.execute_update(
                     "INSERT INTO tr_credit_balance "
@@ -894,24 +910,6 @@ class SpannerBigtableStore:
                     },
                 )
 
-            # Keep the JSON total_credits WARM until C2 deletes the mirror.
-            # The credit mirror still replays the JSON body's total_credits
-            # into tr_credit_balance shard 0 on every credit-entity metadata
-            # write (auto-refill toggles, stripe customer updates); a stale
-            # JSON total would clobber typed-direct top-ups (verified P0).
-            # Warm-keeping and the mirror must be deleted TOGETHER in C2.
-            account.total_credits_microdollars = (
-                int(account.total_credits_microdollars) + amount
-            )
-            if update_entity_body_dml(
-                transaction,
-                pt,
-                "credit",
-                workspace_id,
-                _json_body(account),
-                now,
-            ) != 1:
-                raise ValueError("credit account not found")
             insert_entity_dml_at(
                 transaction,
                 pt,
@@ -1421,10 +1419,8 @@ class SpannerBigtableStore:
     def typed_key_usage(self, key_hash: str) -> dict[str, Any] | None:
         """One point-read of the typed tr_key_limit row: live lifetime counters
         (post-flip the JSON api_key copies are frozen/stale) + the lazy window
-        usage (stale windows read as zero). None when the typed tables are off
-        or the row is missing — callers fall back to the JSON values."""
-        if not getattr(self, "_counter_mirror_enabled", False):
-            return None
+        usage (stale windows read as zero). None when the row is missing —
+        callers fall back to the JSON values."""
         from trusted_router.spend_windows import utcnow, window_floors
 
         pt = self._param_types
@@ -1471,13 +1467,11 @@ class SpannerBigtableStore:
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
         """Sum the workspace's active authoritative credit sub-ledgers.
 
-        Returns (total_credits, total_usage, reserved) microdollars, or None
-        when the typed tables are off or a one-shard row is not seeded. A
-        configured multi-shard workspace fails closed if any active row is
-        missing; falling back to stale JSON usage would overstate availability.
+        Returns (total_credits, total_usage, reserved) microdollars, or None when
+        a one-shard row is not seeded. A configured multi-shard workspace fails
+        closed if any active row is missing; falling back to stale JSON usage
+        would overstate availability.
         """
-        if not getattr(self, "_counter_mirror_enabled", False):
-            return None
         pt = self._param_types
         # This exact snapshot also feeds auto-refill decisions. Do not reuse the
         # allow-stale authorize cache here: after a split, a stale smaller count
@@ -1523,12 +1517,8 @@ class SpannerBigtableStore:
         request that reserved typed settles typed, and a JSON one settles JSON,
         regardless of the current cohort flag.
 
-        Guarded by the mirror flag: when off, no typed tables/reservations exist
-        (the cutover turns the mirror on, after the DDL, before any typed
-        authorize), so we never query tr_reservation before it exists — avoiding a
-        flag-off settle 500 if the route deploys ahead of the schema (codex 3e
-        route review #3)."""
-        if not getattr(self, "_counter_mirror_enabled", False) or not reservation_id:
+        Returns false when there is no reservation id."""
+        if not reservation_id:
             return False
         from trusted_router.storage_gcp_counter_dml import read_reservation
 
@@ -1539,13 +1529,9 @@ class SpannerBigtableStore:
     def get_typed_authorization_by_idempotency(
         self, workspace_id: str, key_hash: str, idempotency_key: str
     ) -> GatewayAuthorization | None:
-        """Find a typed authorization by its scoped idempotency key, INDEPENDENT
-        of the current cohort flag, so a retry after a cohort flag-off/denylist
-        rollback still replays the typed authorization instead of falling to the
-        legacy path and creating a second hold (codex 3e route review #2). Returns
-        None when the mirror is off (no typed tables yet)."""
-        if not getattr(self, "_counter_mirror_enabled", False):
-            return None
+        """Find a typed authorization by its scoped idempotency key so a retry
+        replays the typed authorization instead of creating a second hold
+        (codex 3e route review #2)."""
         from trusted_router.storage_gcp_counter_dml import read_reservation_by_idempotency
         from trusted_router.storage_gcp_keys import (
             _gateway_authorization_idempotency_index_id,
@@ -1943,10 +1929,6 @@ class SpannerBigtableStore:
             columns=("kind", "id", "body", "updated_at"),
             values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
         )
-        # Step 1: mirror hot counters (credit / api_key) onto typed tables in the
-        # SAME batch so they commit atomically with the authoritative JSON row.
-        if getattr(self, "_counter_mirror_enabled", False):
-            mirror_counter_write(batch, kind, entity_id, value, self._spanner.COMMIT_TIMESTAMP)
 
     def _write_entity_tx(self, transaction: Any, kind: str, entity_id: str, value: Any) -> None:
         transaction.insert_or_update(
@@ -1954,9 +1936,6 @@ class SpannerBigtableStore:
             columns=("kind", "id", "body", "updated_at"),
             values=[(kind, entity_id, _json_body(value), self._spanner.COMMIT_TIMESTAMP)],
         )
-        # Step 1: mirror hot counters in the SAME transaction (atomic, no tear).
-        if getattr(self, "_counter_mirror_enabled", False):
-            mirror_counter_write(transaction, kind, entity_id, value, self._spanner.COMMIT_TIMESTAMP)
 
     def _delete_entities(self, kind: str, entity_ids: list[str]) -> None:
         with self._database.batch() as batch:
@@ -1964,15 +1943,9 @@ class SpannerBigtableStore:
                 self.entity_table,
                 self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
             )
-            # Step 1: mirror credit/api_key deletes onto the typed table so a
-            # deleted row never leaves a stale typed mirror (drift).
-            if getattr(self, "_counter_mirror_enabled", False):
-                mirror_counter_delete(batch, kind, entity_ids, self._spanner)
 
     def _delete_entities_tx(self, transaction: Any, kind: str, entity_ids: list[str]) -> None:
         transaction.delete(
             self.entity_table,
             self._spanner.KeySet(keys=[(kind, entity_id) for entity_id in entity_ids]),
         )
-        if getattr(self, "_counter_mirror_enabled", False):
-            mirror_counter_delete(transaction, kind, entity_ids, self._spanner)

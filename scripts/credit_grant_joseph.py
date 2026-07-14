@@ -23,10 +23,6 @@ os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
-# Keep production manual credits safe during the typed-billing cutover. This
-# uses the normal STORE.credit_workspace_once path, but it must also update the
-# typed counter mirror that the cohort-enforced authorize path reads.
-os.environ["TR_TYPED_COUNTER_MIRROR"] = "1"
 
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -38,6 +34,17 @@ EMAIL = "joseph@jperla.com"
 AMOUNT_DOLLARS = 1
 AMOUNT_MICRODOLLARS = AMOUNT_DOLLARS * MICRODOLLARS_PER_DOLLAR
 EVENT_ID = "manual_grant_joseph_2026-06-02_one_dollar"
+
+
+def _typed_total_credits(workspace_id: str) -> int | None:
+    pt = STORE._param_types
+    with STORE._database.snapshot() as snap:
+        rows = list(snap.execute_sql(
+            "SELECT total_credits FROM tr_credit_balance WHERE workspace_id=@w AND shard=0",
+            params={"w": workspace_id},
+            param_types={"w": pt.STRING},
+        ))
+    return int(rows[0][0]) if rows else None
 
 
 def main() -> int:
@@ -68,7 +75,9 @@ def main() -> int:
     if before is None:
         print(f"ERROR: credit account for workspace {workspace.id} not found")
         return 1
+    typed_before = _typed_total_credits(workspace.id)
     print(f"  available before: ${_avail(before):.4f}  (deposited=${before.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.4f}, used=${before.total_usage_microdollars / MICRODOLLARS_PER_DOLLAR:.4f})")
+    print(f"  typed deposited before: ${(typed_before or 0) / MICRODOLLARS_PER_DOLLAR:.4f}")
 
     granted = STORE.credit_workspace_once(
         workspace.id, AMOUNT_MICRODOLLARS, EVENT_ID
@@ -79,7 +88,13 @@ def main() -> int:
         print("  credit applied")
 
     after = STORE.get_credit_account(workspace.id)
+    typed_after = _typed_total_credits(workspace.id)
     print(f"  available after:  ${_avail(after):.4f}  (deposited=${after.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.4f}, used=${after.total_usage_microdollars / MICRODOLLARS_PER_DOLLAR:.4f})")
+    print(f"  typed deposited after:  ${(typed_after or 0) / MICRODOLLARS_PER_DOLLAR:.4f}")
+    expected = (typed_before or 0) + (AMOUNT_MICRODOLLARS if granted else 0)
+    if typed_after != expected:
+        print(f"ERROR: typed counter {typed_after} did not match expected {expected}")
+        return 1
     return 0
 
 

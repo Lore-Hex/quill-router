@@ -31,7 +31,6 @@ os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
-os.environ.setdefault("TR_TYPED_COUNTER_MIRROR", "1")
 
 from trusted_router.config import Settings
 from trusted_router.storage import create_store

@@ -46,6 +46,15 @@ def _seed_credit(store: Any, workspace_id: str, total: int = TOTAL_CREDIT) -> No
         workspace_id,
         CreditAccount(workspace_id=workspace_id, total_credits_microdollars=total),
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
+        "workspace_id": workspace_id,
+        "shard": 0,
+        "total_credits": total,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def _make_key(store: Any, workspace_id: str, *, limit: int | None = TOTAL_CREDIT) -> Any:

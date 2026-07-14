@@ -29,9 +29,6 @@ os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
-# Keep production manual credits safe during the typed-billing cutover. This
-# uses the same typed-direct top-up path as the webhook.
-os.environ["TR_TYPED_COUNTER_MIRROR"] = "1"
 
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -45,6 +42,17 @@ AMOUNT_MICRODOLLARS = AMOUNT_DOLLARS * MICRODOLLARS_PER_DOLLAR
 EVENT_ID = "manual_makeup_2026-05-22_evt_1TaKM6QuWGscJyRc_plus_2_plus_100"
 
 
+def _typed_total_credits(workspace_id: str) -> int | None:
+    pt = STORE._param_types
+    with STORE._database.snapshot() as snap:
+        rows = list(snap.execute_sql(
+            "SELECT total_credits FROM tr_credit_balance WHERE workspace_id=@w AND shard=0",
+            params={"w": workspace_id},
+            param_types={"w": pt.STRING},
+        ))
+    return int(rows[0][0]) if rows else None
+
+
 def main() -> int:
     before = STORE.get_credit_account(WORKSPACE_ID)
     if before is None:
@@ -55,7 +63,9 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    typed_before = _typed_total_credits(WORKSPACE_ID)
     print(f"before: total_credits_microdollars = {before.total_credits_microdollars}")
+    print(f"before: typed total_credits = {typed_before or 0}")
 
     granted = STORE.credit_workspace_typed_direct(
         workspace_id=WORKSPACE_ID,
@@ -69,21 +79,19 @@ def main() -> int:
             f"granted on a prior run.",
             file=sys.stderr,
         )
-        # Not an error; idempotent.
+        typed_after = _typed_total_credits(WORKSPACE_ID)
+        if typed_after != typed_before:
+            print(
+                f"WARN: no-op changed typed total from {typed_before} to {typed_after}",
+                file=sys.stderr,
+            )
+            return 3
         return 0
 
-    after = STORE.get_credit_account(WORKSPACE_ID)
-    if after is None:
-        print(
-            "ERROR: credit_workspace_typed_direct returned True but get_credit_account "
-            "returned None on re-read. Inconsistent state.",
-            file=sys.stderr,
-        )
-        return 2
-
-    delta = after.total_credits_microdollars - before.total_credits_microdollars
+    typed_after = _typed_total_credits(WORKSPACE_ID)
+    delta = (typed_after or 0) - (typed_before or 0)
     print(
-        f"after:  total_credits_microdollars = {after.total_credits_microdollars} "
+        f"after:  typed total_credits = {typed_after or 0} "
         f"(+{delta:,} microdollars = +${delta / MICRODOLLARS_PER_DOLLAR:.2f})"
     )
     if delta != AMOUNT_MICRODOLLARS:

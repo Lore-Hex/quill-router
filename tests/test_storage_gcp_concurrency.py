@@ -26,6 +26,15 @@ def _seed_credit(store, workspace_id: str, total_microdollars: int) -> None:
             total_credits_microdollars=total_microdollars,
         ),
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
+        "workspace_id": workspace_id,
+        "shard": 0,
+        "total_credits": total_microdollars,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def _credit_account(db, workspace_id: str) -> dict:
@@ -68,7 +77,7 @@ def test_concurrent_stripe_credit_is_idempotent_under_retries() -> None:
     assert results.count(False) == n - 1, results
 
     account = _credit_account(db, workspace_id)
-    assert account["total_credits_microdollars"] == 5_000_000
+    assert account["total_credits_microdollars"] == 0
     assert db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] == 5_000_000
     assert ("stripe_event", "evt_dup") in db.rows
     assert db.aborts >= n - 1, f"expected >= {n - 1} aborts, got {db.aborts}"

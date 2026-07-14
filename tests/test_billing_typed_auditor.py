@@ -1,8 +1,7 @@
 """The typed-side invariant auditor: every typed `reserved` must equal the sum of
 that scope's OPEN typed-origin holds (tr_reservation, settled=false) and be >= 0.
-This is the leak detector the narrowed compare() (JSON-vs-typed) can no longer
-provide — it catches the exact incident class (a reserved that no longer matches
-its outstanding holds).
+This is the standing leak detector for the surviving typed book: it catches the
+exact incident class (a reserved that no longer matches its outstanding holds).
 """
 
 from __future__ import annotations

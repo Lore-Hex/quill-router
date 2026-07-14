@@ -189,7 +189,7 @@ def test_reshard_refuses_any_undrained_hold(
     assert store.get_credit_account("ws-reshard").shard_count == 1
 
 
-def test_reshard_refuses_incomplete_rows_and_deposited_credit_drift() -> None:
+def test_reshard_refuses_incomplete_rows_and_deposited_credit_mismatch() -> None:
     store, database = _seed(
         shard_credits=[50, 50],
         shard_usage=[10, 10],

@@ -329,7 +329,9 @@ JSON-settle leaks holds; JSON-reserve + typed-settle invents refunds). An
 in-flight request that reserved under JSON must settle under JSON — gate on the
 reservation's own origin (a flag/marker on the reservation), not the cohort's
 current state, so a request straddling the flip settles where it reserved. Keep a
-lazy exact JSON mirror for ≥1 release so rollback is a flag flip, not a repair.
+lazy exact JSON mirror for >=1 release so rollback is a flag flip, not a repair.
+That historical rollback path is retired after C1/C2a; typed counters are now
+the surviving money book.
 Ramp by workspace cohort; credit first, then key cap. The ABORTED-retry should
 now essentially never fire.
 
