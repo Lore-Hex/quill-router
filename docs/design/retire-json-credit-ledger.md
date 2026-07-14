@@ -154,9 +154,33 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   3 open legacy reservations; display-only impact, fold into Phase C or a small cleanup)
 - [x] C2a deletions (2026-07-14): generic mirror hook, warm-keep, rollback helper,
   backfill, and drift compare removed together. New workspace/key typed-row
-  seeds now happen only on entity create.
-- [ ] C2b: slim `CreditAccount` money fields and the memory twin after one more
-  reviewable increment
+  seeds now happen only on entity create. Adversarial review caught + fixed a
+  P1 spend-cap bypass (an `update_key` limit edit did not re-sync `tr_key_limit`
+  config, so the typed authorize cap stayed stale); the credit warm-keep and the
+  mirror were retired in the same commit so neither could clobber the other.
+- [x] C3 runbook (2026-07-14): single-book credit-ledger operations section added
+  (inspect balance, `audit_typed_invariants`, `repair_typed_reserved`, grant),
+  and the authorize-deadlock-burst section corrected for the 20s retry budget,
+  `Aborted`→503 mapping, and now-operable shard spreading.
+- [ ] C2b (cosmetic cleanup, gated on a design call): delete `CreditAccount`'s
+  now-stale money fields (`total_credits_microdollars` / `total_usage_microdollars`
+  / `reserved_microdollars`; keep `shard_count` + auto-refill/Stripe metadata) and
+  update the InMemory twin. NOTE this is an interface refactor, not a dead-field
+  drop: those fields are still the CARRIER the typed book is presented through
+  (`typed_balance.py` populates a `CreditAccount` from the typed rows; `auto_refill`
+  reads `available = total − usage − reserved` off it to decide card charges;
+  `serialization`/`mcp` display them). Deleting them requires choosing a new
+  money-read carrier (e.g. everyone reads the `live_credit_summary` dict) AND
+  reworking the InMemory single-book store — money-adjacent, zero prod-correctness
+  benefit (values are already typed-sourced and correct). The ledger is FULLY
+  RETIRED on the production path after C1+C2a; C2b is pure model hygiene.
+
+## Status: the JSON credit ledger is retired (C1 + C2a + C3 shipped 2026-07-14)
+Production money is single-book (typed Spanner). The dual-book machinery — mirror,
+backsync, backfill, drift-compare, warm-keep, rollback-to-legacy — is deleted, and
+the surviving tripwires (`audit_typed_invariants` daily, `repair_typed_reserved`
+on demand) are typed-internal. Only C2b (the `CreditAccount` field/twin cleanup
+above) remains, and it is optional hygiene.
 
 ### Rollback
 Rollback-to-legacy is retired. Emergency rollback is the previous deploy revision.
