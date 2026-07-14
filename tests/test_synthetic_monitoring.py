@@ -1823,7 +1823,8 @@ def test_rotation_candidates_cover_credits_endpoints() -> None:
     assert "novita" in pool
     assert "google/gemma-4-26b-a4b-it" not in pool.get("gmi", [])
     assert "google/gemma-4-31b-it" not in pool.get("gmi", [])
-    assert "moonshotai/kimi-k2.7-code" not in pool.get("kimi", [])
+    assert "moonshotai/kimi-k2.7-code" in pool.get("kimi", [])
+    assert "moonshotai/kimi-k2.7-code-highspeed" in pool.get("kimi", [])
     assert "minimax/minimax-m2.1" not in pool.get("minimax", [])
     assert "minimax/minimax-m2.5" not in pool.get("minimax", [])
     assert "deepseek/deepseek-v3.2" not in pool.get("parasail", [])

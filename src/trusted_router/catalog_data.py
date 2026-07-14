@@ -1267,14 +1267,6 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 )
 
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
-    "kimi": frozenset(
-        {
-            # 2026-06-24: first-party Moonshot returns
-            # "Not found the model ... or Permission denied" for K2.7 Code on
-            # the operator key. Keep Novita/BYOK K2.7 routes visible.
-            "moonshotai/kimi-k2.7-code",
-        }
-    ),
     "gmi": frozenset(
         {
             "anthropic/claude-opus-4.7",

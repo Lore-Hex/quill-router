@@ -312,12 +312,15 @@ def fetch_html(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
         return response.text
 
 
-def fetch_json(url: str) -> Any:
+def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
     """Fetch a provider JSON API (e.g., Together's /v1/models). The
     only providers that bypass the parser tier are those with a real
     JSON pricing API; this helper lives here so its network IO is also
-    accounted for in the human-only tier."""
+    accounted for in the human-only tier. ``extra_headers`` supports
+    provider-specific authentication."""
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     with _provider_client() as client:
         response = _get_with_retries(client, url, headers)
         response.raise_for_status()

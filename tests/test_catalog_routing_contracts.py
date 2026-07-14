@@ -71,10 +71,17 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "kimi" in PROVIDERS
     assert "moonshotai/kimi-k2.6" in MODELS
     assert "moonshotai/kimi-k2.7-code" in MODELS
+    assert "moonshotai/kimi-k2.7-code-highspeed" in MODELS
     assert "moonshotai/kimi-k2.6@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.6@kimi/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" not in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k2.7-code-highspeed@kimi/byok" in MODEL_ENDPOINTS
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id
+        == "kimi-k2.7-code-highspeed"
+    )
     assert "moonshotai/kimi-k2.7-code@novita/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code@novita/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.6" in [model.id for model in auto_candidate_models()]
@@ -314,7 +321,6 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
             "gmi",
             ("google/gemma-4-26b-a4b-it", "google/gemma-4-31b-it"),
         ),
-        ("kimi", ("moonshotai/kimi-k2.7-code",)),
         (
             "parasail",
             (
