@@ -293,11 +293,18 @@ def _mcp_tools() -> list[dict[str, Any]]:
                     "optional": True,
                 },
             },
+            read_only=False,
         ),
     ]
 
 
-def _tool_schema(name: str, description: str, properties: dict[str, Any]) -> dict[str, Any]:
+def _tool_schema(
+    name: str,
+    description: str,
+    properties: dict[str, Any],
+    *,
+    read_only: bool = True,
+) -> dict[str, Any]:
     clean_properties = {
         key: {inner_key: inner_value for inner_key, inner_value in value.items() if inner_key != "optional"}
         for key, value in properties.items()
@@ -312,6 +319,11 @@ def _tool_schema(name: str, description: str, properties: dict[str, Any]) -> dic
             "required": [
                 key for key, value in properties.items() if not value.get("optional", False)
             ],
+        },
+        "annotations": {
+            "readOnlyHint": read_only,
+            "openWorldHint": False,
+            "destructiveHint": False,
         },
     }
 

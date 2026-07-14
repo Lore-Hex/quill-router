@@ -48,6 +48,11 @@ def test_mcp_initialize_and_tool_list(client: TestClient) -> None:
     tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
     assert {"models-list", "chat-send", "credits-get", "docs-search"} <= set(tools)
     assert tools["chat-send"]["inputSchema"]["required"] == ["model", "message"]
+    for name, tool in tools.items():
+        annotations = tool["annotations"]
+        assert annotations["readOnlyHint"] is (name != "chat-send")
+        assert annotations["openWorldHint"] is False
+        assert annotations["destructiveHint"] is False
 
 
 def test_mcp_models_list_includes_sonnet_5_and_subagent(client: TestClient) -> None:

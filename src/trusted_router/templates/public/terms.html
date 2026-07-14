@@ -1,0 +1,62 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Effective</strong><span>July 13, 2026</span></div>
+  <div><strong>Provider</strong><span>{{ entity.name }}</span></div>
+  <div><strong>Service</strong><span>Usage based</span></div>
+  <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
+</section>
+
+<section class="model-catalog legal-copy">
+  <div class="model-catalog-head"><div><span class="eyebrow">Agreement</span><h2>Terms governing TrustedRouter</h2></div></div>
+  <p>These Terms of Service are a binding agreement between you and {{ entity.name }}, a {{ entity.type }}. By accessing or using TrustedRouter websites, dashboards, APIs, SDKs, plugins, or related services, you agree to these terms. If you use the service for an organization, you represent that you can bind that organization.</p>
+
+  <h2>Eligibility and accounts</h2>
+  <p>You must be legally able to enter this agreement and provide accurate account information. You are responsible for activity under your account, workspace, API keys, wallet, and provider credentials. Keep credentials confidential and promptly revoke or report compromised credentials.</p>
+
+  <h2>The service</h2>
+  <p>TrustedRouter provides routing, billing, compatibility, model-selection, and related infrastructure for third-party and TrustedRouter-composed AI models. Features, routes, providers, prices, context limits, and availability may change. Unless a separate signed agreement says otherwise, no service-level agreement or guaranteed model availability applies.</p>
+
+  <h2>Charges, credits, and taxes</h2>
+  <p>Paid usage is charged against prepaid credits or another displayed payment method. Usage and prices are measured in integer microdollars even when the interface displays smaller dollar amounts. You authorize applicable charges, taxes, and automatic refills that you explicitly enable. Except where law requires otherwise, purchased credits and completed usage are non-refundable. We may correct billing errors and suspend service for unpaid or disputed amounts.</p>
+
+  <h2>Your content and credentials</h2>
+  <p>You retain rights in content you submit. You grant us and selected subprocessors the limited rights needed to transmit, process, secure, and return that content according to your request. You represent that you have the rights and permissions needed to submit it. BYOK credentials remain yours and are used only to provide the configured service.</p>
+
+  <h2>Privacy and provider terms</h2>
+  <p>Our <a href="/privacy">Privacy Policy</a> describes our data practices. Downstream model providers process content under their own terms and the route configuration you select. Privacy classes, including ZDR and end-to-end encrypted routes, apply only as described in current provider metadata and any signed agreement. You are responsible for choosing routes appropriate for your legal, regulatory, and contractual requirements.</p>
+
+  <h2>Acceptable use</h2>
+  <p>You may not use the service to violate law; infringe rights; distribute malware; compromise accounts or systems without authorization; evade provider safety, sanctions, export, or access controls; interfere with service operation; conduct abusive automated traffic; misrepresent output as human or authoritative where disclosure is required; or resell access in violation of an applicable provider agreement. You must follow applicable model-provider policies.</p>
+
+  <h2>High-risk use</h2>
+  <p>AI output may be inaccurate, incomplete, or unsuitable. You are responsible for human review and appropriate safeguards, especially for legal, medical, financial, employment, safety-critical, or other high-impact decisions. TrustedRouter does not provide legal, medical, or financial advice.</p>
+
+  <h2>Open source and feedback</h2>
+  <p>Open-source components are governed by their repository licenses. If you provide feedback, you permit us to use it without restriction or compensation.</p>
+
+  <h2>Suspension and termination</h2>
+  <p>You may stop using the service at any time. We may limit, suspend, or terminate access for security risk, legal requirements, nonpayment, abuse, material breach, or conduct that threatens the service or others. Provisions that by their nature should survive termination will survive.</p>
+
+  <h2>Disclaimers</h2>
+  <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SERVICE AND ALL MODEL OUTPUTS ARE PROVIDED "AS IS" AND "AS AVAILABLE." WE DISCLAIM IMPLIED WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, AND WARRANTIES ARISING FROM COURSE OF DEALING. WE DO NOT WARRANT THAT THE SERVICE OR ANY PROVIDER WILL BE UNINTERRUPTED, ERROR-FREE, SECURE, OR ACCURATE.</p>
+
+  <h2>Limitation of liability</h2>
+  <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, NEITHER PARTY WILL BE LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR LOST PROFITS, REVENUE, DATA, OR GOODWILL. OUR TOTAL LIABILITY ARISING FROM THE SERVICE WILL NOT EXCEED THE GREATER OF $100 OR THE AMOUNT YOU PAID US FOR THE SERVICE DURING THE 12 MONTHS BEFORE THE EVENT GIVING RISE TO LIABILITY. THESE LIMITS DO NOT APPLY WHERE LAW PROHIBITS THEM.</p>
+
+  <h2>Indemnity</h2>
+  <p>You will defend and indemnify {{ entity.name }} and its personnel against third-party claims arising from your content, your unlawful or prohibited use, or your breach of these terms, to the extent permitted by law.</p>
+
+  <h2>Changes</h2>
+  <p>We may update these terms as the service changes. We will post updated terms here and change the effective date. Continued use after updated terms take effect constitutes acceptance, except where law requires another form of consent.</p>
+
+  <h2>Governing law</h2>
+  <p>Delaware law governs these terms without regard to conflict-of-law rules. The state and federal courts located in Delaware have exclusive jurisdiction, and each party consents to those courts, except where applicable law requires otherwise.</p>
+
+  <h2>General</h2>
+  <p>These terms, the Privacy Policy, and any signed order or addendum form the agreement for the service. A signed agreement controls if it expressly conflicts with these online terms. You may not assign this agreement without our consent; we may assign it in connection with a reorganization, financing, or sale. If a provision is unenforceable, the remainder continues. Failure to enforce a provision is not a waiver.</p>
+
+  <h2>Contact</h2>
+  <p>{{ entity.name }}<br>{{ entity.address }}<br>{{ entity.phone }}<br><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></p>
+</section>
+{% endblock %}

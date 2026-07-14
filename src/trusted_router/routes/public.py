@@ -58,12 +58,15 @@ from trusted_router.dashboard import (
     public_model_section_html,
     public_models_html,
     public_page_html,
+    public_privacy_html,
     public_provider_detail_html,
     public_provider_performance_html,
     public_providers_html,
     public_rankings_html,
     public_soc2_readiness_html,
     public_subprocessors_html,
+    public_support_html,
+    public_terms_html,
     robots_txt,
     sitemap_comparisons_xml,
     sitemap_core_xml,
@@ -470,6 +473,18 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/legal")
     async def legal() -> str:
         return public_legal_html(settings)
+
+    @public_html_route("/privacy")
+    async def privacy() -> str:
+        return public_privacy_html(settings)
+
+    @public_html_route("/terms")
+    async def terms() -> str:
+        return public_terms_html(settings)
+
+    @public_html_route("/support")
+    async def support() -> str:
+        return public_support_html(settings)
 
     @public_html_route("/legal/dpa")
     async def legal_dpa() -> str:

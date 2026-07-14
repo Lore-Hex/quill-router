@@ -1,0 +1,36 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="public-proof-strip">
+  <div><strong>Product and plugin</strong><span><a href="https://github.com/Lore-Hex/LLM-advisor/issues">Open an issue</a></span></div>
+  <div><strong>Security</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
+  <div><strong>Status</strong><span><a href="https://status.trustedrouter.com">Live status</a></span></div>
+  <div><strong>Docs</strong><span><a href="/docs">Developer docs</a></span></div>
+</section>
+
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Product support</span>
+    <h3>Account, billing, routing, and API help</h3>
+    <p>Email <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>. Include the request or generation ID, approximate time, route, and region. Never send an API key, BYOK credential, prompt, output, payment number, or other secret.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Open source and plugins</span>
+    <h3>Reproducible bug reports</h3>
+    <p>Use the relevant public GitHub repository for source-code and plugin issues. Remove customer data and credentials before posting.</p>
+    <a class="btn" href="https://github.com/Lore-Hex/LLM-advisor/issues">LLM Advisor issues</a>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Security</span>
+    <h3>Report vulnerabilities privately</h3>
+    <p>Send security reports privately to <a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a>. Do not publish an unpatched vulnerability or include live credentials in a public issue.</p>
+    <a class="btn" href="/security">Security details</a>
+  </div>
+</section>
+
+<section class="limitation-band">
+  <span class="pill">Response details</span>
+  <div>
+    <p>Support is provided on a commercially reasonable basis unless a signed agreement states a specific response time or service level. Current incidents and historical availability are published at <a href="https://status.trustedrouter.com">status.trustedrouter.com</a>.</p>
+  </div>
+</section>
+{% endblock %}

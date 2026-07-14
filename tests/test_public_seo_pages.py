@@ -368,6 +368,40 @@ def test_public_legal_packet_exposes_procurement_checkpoint(client: TestClient) 
     assert "not_obtained" in page.text
     assert "trust.trustedrouter.com" in page.text
 
+
+def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient) -> None:
+    privacy = client.get("/privacy")
+    assert privacy.status_code == 200
+    assert "Privacy Policy | TrustedRouter" in privacy.text
+    assert "Lore Hex Corp" in privacy.text
+    assert "does not store prompt or output content by default" in privacy.text
+    assert "We do not use customer prompts or outputs to train our own models" in privacy.text
+    assert "/legal/subprocessors" in privacy.text
+    assert "security@trustedrouter.com" in privacy.text
+
+    terms = client.get("/terms")
+    assert terms.status_code == 200
+    assert "Terms of Service | TrustedRouter" in terms.text
+    assert "Charges, credits, and taxes" in terms.text
+    assert "Acceptable use" in terms.text
+    assert "Delaware law" in terms.text
+    assert "AS IS" in terms.text
+
+    support = client.get("/support")
+    assert support.status_code == 200
+    assert "TrustedRouter support" in support.text
+    assert "github.com/Lore-Hex/LLM-advisor/issues" in support.text
+    assert "Never send an API key" in support.text
+    assert "status.trustedrouter.com" in support.text
+
+
+def test_privacy_terms_and_support_are_in_core_sitemap(client: TestClient) -> None:
+    sitemap = client.get("/sitemap-core.xml")
+    assert sitemap.status_code == 200
+    assert "https://trustedrouter.com/privacy" in sitemap.text
+    assert "https://trustedrouter.com/terms" in sitemap.text
+    assert "https://trustedrouter.com/support" in sitemap.text
+
     packet = client.get("/legal/procurement.json")
     assert packet.status_code == 200
     assert packet.headers["content-type"].startswith("application/json")
