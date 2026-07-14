@@ -28,12 +28,10 @@ def test_create_workspace_seeds_tr_credit_balance_row() -> None:
         trial_credit_microdollars=7_000_000,
     )
 
-    account = store.get_credit_account(workspace.id)
     row = _typed_credit(db, workspace.id)
-    assert account is not None
     assert row["workspace_id"] == workspace.id
     assert row["shard"] == 0
-    assert row["total_credits"] == account.total_credits_microdollars == 7_000_000
+    assert row["total_credits"] == 7_000_000
     assert row["total_usage"] == 0
     assert row["reserved"] == 0
 
@@ -74,7 +72,7 @@ def test_metadata_writes_never_reseed_or_clobber_typed_topups() -> None:
 
     assert store.credit_workspace_once(workspace.id, 50_000_000, "evt-topup")
     assert _typed_credit(db, workspace.id)["total_credits"] == 150_000_000
-    assert _json_credit(db, workspace.id)["total_credits_microdollars"] == 100_000_000
+    assert "total_credits_microdollars" not in _json_credit(db, workspace.id)
     typed_version = db.typed_versions[(CREDIT_BALANCE_TABLE, (workspace.id, 0))]
 
     assert store.record_auto_refill_outcome(workspace.id, status="succeeded") is not None

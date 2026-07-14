@@ -33,9 +33,7 @@ def _floors() -> dict:
 
 
 def _seed_credit(store, ws: str, total: int) -> None:
-    store._write_entity(
-        "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=total)
-    )
+    store._write_entity("credit", ws, CreditAccount(workspace_id=ws))
     store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
         "workspace_id": ws,
         "shard": 0,
@@ -178,8 +176,12 @@ def test_dml_after_mutation_is_rejected() -> None:
     pt = store._param_types
 
     def mix(transaction) -> None:
-        store._write_entity_tx(transaction, "credit", ws, CreditAccount(
-            workspace_id=ws, total_credits_microdollars=1_000_000))  # mutation
+        store._write_entity_tx(
+            transaction,
+            "credit",
+            ws,
+            CreditAccount(workspace_id=ws),
+        )  # mutation
         reserve_credit(transaction, pt, ws, 100_000)  # DML -> must raise
 
     with pytest.raises(RuntimeError, match="DML.*mutation"):

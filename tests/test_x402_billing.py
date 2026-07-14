@@ -10,7 +10,13 @@ from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
+
+
+def _credit_summary(workspace_id: str) -> dict[str, int]:
+    summary = live_credit_summary(workspace_id)
+    assert summary is not None
+    return summary
 
 
 def _x402_client(**settings: Any) -> TestClient:
@@ -101,9 +107,7 @@ def test_x402_config_refuses_mock_or_missing_stripe_outside_local_test() -> None
 def test_x402_enabled_without_stripe_secret_does_not_mock_credit() -> None:
     with _x402_client(stripe_secret_key=None) as client:
         headers, workspace_id = _api_headers(client)
-        before = STORE.get_credit_account(workspace_id)
-        assert before is not None
-        before_total = before.total_credits_microdollars
+        before_total = _credit_summary(workspace_id)["total_credits"]
         fund = client.post(
             "/v1/billing/x402/fund",
             headers=headers,
@@ -114,12 +118,10 @@ def test_x402_enabled_without_stripe_secret_does_not_mock_credit() -> None:
             headers=headers,
             json={"payment_intent_id": f"pi_x402_mock_{workspace_id}_attacker"},
         )
-        after = STORE.get_credit_account(workspace_id)
 
     assert fund.status_code == 503
     assert settle.status_code == 503
-    assert after is not None
-    assert after.total_credits_microdollars == before_total
+    assert _credit_summary(workspace_id)["total_credits"] == before_total
 
 
 def test_x402_fund_creates_stripe_crypto_payment_intent_and_returns_payment_required(
@@ -260,9 +262,7 @@ def test_x402_fund_enforces_amount_cap_and_rate_limit(monkeypatch) -> None:
 def test_x402_settle_credits_succeeded_payment_once(monkeypatch) -> None:
     with _x402_client() as client:
         headers, workspace_id = _api_headers(client)
-        before = STORE.get_credit_account(workspace_id)
-        assert before is not None
-        before_total = before.total_credits_microdollars
+        before_total = _credit_summary(workspace_id)["total_credits"]
 
         def retrieve(_payment_intent_id: str, **_kwargs: Any) -> dict[str, Any]:
             return _payment_intent(workspace_id=workspace_id)
@@ -281,14 +281,12 @@ def test_x402_settle_credits_succeeded_payment_once(monkeypatch) -> None:
             headers=headers,
             json={"payment_intent_id": "pi_x402_good"},
         )
-        account = STORE.get_credit_account(workspace_id)
 
     assert first.status_code == 200, first.text
     assert first.json()["data"]["credited"] is True
     assert second.status_code == 200, second.text
     assert second.json()["data"]["credited"] is False
-    assert account is not None
-    assert account.total_credits_microdollars == before_total + 10_000_000
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 10_000_000
 
 
 def test_x402_settle_pending_wrong_workspace_and_invalid_payment_intents(monkeypatch) -> None:
@@ -379,9 +377,7 @@ def test_x402_settle_rejects_malformed_payment_intent_before_stripe(monkeypatch)
 def test_x402_settle_caps_credit_to_requested_amount(monkeypatch) -> None:
     with _x402_client() as client:
         headers, workspace_id = _api_headers(client)
-        before = STORE.get_credit_account(workspace_id)
-        assert before is not None
-        before_total = before.total_credits_microdollars
+        before_total = _credit_summary(workspace_id)["total_credits"]
 
         def retrieve(_payment_intent_id: str, **_kwargs: Any) -> dict[str, Any]:
             return _payment_intent(
@@ -400,20 +396,16 @@ def test_x402_settle_caps_credit_to_requested_amount(monkeypatch) -> None:
             headers=headers,
             json={"payment_intent_id": "pi_x402_good"},
         )
-        account = STORE.get_credit_account(workspace_id)
 
     assert response.status_code == 200
     assert response.json()["data"]["amount_microdollars"] == 5_000_000
-    assert account is not None
-    assert account.total_credits_microdollars == before_total + 5_000_000
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 5_000_000
 
 
 def test_x402_webhook_and_settle_are_idempotent_in_both_orders(monkeypatch) -> None:
     with _x402_client() as client:
         headers, workspace_id = _api_headers(client)
-        before = STORE.get_credit_account(workspace_id)
-        assert before is not None
-        before_total = before.total_credits_microdollars
+        before_total = _credit_summary(workspace_id)["total_credits"]
         payment = _payment_intent(workspace_id=workspace_id)
 
         first_webhook = client.post(
@@ -445,7 +437,6 @@ def test_x402_webhook_and_settle_are_idempotent_in_both_orders(monkeypatch) -> N
             headers=headers,
             json={"payment_intent_id": "pi_x402_good"},
         )
-        account = STORE.get_credit_account(workspace_id)
 
     assert first_webhook.status_code == 200
     assert first_webhook.json()["data"]["credited"] is True
@@ -453,16 +444,13 @@ def test_x402_webhook_and_settle_are_idempotent_in_both_orders(monkeypatch) -> N
     assert retry_webhook.json()["data"]["credited"] is False
     assert settle.status_code == 200
     assert settle.json()["data"]["credited"] is False
-    assert account is not None
-    assert account.total_credits_microdollars == before_total + 10_000_000
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 10_000_000
 
 
 def test_x402_concurrent_settle_credits_once(monkeypatch) -> None:
     with _x402_client(x402_settle_rate_limit_per_window=100) as client:
         headers, workspace_id = _api_headers(client)
-        before = STORE.get_credit_account(workspace_id)
-        assert before is not None
-        before_total = before.total_credits_microdollars
+        before_total = _credit_summary(workspace_id)["total_credits"]
 
         def retrieve(_payment_intent_id: str, **_kwargs: Any) -> dict[str, Any]:
             return _payment_intent(workspace_id=workspace_id)
@@ -483,11 +471,9 @@ def test_x402_concurrent_settle_credits_once(monkeypatch) -> None:
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(lambda _: settle_once(), range(4)))
-        account = STORE.get_credit_account(workspace_id)
 
     assert results.count(True) == 1
-    assert account is not None
-    assert account.total_credits_microdollars == before_total + 10_000_000
+    assert _credit_summary(workspace_id)["total_credits"] == before_total + 10_000_000
 
 
 def test_x402_refund_webhook_is_operator_visible_not_silent(client: TestClient) -> None:

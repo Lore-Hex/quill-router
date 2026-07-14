@@ -6,6 +6,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.openrouter_coverage import ROUTE_COVERAGE
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 TEST_BYOK_KMS_KEY_NAME = (
     "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
@@ -100,7 +101,7 @@ def test_gateway_settle_repeat_cannot_charge_or_log_twice(
         },
     )
     assert first.status_code == 200, first.text
-    usage_after_first = STORE.credits[workspace_id].total_usage_microdollars
+    usage_after_first = STORE.credit_money[workspace_id].total_usage_microdollars
     generation_count_after_first = len(STORE.generation_store.generations)
 
     repeat = client.post(
@@ -115,7 +116,7 @@ def test_gateway_settle_repeat_cannot_charge_or_log_twice(
     )
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
-    assert STORE.credits[workspace_id].total_usage_microdollars == usage_after_first
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == usage_after_first
     assert len(STORE.generation_store.generations) == generation_count_after_first
     assert all(gen.request_id != "gw-double-charge-attempt" for gen in STORE.generation_store.generations.values())
 
@@ -149,7 +150,7 @@ def test_gateway_refund_repeat_cannot_restore_credit_twice(
     assert repeat.status_code == 200, repeat.text
     assert repeat.json()["data"]["already_settled"] is True
     assert _available_microdollars(workspace_id) == starting_available
-    assert STORE.credits[workspace_id].reserved_microdollars == 0
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 0
 
 
 def test_production_prompt_routes_are_absent_and_gateway_requires_internal_token() -> None:
@@ -219,12 +220,9 @@ def _production_app():
 
 
 def _available_microdollars(workspace_id: str) -> int:
-    account = STORE.credits[workspace_id]
-    return (
-        account.total_credits_microdollars
-        - account.total_usage_microdollars
-        - account.reserved_microdollars
-    )
+    summary = live_credit_summary(workspace_id)
+    assert summary is not None
+    return summary["available"]
 
 
 def _per_token_decimal(microdollars_per_million: int) -> str:

@@ -62,15 +62,12 @@ def main() -> int:
         print(f"ERROR: credit account for workspace {workspace.id} not found")
         return 1
     typed_before = _typed_total_credits(workspace.id)
-    print(f"  JSON deposited before:  ${before.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.2f}")
     print(f"  typed deposited before: ${(typed_before or 0) / MICRODOLLARS_PER_DOLLAR:.2f}")
 
     granted = STORE.credit_workspace_once(workspace.id, AMOUNT_MICRODOLLARS, EVENT_ID)
     print("  credit applied" if granted else f"  no-op: event {EVENT_ID!r} already applied")
 
-    after = STORE.get_credit_account(workspace.id)
     typed_after = _typed_total_credits(workspace.id)
-    print(f"  JSON deposited after:  ${after.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.2f}")
     print(f"  typed deposited after: ${(typed_after or 0) / MICRODOLLARS_PER_DOLLAR:.2f}")
     expected = (typed_before or 0) + (AMOUNT_MICRODOLLARS if granted else 0)
     if typed_after != expected:

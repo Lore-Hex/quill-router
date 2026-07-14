@@ -35,13 +35,7 @@ def _seed(
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=sum(totals),
-            total_usage_microdollars=sum(usage),
-            reserved_microdollars=sum(reserved),
-            shard_count=len(totals),
-        ),
+        CreditAccount(workspace_id=workspace_id, shard_count=len(totals)),
     )
     _set_credit_rows(database, totals, usage=usage, reserved=reserved, workspace_id=workspace_id)
     _raw, key = store.api_keys.create(
@@ -346,13 +340,7 @@ def test_unshard_behind_refresh_dedupe_returns_402_not_500(
     store._write_entity(
         "credit",
         WORKSPACE_ID,
-        CreditAccount(
-            workspace_id=WORKSPACE_ID,
-            total_credits_microdollars=40,
-            total_usage_microdollars=0,
-            reserved_microdollars=0,
-            shard_count=1,
-        ),
+        CreditAccount(workspace_id=WORKSPACE_ID, shard_count=1),
     )
 
     outcome, authorization = _typed_authorize(store, key, estimate=60)

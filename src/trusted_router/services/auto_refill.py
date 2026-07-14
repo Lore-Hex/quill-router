@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from trusted_router.config import Settings
 from trusted_router.storage import STORE
 from trusted_router.storage_models import CreditAccount
-from trusted_router.typed_balance import typed_aware_credit_account
+from trusted_router.typed_balance import live_credit_summary
 
 log = logging.getLogger(__name__)
 
@@ -61,18 +61,21 @@ def maybe_charge_after_settle(
     # Typed-aware: for a typed workspace the authoritative usage/reserved live in
     # the typed table; reading stale JSON here would overstate available and the
     # threshold would never trip → the card never charges (underbill).
-    account = typed_aware_credit_account(STORE, workspace_id, settings=settings)
+    account = STORE.get_credit_account(workspace_id)
     if account is None:
         return AutoRefillOutcome(fired=False, reason="no_account")
     if not account.auto_refill_enabled:
         return AutoRefillOutcome(fired=False, reason="disabled")
     if account.auto_refill_amount_microdollars <= 0:
         return AutoRefillOutcome(fired=False, reason="disabled")
-    available = (
-        account.total_credits_microdollars
-        - account.total_usage_microdollars
-        - account.reserved_microdollars
-    )
+    summary = live_credit_summary(workspace_id, store=STORE)
+    if summary is None:
+        return AutoRefillOutcome(fired=False, reason="no_account")
+    # Unclamped available (may be negative for an overdrawn balance) so the
+    # threshold comparison is byte-identical to the pre-C2b inline computation.
+    # summary["available"] is floored at 0 for display and must NOT be used here:
+    # at threshold 0 it would suppress a refill the overdraw was meant to cover.
+    available = summary["total_credits"] - summary["total_usage"] - summary["reserved"]
     # The product promise is "when balance drops below the threshold".
     # Equal-to-threshold is still not below, so do not charge yet.
     if available >= account.auto_refill_threshold_microdollars:

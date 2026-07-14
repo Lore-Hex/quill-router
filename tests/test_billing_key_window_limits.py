@@ -307,7 +307,7 @@ def test_window_check_passes_through_idempotent_replay() -> None:
 def test_flip_seed_carries_window_limit_config() -> None:
     """codex #93 round 2: reconcile_for_flip's seed must include the window
     config columns."""
-    from trusted_router.storage import CreditAccount, Workspace
+    from trusted_router.storage import Workspace
     from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
     from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
 
@@ -318,7 +318,7 @@ def test_flip_seed_carries_window_limit_config() -> None:
     )
     store._write_entity(
         "credit", ws,
-        CreditAccount(workspace_id=ws, total_credits_microdollars=1_000_000),
+        {"workspace_id": ws, "total_credits_microdollars": 1_000_000},
     )
     _raw, key = store.api_keys.create(
         workspace_id=ws, name="k", creator_user_id=None,

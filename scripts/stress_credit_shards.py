@@ -115,7 +115,6 @@ def _seed(
         workspace_id,
         CreditAccount(
             workspace_id=workspace_id,
-            total_credits_microdollars=total_credits,
             shard_count=shard_count,
         ),
     )

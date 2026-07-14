@@ -44,7 +44,7 @@ def _seed_credit(store: Any, workspace_id: str, total: int = TOTAL_CREDIT) -> No
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(workspace_id=workspace_id, total_credits_microdollars=total),
+        CreditAccount(workspace_id=workspace_id),
     )
     store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
         "workspace_id": workspace_id,
@@ -112,9 +112,9 @@ def _legacy_authorization(
     estimate: int = ESTIMATE,
 ) -> GatewayAuthorization:
     reservation_id = f"legacy-res-{workspace_id}"
-    credit = store.get_credit_account(workspace_id)
+    credit = store._read_entity("credit", workspace_id, dict)
     if credit is not None:
-        credit.reserved_microdollars += estimate
+        credit["reserved_microdollars"] = int(credit.get("reserved_microdollars", 0)) + estimate
         store._write_entity("credit", workspace_id, credit)
     store.reserve_key_limit(key_hash, estimate, usage_type="Credits")
     return store.create_gateway_authorization(
@@ -393,9 +393,9 @@ def test_transient_pre_read_parks_typed_and_errors_legacy(
 
     monkeypatch.setattr(store, "get_gateway_authorization", original_get_gateway_authorization)
     assert store.get_gateway_authorization(legacy_auth.id).settled is False
-    legacy_credit = store.get_credit_account(legacy_ws)
-    assert legacy_credit.total_usage_microdollars == 0
-    assert legacy_credit.reserved_microdollars == ESTIMATE
+    legacy_credit = store._read_entity("credit", legacy_ws, dict)
+    assert legacy_credit.get("total_usage_microdollars", 0) == 0
+    assert legacy_credit.get("reserved_microdollars", 0) == ESTIMATE
 
 
 def test_transient_outage_errors_legacy_row(
@@ -415,9 +415,9 @@ def test_transient_outage_errors_legacy_row(
 
     assert apply_frozen_settle(_row(auth, origin="legacy")) == ApplyOutcome.ERROR
     assert store.get_gateway_authorization(auth.id).settled is False
-    credit = store.get_credit_account(ws)
-    assert credit.total_usage_microdollars == 0
-    assert credit.reserved_microdollars == ESTIMATE
+    credit = store._read_entity("credit", ws, dict)
+    assert credit.get("total_usage_microdollars", 0) == 0
+    assert credit.get("reserved_microdollars", 0) == ESTIMATE
 
 
 def test_transient_disambiguation_read_parks_typed_row(

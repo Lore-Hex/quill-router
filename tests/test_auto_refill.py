@@ -20,6 +20,13 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.services.auto_refill import AutoRefillOutcome, maybe_charge_after_settle
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
+
+
+def _credit_summary(workspace_id: str) -> dict[str, int]:
+    summary = live_credit_summary(workspace_id)
+    assert summary is not None
+    return summary
 
 
 @pytest.fixture
@@ -223,9 +230,7 @@ def test_payment_intent_succeeded_webhook_credits_workspace(
                 }
             },
         }
-        before = STORE.get_credit_account(configured_workspace)
-        assert before is not None
-        before_credits = before.total_credits_microdollars
+        before_credits = _credit_summary(configured_workspace)["total_credits"]
         resp = client.post("/internal/stripe/webhook", json=event)
         next(client_iter)  # silence unused-iter warning.
     assert resp.status_code == 200
@@ -234,7 +239,7 @@ def test_payment_intent_succeeded_webhook_credits_workspace(
 
     after = STORE.get_credit_account(configured_workspace)
     assert after is not None
-    assert after.total_credits_microdollars == before_credits + 20_000_000
+    assert _credit_summary(configured_workspace)["total_credits"] == before_credits + 20_000_000
     assert after.last_auto_refill_status == "succeeded"
 
 
@@ -346,11 +351,7 @@ def test_auto_refill_exits_band_after_successful_credit(
 
     account = STORE.get_credit_account(configured_workspace)
     assert account is not None
-    available = (
-        account.total_credits_microdollars
-        - account.total_usage_microdollars
-        - account.reserved_microdollars
-    )
+    available = _credit_summary(configured_workspace)["available"]
     # $1 + $20 refill = $21, well above $5 threshold.
     assert available > account.auto_refill_threshold_microdollars
 

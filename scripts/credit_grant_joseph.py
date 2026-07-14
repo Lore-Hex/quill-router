@@ -66,17 +66,11 @@ def main() -> int:
     workspace = workspaces[0]
     print(f"granting ${AMOUNT_DOLLARS} ({AMOUNT_MICRODOLLARS} μ$) to workspace {workspace.id}")
 
-    def _avail(acct) -> float:
-        # Available credit = total deposited - total burned - currently reserved
-        net = acct.total_credits_microdollars - acct.total_usage_microdollars - acct.reserved_microdollars
-        return net / MICRODOLLARS_PER_DOLLAR
-
     before = STORE.get_credit_account(workspace.id)
     if before is None:
         print(f"ERROR: credit account for workspace {workspace.id} not found")
         return 1
     typed_before = _typed_total_credits(workspace.id)
-    print(f"  available before: ${_avail(before):.4f}  (deposited=${before.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.4f}, used=${before.total_usage_microdollars / MICRODOLLARS_PER_DOLLAR:.4f})")
     print(f"  typed deposited before: ${(typed_before or 0) / MICRODOLLARS_PER_DOLLAR:.4f}")
 
     granted = STORE.credit_workspace_once(
@@ -87,9 +81,7 @@ def main() -> int:
     else:
         print("  credit applied")
 
-    after = STORE.get_credit_account(workspace.id)
     typed_after = _typed_total_credits(workspace.id)
-    print(f"  available after:  ${_avail(after):.4f}  (deposited=${after.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.4f}, used=${after.total_usage_microdollars / MICRODOLLARS_PER_DOLLAR:.4f})")
     print(f"  typed deposited after:  ${(typed_after or 0) / MICRODOLLARS_PER_DOLLAR:.4f}")
     expected = (typed_before or 0) + (AMOUNT_MICRODOLLARS if granted else 0)
     if typed_after != expected:

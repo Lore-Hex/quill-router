@@ -162,25 +162,26 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   (inspect balance, `audit_typed_invariants`, `repair_typed_reserved`, grant),
   and the authorize-deadlock-burst section corrected for the 20s retry budget,
   `Aborted`→503 mapping, and now-operable shard spreading.
-- [ ] C2b (cosmetic cleanup, gated on a design call): delete `CreditAccount`'s
-  now-stale money fields (`total_credits_microdollars` / `total_usage_microdollars`
-  / `reserved_microdollars`; keep `shard_count` + auto-refill/Stripe metadata) and
-  update the InMemory twin. NOTE this is an interface refactor, not a dead-field
-  drop: those fields are still the CARRIER the typed book is presented through
-  (`typed_balance.py` populates a `CreditAccount` from the typed rows; `auto_refill`
-  reads `available = total − usage − reserved` off it to decide card charges;
-  `serialization`/`mcp` display them). Deleting them requires choosing a new
-  money-read carrier (e.g. everyone reads the `live_credit_summary` dict) AND
-  reworking the InMemory single-book store — money-adjacent, zero prod-correctness
-  benefit (values are already typed-sourced and correct). The ledger is FULLY
-  RETIRED on the production path after C1+C2a; C2b is pure model hygiene.
+- [x] C2b (2026-07-14): `CreditAccount` is now metadata-only — `total_credits_microdollars`
+  / `total_usage_microdollars` / `reserved_microdollars` deleted (kept `shard_count`
+  + auto-refill/Stripe metadata). The chosen money-read carrier is the existing
+  `live_credit_summary` dict (no new type): `typed_aware_credit_account` was removed,
+  `auto_refill` reads the unclamped `available` off the summary (byte-identical to the
+  old inline `total − usage − reserved`) and metadata off `get_credit_account`, and the
+  InMemory twin's single book moved to a `CreditMoney` sibling holder shared by
+  reference with the reservation engine. `SpannerBigtableStore.credit_money_snapshot`
+  reads the raw `credit` JSON entity so `live_credit_summary` keeps its pre-C2b
+  fallback when the typed snapshot is unavailable (mirror off / row not yet seeded);
+  `scripts/typed_flip.py` + the operator grant scripts read legacy money from the raw
+  entity dict. Clean break — passing a retired money kwarg now raises. Two adversarial
+  verification passes; production write path (typed-DML) unchanged.
 
 ## Status: the JSON credit ledger is retired (C1 + C2a + C3 shipped 2026-07-14)
 Production money is single-book (typed Spanner). The dual-book machinery — mirror,
 backsync, backfill, drift-compare, warm-keep, rollback-to-legacy — is deleted, and
 the surviving tripwires (`audit_typed_invariants` daily, `repair_typed_reserved`
-on demand) are typed-internal. Only C2b (the `CreditAccount` field/twin cleanup
-above) remains, and it is optional hygiene.
+on demand) are typed-internal. C2b (the `CreditAccount` field/twin cleanup above)
+is now shipped, so the model is metadata-only too.
 
 ### Rollback
 Rollback-to-legacy is retired. Emergency rollback is the previous deploy revision.

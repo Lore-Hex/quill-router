@@ -12,7 +12,7 @@ from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.storage import InMemoryStore, configure_store
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
-from trusted_router.storage_models import CreditAccount
+from trusted_router.storage_models import CreditAccount, CreditMoney
 from trusted_router.typed_balance import live_credit_summary
 
 
@@ -38,12 +38,7 @@ def test_live_credit_summary_typed_row_wins() -> None:
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=10_000_000,
-            total_usage_microdollars=1_000_000,
-            reserved_microdollars=500_000,
-        ),
+        CreditAccount(workspace_id=workspace_id),
     )
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
         "workspace_id": workspace_id,
@@ -69,17 +64,22 @@ def test_live_credit_summary_typed_row_wins() -> None:
 
 
 def test_live_credit_summary_typed_row_absent_falls_back_to_json() -> None:
+    # No typed snapshot available (row not yet seeded, or the mirror flag is
+    # off) but the 'credit' entity still carries legacy JSON money. Must fall
+    # back to that money — matching pre-C2b behavior. Returning None here would
+    # 404 the billing/mcp reads and stop auto-refill for a workspace that has
+    # real credit.
     store, _db, _ = make_fake_store()
     workspace_id = "ws_json_summary"
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=5_000_000,
-            total_usage_microdollars=1_500_000,
-            reserved_microdollars=500_000,
-        ),
+        {
+            "workspace_id": workspace_id,
+            "total_credits_microdollars": 5_000_000,
+            "total_usage_microdollars": 1_500_000,
+            "reserved_microdollars": 500_000,
+        },
     )
 
     assert live_credit_summary(workspace_id, store=store) == {
@@ -90,11 +90,17 @@ def test_live_credit_summary_typed_row_absent_falls_back_to_json() -> None:
     }
 
 
+def test_live_credit_summary_no_credit_entity_returns_none() -> None:
+    # A workspace with no 'credit' entity at all has no money to report.
+    store, _db, _ = make_fake_store()
+    assert live_credit_summary("ws_missing_entirely", store=store) is None
+
+
 def test_live_credit_summary_memory_store_uses_single_book() -> None:
     store = InMemoryStore()
     workspace_id = "ws_memory_summary"
-    store.credits[workspace_id] = CreditAccount(
-        workspace_id=workspace_id,
+    store.credits[workspace_id] = CreditAccount(workspace_id=workspace_id)
+    store.credit_money[workspace_id] = CreditMoney(
         total_credits_microdollars=2_000_000,
         total_usage_microdollars=1_500_000,
         reserved_microdollars=750_000,
@@ -157,12 +163,7 @@ def _seed_stale_json_live_typed(store: Any, db: Any, workspace_id: str) -> None:
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=10_000_000,
-            total_usage_microdollars=1_000_000,
-            reserved_microdollars=500_000,
-        ),
+        CreditAccount(workspace_id=workspace_id),
     )
     db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)].update({
         "total_credits": 10_000_000,

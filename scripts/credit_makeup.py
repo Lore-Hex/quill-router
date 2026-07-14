@@ -64,7 +64,6 @@ def main() -> int:
         )
         return 1
     typed_before = _typed_total_credits(WORKSPACE_ID)
-    print(f"before: total_credits_microdollars = {before.total_credits_microdollars}")
     print(f"before: typed total_credits = {typed_before or 0}")
 
     granted = STORE.credit_workspace_typed_direct(

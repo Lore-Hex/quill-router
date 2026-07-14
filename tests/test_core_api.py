@@ -393,9 +393,9 @@ def test_provider_errors_do_not_echo_prompt_or_create_generation(
     assert prompt not in resp.text
     assert STORE.generation_store.generations == {}
     key = next(iter(STORE.api_keys.keys.values()))
-    account = STORE.credits[key.workspace_id]
-    assert account.total_usage_microdollars == 0
-    assert account.reserved_microdollars == 0
+    money = STORE.credit_money[key.workspace_id]
+    assert money.total_usage_microdollars == 0
+    assert money.reserved_microdollars == 0
     assert key.reserved_microdollars == 0
 
 
@@ -622,7 +622,7 @@ def test_prepaid_insufficient_credits_blocks_before_provider_call(
     from trusted_router.storage import STORE
 
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    STORE.credits[workspace_id].total_credits_microdollars = 0
+    STORE.credit_money[workspace_id].total_credits_microdollars = 0
     resp = client.post(
         "/v1/chat/completions",
         headers=inference_headers,

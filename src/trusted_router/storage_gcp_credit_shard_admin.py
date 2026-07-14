@@ -124,14 +124,6 @@ def inspect_credit_reshard(
         result.reasons.append(
             f"{result.legacy_open_reservations} open legacy reservations; wait for drain"
         )
-    if int(account.reserved_microdollars) != 0:
-        result.reasons.append(
-            f"JSON credit has reserved={account.reserved_microdollars}; wait for drain"
-        )
-    if total_credits != int(account.total_credits_microdollars):
-        result.reasons.append(
-            "typed/JSON deposited-credit totals differ; reconcile before reshard"
-        )
     return result
 
 
@@ -191,8 +183,6 @@ def reshard_credit_account(
         if (
             open_typed != 0
             or reserved != 0
-            or int(account.reserved_microdollars) != 0
-            or total_credits != int(account.total_credits_microdollars)
             or any(int(row[2]) < 0 or int(row[3]) < 0 for row in rows)
             or any(int(row[2]) + int(row[3]) > int(row[1]) for row in rows)
         ):
@@ -231,9 +221,6 @@ def reshard_credit_account(
             )
 
         account.shard_count = target_count
-        account.total_credits_microdollars = total_credits
-        account.total_usage_microdollars = total_usage
-        account.reserved_microdollars = 0
         # Deliberately bypass _write_entity_tx: this admin transaction already
         # owns the exact typed-row mutations above.
         transaction.insert_or_update(
