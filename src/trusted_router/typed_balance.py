@@ -5,7 +5,7 @@ After the 2026-06-25 ownership split, a typed workspace's authoritative
 live in the typed Spanner tables (tr_credit_balance / tr_key_limit), booked by
 the typed authorize/finalize DML. The JSON `credit` / `api_key` rows are
 intentionally stale for those columns once a workspace is typed (only
-total_credits / key config are mirrored back). So any DISPLAY or DECISION that
+typed snapshots are live). So any DISPLAY or DECISION that
 reads the JSON counters — the console balance, `/credits`, auto-refill, key
 usage/remaining — would see a stale-LOW usage and an overstated available
 balance (e.g. auto-refill would never fire → the card is never charged →

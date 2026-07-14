@@ -1,10 +1,8 @@
-"""Operator CLI for the safe typed-billing ramp (Step 6).
+"""Operator CLI for typed-billing activation and repair.
 
-Sequences the tested primitives — workspace pause (quiesce), drain check, the
-fail-closed flip reconciliation, the invariant auditor, and the rollback
-backsync — into an explicit, step-by-step flip. Every mutating step is
-fail-closed and requires --apply. The env-allowlist deploy is a SEPARATE manual
-step done WHILE the batch is paused (this CLI never edits the gate).
+Sequences workspace pause (quiesce), drain check, fail-closed activation
+reconciliation, the invariant auditor, and reserved repair into explicit
+operator steps. Every mutating step is fail-closed and requires --apply.
 
 SAFE BATCH FLIP (codex Step-6 design):
 
@@ -26,11 +24,6 @@ SAFE BATCH FLIP (codex Step-6 design):
   # standing tripwire (run on a schedule + before each batch)
   python scripts/deploy/ramp_typed_billing.py audit
 
-ROLLBACK (denylist is NOT correct alone once typed usage exists):
-
-  python scripts/deploy/ramp_typed_billing.py pause WS --apply        # quiesce + drain
-  python scripts/deploy/ramp_typed_billing.py rollback WS --apply     # typed -> JSON backsync
-  # [MANUAL] denylist / remove WS from the allowlist + deploy, then unpause.
 """
 
 from __future__ import annotations
@@ -50,7 +43,6 @@ from trusted_router.config import Settings
 from trusted_router.storage import create_store
 from trusted_router.storage_gcp_counter_reconcile import (
     audit_typed_invariants,
-    backsync_typed_to_json,
     reconcile_for_flip,
     repair_typed_reserved,
 )
@@ -60,10 +52,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    for name in ("pause", "unpause", "status", "reconcile", "rollback", "repair"):
+    for name in ("pause", "unpause", "status", "reconcile", "repair"):
         p = sub.add_parser(name)
         p.add_argument("workspaces", nargs="+")
-        if name in ("pause", "unpause", "reconcile", "rollback", "repair"):
+        if name in ("pause", "unpause", "reconcile", "repair"):
             p.add_argument("--apply", action="store_true", help="actually mutate (else dry-run)")
         if name == "pause":
             p.add_argument("--reason", default="typed-billing ramp")
@@ -105,16 +97,6 @@ def main() -> int:
                 print(f"{ws}: SEEDED credit={flip.credit_seeded} keys={flip.keys_seeded}")
             else:
                 print(f"{ws}: ready (dry-run; pass --apply to seed)")
-
-        elif args.cmd == "rollback":
-            bs = backsync_typed_to_json(store, ws, apply=args.apply)
-            if not bs.ready:
-                print(f"{ws}: NOT backsync-ready — {bs.reasons}")
-                rc = 1
-            elif bs.applied:
-                print(f"{ws}: BACKSYNCED credit={bs.credit} keys={bs.keys}")
-            else:
-                print(f"{ws}: ready (dry-run; pass --apply to backsync)")
 
         elif args.cmd == "repair":
             rp = repair_typed_reserved(store, ws, apply=args.apply)

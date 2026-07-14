@@ -27,8 +27,13 @@ from trusted_router.storage_gcp_authorize import (
     SettleOutcome,
     settle_atomic,
 )
-from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
-from trusted_router.storage_models import CreditAccount
+from trusted_router.storage_gcp_counters import (
+    CREDIT_BALANCE_TABLE,
+    KEY_LIMIT_COLUMNS,
+    KEY_LIMIT_TABLE,
+    key_limit_mirror_rows,
+)
+from trusted_router.storage_models import ApiKey, CreditAccount
 
 
 @dataclass(frozen=True)
@@ -125,14 +130,28 @@ def _seed(
             "source_updated_at": None,
             "updated_at": None,
         }
-    _raw, key = store.api_keys.create(
-        workspace_id=workspace_id,
+    key = ApiKey(
+        hash="stress-key",
+        salt="stress-salt",
+        secret_hash="stress-secret",  # noqa: S106 - placeholder stress fixture.
+        lookup_hash="stress-lookup",
         name="stress-key",
+        label="stress-key",
+        workspace_id=workspace_id,
         creator_user_id=None,
-        limit_microdollars=None,
+        usage_shard_count=shard_count,
     )
-    key.usage_shard_count = shard_count
     store._write_entity("api_key", key.hash, key)
+    with database.batch() as batch:
+        batch.insert_or_update(
+            table=KEY_LIMIT_TABLE,
+            columns=KEY_LIMIT_COLUMNS,
+            values=key_limit_mirror_rows(
+                key.hash,
+                key,
+                store._spanner.COMMIT_TIMESTAMP,
+            ),
+        )
     return store, database, key
 
 

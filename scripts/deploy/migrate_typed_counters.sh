@@ -4,8 +4,8 @@
 #
 # Idempotent: checks INFORMATION_SCHEMA and only creates objects that are
 # missing, so it is safe to re-run and safe on both fresh and existing
-# databases. Apply this BEFORE deploying the mirror code with
-# TR_TYPED_COUNTER_MIRROR=1 — the dual-write writes to these tables.
+# databases. These tables are required by typed billing and creation-time
+# credit/api-key row seeding.
 #
 # Operational sequencing: apply this only when no Cloud Run deploy is rolling
 # and prefer a low-traffic window. Spanner schema changes wound in-flight
@@ -52,8 +52,8 @@ apply_ddl() {
 }
 
 # Idempotent guard: ensure a timestamp column carries allow_commit_timestamp=true.
-# Needed because the mirror writes the COMMIT_TIMESTAMP sentinel into
-# source_updated_at; without the option the first mirrored write fails the txn.
+# Needed because creation-time seeding writes the COMMIT_TIMESTAMP sentinel into
+# source_updated_at; without the option the first seed write fails the txn.
 # Covers tables created by an earlier version of this script without the option.
 ensure_commit_ts_col() {
   local table="$1" col="$2" n
@@ -146,9 +146,8 @@ if index_exists tr_reservation_by_expiry; then log "tr_reservation_by_expiry exi
 fi
 
 # ── Per-key window spend limits (daily/weekly/monthly) ──────────────────────
-# Config columns (*_limit_micro) are JSON-owned and mirrored from the api_key
-# row; the window usage/state columns are typed-DML-owned (bumped lazily by
-# release_key, NEVER mirrored — mirroring them would re-create the #79 clobber).
+# Config columns (*_limit_micro) are seeded from the api_key row on create; the
+# window usage/state columns are typed-DML-owned and bumped lazily by release_key.
 column_exists() {
   local table="$1" col="$2" n
   n=$(gcloud spanner databases execute-sql "$DATABASE" \
@@ -198,7 +197,7 @@ ensure_column tr_reservation credit_shard "INT64 DEFAULT (0)"
 # authorization never clobber each other. Frozen settle inputs (actual_cost_micro,
 # selected_endpoint_id, model_id, selected_usage_type, settle_origin,
 # reservation_id) are captured at enqueue so a drain replays a deterministic
-# amount+origin regardless of any later pricing/mirror-flag change.
+# amount+origin regardless of any later pricing or serving-env change.
 if table_exists tr_settle_outbox; then log "tr_settle_outbox exists, skip"; else
   apply_ddl "CREATE TABLE tr_settle_outbox (
     authorization_id STRING(64) NOT NULL,

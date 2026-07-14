@@ -37,10 +37,10 @@ for rollback. Finishing the migration deletes the machinery.
 - The JSON `credit` entity survives ONLY as non-money metadata: auto-refill config,
   stripe customer/payment-method ids, last-refill audit fields. Money fields deleted
   from `CreditAccount` (and the memory twin models the single typed book).
-- Deleted code: legacy `_require_credit_tx`/JSON finalize path, the mirror
-  (`mirror_write`/`mirror_delete`), `backsync_typed_to_json`, `backfill`, `compare`,
-  and their tests. `repair_typed_reserved` + `audit_typed_invariants` REMAIN (they audit
-  the surviving book).
+- Deleted code: legacy `_require_credit_tx`/JSON finalize path, the generic
+  JSON-to-typed mirror, the typed-to-JSON helper, the old backfill/drift
+  comparison helpers, and their tests. `repair_typed_reserved` +
+  `audit_typed_invariants` REMAIN (they audit the surviving book).
 - Money display/API reads use the live typed snapshot; `signup()`'s trial-credit report
   follows the surviving credit book once JSON money fields are deleted.
 
@@ -54,16 +54,16 @@ A1. Flip tooling: a batch script wrapping the existing per-workspace runbook
     (`billing_paused` → drain to zero open holds → `reconcile_for_flip(apply=True)` →
     add to allowlist → unpause), plus a dry-run mode that reports per-workspace
     readiness (open holds, drift). Uses existing primitives only.
-A2. Canary: flip 1-3 internal/low-traffic workspaces. Run `audit_typed_invariants` +
-    `compare` daily. Bake ≥ a few days.
+A2. Canary: flip 1-3 internal/low-traffic workspaces. Run the typed invariant
+    audit daily. Bake ≥ a few days.
 A3. Ramp cohorts (10% → 50% → all) with the same audits between batches. New signups
     flip at creation (allowlist additions or a "typed-by-default-for-new" flag).
 A4. Set `TR_TYPED_BILLING_WORKSPACE_IDS=*` in rollout.sh (config-as-code, like the
     #120 outbox flip). The denylist kill-switch semantics are unchanged throughout
-    (break-glass availability brake; under-bills until backsync — acceptable and
+    (break-glass availability brake; under-bills until typed repair — acceptable and
     already documented).
-Rollback story: per-workspace `pause → drain → backsync_typed_to_json → remove from
-allowlist → unpause` — the existing, tested runbook. This is why Phase A deletes nothing.
+Rollback story at the time: per-workspace pause, drain, typed-to-JSON backsync,
+remove from allowlist, unpause. This is why Phase A deleted nothing.
 
 ### Phase B — move the remaining JSON-money surfaces (code; one PR per step)
 B1. Reads: console credits/billing display and the MCP `credits-get` tool
@@ -74,14 +74,14 @@ B1. Reads: console credits/billing display and the MCP `credits-get` tool
 B2. Writes: `credit_workspace_once`, stripe settlement, auto-refill outcome → typed
     `total_credits` becomes AUTHORITATIVE (idempotency event + typed write in one txn),
     but the JSON `total_credits` field is STILL written in the same txn ("kept warm").
-    Rationale (P1 from adversarial review): `backsync_typed_to_json` copies only
+    Rationale (P1 from adversarial review): the rollback backsync copied only
     total_usage/reserved — never total_credits (counter_reconcile.py:491,550-553; pinned
     by tests/test_billing_rollback_backsync.py:51-52) — so a denylisted/rolled-back
     workspace's legacy authorize (storage_gcp_keys.py:278-286) would otherwise read a
     stale JSON balance after a typed-direct top-up. Keeping JSON warm preserves the
     per-workspace rollback unchanged; the JSON write (and the warm-keeping) is deleted
     only in Phase C when rollback-to-legacy is retired. (Alternative — extending
-    backsync to copy total_credits — rejected: touches rollback semantics mid-migration.)
+    rollback backsync to copy total_credits — rejected: touches rollback semantics mid-migration.)
 B3. Grant scripts (`scripts/credit_grant_*.py` pattern) switch their verification to the
     typed snapshot (they already cross-check it today).
 
@@ -93,8 +93,8 @@ C1. Delete the legacy JSON finalize path and `_require_credit_tx` enforcement �
     and writes `CreditAccount.reserved_microdollars`. Also delete B2's JSON
     total_credits warm-keeping write in the same step (rollback-to-legacy is retired
     here, so the warm copy loses its purpose).
-C2. Delete the mirror, `backsync`, `backfill`, `compare`; slim `CreditAccount` to
-    metadata; update the memory twin + every test that constructs money fields on it.
+C2. Delete the mirror/helper/drift tooling; slim `CreditAccount` to metadata;
+    update the memory twin + every test that constructs money fields on it.
 C3. Runbook rewrite: single-book operations; keep `repair_typed_reserved` +
     `audit_typed_invariants` as the standing tripwires.
 
@@ -152,10 +152,11 @@ Legend: [J] = Joseph's explicit go required · [C] = Claude runs autonomously (S
   C1 landed.
 - [ ] Stale legacy-hold cleanup for workspace `ea7dd3d8` (JSON reserved=29373,
   3 open legacy reservations; display-only impact, fold into Phase C or a small cleanup)
-- [ ] Phase C deletions after 2 weeks of clean audits from 2026-07-10, the first
-  clean-audit day once #148 frees the orphan holds
+- [x] C2a deletions (2026-07-14): generic mirror hook, warm-keep, rollback helper,
+  backfill, and drift compare removed together. New workspace/key typed-row
+  seeds now happen only on entity create.
+- [ ] C2b: slim `CreditAccount` money fields and the memory twin after one more
+  reviewable increment
 
-### Rollback (any point through B; retired by C1)
-`typed_flip.py rollback --workspace <id> --apply` → allowlist-REMOVAL deploy →
-`typed_flip.py finish --workspace <id> --allowlist-deployed --rollback --apply`.
-After C1, rollback-to-legacy is retired; emergency rollback is the previous deploy revision.
+### Rollback
+Rollback-to-legacy is retired. Emergency rollback is the previous deploy revision.

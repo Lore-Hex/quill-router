@@ -16,15 +16,11 @@ from typing import Any
 from trusted_router.config import Settings
 from trusted_router.storage import create_store
 from trusted_router.storage_gcp_counter_reconcile import (
-    DriftReport,
     audit_typed_invariants,
-    backsync_typed_to_json,
-    compare,
     reconcile_for_flip,
 )
 from trusted_router.storage_models import ApiKey, CreditAccount, Reservation, Workspace
 
-_MISSING = object()
 _DEFAULT_ENV = {
     "TR_STORAGE_BACKEND": "spanner-bigtable",
     "TR_GCP_PROJECT_ID": "quill-cloud-proxy",
@@ -32,7 +28,6 @@ _DEFAULT_ENV = {
     "TR_SPANNER_DATABASE_ID": "trusted-router",
     "TR_BIGTABLE_INSTANCE_ID": "trusted-router-logs",
     "TR_BIGTABLE_GENERATION_TABLE": "trustedrouter-generations",
-    "TR_TYPED_COUNTER_MIRROR": "1",
 }
 
 
@@ -53,7 +48,6 @@ class Readiness:
     typed_reservation_rows: int = 0
     typed_open_reservations: int = 0
     typed_credit: TypedCreditRow | None = None
-    compare_drifts: list[str] = field(default_factory=list)
     blocking_reasons: list[str] = field(default_factory=list)
 
     @property
@@ -183,40 +177,13 @@ def _legacy_open_reservation_count(store: Any, workspace_id: str) -> int:
     )
 
 
-def _workspace_compare_drifts(
-    report: DriftReport,
-    workspace_id: str,
-    keys: list[ApiKey],
-) -> list[str]:
-    key_hashes = {key.hash for key in keys}
-    drifts: list[str] = []
-    for sample_id in report.samples:
-        if sample_id in {f"credit:{workspace_id}", f"credit-orphan:{workspace_id}"}:
-            drifts.append(sample_id)
-            continue
-        for prefix in ("api_key:", "api_key-orphan:"):
-            if sample_id.startswith(prefix) and sample_id.removeprefix(prefix) in key_hashes:
-                drifts.append(sample_id)
-                break
-    return drifts
-
-
-def assess_readiness(
-    store: Any,
-    workspace_id: str,
-    *,
-    compare_report: DriftReport | object = _MISSING,
-) -> Readiness:
+def assess_readiness(store: Any, workspace_id: str) -> Readiness:
     workspace = store.get_workspace(workspace_id)
     credit = store.get_credit_account(workspace_id)
     keys = store.list_keys(workspace_id) if workspace is not None else []
     legacy_open = _legacy_open_reservation_count(store, workspace_id)
     typed_rows, typed_open = _typed_reservation_counts(store, workspace_id)
     typed_credit = _typed_credit_row(store, workspace_id)
-
-    if compare_report is _MISSING:
-        compare_report = compare(store, max_samples=100_000)
-    drifts = _workspace_compare_drifts(compare_report, workspace_id, keys)
 
     readiness = Readiness(
         workspace_id=workspace_id,
@@ -227,7 +194,6 @@ def assess_readiness(
         typed_reservation_rows=typed_rows,
         typed_open_reservations=typed_open,
         typed_credit=typed_credit,
-        compare_drifts=drifts,
     )
     if workspace is None:
         readiness.blocking_reasons.append("workspace not found")
@@ -237,8 +203,6 @@ def assess_readiness(
         readiness.blocking_reasons.append(f"ALREADY_TYPED: {typed_rows} tr_reservation rows")
     if typed_open != 0:
         readiness.blocking_reasons.append(f"{typed_open} open tr_reservation rows")
-    if drifts:
-        readiness.blocking_reasons.append("compare() drift: " + ", ".join(drifts))
     return readiness
 
 
@@ -280,9 +244,6 @@ def _print_readiness(readiness: Readiness) -> None:
             f"total_usage={readiness.typed_credit.total_usage} "
             f"reserved={readiness.typed_credit.reserved}"
         )
-    drift_text = "clean" if not readiness.compare_drifts else ", ".join(readiness.compare_drifts)
-    print(f"  compare: {drift_text}")
-
 
 def _workspace_ids(store: Any, args: argparse.Namespace) -> list[str]:
     if args.workspace:
@@ -294,11 +255,10 @@ def _workspace_ids(store: Any, args: argparse.Namespace) -> list[str]:
 def run_readiness(store: Any, args: argparse.Namespace) -> int:
     if not args.workspace and not args.all:
         args.all = True
-    report = compare(store, max_samples=100_000)
     counts = {"READY": 0, "NOT_READY": 0, "ALREADY_TYPED": 0}
     workspace_ids = _workspace_ids(store, args)
     for workspace_id in workspace_ids:
-        readiness = assess_readiness(store, workspace_id, compare_report=report)
+        readiness = assess_readiness(store, workspace_id)
         counts[readiness.verdict] += 1
         _print_readiness(readiness)
     print(
@@ -442,16 +402,9 @@ def run_prepare(store: Any, args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_watch_items(*, rollback: bool = False) -> None:
-    if rollback:
-        print("POST-ROLLBACK WATCH ITEMS:")
-        print("  audit_typed_invariants daily")
-        print("  compare() drift")
-        print("  legacy credit/reservation drain health")
-        return
+def _print_watch_items() -> None:
     print("POST-FLIP WATCH ITEMS:")
     print("  audit_typed_invariants daily")
-    print("  compare() drift")
     print("  the 'release row-count != 1' log alert")
 
 
@@ -484,46 +437,7 @@ def run_finish(store: Any, args: argparse.Namespace) -> int:
         return 0
     if not _unpause_workspace(store, args.workspace):
         return 1
-    _print_watch_items(rollback=args.rollback)
-    return 0
-
-
-def _print_rollback_next_steps(workspace_id: str) -> None:
-    print("ROLLBACK NEXT STEPS:")
-    print(
-        "roll back the deploy to the previous revision if you need the retired "
-        f"legacy gate for workspace {workspace_id},"
-    )
-    print(
-        "verify the SERVING revision, then run "
-        f"`typed_flip.py finish --workspace {workspace_id} --allowlist-deployed --rollback`."
-    )
-    print("Workspace REMAINS PAUSED.")
-
-
-def run_rollback(store: Any, args: argparse.Namespace) -> int:
-    if not args.apply:
-        print("DRY-RUN: would set billing_paused=True")
-        print("DRY-RUN: would re-check typed open holds after pause")
-        print("DRY-RUN: would run backsync_typed_to_json(..., apply=True)")
-        print("DRY-RUN: would leave workspace PAUSED for allowlist REMOVAL deploy")
-        status = backsync_typed_to_json(store, args.workspace, apply=False)
-        print(f"current backsync readiness: ready={status.ready} reasons={status.reasons}")
-        return 0
-    if not _require_apply_backend(args.apply):
-        return 1
-    if not _pause_workspace(store, args.workspace, reason="typed-billing rollback"):
-        return 1
-    status = backsync_typed_to_json(store, args.workspace, apply=True)
-    if not status.ready:
-        print(f"ERROR: backsync_typed_to_json refused: {status.reasons}", file=sys.stderr)
-        if any("open typed holds" in reason for reason in status.reasons):
-            print("re-run rollback after in-flight requests settle")
-            print("Workspace is paused and will remain paused; this is the desired parked state.")
-            return 2
-        return 1
-    print(f"backsync_typed_to_json: applied={status.applied} credit={status.credit} keys={status.keys}")
-    _print_rollback_next_steps(args.workspace)
+    _print_watch_items()
     return 0
 
 
@@ -561,19 +475,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "the script cannot read the serving revision's env itself"
         ),
     )
-    finish.add_argument("--rollback", action="store_true", help="finish a rollback unpause")
     finish.add_argument("--apply", action="store_true")
     finish.set_defaults(func=run_finish)
-
-    rollback = sub.add_parser("rollback", help="pause, drain-check, backsync typed counters to JSON")
-    rollback.add_argument("--workspace", required=True)
-    rollback.add_argument("--apply", action="store_true")
-    rollback.set_defaults(func=run_rollback)
     return parser
 
 
 def _with_default_subcommand(argv: list[str]) -> list[str]:
-    commands = {"readiness", "prepare", "finish", "rollback"}
+    commands = {"readiness", "prepare", "finish"}
     if argv and (argv[0] in commands or argv[0] in {"-h", "--help"}):
         return argv
     return ["readiness", *argv]

@@ -40,6 +40,15 @@ def _seed_workspace(
             reserved_microdollars=reserved,
         ),
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": total_credits,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def _add_legacy_hold(store: Any, ws: str, amount: int = 100_000) -> None:
@@ -79,12 +88,6 @@ def test_readiness_verdicts_ready_not_ready_and_already_typed() -> None:
     assert reserved.verdict == "NOT_READY"
     assert any("reserved" in reason for reason in reserved.reasons)
     assert reserved.legacy_open_reservations == 1
-
-    _seed_workspace(store, "ws_drift", paused=True)
-    _typed_credit(db, "ws_drift")["total_credits"] = 123
-    drift = typed_flip.assess_readiness(store, "ws_drift")
-    assert drift.verdict == "NOT_READY"
-    assert any("compare() drift" in reason for reason in drift.reasons)
 
     _seed_workspace(store, "ws_typed", paused=True)
     db.reservations["r_hist"] = {
@@ -141,16 +144,6 @@ def test_prepare_apply_pauses_and_parks_on_existing_legacy_hold(
     assert "re-run prepare after in-flight requests settle" in out
     assert "drain-blocked: JSON credit reserved=100000" in out
     assert "drain-blocked: 1 open legacy reservations" in out
-
-
-def test_prepare_apply_refuses_drift_before_pausing() -> None:
-    store, db, _ = make_fake_store()
-    ws_drift = "ws_prepare_drift"
-    _seed_workspace(store, ws_drift, paused=False)
-    _typed_credit(db, ws_drift)["total_credits"] = 99
-
-    assert typed_flip.main(["prepare", "--workspace", ws_drift, "--apply"], store=store) == 1
-    assert store.get_workspace(ws_drift).billing_paused is False
 
 
 def test_prepare_apply_refuses_already_typed_before_pausing() -> None:
@@ -244,9 +237,3 @@ def test_dry_runs_do_not_mutate_store_state() -> None:
 
     assert typed_flip.main(["finish", "--workspace", ws, "--allowlist-deployed"], store=store) == 0
     assert _snapshot_state(db) == before_finish
-
-    store.update_workspace(ws, billing_paused=False, billing_pause_reason="")
-    before_rollback = _snapshot_state(db)
-
-    assert typed_flip.main(["rollback", "--workspace", ws], store=store) == 0
-    assert _snapshot_state(db) == before_rollback

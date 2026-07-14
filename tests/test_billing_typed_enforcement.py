@@ -36,6 +36,15 @@ def _seed_credit(store, ws: str, total: int) -> None:
     store._write_entity(
         "credit", ws, CreditAccount(workspace_id=ws, total_credits_microdollars=total)
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": total,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def _typed(db, ws: str) -> dict:
@@ -853,13 +862,9 @@ def test_reaper_reclaims_hold_after_api_key_deletion(
     assert auth["outcome"] == AuthorizeOutcome.ACCEPTED
 
     assert store.api_keys.delete(key.hash) is True
-    assert (key.hash, 0) not in db.typed.get(_KLT, {})
+    assert (key.hash, 0) in db.typed.get(_KLT, {})
     before = audit_typed_invariants(store)
-    assert not before.clean
-    assert before.samples[f"api_key-orphan-hold:{key.hash}:0"] == {
-        "typed_reserved": None,
-        "open_holds": 1_000_000,
-    }
+    assert before.clean
 
     with caplog.at_level(logging.WARNING, logger="trusted_router.storage_gcp_authorize"):
         reaped = reap_expired_reservations(store._database, store._param_types, now=_NOW)
@@ -868,11 +873,8 @@ def test_reaper_reclaims_hold_after_api_key_deletion(
     assert db.reservations[auth["reservation_id"]]["settled"] is True
     assert _typed(db, ws)["reserved"] == 0
     assert _typed(db, ws)["total_usage"] == 0
-    assert (key.hash, 0) not in db.typed.get(_KLT, {})
-    warnings = _missing_key_release_warnings(caplog)
-    assert len(warnings) == 1
-    assert key.hash in warnings[0].getMessage()
-    assert "hold_micro=1000000" in warnings[0].getMessage()
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 0
+    assert _missing_key_release_warnings(caplog) == []
     assert audit_typed_invariants(store).clean
 
 
@@ -893,13 +895,11 @@ def test_typed_finalize_charges_credit_after_api_key_deletion(
     assert result["outcome"] == SettleOutcome.SETTLED
     assert _typed(db, ws)["reserved"] == 0
     assert _typed(db, ws)["total_usage"] == 900_000
-    assert (key.hash, 0) not in db.typed.get(_KLT, {})
+    assert db.typed[_KLT][(key.hash, 0)]["reserved"] == 0
+    assert db.typed[_KLT][(key.hash, 0)]["usage"] == 900_000
     assert ("generation", f"gen-{rid}") in db.rows
     assert _json.loads(db.rows[("gateway_authorization", aid)].body)["settled"] is True
-    warnings = _missing_key_release_warnings(caplog)
-    assert len(warnings) == 1
-    assert key.hash in warnings[0].getMessage()
-    assert "hold_micro=1000000" in warnings[0].getMessage()
+    assert _missing_key_release_warnings(caplog) == []
 
 
 def test_key_release_guard_failure_stays_loud(
@@ -1146,11 +1146,11 @@ def test_typed_finalize_gateway_authorization_logs_split_timing(
     assert record.args[3] == 1
 
 
-def test_typed_idempotency_lookup_survives_cohort_rollback() -> None:
+def test_typed_idempotency_lookup_survives_gate_changes() -> None:
     """get_typed_authorization_by_idempotency finds a typed auth INDEPENDENT of
-    the cohort flag, so a retry after rollback replays (codex 3e route #2)."""
+    the cohort flag, so a retry replays (codex 3e route #2)."""
     store, _db, _ = make_fake_store()
-    ws = "ws_idem_rollback"
+    ws = "ws_idem_gate"
     _seed_credit(store, ws, 5_000_000)
     key = _make_key(store, ws, limit=5_000_000)
     res = store.authorize_gateway_typed(
@@ -1166,12 +1166,3 @@ def test_typed_idempotency_lookup_survives_cohort_rollback() -> None:
     assert found is not None
     assert found.id == res[1].id  # same authorization, regardless of cohort flag
     assert store.get_typed_authorization_by_idempotency(ws, key.hash, "other") is None
-
-
-def test_typed_origin_and_idempotency_guarded_by_mirror_flag() -> None:
-    """With the mirror off (no typed tables yet) the origin/idempotency lookups
-    short-circuit to legacy without querying tr_reservation (codex 3e route #3)."""
-    store, _db, _ = make_fake_store()
-    store._counter_mirror_enabled = False
-    assert store.is_typed_reservation("any", "auth") is False
-    assert store.get_typed_authorization_by_idempotency("ws", "kh", "k") is None

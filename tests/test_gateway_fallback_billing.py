@@ -9,6 +9,7 @@ from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
+from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
 def _client_and_key() -> tuple[TestClient, dict]:
@@ -32,6 +33,15 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
         ws,
         CreditAccount(workspace_id=ws, total_credits_microdollars=10_000_000),
     )
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": 10_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
     _raw, api_key = store.create_api_key(
         workspace_id=ws,
         name="gateway typed",

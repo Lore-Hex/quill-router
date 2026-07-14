@@ -14,8 +14,6 @@ from trusted_router.storage_gcp_authorize import (
     settle_atomic,
 )
 from trusted_router.storage_gcp_counter_reconcile import (
-    backsync_typed_to_json,
-    compare,
     repair_typed_reserved,
 )
 from trusted_router.storage_gcp_counters import (
@@ -51,6 +49,15 @@ def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
             total_credits_microdollars=1_000_000,
         ),
     )
+    database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
+        "workspace_id": workspace_id,
+        "shard": 0,
+        "total_credits": 1_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
     _raw, key = store.api_keys.create(
         workspace_id=workspace_id,
         name="uncapped-sharded-key",
@@ -59,6 +66,31 @@ def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
     )
     key.usage_shard_count = key_shards
     store._write_entity("api_key", key.hash, key)
+    rows = database.typed.setdefault(KEY_LIMIT_TABLE, {})
+    for shard in range(key_shards):
+        rows.setdefault(
+            (key.hash, shard),
+            {
+                "key_hash": key.hash,
+                "shard": shard,
+                "limit_micro": None,
+                "usage": 0,
+                "byok_usage": 0,
+                "reserved": 0,
+                "include_byok": True,
+                "day_limit_micro": None,
+                "week_limit_micro": None,
+                "month_limit_micro": None,
+                "day_usage": 0,
+                "day_start": None,
+                "week_usage": 0,
+                "week_start": None,
+                "month_usage": 0,
+                "month_start": None,
+                "source_updated_at": None,
+                "updated_at": None,
+            },
+        )
     return store, database, key
 
 
@@ -85,7 +117,7 @@ def test_key_usage_shards_default_and_fail_closed_for_capped_keys() -> None:
         )
 
 
-def test_api_key_mirror_creates_every_usage_shard_without_clobbering_counters() -> None:
+def test_sharded_key_metadata_update_does_not_clobber_typed_counters() -> None:
     store, database, key = _seed(key_shards=4)
     rows = database.typed[KEY_LIMIT_TABLE]
 
@@ -196,23 +228,22 @@ def test_typed_key_usage_sums_shards_and_current_windows() -> None:
     }
 
 
-def test_compare_detects_a_missing_configured_key_usage_shard() -> None:
+def test_typed_key_usage_fails_closed_on_missing_configured_shard() -> None:
     store, database, key = _seed(key_shards=4)
-    assert compare(store).clean
 
     database.typed[KEY_LIMIT_TABLE].pop((key.hash, 3))
-    report = compare(store)
 
-    assert report.key_drift == 1
-    assert report.samples[f"api_key:{key.hash}"]["usage_shard_count"] == (4, 3)
+    with pytest.raises(RuntimeError, match="usage shard set is incomplete"):
+        store.typed_key_usage(key.hash)
 
 
-def test_deleting_sharded_key_removes_every_typed_usage_row() -> None:
+def test_deleting_sharded_key_leaves_typed_usage_rows() -> None:
     store, database, key = _seed(key_shards=4)
 
     assert store.api_keys.delete(key.hash)
 
-    assert not any(row_key == key.hash for row_key, _shard in database.typed[KEY_LIMIT_TABLE])
+    assert ("api_key", key.hash) not in database.rows
+    assert {(key.hash, shard) for shard in range(4)} <= set(database.typed[KEY_LIMIT_TABLE])
 
 
 def test_adding_a_limit_to_sharded_key_is_rejected_atomically() -> None:
@@ -310,13 +341,10 @@ def test_key_usage_operator_status_is_idempotent_after_split() -> None:
     assert not noop.applied
 
 
-def test_legacy_rollback_and_shard_zero_repair_refuse_sharded_key_usage() -> None:
+def test_shard_zero_repair_refuses_sharded_key_usage() -> None:
     store, _database, key = _seed(key_shards=4)
 
-    backsync = backsync_typed_to_json(store, key.workspace_id, apply=True)
     repair = repair_typed_reserved(store, key.workspace_id, apply=True)
 
-    assert not backsync.ready
-    assert "API-key usage is sharded" in backsync.reasons[0]
     assert not repair.ready
     assert any("API-key usage is sharded" in reason for reason in repair.reasons)

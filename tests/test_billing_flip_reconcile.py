@@ -26,9 +26,9 @@ def _typed_key(db, key_hash: str) -> dict:
 
 def _seed_drained_workspace(store, ws: str, *, total_credits: int, total_usage: int, paused: bool = True):
     """A never-typed workspace with lifetime usage but no open holds (drained), and
-    billing-PAUSED (reconcile/flip require the quiesce). After the ownership split
-    the mirror carries only total_credits, so the typed row's total_usage is
-    intentionally stale (0) until reconcile_for_flip seeds it."""
+    billing-PAUSED (reconcile/flip require the quiesce). C2a creation seeding
+    carries only total_credits, so the typed row's total_usage is intentionally
+    stale (0) until reconcile_for_flip seeds it."""
     store._write_entity(
         "workspace", ws,
         Workspace(id=ws, name="t", owner_user_id="u", billing_paused=paused),
@@ -41,6 +41,15 @@ def _seed_drained_workspace(store, ws: str, *, total_credits: int, total_usage: 
             total_usage_microdollars=total_usage,
         ),
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": total_credits,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def test_reconcile_ready_seeds_gross_counters_with_zero_reserved() -> None:
@@ -52,7 +61,7 @@ def test_reconcile_ready_seeds_gross_counters_with_zero_reserved() -> None:
     )
     store.api_keys.add_usage(key.hash, 300_000, is_byok=False)  # JSON usage only (mirror skips it)
 
-    # Pre-state: the mirror carried total_credits + key config, NOT usage.
+    # Pre-state: creation seed carried total_credits + key config, NOT usage.
     assert _typed_credit(db, ws)["total_usage"] == 0
     assert _typed_key(db, key.hash)["usage"] == 0
 

@@ -25,6 +25,11 @@ from trusted_router.security import (
     verify_api_key,
 )
 from trusted_router.storage_gcp_codec import workspace_key_id as _workspace_key_id
+from trusted_router.storage_gcp_counters import (
+    KEY_LIMIT_COLUMNS,
+    KEY_LIMIT_TABLE,
+    key_limit_mirror_rows,
+)
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_models import (
     ApiKey,
@@ -84,6 +89,15 @@ class SpannerApiKeys:
         )
         with self._io.database.batch() as batch:
             self._io.write_entity_batch(batch, "api_key", key.hash, key)
+            batch.insert_or_update(
+                table=KEY_LIMIT_TABLE,
+                columns=KEY_LIMIT_COLUMNS,
+                values=key_limit_mirror_rows(
+                    key.hash,
+                    key,
+                    self._io.spanner_module.COMMIT_TIMESTAMP,
+                ),
+            )
             self._io.write_entity_batch(batch, "api_key_lookup", lookup_hash, {"key_id": key.hash})
             self._io.write_entity_batch(
                 batch,
@@ -175,7 +189,24 @@ class SpannerApiKeys:
         if "tags" in patch:
             key.tags = dict(patch["tags"] or {})
         key.updated_at = iso_now()
-        self._io.write_entity("api_key", key.hash, key)
+        # Re-sync the CONFIG columns to tr_key_limit in the same atomic batch.
+        # The generic mirror (deleted in C2a) used to do this on every api_key
+        # write; the typed authorize path reads the overall per-key cap
+        # (limit_micro) from tr_key_limit, so a limit edit that only wrote
+        # tr_entities would never reach enforcement (stale cap = spend bypass).
+        # KEY_LIMIT_COLUMNS is config-only (no usage/reserved/byok_usage), so
+        # this upsert on the existing row cannot clobber typed-owned counters.
+        with self._io.database.batch() as batch:
+            self._io.write_entity_batch(batch, "api_key", key.hash, key)
+            batch.insert_or_update(
+                table=KEY_LIMIT_TABLE,
+                columns=KEY_LIMIT_COLUMNS,
+                values=key_limit_mirror_rows(
+                    key.hash,
+                    key,
+                    self._io.spanner_module.COMMIT_TIMESTAMP,
+                ),
+            )
         return key
 
     # ── Per-key spend-cap lifecycle ─────────────────────────────────────

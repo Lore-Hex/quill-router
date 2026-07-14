@@ -45,6 +45,15 @@ def test_live_credit_summary_typed_row_wins() -> None:
             reserved_microdollars=500_000,
         ),
     )
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
+        "workspace_id": workspace_id,
+        "shard": 0,
+        "total_credits": 10_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
     db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)].update({
         "total_credits": 12_000_000,
         "total_usage": 7_000_000,
@@ -61,7 +70,6 @@ def test_live_credit_summary_typed_row_wins() -> None:
 
 def test_live_credit_summary_typed_row_absent_falls_back_to_json() -> None:
     store, _db, _ = make_fake_store()
-    store._counter_mirror_enabled = False
     workspace_id = "ws_json_summary"
     store._write_entity(
         "credit",
@@ -157,6 +165,7 @@ def _seed_stale_json_live_typed(store: Any, db: Any, workspace_id: str) -> None:
         ),
     )
     db.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)].update({
+        "total_credits": 10_000_000,
         "total_usage": 7_000_000,
         "reserved": 1_000_000,
     })

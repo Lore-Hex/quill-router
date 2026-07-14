@@ -5,8 +5,8 @@ Covers the money semantics end to end on the fake Spanner store:
     across a boundary; BYOK gated by include_byok; refund/reaper +0 no-op)
   - authorize rejects when a window is exhausted (approximate: point-read
     before the holds) and passes again after the window rolls over
-  - the mirror writes window LIMIT config but never the window USAGE state
-    (the #79 ownership-split pin, extended to the new columns)
+  - create_api_key seeds window LIMIT config, while later metadata updates never
+    reseed the typed row or clobber window USAGE state
 """
 
 from __future__ import annotations
@@ -166,24 +166,52 @@ def test_byok_settle_counts_only_when_key_includes_byok() -> None:
     assert row["day_usage"] == 0  # excluded from the caps
 
 
-def test_mirror_writes_window_limits_but_never_window_usage() -> None:
-    """The #79 ownership-split pin, extended: a JSON api_key write mirrors the
-    window LIMIT config but must not clobber the typed window USAGE state."""
+def test_create_seeds_window_limits_metadata_update_never_reseeds() -> None:
+    """C2a: key create seeds config; an update RE-SYNCS the config columns to
+    tr_key_limit (typed authorize reads the cap there) WITHOUT clobbering the
+    typed-owned spend counters (usage/start/reserved)."""
     store, db, _ = make_fake_store()
     key = _seed(store, db, "ws_pin", limit_daily_microdollars=5_000)
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
-    assert row["day_limit_micro"] == 5_000  # config mirrored on create
+    assert row["day_limit_micro"] == 5_000  # config seeded on create
 
     # Live typed window state (as if settles happened).
     row["day_usage"] = 4_999
     row["day_start"] = _floors()["daily"]
 
-    # Any JSON write to the key re-fires the mirror (e.g. a rename + new limit).
     store.update_key(key.hash, {"name": "renamed", "limit_daily_microdollars": 7_000})
     row = db.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
-    assert row["day_limit_micro"] == 7_000  # config updated
-    assert row["day_usage"] == 4_999  # typed-owned state SURVIVES the mirror
+    # Config column follows the edit; typed-owned counters are preserved.
+    assert row["day_limit_micro"] == 7_000
+    assert row["day_usage"] == 4_999
     assert row["day_start"] == _floors()["daily"]
+
+
+def test_update_key_overall_limit_reaches_typed_enforcement() -> None:
+    """Regression (C2a P1): editing a key's OVERALL cap must reach typed
+    enforcement — reserve_key reads limit_micro from tr_key_limit, so an edit
+    that only wrote tr_entities would be a silent spend bypass."""
+    store, db, _ = make_fake_store()
+
+    # Lowering a cap takes effect: $10 -> $1, then a $5 authorize is rejected.
+    lowered = _seed(store, db, "ws_lower", limit_microdollars=10_000_000)
+    assert _auth(store, "ws_lower", lowered.hash, 5_000_000)["outcome"] == AuthorizeOutcome.ACCEPTED
+    store.update_key(lowered.hash, {"limit_microdollars": 1_000_000})
+    assert db.typed[KEY_LIMIT_TABLE][(lowered.hash, 0)]["limit_micro"] == 1_000_000
+    assert (
+        _auth(store, "ws_lower", lowered.hash, 5_000_000)["outcome"]
+        == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    )
+
+    # Adding a cap to a previously-uncapped key takes effect.
+    uncapped = _seed(store, db, "ws_cap", limit_microdollars=None)
+    assert _auth(store, "ws_cap", uncapped.hash, 50_000_000)["outcome"] == AuthorizeOutcome.ACCEPTED
+    store.update_key(uncapped.hash, {"limit_microdollars": 1_000_000})
+    assert db.typed[KEY_LIMIT_TABLE][(uncapped.hash, 0)]["limit_micro"] == 1_000_000
+    assert (
+        _auth(store, "ws_cap", uncapped.hash, 50_000_000)["outcome"]
+        == AuthorizeOutcome.KEY_LIMIT_EXCEEDED
+    )
 
 
 def test_window_resets_at_is_the_next_boundary() -> None:
@@ -276,23 +304,9 @@ def test_window_check_passes_through_idempotent_replay() -> None:
     ) is None
 
 
-def test_drift_comparator_covers_window_limit_config() -> None:
-    """The exact-mirror gate must catch a broken window-limit mirror (codex #93)."""
-    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
-    from trusted_router.storage_gcp_counters import key_drift
-
-    store, db, _ = make_fake_store()
-    key = _seed(store, db, "ws_drift", limit_daily_microdollars=5_000)
-    json_body = {"limit_daily_microdollars": 5_000, "include_byok_in_limit": True}
-    typed_row = dict(db.typed[KLT][(key.hash, 0)])
-    assert key_drift(json_body, typed_row) == {}  # mirrored -> no drift
-    typed_row["day_limit_micro"] = 999  # simulate a broken mirror
-    assert "day_limit_micro" in key_drift(json_body, typed_row)
-
-
 def test_flip_seed_carries_window_limit_config() -> None:
     """codex #93 round 2: reconcile_for_flip's seed must include the window
-    config columns, or a seeded key with a daily limit drifts immediately."""
+    config columns."""
     from trusted_router.storage import CreditAccount, Workspace
     from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
     from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
@@ -310,7 +324,7 @@ def test_flip_seed_carries_window_limit_config() -> None:
         workspace_id=ws, name="k", creator_user_id=None,
         limit_daily_microdollars=4_000, limit_monthly_microdollars=90_000,
     )
-    del db.typed[KLT][(key.hash, 0)]  # simulate a never-typed key (no mirror row)
+    del db.typed[KLT][(key.hash, 0)]  # simulate a key without a typed row
 
     res = reconcile_for_flip(store, ws, apply=True)
     assert res.applied, res.reasons

@@ -30,7 +30,7 @@ def _report_func(report: _Report) -> audit_typed_counters.AuditFunc:
     return inner
 
 
-def test_audit_script_exits_zero_when_both_reports_clean(
+def test_audit_script_exits_zero_when_invariants_clean(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -39,13 +39,11 @@ def test_audit_script_exits_zero_when_both_reports_clean(
         store=object(),
         settings_factory=_Settings,
         invariant_audit=_report_func(_Report(True, "invariants clean")),
-        drift_compare=_report_func(_Report(True, "drift clean")),
     )
 
     assert rc == 0
     out = capsys.readouterr().out
     assert "audit_typed_invariants: invariants clean" in out
-    assert "compare: drift clean" in out
 
 
 def test_audit_script_exits_one_on_invariant_violation(capsys: pytest.CaptureFixture[str]) -> None:
@@ -55,24 +53,10 @@ def test_audit_script_exits_one_on_invariant_violation(capsys: pytest.CaptureFix
         invariant_audit=_report_func(
             _Report(False, "invariants bad", {"credit:ws:0": {"typed_reserved": 10}})
         ),
-        drift_compare=_report_func(_Report(True, "drift clean")),
     )
 
     assert rc == 1
     assert "VIOLATION credit:ws:0" in capsys.readouterr().out
-
-
-def test_audit_script_exits_one_on_compare_drift(capsys: pytest.CaptureFixture[str]) -> None:
-    rc = audit_typed_counters.main(
-        store=object(),
-        settings_factory=_Settings,
-        invariant_audit=_report_func(_Report(True, "invariants clean")),
-        drift_compare=_report_func(_Report(False, "drift bad", {"api_key:key": {"limit": 1}})),
-    )
-
-    assert rc == 1
-    assert "DRIFT api_key:key" in capsys.readouterr().out
-
 
 def test_audit_script_refuses_non_spanner_bigtable_backend(
     monkeypatch: pytest.MonkeyPatch,
@@ -83,7 +67,6 @@ def test_audit_script_refuses_non_spanner_bigtable_backend(
     rc = audit_typed_counters.main(
         store=object(),
         invariant_audit=_report_func(_Report(True, "unused")),
-        drift_compare=_report_func(_Report(True, "unused")),
     )
 
     captured = capsys.readouterr()
@@ -100,7 +83,6 @@ def test_audit_script_exits_two_on_infrastructure_error(capsys: pytest.CaptureFi
         store=object(),
         settings_factory=_Settings,
         invariant_audit=broken_audit,
-        drift_compare=_report_func(_Report(True, "unused")),
     )
 
     captured = capsys.readouterr()

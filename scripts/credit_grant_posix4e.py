@@ -6,8 +6,7 @@ truncation bug (2026-07-06). That account is the "bench" API key on workspace
 ea7dd3d8 (owner alex@fralex.art / github posix4e).
 
 Uses STORE.credit_workspace_once with a deterministic event_id so re-running
-is a clean no-op (returns False). Mirrors through to the typed counter under
-TR_TYPED_COUNTER_MIRROR=1. Verifies the typed counter after.
+is a clean no-op (returns False). Verifies the typed counter after.
 
 Usage:
     cd /Users/jperla/claude/qr-billing
@@ -24,7 +23,6 @@ os.environ.setdefault("TR_SPANNER_INSTANCE_ID", "trusted-router-nam6")
 os.environ.setdefault("TR_SPANNER_DATABASE_ID", "trusted-router")
 os.environ.setdefault("TR_BIGTABLE_INSTANCE_ID", "trusted-router-logs")
 os.environ.setdefault("TR_BIGTABLE_GENERATION_TABLE", "trustedrouter-generations")
-os.environ["TR_TYPED_COUNTER_MIRROR"] = "1"
 
 from trusted_router.config import Settings
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR
@@ -66,8 +64,9 @@ def main() -> int:
     if before is None:
         print(f"ERROR: credit account for workspace {workspace.id} not found")
         return 1
+    typed_before = _typed_total_credits(workspace.id)
     print(f"  JSON deposited before:  ${before.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.2f}")
-    print(f"  typed deposited before: ${(_typed_total_credits(workspace.id) or 0) / MICRODOLLARS_PER_DOLLAR:.2f}")
+    print(f"  typed deposited before: ${(typed_before or 0) / MICRODOLLARS_PER_DOLLAR:.2f}")
 
     granted = STORE.credit_workspace_once(workspace.id, AMOUNT_MICRODOLLARS, EVENT_ID)
     print("  credit applied" if granted else f"  no-op: event {EVENT_ID!r} already applied")
@@ -76,8 +75,9 @@ def main() -> int:
     typed_after = _typed_total_credits(workspace.id)
     print(f"  JSON deposited after:  ${after.total_credits_microdollars / MICRODOLLARS_PER_DOLLAR:.2f}")
     print(f"  typed deposited after: ${(typed_after or 0) / MICRODOLLARS_PER_DOLLAR:.2f}")
-    if typed_after != after.total_credits_microdollars:
-        print("  WARNING: typed counter did not match JSON - check the mirror!")
+    expected = (typed_before or 0) + (AMOUNT_MICRODOLLARS if granted else 0)
+    if typed_after != expected:
+        print(f"  WARNING: typed counter {typed_after} did not match expected {expected}")
         return 1
     return 0
 
