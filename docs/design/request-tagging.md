@@ -58,8 +58,8 @@ panel and advisor calls made by combination models.
 
 ### 2.2 Limits
 
-- `user`: 128 Unicode characters.
-- `session_id`: 128 Unicode characters.
+- `user`: 256 Unicode characters.
+- `session_id`: 256 Unicode characters.
 - `trace`: JSON object, at most 8 KiB after compact UTF-8 encoding, depth at
   most 8, and at most 256 total object keys and array elements.
 - App title: 120 Unicode characters.
