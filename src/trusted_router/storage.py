@@ -19,6 +19,7 @@ from trusted_router.storage_models import (
     BroadcastDestination,
     ByokProviderConfig,
     CreditAccount,
+    CreditMoney,
     CustomModel,
     EmailSendBlock,
     EncryptedSecretEnvelope,
@@ -62,6 +63,7 @@ class InMemoryStore:
         self.workspaces: dict[str, Workspace] = {}
         self.members: dict[tuple[str, str], Member] = {}
         self.credits: dict[str, CreditAccount] = {}
+        self.credit_money: dict[str, CreditMoney] = {}
         self.stripe_events: set[str] = set()
         # Composed feature stores. Each owns its own state and is importable
         # on its own. Keeps storage.py focused on identity + credit ledger;
@@ -69,6 +71,7 @@ class InMemoryStore:
         # rate limits / wallet / SES all live in their own modules.
         self.api_keys = InMemoryApiKeys(
             credits_by_workspace=self.credits,
+            credit_money_by_workspace=self.credit_money,
             lock=self._lock,
         )
         self.generation_store = InMemoryGenerations(
@@ -94,6 +97,7 @@ class InMemoryStore:
             self.workspaces.clear()
             self.members.clear()
             self.credits.clear()
+            self.credit_money.clear()
             self.stripe_events.clear()
             self.api_keys.reset()
             self.generation_store.reset()
@@ -142,7 +146,7 @@ class InMemoryStore:
                 creator_user_id=user.id,
                 management=True,
             )
-            trial = self.credits[workspace.id].total_credits_microdollars
+            trial = self.credit_money[workspace.id].total_credits_microdollars
         return SignupResult(
             user=user,
             workspace=workspace,
@@ -202,11 +206,10 @@ class InMemoryStore:
             # webhook in routes/internal/webhook.py). Stops free-credit
             # farming with throwaway emails. Wallet sign-in already passed
             # 0 explicitly, so its behavior is unchanged.
-            self.credits[workspace.id] = CreditAccount(
-                workspace_id=workspace.id,
-                total_credits_microdollars=(
-                    0 if trial_credit_microdollars is None else trial_credit_microdollars
-                ),
+            initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
+            self.credits[workspace.id] = CreditAccount(workspace_id=workspace.id)
+            self.credit_money[workspace.id] = CreditMoney(
+                total_credits_microdollars=initial_total
             )
             return workspace
 
@@ -248,6 +251,16 @@ class InMemoryStore:
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         with self._lock:
             return self.credits.get(workspace_id)
+
+    def credit_money_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
+        money = self.credit_money.get(workspace_id)
+        if money is None:
+            return None
+        return (
+            money.total_credits_microdollars,
+            money.total_usage_microdollars,
+            money.reserved_microdollars,
+        )
 
     def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
         with self._lock:
@@ -613,8 +626,7 @@ class InMemoryStore:
             if event_id in self.stripe_events:
                 return False
             self.stripe_events.add(event_id)
-            account = self.credits[workspace_id]
-            account.total_credits_microdollars += amount_microdollars
+            self.credit_money[workspace_id].total_credits_microdollars += amount_microdollars
             return True
 
     def credit_workspace_typed_direct(

@@ -18,11 +18,9 @@ single-book test twin.
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any, TypedDict
 
 from trusted_router.storage import STORE, typed_billing_store
-from trusted_router.storage_models import CreditAccount
 
 
 class LiveCreditSummary(TypedDict):
@@ -32,34 +30,6 @@ class LiveCreditSummary(TypedDict):
     available: int
 
 
-def typed_aware_credit_account(
-    store: Any, workspace_id: str, *, settings: Any
-) -> CreditAccount | None:
-    """Return the workspace's CreditAccount with total_credits/total_usage/
-    reserved overlaid from the typed table when the workspace is typed. JSON
-    metadata (auto-refill config, stripe ids) is preserved. No-op for legacy
-    workspaces, stores without the typed capability, or a not-yet-seeded typed
-    row.
-
-    The typed read goes through the TypedBillingStore capability (a point-read
-    method on the store) instead of reaching into the store's private Spanner
-    handles — the reason isinstance(store, TypedBillingStore) replaced the old
-    hasattr(_database) probe (#39)."""
-    account = store.get_credit_account(workspace_id)
-    typed_store = typed_billing_store(store)
-    if account is None or typed_store is None:
-        return account
-    typed = typed_store.typed_credit_snapshot(workspace_id)
-    if typed is None:
-        return account  # typed-capable store, but no row yet — JSON is the best estimate
-    return dataclasses.replace(
-        account,
-        total_credits_microdollars=int(typed[0]),
-        total_usage_microdollars=int(typed[1]),
-        reserved_microdollars=int(typed[2]),
-    )
-
-
 def live_credit_summary(
     workspace_id: str,
     *,
@@ -67,9 +37,9 @@ def live_credit_summary(
 ) -> LiveCreditSummary | None:
     """Return the live money counters for display/API reads.
 
-    A typed counter row wins whenever it exists. Workspaces without a typed row
-    yet, plus the in-memory single-book store, fall back to the JSON
-    CreditAccount. Non-money JSON metadata remains the caller's responsibility.
+    A typed counter row wins whenever it exists. The in-memory single-book store
+    falls back to its CreditMoney snapshot. Non-money JSON metadata remains the
+    caller's responsibility.
     """
     active_store = STORE if store is None else store
     typed_store = typed_billing_store(active_store)
@@ -78,14 +48,13 @@ def live_credit_summary(
         if typed is not None:
             return _summary(int(typed[0]), int(typed[1]), int(typed[2]))
 
-    account = active_store.get_credit_account(workspace_id)
-    if account is None:
-        return None
-    return _summary(
-        account.total_credits_microdollars,
-        account.total_usage_microdollars,
-        account.reserved_microdollars,
-    )
+    snapshot_fn = getattr(active_store, "credit_money_snapshot", None)
+    if snapshot_fn is not None:
+        money = snapshot_fn(workspace_id)
+        if money is None:
+            return None
+        return _summary(int(money[0]), int(money[1]), int(money[2]))
+    return None
 
 
 def _summary(total_credits: int, total_usage: int, reserved: int) -> LiveCreditSummary:

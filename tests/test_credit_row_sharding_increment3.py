@@ -34,13 +34,7 @@ def _seed(
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=sum(totals),
-            total_usage_microdollars=sum(usage),
-            reserved_microdollars=sum(reserved),
-            shard_count=len(totals),
-        ),
+        CreditAccount(workspace_id=workspace_id, shard_count=len(totals)),
     )
     table = database.typed.setdefault(CREDIT_BALANCE_TABLE, {})
     for shard, total in enumerate(totals):

@@ -9,8 +9,8 @@ The "spend control" half of the in-memory store. Owns four dicts:
     the authorize call).
 
 Three of those dicts are owned outright; reservations need read+write access
-to the workspace credit ledger (CreditAccount.reserved/total_usage), so the
-class accepts the credits dict by reference at construction time. The
+to the workspace credit ledger (CreditMoney.reserved/total_usage), so the
+class accepts the money dict by reference at construction time. The
 parent InMemoryStore's lock is shared so reserve→credit-debit happens
 atomically.
 
@@ -44,6 +44,7 @@ from trusted_router.spend_windows import (
 from trusted_router.storage_models import (
     ApiKey,
     CreditAccount,
+    CreditMoney,
     GatewayAuthorization,
     Reservation,
     _is_byok,
@@ -57,10 +58,12 @@ class InMemoryApiKeys:
         self,
         *,
         credits_by_workspace: dict[str, CreditAccount],
+        credit_money_by_workspace: dict[str, CreditMoney],
         lock: threading.RLock,
     ) -> None:
         self._lock = lock
         self._credits = credits_by_workspace
+        self._credit_money = credit_money_by_workspace
         self.keys: dict[str, ApiKey] = {}
         self.key_ids_by_lookup_hash: dict[str, str] = {}
         self.reservations: dict[str, Reservation] = {}
@@ -330,7 +333,7 @@ class InMemoryApiKeys:
                 existing_id = self.reservation_id_by_idempotency_key.get(idempotency_key)
                 if existing_id is not None:
                     return self.reservations[existing_id]
-            account = self._credits[workspace_id]
+            account = self._credit_money[workspace_id]
             available = (
                 account.total_credits_microdollars
                 - account.total_usage_microdollars
@@ -356,9 +359,9 @@ class InMemoryApiKeys:
             reservation = self.reservations[reservation_id]
             if reservation.settled:
                 return
-            account = self._credits[reservation.workspace_id]
-            account.reserved_microdollars -= reservation.amount_microdollars
-            account.total_usage_microdollars += actual_microdollars
+            m = self._credit_money[reservation.workspace_id]
+            m.reserved_microdollars -= reservation.amount_microdollars
+            m.total_usage_microdollars += actual_microdollars
             reservation.settled = True
 
     def refund(self, reservation_id: str) -> None:
@@ -366,8 +369,8 @@ class InMemoryApiKeys:
             reservation = self.reservations[reservation_id]
             if reservation.settled:
                 return
-            account = self._credits[reservation.workspace_id]
-            account.reserved_microdollars -= reservation.amount_microdollars
+            m = self._credit_money[reservation.workspace_id]
+            m.reserved_microdollars -= reservation.amount_microdollars
             reservation.settled = True
 
     # ── Gateway authorizations ──────────────────────────────────────────

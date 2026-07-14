@@ -47,11 +47,7 @@ def _seed_sharded_credit(
     workspace_id: str,
     totals: list[int],
 ) -> None:
-    account = CreditAccount(
-        workspace_id=workspace_id,
-        total_credits_microdollars=sum(totals),
-        shard_count=len(totals),
-    )
+    account = CreditAccount(workspace_id=workspace_id, shard_count=len(totals))
     store._write_entity("credit", workspace_id, account)  # type: ignore[attr-defined]
     table = database.typed.setdefault(CREDIT_BALANCE_TABLE, {})  # type: ignore[attr-defined]
     for shard, total in enumerate(totals):
@@ -226,7 +222,7 @@ def test_typed_direct_grant_distributes_delta_and_is_idempotent() -> None:
     rows = database.typed[CREDIT_BALANCE_TABLE]
     assert [rows[(workspace_id, shard)]["total_credits"] for shard in range(3)] == [44, 33, 33]
     assert live_credit_summary(workspace_id, store=store)["total_credits"] == 110
-    assert store.get_credit_account(workspace_id).total_credits_microdollars == 100
+    assert store.get_credit_account(workspace_id).shard_count == 3
 
 
 def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
@@ -239,7 +235,7 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
         store.credit_workspace_typed_direct(workspace_id, 10, "evt-missing")
 
     assert database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] == 50
-    assert store.get_credit_account(workspace_id).total_credits_microdollars == 100
+    assert store.get_credit_account(workspace_id).shard_count == 2
     assert ("stripe_event", "evt-missing") not in database.rows
 
 
@@ -271,11 +267,7 @@ def test_typed_credit_snapshot_fails_closed_on_missing_configured_shard() -> Non
 def test_generic_credit_metadata_write_does_not_overwrite_sharded_sub_budgets() -> None:
     store, database, _ = make_fake_store()
     workspace_id = "ws-mirror-shards"
-    account = CreditAccount(
-        workspace_id=workspace_id,
-        total_credits_microdollars=100,
-        shard_count=2,
-    )
+    account = CreditAccount(workspace_id=workspace_id, shard_count=2)
 
     store._write_entity("credit", workspace_id, account)
 

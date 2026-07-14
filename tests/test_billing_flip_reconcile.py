@@ -11,7 +11,7 @@ See docs/design/billing-typed-counters.md.
 from __future__ import annotations
 
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, Workspace
+from trusted_router.storage import Workspace
 from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE, KEY_LIMIT_TABLE
 
@@ -35,11 +35,11 @@ def _seed_drained_workspace(store, ws: str, *, total_credits: int, total_usage: 
     )
     store._write_entity(
         "credit", ws,
-        CreditAccount(
-            workspace_id=ws,
-            total_credits_microdollars=total_credits,
-            total_usage_microdollars=total_usage,
-        ),
+        {
+            "workspace_id": ws,
+            "total_credits_microdollars": total_credits,
+            "total_usage_microdollars": total_usage,
+        },
     )
     store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
         "workspace_id": ws,
@@ -89,11 +89,11 @@ def test_reconcile_refuses_open_credit_hold() -> None:
     store._write_entity(
         "credit",
         ws,
-        CreditAccount(
-            workspace_id=ws,
-            total_credits_microdollars=1_000_000,
-            reserved_microdollars=250_000,
-        ),
+        {
+            "workspace_id": ws,
+            "total_credits_microdollars": 1_000_000,
+            "reserved_microdollars": 250_000,
+        },
     )
 
     result = reconcile_for_flip(store, ws, apply=True)

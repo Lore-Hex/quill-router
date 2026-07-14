@@ -13,8 +13,17 @@ def _seed_credit(store, workspace_id: str, total: int) -> None:
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(workspace_id=workspace_id, total_credits_microdollars=total),
+        CreditAccount(workspace_id=workspace_id),
     )
+    store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
+        "workspace_id": workspace_id,
+        "shard": 0,
+        "total_credits": total,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
 
 
 def _json_credit(db, workspace_id: str) -> dict:
@@ -33,21 +42,25 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
 
     assert store.credit_workspace_typed_direct(ws, 500_000, event_id) is True
 
-    assert _json_credit(db, ws)["total_credits_microdollars"] == 1_000_000
+    assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
     assert ("stripe_event", event_id) in db.rows
     commit_version = db.rows[("stripe_event", event_id)].version
     assert db.typed_versions[(CREDIT_BALANCE_TABLE, (ws, 0))] == commit_version
 
     assert store.credit_workspace_typed_direct(ws, 500_000, event_id) is False
-    assert _json_credit(db, ws)["total_credits_microdollars"] == 1_000_000
+    assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
 
 
 def test_credit_workspace_typed_direct_creates_missing_typed_row_from_json() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_b2_missing_typed"
-    _seed_credit(store, ws, 2_000_000)
+    store._write_entity(
+        "credit",
+        ws,
+        {"workspace_id": ws, "total_credits_microdollars": 2_000_000},
+    )
     assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
 
     assert store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed") is True
@@ -67,13 +80,13 @@ def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
 
     assert store.credit_workspace_typed_direct(ws, 400_000, "evt_new_path") is True
     assert store.credit_workspace_once(ws, 400_000, "evt_new_path") is False
-    assert _json_credit(db, ws)["total_credits_microdollars"] == 1_000_000
+    assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
     store._write_entity("stripe_event", "evt_old_marker", {"created_at": "2026-07-10T00:00:00Z"})
     assert store.credit_workspace_once(ws, 900_000, "evt_old_marker") is False
     assert store.credit_workspace_typed_direct(ws, 900_000, "evt_old_marker") is False
-    assert _json_credit(db, ws)["total_credits_microdollars"] == 1_000_000
+    assert "total_credits_microdollars" not in _json_credit(db, ws)
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
 
@@ -96,7 +109,7 @@ def test_gcp_signup_reports_typed_trial_credit(monkeypatch) -> None:
 
     assert result is not None
     assert result.trial_credit_microdollars == grant_amount
-    assert _json_credit(db, result.workspace.id)["total_credits_microdollars"] == 0
+    assert "total_credits_microdollars" not in _json_credit(db, result.workspace.id)
     assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
 
 

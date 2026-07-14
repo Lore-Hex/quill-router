@@ -196,7 +196,7 @@ def test_gateway_authorize_rejects_oversized_trace_before_reservation(
     )
     assert response.status_code == 400
     assert response.json()["error"]["type"] == "invalid_request_metadata"
-    assert STORE.credits[created["data"]["workspace_id"]].reserved_microdollars == 0
+    assert STORE.credit_money[created["data"]["workspace_id"]].reserved_microdollars == 0
 
 
 def test_merge_tags_overlays_request_values_without_mutating_defaults() -> None:

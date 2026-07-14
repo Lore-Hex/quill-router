@@ -264,16 +264,13 @@ class SpannerBigtableStore:
             # New accounts start at $0; trial credit is granted on first
             # valid-card attach via the Stripe webhook. See
             # routes/internal/webhook.py + the create_workspace doc above.
-            credit = CreditAccount(
-                workspace_id=workspace.id,
-                total_credits_microdollars=0,
-            )
+            credit = CreditAccount(workspace_id=workspace.id)
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": new_user.id})
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(transaction, workspace.id, credit)
+            self._seed_credit_balance_on_create(transaction, workspace.id, 0)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -312,7 +309,7 @@ class SpannerBigtableStore:
         self,
         writer: Any,
         workspace_id: str,
-        credit: CreditAccount,
+        initial_total_micro: int,
     ) -> None:
         writer.insert_or_update(
             table=CREDIT_BALANCE_TABLE,
@@ -320,7 +317,7 @@ class SpannerBigtableStore:
             values=[
                 credit_balance_mirror_row(
                     workspace_id,
-                    credit,
+                    initial_total_micro,
                     self._spanner.COMMIT_TIMESTAMP,
                 )
             ],
@@ -373,17 +370,13 @@ class SpannerBigtableStore:
         # webhook in routes/internal/webhook.py). Stops free-credit
         # farming with throwaway emails. Wallet sign-in already passed
         # 0 explicitly, so its behavior is unchanged.
-        credit = CreditAccount(
-            workspace_id=workspace.id,
-            total_credits_microdollars=(
-                0 if trial_credit_microdollars is None else trial_credit_microdollars
-            ),
-        )
+        initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
+        credit = CreditAccount(workspace_id=workspace.id)
         with self._database.batch() as batch:
             self._write_entity_batch(batch, "workspace", workspace.id, workspace)
             self._write_entity_batch(batch, "member", _member_id(workspace.id, owner_user_id), member)
             self._write_entity_batch(batch, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(batch, workspace.id, credit)
+            self._seed_credit_balance_on_create(batch, workspace.id, initial_total)
         return workspace
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
@@ -431,6 +424,24 @@ class SpannerBigtableStore:
 
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
+
+    def credit_money_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
+        # Fallback money read for live_credit_summary when the typed snapshot is
+        # unavailable (mirror flag off, or the typed row not yet seeded). The
+        # stored 'credit' JSON still carries the legacy money on pre-C2b rows
+        # (they are only dropped when constructing the metadata-only
+        # CreditAccount, never from storage), so read the raw entity — matching
+        # the pre-C2b behavior where live_credit_summary fell back to the JSON
+        # CreditAccount. A tr_credit_balance point-read is deliberately NOT used:
+        # that table may not exist in a deploy-before-DDL state.
+        raw = self._read_entity("credit", workspace_id, dict)
+        if raw is None:
+            return None
+        return (
+            int(raw.get("total_credits_microdollars", 0)),
+            int(raw.get("total_usage_microdollars", 0)),
+            int(raw.get("reserved_microdollars", 0)),
+        )
 
     def _credit_shard_count_loader(self, workspace_id: str) -> Callable[[], int]:
         def load() -> int:
@@ -550,16 +561,13 @@ class SpannerBigtableStore:
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
-            credit = CreditAccount(
-                workspace_id=workspace.id,
-                total_credits_microdollars=0,
-            )
+            credit = CreditAccount(workspace_id=workspace.id)
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "wallet_user", normalized, {"user_id": new_user.id})
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(transaction, workspace.id, credit)
+            self._seed_credit_balance_on_create(transaction, workspace.id, 0)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -890,8 +898,12 @@ class SpannerBigtableStore:
                     raise RuntimeError(
                         f"missing tr_credit_balance shard {shard} for sharded workspace"
                     )
-                # Seed path for legacy/missing typed rows; JSON credit money is stale.
-                new_total = int(account.total_credits_microdollars) + amount
+                # Seed path for legacy/missing typed rows; preserve any old JSON
+                # money if this is the first typed grant for a pre-C2b row.
+                raw_credit = (
+                    self._read_entity_tx(transaction, "credit", workspace_id, dict) or {}
+                )
+                new_total = int(raw_credit.get("total_credits_microdollars", 0)) + amount
                 transaction.execute_update(
                     "INSERT INTO tr_credit_balance "
                     "(workspace_id, shard, total_credits, source_updated_at, updated_at) "

@@ -19,7 +19,7 @@ from trusted_router.storage_gcp_counter_reconcile import (
     audit_typed_invariants,
     reconcile_for_flip,
 )
-from trusted_router.storage_models import ApiKey, CreditAccount, Reservation, Workspace
+from trusted_router.storage_models import ApiKey, Reservation, Workspace
 
 _DEFAULT_ENV = {
     "TR_STORAGE_BACKEND": "spanner-bigtable",
@@ -42,7 +42,10 @@ class TypedCreditRow:
 class Readiness:
     workspace_id: str
     workspace: Workspace | None
-    credit: CreditAccount | None
+    # Raw legacy-JSON 'credit' entity (dict) or None. Post-C2b CreditAccount is
+    # metadata-only, so the pre-flip legacy money (total_credits/total_usage/
+    # reserved) is read straight from the stored entity dict.
+    credit: dict | None
     keys: list[ApiKey] = field(default_factory=list)
     legacy_open_reservations: int = 0
     typed_reservation_rows: int = 0
@@ -69,8 +72,8 @@ class Readiness:
     @property
     def drain_reasons(self) -> list[str]:
         reasons: list[str] = []
-        if self.credit is not None and int(self.credit.reserved_microdollars) != 0:
-            reasons.append(f"JSON credit reserved={self.credit.reserved_microdollars}")
+        if self.credit is not None and int(self.credit.get("reserved_microdollars", 0)) != 0:
+            reasons.append(f"JSON credit reserved={self.credit.get('reserved_microdollars', 0)}")
         if self.legacy_open_reservations != 0:
             reasons.append(f"{self.legacy_open_reservations} open legacy reservations")
         if self.key_reserved_total != 0:
@@ -179,7 +182,7 @@ def _legacy_open_reservation_count(store: Any, workspace_id: str) -> int:
 
 def assess_readiness(store: Any, workspace_id: str) -> Readiness:
     workspace = store.get_workspace(workspace_id)
-    credit = store.get_credit_account(workspace_id)
+    credit = store._read_entity("credit", workspace_id, dict)
     keys = store.list_keys(workspace_id) if workspace is not None else []
     legacy_open = _legacy_open_reservation_count(store, workspace_id)
     typed_rows, typed_open = _typed_reservation_counts(store, workspace_id)
@@ -221,9 +224,9 @@ def _print_readiness(readiness: Readiness) -> None:
     else:
         print(
             "  JSON credit: "
-            f"total_credits={readiness.credit.total_credits_microdollars} "
-            f"total_usage={readiness.credit.total_usage_microdollars} "
-            f"reserved={readiness.credit.reserved_microdollars}"
+            f"total_credits={readiness.credit.get('total_credits_microdollars', 0)} "
+            f"total_usage={readiness.credit.get('total_usage_microdollars', 0)} "
+            f"reserved={readiness.credit.get('reserved_microdollars', 0)}"
         )
     print(
         "  holds: "
@@ -304,15 +307,15 @@ def _unpause_workspace(store: Any, workspace_id: str) -> bool:
 
 
 def _verify_seeded_credit(store: Any, workspace_id: str) -> tuple[bool, str]:
-    credit = store.get_credit_account(workspace_id)
+    credit = store._read_entity("credit", workspace_id, dict)
     typed = _typed_credit_row(store, workspace_id)
     if credit is None:
         return False, "JSON credit account missing"
     if typed is None:
         return False, "typed tr_credit_balance row missing"
     expected = (
-        int(credit.total_credits_microdollars),
-        int(credit.total_usage_microdollars),
+        int(credit.get("total_credits_microdollars", 0)),
+        int(credit.get("total_usage_microdollars", 0)),
         0,
     )
     actual = (typed.total_credits, typed.total_usage, typed.reserved)

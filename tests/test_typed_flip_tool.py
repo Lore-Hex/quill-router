@@ -7,7 +7,7 @@ import pytest
 
 from scripts import typed_flip
 from tests.fakes.spanner import make_fake_store
-from trusted_router.storage import CreditAccount, Reservation, Workspace
+from trusted_router.storage import Reservation, Workspace
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
 
@@ -33,12 +33,12 @@ def _seed_workspace(
     store._write_entity(
         "credit",
         ws,
-        CreditAccount(
-            workspace_id=ws,
-            total_credits_microdollars=total_credits,
-            total_usage_microdollars=total_usage,
-            reserved_microdollars=reserved,
-        ),
+        {
+            "workspace_id": ws,
+            "total_credits_microdollars": total_credits,
+            "total_usage_microdollars": total_usage,
+            "reserved_microdollars": reserved,
+        },
     )
     store._database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
         "workspace_id": ws,
@@ -52,9 +52,9 @@ def _seed_workspace(
 
 
 def _add_legacy_hold(store: Any, ws: str, amount: int = 100_000) -> None:
-    credit = store.get_credit_account(ws)
+    credit = store._read_entity("credit", ws, dict)
     assert credit is not None
-    credit.reserved_microdollars += amount
+    credit["reserved_microdollars"] = int(credit.get("reserved_microdollars", 0)) + amount
     store._write_entity("credit", ws, credit)
     store._write_entity(
         "reservation",

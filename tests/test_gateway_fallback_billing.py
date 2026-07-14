@@ -31,7 +31,7 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     store._write_entity(
         "credit",
         ws,
-        CreditAccount(workspace_id=ws, total_credits_microdollars=10_000_000),
+        CreditAccount(workspace_id=ws),
     )
     db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
         "workspace_id": ws,
@@ -76,7 +76,7 @@ def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() 
     store._write_entity(
         "credit",
         ws,
-        CreditAccount(workspace_id=ws, total_credits_microdollars=10_000_000),
+        CreditAccount(workspace_id=ws),
     )
     _raw, api_key = store.create_api_key(
         workspace_id=ws,
@@ -186,12 +186,11 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert generation.usage_type == "BYOK"
     assert generation.total_cost_microdollars == expected_cost
 
-    credit = STORE.get_credit_account(key["workspace_id"])
+    money = STORE.credit_money[key["workspace_id"]]
     refreshed_key = STORE.get_key_by_hash(key["hash"])
-    assert credit is not None
     assert refreshed_key is not None
-    assert credit.reserved_microdollars == 0
-    assert credit.total_usage_microdollars == 0
+    assert money.reserved_microdollars == 0
+    assert money.total_usage_microdollars == 0
     assert refreshed_key.reserved_microdollars == 0
     assert refreshed_key.usage_microdollars == 0
     assert refreshed_key.byok_usage_microdollars == expected_cost
@@ -262,12 +261,11 @@ def test_gateway_validate_checks_key_without_reserving_or_recording_usage() -> N
         "route_type": "responses.input_tokens",
     }
     refreshed_key = STORE.get_key_by_hash(key["hash"])
-    credit = STORE.get_credit_account(key["workspace_id"])
+    money = STORE.credit_money[key["workspace_id"]]
     assert refreshed_key is not None
-    assert credit is not None
     assert refreshed_key.reserved_microdollars == 0
     assert refreshed_key.usage_microdollars == 0
-    assert credit.reserved_microdollars == 0
+    assert money.reserved_microdollars == 0
     assert not STORE.generation_store.generations
 
 
@@ -297,10 +295,10 @@ def test_gateway_settle_rejects_unlisted_fallback_without_charge_or_generation()
     assert rejected.status_code == 400
     assert rejected.json()["error"]["type"] == "bad_request"
     assert not STORE.generation_store.generations
-    credit = STORE.get_credit_account(key["workspace_id"])
+    money = STORE.credit_money[key["workspace_id"]]
     refreshed_key = STORE.get_key_by_hash(key["hash"])
-    assert credit is not None and credit.total_usage_microdollars == 0
     assert refreshed_key is not None
+    assert money.total_usage_microdollars == 0
     assert refreshed_key.usage_microdollars == 0
     assert refreshed_key.byok_usage_microdollars == 0
 
@@ -408,12 +406,11 @@ def test_gateway_missing_byok_primary_uses_prepaid_endpoint() -> None:
     assert data["usage_type"] == "Credits"
     assert data["cost_microdollars"] == expected_cost
 
-    credit = STORE.get_credit_account(key["workspace_id"])
+    money = STORE.credit_money[key["workspace_id"]]
     refreshed_key = STORE.get_key_by_hash(key["hash"])
-    assert credit is not None
     assert refreshed_key is not None
-    assert credit.reserved_microdollars == 0
-    assert credit.total_usage_microdollars == expected_cost
+    assert money.reserved_microdollars == 0
+    assert money.total_usage_microdollars == expected_cost
     assert refreshed_key.usage_microdollars == expected_cost
     assert refreshed_key.byok_usage_microdollars == 0
 

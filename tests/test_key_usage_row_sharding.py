@@ -44,10 +44,7 @@ def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=1_000_000,
-        ),
+        CreditAccount(workspace_id=workspace_id),
     )
     database.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(workspace_id, 0)] = {
         "workspace_id": workspace_id,

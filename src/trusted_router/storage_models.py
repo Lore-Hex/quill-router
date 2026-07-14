@@ -250,9 +250,6 @@ class SettleOutboxRow:
 @dataclass
 class CreditAccount:
     workspace_id: str
-    total_credits_microdollars: int = 0
-    total_usage_microdollars: int = 0
-    reserved_microdollars: int = 0
     # Number of independent tr_credit_balance sub-ledgers owned by this
     # workspace. The default preserves the original one-row behavior; only the
     # pause/drain operator path may activate more shards for a hot workspace.
@@ -269,6 +266,17 @@ class CreditAccount:
     # and surface a helpful error if the saved card declines.
     last_auto_refill_at: str | None = None
     last_auto_refill_status: str | None = None  # "succeeded" | "failed:<code>" | "pending"
+
+
+@dataclass
+class CreditMoney:
+    """In-memory single-book credit money for one workspace. The Spanner
+    store keeps this in the typed tr_credit_balance table; the InMemory twin
+    keeps it here so CreditAccount stays metadata-only."""
+
+    total_credits_microdollars: int = 0
+    total_usage_microdollars: int = 0
+    reserved_microdollars: int = 0
 
 
 @dataclass

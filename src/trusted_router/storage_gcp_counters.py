@@ -112,12 +112,13 @@ def distribute_credit_amount(amount: int, shard_count: int) -> tuple[int, ...]:
     return tuple(values)
 
 
-def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> tuple:
-    """Mirror the JSON-owned `total_credits` of a `credit` row into
-    tr_credit_balance. reserved + total_usage are typed-DML-owned and are
-    deliberately NOT mirrored (see CREDIT_BALANCE_COLUMNS).
+def credit_balance_mirror_row(workspace_id: str, total_micro: int, commit_ts: Any) -> tuple:
+    """Seed the one-shard `total_credits` value into tr_credit_balance.
 
-    This generic absolute-value mirror is intentionally one-shard only. Once a
+    reserved + total_usage are typed-DML-owned and are deliberately NOT mirrored
+    (see CREDIT_BALANCE_COLUMNS).
+
+    This absolute-value seed is intentionally one-shard only. Once a
     workspace is explicitly sharded, credit deltas are distributed by
     credit_workspace_typed_direct; replaying the global JSON total into shard 0
     would multiply its budget.
@@ -125,7 +126,7 @@ def credit_balance_mirror_row(workspace_id: str, value: Any, commit_ts: Any) -> 
     return (
         workspace_id,
         UNSHARDED,
-        int(_field(value, "total_credits_microdollars", 0)),
+        int(total_micro),
         commit_ts,  # source_updated_at — the JSON row's updated_at, same commit
         commit_ts,  # this mirror's updated_at
     )

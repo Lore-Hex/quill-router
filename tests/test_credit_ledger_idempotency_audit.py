@@ -37,6 +37,7 @@ from trusted_router.config import Settings
 from trusted_router.storage import (
     STORE,
     CreditAccount,
+    CreditMoney,
 )
 from trusted_router.types import UsageType
 
@@ -45,10 +46,8 @@ def _fresh_workspace(name: str = "ws_idem_audit") -> str:
     """Set up a workspace with $5 of credit so we have headroom to
     reserve+settle without going negative. Returns the workspace_id."""
     workspace_id = f"{name}_{len(STORE.credits)}"
-    STORE.credits[workspace_id] = CreditAccount(
-        workspace_id=workspace_id,
-        total_credits_microdollars=5_000_000,
-    )
+    STORE.credits[workspace_id] = CreditAccount(workspace_id=workspace_id)
+    STORE.credit_money[workspace_id] = CreditMoney(total_credits_microdollars=5_000_000)
     return workspace_id
 
 
@@ -62,7 +61,7 @@ def test_credit_workspace_once_is_idempotent_on_repeat_event_id() -> None:
     after the 2026-05-24 deploy that fixed the StripeObject crash)
     cannot grant twice."""
     workspace_id = _fresh_workspace()
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    before = STORE.credit_money[workspace_id].total_credits_microdollars
 
     first = STORE.credit_workspace_once(workspace_id, 1_000_000, "evt_audit_credit_1")
     second = STORE.credit_workspace_once(workspace_id, 1_000_000, "evt_audit_credit_1")
@@ -71,7 +70,7 @@ def test_credit_workspace_once_is_idempotent_on_repeat_event_id() -> None:
     assert first is True
     assert second is False
     assert third is False
-    after = STORE.credits[workspace_id].total_credits_microdollars
+    after = STORE.credit_money[workspace_id].total_credits_microdollars
     assert after - before == 1_000_000, (
         f"credit_workspace_once double-applied on event_id retry; "
         f"expected +1_000_000, got +{after - before}"
@@ -82,12 +81,12 @@ def test_credit_workspace_once_different_event_ids_grant_independently() -> None
     """Sanity: idempotency keys are PER-event_id, not blanket per-
     workspace. Two DIFFERENT Stripe events must both credit."""
     workspace_id = _fresh_workspace()
-    before = STORE.credits[workspace_id].total_credits_microdollars
+    before = STORE.credit_money[workspace_id].total_credits_microdollars
 
     assert STORE.credit_workspace_once(workspace_id, 1_000_000, "evt_distinct_a") is True
     assert STORE.credit_workspace_once(workspace_id, 2_000_000, "evt_distinct_b") is True
 
-    after = STORE.credits[workspace_id].total_credits_microdollars
+    after = STORE.credit_money[workspace_id].total_credits_microdollars
     assert after - before == 3_000_000
 
 
@@ -109,10 +108,10 @@ def test_reserve_with_same_idempotency_key_returns_same_reservation() -> None:
 
     assert r1.id == r2.id == r3.id
     # Reserved amount should reflect ONE reservation, not three.
-    account = STORE.credits[workspace_id]
-    assert account.reserved_microdollars == 250_000, (
+    money = STORE.credit_money[workspace_id]
+    assert money.reserved_microdollars == 250_000, (
         f"reserve with same idempotency_key double-counted; "
-        f"reserved_microdollars={account.reserved_microdollars}"
+        f"reserved_microdollars={money.reserved_microdollars}"
     )
 
 
@@ -145,10 +144,10 @@ def test_settle_is_naturally_idempotent_via_reservation_settled_flag() -> None:
     STORE.settle(reservation.id, actual_microdollars=300_000)  # retry
     STORE.settle(reservation.id, actual_microdollars=300_000)  # retry again
 
-    account = STORE.credits[workspace_id]
-    assert account.reserved_microdollars == 0  # released once
-    assert account.total_usage_microdollars == 300_000, (
-        f"settle double-applied; total_usage_microdollars={account.total_usage_microdollars}"
+    money = STORE.credit_money[workspace_id]
+    assert money.reserved_microdollars == 0  # released once
+    assert money.total_usage_microdollars == 300_000, (
+        f"settle double-applied; total_usage_microdollars={money.total_usage_microdollars}"
     )
 
 
@@ -167,9 +166,9 @@ def test_refund_is_naturally_idempotent_via_reservation_settled_flag() -> None:
     STORE.refund(reservation.id)  # retry — must be a no-op
     STORE.refund(reservation.id)  # retry again
 
-    account = STORE.credits[workspace_id]
-    assert account.reserved_microdollars == 0  # released exactly once
-    assert account.total_usage_microdollars == 0  # refund never charges
+    money = STORE.credit_money[workspace_id]
+    assert money.reserved_microdollars == 0  # released exactly once
+    assert money.total_usage_microdollars == 0  # refund never charges
 
 
 def test_settle_then_refund_does_not_undo_settled_charge() -> None:
@@ -184,9 +183,9 @@ def test_settle_then_refund_does_not_undo_settled_charge() -> None:
     STORE.settle(reservation.id, actual_microdollars=150_000)
     STORE.refund(reservation.id)  # must be a no-op since reservation.settled is True
 
-    account = STORE.credits[workspace_id]
-    assert account.total_usage_microdollars == 150_000  # not undone
-    assert account.reserved_microdollars == 0
+    money = STORE.credit_money[workspace_id]
+    assert money.total_usage_microdollars == 150_000  # not undone
+    assert money.reserved_microdollars == 0
 
 
 # ── 5. mark_gateway_authorization_settled (idempotency at the gateway layer) ─
@@ -291,8 +290,8 @@ def test_finalize_gateway_authorization_returns_false_on_replay() -> None:
     assert first is True
     assert second is False
     assert third is False
-    account = STORE.credits[workspace_id]
-    assert account.total_usage_microdollars == 150_000  # not 450_000
+    money = STORE.credit_money[workspace_id]
+    assert money.total_usage_microdollars == 150_000  # not 450_000
 
 
 # ── 8. End-to-end Stage 5a dual-write contract ──────────────────────────────

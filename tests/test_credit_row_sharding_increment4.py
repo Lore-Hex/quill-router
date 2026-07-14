@@ -37,13 +37,7 @@ def _seed(
     store._write_entity(
         "credit",
         workspace_id,
-        CreditAccount(
-            workspace_id=workspace_id,
-            total_credits_microdollars=sum(shard_credits),
-            total_usage_microdollars=sum(shard_usage),
-            reserved_microdollars=sum(shard_reserved),
-            shard_count=len(shard_credits),
-        ),
+        CreditAccount(workspace_id=workspace_id, shard_count=len(shard_credits)),
     )
     table = database.typed.setdefault(CREDIT_BALANCE_TABLE, {})
     for shard, credits in enumerate(shard_credits):
@@ -98,8 +92,6 @@ def test_split_is_atomic_even_partitioned_and_invalidates_cached_count() -> None
     assert sum(row["total_usage"] for row in rows) == 37
     account = store.get_credit_account("ws-reshard")
     assert account.shard_count == 4
-    assert account.total_credits_microdollars == 101
-    assert account.total_usage_microdollars == 37
     assert store._credit_shard_count("ws-reshard") == 4
 
 
@@ -125,8 +117,6 @@ def test_split_then_unshard_round_trip_preserves_every_global_counter() -> None:
     ]
     account = store.get_credit_account("ws-reshard")
     assert account.shard_count == 1
-    assert account.total_credits_microdollars == 101
-    assert account.total_usage_microdollars == 37
 
 
 def test_same_target_is_verified_idempotent_noop() -> None:
@@ -189,7 +179,7 @@ def test_reshard_refuses_any_undrained_hold(
     assert store.get_credit_account("ws-reshard").shard_count == 1
 
 
-def test_reshard_refuses_incomplete_rows_and_deposited_credit_mismatch() -> None:
+def test_reshard_refuses_incomplete_rows_and_uses_typed_totals() -> None:
     store, database = _seed(
         shard_credits=[50, 50],
         shard_usage=[10, 10],
@@ -209,26 +199,19 @@ def test_reshard_refuses_incomplete_rows_and_deposited_credit_mismatch() -> None
         "source_updated_at": None,
         "updated_at": None,
     }
-    drift = reshard_credit_account(store, "ws-reshard", 4, apply=True)
-    assert not drift.ready
-    assert any(
-        reason.startswith("typed/JSON deposited-credit totals differ")
-        for reason in drift.reasons
-    )
-    assert store.get_credit_account("ws-reshard").shard_count == 2
+    changed = reshard_credit_account(store, "ws-reshard", 4, apply=True)
+    assert changed.ready and changed.applied
+    assert sum(row["total_credits"] for row in _rows(database)) == 90
+    assert store.get_credit_account("ws-reshard").shard_count == 4
 
 
-def test_reshard_refreshes_stale_json_usage_from_authoritative_typed_sum() -> None:
+def test_reshard_persists_shard_count_without_json_money() -> None:
     store, _database = _seed(shard_credits=[100], shard_usage=[60])
-    account = store.get_credit_account("ws-reshard")
-    account.total_usage_microdollars = 1
-    store._write_entity("credit", "ws-reshard", account)
 
     result = reshard_credit_account(store, "ws-reshard", 2, apply=True)
 
     assert result.ready and result.applied
     refreshed = store.get_credit_account("ws-reshard")
-    assert refreshed.total_usage_microdollars == 60
     assert refreshed.shard_count == 2
 
 
