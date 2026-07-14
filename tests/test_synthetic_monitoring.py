@@ -1925,6 +1925,40 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert not _rotation_omits_temperature("openai", "openai/gpt-4.1-mini")
 
 
+def test_rotation_budget_covers_modern_reasoning_families() -> None:
+    # Every (provider, model) observed on 2026-07-13 hitting the 16-token
+    # default and erroring with finish_reason=length -> probe_config_error on
+    # the public leaderboard. All must now get the reasoning budget.
+    for provider, model in [
+        ("makora", "google/gemma-4-26b-a4b-it"),
+        ("gemini", "google/gemini-3.1-pro-preview"),
+        ("gemini", "google/gemini-3.1-flash-lite-preview"),
+        ("gemini", "google/gemini-2.5-pro"),
+        ("makora", "qwen/qwen3.6-35b-a3b"),
+        ("makora", "qwen/qwen3.6-27b"),
+        ("parasail", "qwen/qwen3.5-397b-a17b"),
+        ("parasail", "qwen/qwen3.5-35b-a3b"),
+        ("parasail", "deepseek/deepseek-v4-pro"),
+        ("crusoe", "nvidia/nemotron-3-nano-30b-a3b"),
+        ("crusoe", "nvidia/nemotron-3-super-120b-a12b"),
+        ("nebius", "nvidia/Nemotron-3-Nano-Omni"),
+        ("nebius", "MiniMaxAI/MiniMax-M2.5"),
+    ]:
+        assert _rotation_max_tokens(provider, model) == 512, (provider, model)
+
+
+def test_rotation_budget_stays_cheap_for_non_reasoning_models() -> None:
+    # The cheap default must survive for non-reasoning models — in particular
+    # gemini-2.5-flash-lite, our highest-volume route, which streams content
+    # directly and must NOT be swept in by a broad "gemini-2.5" match.
+    assert _rotation_max_tokens("gemini", "google/gemini-2.5-flash-lite") == 16
+    assert _rotation_max_tokens("openai", "openai/gpt-4.1-mini") == 16
+    assert _rotation_max_tokens("anthropic", "anthropic/claude-haiku-4.5") == 16
+    assert _rotation_max_tokens("deepseek", "deepseek/deepseek-v4-flash") == 16
+    # existing non-16 tiers unchanged
+    assert _rotation_max_tokens("kimi", "moonshotai/kimi-k2.6") == 128
+
+
 @pytest.mark.asyncio
 async def test_provider_rotation_probe_measures_ttfb_and_ttft() -> None:
     body = (
