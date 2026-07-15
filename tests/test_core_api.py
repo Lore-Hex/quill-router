@@ -779,6 +779,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/athena",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
+        "trustedrouter/liberty-1.0",
+        "trustedrouter/liberty-2.0",
+        "trustedrouter/liberty-3.0",
+        "thinkingmachines/inkling",
         "google/gemini-3.1-flash-image-preview",
     }.issubset(model_ids)
     models_by_id = {model["id"]: model for model in models}
@@ -885,6 +889,27 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "deepseek/deepseek-v4-flash",
         "minimax/minimax-m3",
         "cerebras/gpt-oss-120b",
+    ]
+    liberty_1 = models_by_id["trustedrouter/liberty-1.0"]
+    liberty_2 = models_by_id["trustedrouter/liberty-2.0"]
+    liberty_3 = models_by_id["trustedrouter/liberty-3.0"]
+    assert liberty_1["context_length"] == 1_048_576
+    assert liberty_1["trustedrouter"]["route_kind"] == "fusion_panel"
+    assert liberty_1["trustedrouter"]["auto_candidates"] == [
+        "thinkingmachines/inkling",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+    ]
+    assert liberty_2["context_length"] == 131_072
+    assert liberty_2["trustedrouter"]["auto_candidates"] == [
+        "openai/gpt-oss-120b",
+        "google/gemma-4-31b-it",
+        "trustedrouter/liberty-1.0",
+    ]
+    assert liberty_3["context_length"] == 262_144
+    assert liberty_3["trustedrouter"]["auto_candidates"] == [
+        "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
+        "trustedrouter/liberty-1.0",
     ]
     # Probe one model from each TR-keyed provider that actually appears
     # in the ingest snapshot. Vertex is intentionally absent — TR doesn't

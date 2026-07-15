@@ -1,10 +1,10 @@
 {
-  "_about": "Provider-native supplement for Baseten Model APIs. Verified against https://inference.baseten.co/v1/models on 2026-06-24.",
+  "_about": "Provider-native supplement for Baseten Model APIs. Verified against https://inference.baseten.co/v1/models on 2026-07-15.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-06-24T00:00:00Z",
+  "generated_at": "2026-07-15T00:00:00Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 11,
+  "model_count": 12,
   "models": [
     {
       "id": "openai/gpt-oss-120b",
@@ -115,6 +115,16 @@
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 160000
+    },
+    {
+      "id": "thinkingmachines/inkling",
+      "upstream_id": "thinkingmachines/inkling",
+      "display_name": "Thinking Machines Inkling",
+      "context_length": 1048576,
+      "endpoints": ["chat/completions"],
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 4050000,
+      "cached_input_token_price_per_m": 170000
     }
   ]
 }

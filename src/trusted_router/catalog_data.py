@@ -763,6 +763,12 @@ OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 
 ATHENA_MODEL_ID = "trustedrouter/athena"
 
+LIBERTY_1_0_MODEL_ID = "trustedrouter/liberty-1.0"
+
+LIBERTY_2_0_MODEL_ID = "trustedrouter/liberty-2.0"
+
+LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
+
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
     {
         OPEN_PATCHER_S1_MODEL_ID,
@@ -844,6 +850,9 @@ META_MODEL_IDS = frozenset(
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
         ATHENA_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+        LIBERTY_2_0_MODEL_ID,
+        LIBERTY_3_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -980,6 +989,11 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     "deepseek/deepseek-v4-pro",
+)
+
+LIBERTY_1_0_MODEL_ORDER = (
+    "thinkingmachines/inkling",
+    "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
 SYNTH_FRONTIER_MODEL_ORDER = (
@@ -1134,6 +1148,16 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         ZEUS_1_0_MINI_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
+    ),
+    LIBERTY_2_0_MODEL_ID: (
+        "openai/gpt-oss-120b",
+        "google/gemma-4-31b-it",
+        LIBERTY_1_0_MODEL_ID,
+    ),
+    LIBERTY_3_0_MODEL_ID: (
+        "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
+        LIBERTY_1_0_MODEL_ID,
     ),
 }
 
@@ -1389,6 +1413,8 @@ for _advisor_model_id in (
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     ATHENA_MODEL_ID,
+    LIBERTY_2_0_MODEL_ID,
+    LIBERTY_3_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
 
@@ -1408,5 +1434,6 @@ for _synth_model_id in (
     PROMETHEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
+    LIBERTY_1_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
