@@ -36,6 +36,7 @@ log = logging.getLogger("pricing")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PARSERS_DIR = REPO_ROOT / "scripts" / "pricing" / "parsers"
+PRICING_FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures" / "pricing"
 
 # ----------------------------------------------------------------------
 # Plausibility ranges and import whitelist for LLM-generated parser code.
@@ -831,6 +832,52 @@ def parser_path(slug: str) -> Path:
     return PARSERS_DIR / f"{slug}.py"
 
 
+def _assert_fixture_compatibility(
+    *,
+    slug: str,
+    current_parse_fn: Any,
+    candidate_source: str,
+) -> None:
+    """Reject a self-heal that breaks a previously understood page shape.
+
+    Provider pages can expose different markup to different regions or roll
+    out a new layout gradually. A generated parser therefore has to be
+    additive: when the current parser still understands the captured fixture,
+    the candidate must produce the exact same normalized prices for it.
+    """
+    fixture_path = PRICING_FIXTURES_DIR / f"{slug}.html"
+    if not fixture_path.exists():
+        return
+    fixture_html = fixture_path.read_text(encoding="utf-8")
+    try:
+        current_raw = current_parse_fn(fixture_html)
+    except Exception:
+        return
+    current_prices, current_errors = _coerce_to_model_prices(current_raw)
+    if current_errors or current_prices is None or not current_prices:
+        return
+
+    candidate_prices, candidate_errors = sandbox_run_parser(
+        candidate_source, fixture_html
+    )
+    if candidate_errors or candidate_prices is None:
+        raise RuntimeError(
+            f"{slug}: self-heal fixture regression: {candidate_errors}"
+        )
+    if candidate_prices != current_prices:
+        removed = sorted(set(current_prices) - set(candidate_prices))
+        changed = sorted(
+            model_id
+            for model_id in set(current_prices) & set(candidate_prices)
+            if current_prices[model_id] != candidate_prices[model_id]
+        )
+        added = sorted(set(candidate_prices) - set(current_prices))
+        raise RuntimeError(
+            f"{slug}: self-heal fixture regression: "
+            f"removed={removed}, changed={changed}, added={added}"
+        )
+
+
 # ----------------------------------------------------------------------
 # Per-provider orchestration. Used by `providers/<slug>.py:fetch()`.
 # ----------------------------------------------------------------------
@@ -924,6 +971,12 @@ def fetch_provider(
         raise RuntimeError(
             f"{slug}: self-heal output failed validation: {final_errors}"
         )
+
+    _assert_fixture_compatibility(
+        slug=slug,
+        current_parse_fn=parse_fn,
+        candidate_source=new_src,
+    )
 
     # All gates passed — persist the new parser source.
     parser_path(slug).write_text(new_src, encoding="utf-8")

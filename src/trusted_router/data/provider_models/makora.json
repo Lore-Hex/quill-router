@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://www.makora.com/; https://openrouter.ai/api/v1/models for Gemma fallback",
-  "generated_at": "2026-07-15T01:37:51Z",
+  "generated_at": "2026-07-15T02:11:36Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10,
   "models": [
@@ -15,9 +15,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 90000,
-      "output_token_price_per_m": 200000,
-      "cached_input_token_price_per_m": 20000,
+      "input_token_price_per_m": 113400,
+      "output_token_price_per_m": 279100,
+      "cached_input_token_price_per_m": 85100,
       "input_modalities": [
         "text"
       ],
@@ -44,9 +44,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1120000,
-      "output_token_price_per_m": 2240000,
-      "cached_input_token_price_per_m": 110000,
+      "input_token_price_per_m": 1318000,
+      "output_token_price_per_m": 2636100,
+      "cached_input_token_price_per_m": 988500,
       "input_modalities": [
         "text"
       ],
@@ -100,9 +100,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 180000,
+      "input_token_price_per_m": 1350000,
+      "output_token_price_per_m": 3990000,
+      "cached_input_token_price_per_m": 240000,
       "input_modalities": [
         "text"
       ],
@@ -129,9 +129,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 820000,
-      "output_token_price_per_m": 3380000,
-      "cached_input_token_price_per_m": 160000,
+      "input_token_price_per_m": 760000,
+      "output_token_price_per_m": 3774900,
+      "cached_input_token_price_per_m": 575700,
       "input_modalities": [
         "text",
         "image"
@@ -159,9 +159,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 380000,
-      "cached_input_token_price_per_m": 80000,
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 150000,
       "input_modalities": [
         "text"
       ],
@@ -187,9 +187,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 120000,
-      "output_token_price_per_m": 380000,
-      "cached_input_token_price_per_m": 80000,
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 150000,
       "input_modalities": [
         "text"
       ],
@@ -215,9 +215,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 270000,
-      "output_token_price_per_m": 2820000,
-      "cached_input_token_price_per_m": 300000,
+      "input_token_price_per_m": 467100,
+      "output_token_price_per_m": 3459200,
+      "cached_input_token_price_per_m": 350300,
       "input_modalities": [
         "text"
       ],
@@ -244,9 +244,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 140000,
-      "output_token_price_per_m": 850000,
-      "cached_input_token_price_per_m": 110000,
+      "input_token_price_per_m": 172000,
+      "output_token_price_per_m": 1200200,
+      "cached_input_token_price_per_m": 129000,
       "input_modalities": [
         "text"
       ],
@@ -273,9 +273,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 180000,
+      "input_token_price_per_m": 1350000,
+      "output_token_price_per_m": 3990000,
+      "cached_input_token_price_per_m": 240000,
       "input_modalities": [
         "text"
       ],

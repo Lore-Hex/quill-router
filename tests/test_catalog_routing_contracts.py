@@ -297,10 +297,8 @@ def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
     prepaid = MODEL_ENDPOINTS["tencent/hy3@novita/prepaid"]
     byok = MODEL_ENDPOINTS["tencent/hy3@novita/byok"]
 
-    # We do not have a first-party Tencent provider object yet, so provider
-    # ownership falls back to the serving provider while the model ID keeps
-    # the canonical Tencent namespace.
-    assert model.provider == "novita"
+    # Tencent has several independent hosts. Validate the Novita endpoint
+    # itself rather than whichever host happens to sort first on the model.
     assert model.context_length == 262_144
     assert prepaid.upstream_id == "tencent/hy3"
     assert byok.upstream_id == "tencent/hy3"
@@ -346,9 +344,16 @@ def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
 def test_operator_unavailable_provider_routes_are_not_prepaid(
     provider: str, model_ids: tuple[str, ...]
 ) -> None:
+    checked = 0
     for model_id in model_ids:
+        if f"{model_id}@{provider}/byok" not in MODEL_ENDPOINTS:
+            # Provider feeds may retire the route entirely. The suppression
+            # contract applies only while the provider still advertises it.
+            continue
         assert f"{model_id}@{provider}/prepaid" not in MODEL_ENDPOINTS
         assert f"{model_id}@{provider}/byok" in MODEL_ENDPOINTS
+        checked += 1
+    assert checked > 0
 
 
 def test_minimax_m3_uses_provider_native_context_tiers() -> None:
@@ -1096,7 +1101,6 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         assert model is not None, f"{model_id} missing from catalog"
         assert model.supports_chat, f"{model_id} not chat"
         assert model.provider == "xiaomi"
-        assert model.upstream_id == upstream
         assert model.prompt_price_microdollars_per_million_tokens > 0
         credits = [
             e
@@ -1104,6 +1108,7 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
             if str(e.usage_type) == "Credits" and e.provider == "xiaomi"
         ]
         assert credits, f"{model_id} has no xiaomi prepaid endpoint"
+        assert {endpoint.upstream_id for endpoint in credits} == {upstream}
 
     pro = MODELS["xiaomi/mimo-v2.5-pro"]
     assert pro.context_length == 1_048_576
@@ -1240,7 +1245,7 @@ def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
     model = MODELS["anthropic/claude-fable-5"]
     endpoints = endpoints_for_model(model.id)
     assert endpoints
-    assert {endpoint.provider for endpoint in endpoints} == {"anthropic"}
+    assert "anthropic" in {endpoint.provider for endpoint in endpoints}
     assert all(endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD for endpoint in endpoints)
 
     shape = model_to_openrouter_shape(model)

@@ -1,4 +1,4 @@
-"""Novita pricing parser (plain-text tabular render)."""
+"""Novita pricing parser for markdown-link and plain-text table layouts."""
 from __future__ import annotations
 
 import re
@@ -103,6 +103,23 @@ _DISPLAY_TO_OR_ID: dict[str, str] = {
 }
 
 
+_LINK_PRICE_RE = re.compile(
+    r"\| \[([\w./:_\-]+)\][^|]*"
+    r"\|\s*[\d,]+\s*"
+    r"\|\s*\$([\d.]+)\s*/Mt"
+    r"(?:[^|]*?Cache Read \$([\d.]+)\s*/Mt)?"
+    r"[^|]*"
+    r"\|\s*\$([\d.]+)\s*/Mt"
+    r"[^|]*"
+    r"\|"
+)
+
+_FREE_TEXT_ROW_RE = re.compile(
+    r"(?m)^\s*(?P<name>[^\t\n]+)\t[\d,]+\s*\n"
+    r"\s*Free\s*\n\s*\n?\s*Free\s*\n",
+)
+
+
 # Match a model row. Because rows may span multiple lines (due to
 # cache-read info), we use a somewhat loose pattern.
 #
@@ -124,6 +141,40 @@ _FREE_RE = re.compile(r"\bFree\b")
 
 def parse(html: str) -> dict:
     out: dict = {}
+    # Older Jina renders use markdown links with canonical model IDs.
+    for match in _LINK_PRICE_RE.finditer(html):
+        model_id, input_usd, cached_usd, output_usd = match.groups()
+        if model_id in out:
+            continue
+        try:
+            row: dict = {
+                "prompt_micro_per_m": int(round(float(input_usd) * 1_000_000)),
+                "completion_micro_per_m": int(
+                    round(float(output_usd) * 1_000_000)
+                ),
+            }
+        except ValueError:
+            continue
+        if cached_usd:
+            try:
+                row["prompt_cached_micro_per_m"] = int(
+                    round(float(cached_usd) * 1_000_000)
+                )
+            except ValueError:
+                pass
+        out[model_id] = row
+
+    for match in _FREE_TEXT_ROW_RE.finditer(html):
+        name = match.group("name").strip()
+        model_id = _DISPLAY_TO_OR_ID.get(name)
+        if model_id and model_id not in out:
+            out[model_id] = {
+                "prompt_micro_per_m": 0,
+                "completion_micro_per_m": 0,
+            }
+
+    # Current renders use display names in a tab-delimited table. Preserve
+    # link-layout values above if both layouts appear in one response.
     for match in _ROW_RE.finditer(html):
         name = match.group("name").strip()
         if not name or name not in _DISPLAY_TO_OR_ID:

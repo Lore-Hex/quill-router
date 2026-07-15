@@ -87,12 +87,12 @@ class ModelProviderPrivacyOverride:
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
     (
         "anthropic/claude-fable-5",
-        "anthropic",
+        "*",
     ): ModelProviderPrivacyOverride(
         privacy_tier=PRIVACY_TIER_STANDARD,
         provider_zero_data_retention=False,
         provider_policy=(
-            "Claude Fable 5 is available on the Anthropic route, but it is not "
+            "Claude Fable 5 is available, but it is not "
             "tracked as ZDR for TrustedRouter. It is excluded from "
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
         ),

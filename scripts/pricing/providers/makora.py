@@ -16,8 +16,7 @@ from pathlib import Path
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "makora"
-URL = "https://r.jina.ai/https://www.makora.com/"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = "https://www.makora.com/"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -44,7 +43,6 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )
 
 

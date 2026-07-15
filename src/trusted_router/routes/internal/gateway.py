@@ -1232,6 +1232,10 @@ def _endpoint_cost_microdollars(
         output_tokens,
         rates.completion_price_microdollars_per_million_tokens,
     )
+    has_positive_charge = (input_tokens > 0 and prompt_price > 0) or (
+        output_tokens > 0
+        and rates.completion_price_microdollars_per_million_tokens > 0
+    )
     if cache_read_tokens or cache_creation_tokens:
         # Endpoint path prices cache via provider multipliers; the tier cached rate is the model-level path's policy.
         read_price, write_price = cache_token_prices_microdollars(
@@ -1239,7 +1243,15 @@ def _endpoint_cost_microdollars(
         )
         cost += token_cost_microdollars(cache_read_tokens, read_price)
         cost += token_cost_microdollars(cache_creation_tokens, write_price)
-    return cost
+        has_positive_charge = (
+            has_positive_charge
+            or (cache_read_tokens > 0 and read_price > 0)
+            or (cache_creation_tokens > 0 and write_price > 0)
+        )
+    # Microdollars are the ledger's smallest unit. A positive-priced request
+    # must still reserve and settle one unit when its exact fractional cost
+    # rounds below one microdollar; otherwise tiny calls can bypass key limits.
+    return max(cost, 1) if has_positive_charge else 0
 
 
 def _schedule_auto_refill(

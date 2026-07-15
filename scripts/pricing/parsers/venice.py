@@ -1,4 +1,4 @@
-"""Venice pricing parser (Jina-rendered markdown table)."""
+"""Venice pricing parser for block and markdown-table layouts."""
 from __future__ import annotations
 
 import re
@@ -34,6 +34,14 @@ _ROW_RE = re.compile(
     r"\s*(?:\$([\d.]+)|-)\s*\|"               # optional cache read (or "-")
 )
 
+_BLOCK_RE = re.compile(
+    r"`([\w.\-]+)`"
+    r"[\s\S]{0,300}?"
+    r"Input Price\$([\d.]+)"
+    r"\s*Output Price\$([\d.]+)"
+    r"(?:\s*Cache Read\$([\d.]+))?",
+)
+
 
 def _to_micro(value_usd: str) -> int:
     return int(round(float(value_usd) * 1_000_000))
@@ -41,24 +49,24 @@ def _to_micro(value_usd: str) -> int:
 
 def parse(md: str) -> dict:
     out: dict = {}
-    for match in _ROW_RE.finditer(md):
-        native, input_usd, output_usd, cached_usd = match.groups()
-        or_id = _NAME_TO_OR_ID.get(native)
-        if or_id is None:
-            continue
-        if or_id in out:
-            continue
-        try:
-            row_out: dict = {
-                "prompt_micro_per_m": _to_micro(input_usd),
-                "completion_micro_per_m": _to_micro(output_usd),
-            }
-        except ValueError:
-            continue
-        if cached_usd:
+    # Parse the older repeated-block render first, then fill new table rows.
+    for pattern in (_BLOCK_RE, _ROW_RE):
+        for match in pattern.finditer(md):
+            native, input_usd, output_usd, cached_usd = match.groups()
+            or_id = _NAME_TO_OR_ID.get(native)
+            if or_id is None or or_id in out:
+                continue
             try:
-                row_out["prompt_cached_micro_per_m"] = _to_micro(cached_usd)
+                row_out: dict = {
+                    "prompt_micro_per_m": _to_micro(input_usd),
+                    "completion_micro_per_m": _to_micro(output_usd),
+                }
             except ValueError:
-                pass
-        out[or_id] = row_out
+                continue
+            if cached_usd:
+                try:
+                    row_out["prompt_cached_micro_per_m"] = _to_micro(cached_usd)
+                except ValueError:
+                    pass
+            out[or_id] = row_out
     return out

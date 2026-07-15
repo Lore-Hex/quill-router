@@ -60,6 +60,10 @@ Cache $0.1290/M tokens
 """
 
 
+def test_makora_fetches_first_party_pricing_page() -> None:
+    assert makora.URL == "https://www.makora.com/"
+
+
 def test_makora_parser_extracts_public_lineup_prices() -> None:
     prices = makora_parser.parse(MAKORA_LINEUP_HTML)
 

@@ -19,6 +19,7 @@ from trusted_router.catalog_data import (
     PRIVACY_TIER_ZERO_RETENTION,
     PROVIDERS,
     ModelEndpoint,
+    ModelProviderPrivacyOverride,
     Provider,
 )
 
@@ -37,12 +38,16 @@ def provider_privacy_tier(provider: Provider) -> int:
     return PRIVACY_TIER_STANDARD
 
 
-
-
+def _model_provider_privacy_override(
+    model_id: str, provider_slug: str
+) -> ModelProviderPrivacyOverride | None:
+    return _MODEL_PROVIDER_PRIVACY_OVERRIDES.get(
+        (model_id, provider_slug)
+    ) or _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, "*"))
 
 
 def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
-    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None:
         return override.privacy_tier
     return provider_privacy_tier(PROVIDERS[provider_slug])
@@ -53,21 +58,21 @@ def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
 
 
 def model_provider_zero_data_retention(model_id: str, provider_slug: str) -> bool | None:
-    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None and override.provider_zero_data_retention is not None:
         return override.provider_zero_data_retention
     return PROVIDERS[provider_slug].provider_zero_data_retention
 
 
 def model_provider_policy(model_id: str, provider_slug: str) -> str:
-    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None and override.provider_policy is not None:
         return override.provider_policy
     return PROVIDERS[provider_slug].provider_policy
 
 
 def model_provider_policy_url(model_id: str, provider_slug: str) -> str | None:
-    override = _MODEL_PROVIDER_PRIVACY_OVERRIDES.get((model_id, provider_slug))
+    override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None and override.provider_policy_url is not None:
         return override.provider_policy_url
     return PROVIDERS[provider_slug].provider_policy_url
