@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Bot-authored pricing commits use GITHUB_TOKEN, so GitHub suppresses
+  # their normal push-triggered workflows. refresh-prices.yml dispatches
+  # CI explicitly for the generated commit before dispatching deploy.yml.
+  workflow_dispatch: {}
 
 jobs:
   test:
