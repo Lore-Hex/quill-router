@@ -9,6 +9,7 @@ import pytest
 
 from trusted_router.catalog import MODELS, Model, endpoints_for_model
 from trusted_router.providers import (
+    OPENAI_COMPATIBLE_PROVIDERS,
     ProviderClient,
     ProviderError,
     estimate_tokens_from_messages,
@@ -460,6 +461,10 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
 ) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text(f"{env_key}={env_value}\n", encoding="utf-8")
+    model = MODELS[provider_model] if isinstance(provider_model, str) else provider_model
+    provider_env_keys = OPENAI_COMPATIBLE_PROVIDERS[model.provider][0]
+    if env_key != provider_env_keys[0]:
+        monkeypatch.setenv(provider_env_keys[0], "ambient-key-must-not-win")
     calls: list[dict[str, Any]] = []
 
     class FakeAsyncClient:
@@ -489,7 +494,7 @@ async def test_new_openai_compatible_provider_platforms_use_native_keys_and_urls
     client = ProviderClient(LocalKeyFile(key_file), live=True)
 
     result = await client.chat(
-        MODELS[provider_model] if isinstance(provider_model, str) else provider_model,
+        model,
         {"messages": [{"role": "user", "content": "hello"}], "max_tokens": 5},
     )
 

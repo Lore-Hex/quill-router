@@ -435,8 +435,16 @@ class ProviderClient:
         return self.key_file.get(name) or os.environ.get(name)
 
     def _secret_any(self, names: tuple[str, ...] | None) -> str | None:
+        # Treat the explicitly supplied key file as one source. Check every
+        # accepted alias there before consulting ambient process variables;
+        # otherwise KIMI_API_KEY in the environment can unexpectedly override
+        # MOONSHOT_API_KEY in the caller's key file (and likewise for Makora).
         for name in names or ():
-            value = self._secret(name)
+            value = self.key_file.get(name)
+            if value:
+                return value
+        for name in names or ():
+            value = os.environ.get(name)
             if value:
                 return value
         return None
