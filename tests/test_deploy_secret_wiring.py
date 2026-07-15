@@ -33,3 +33,12 @@ def test_deploy_wires_athena_worker_prompt_secret() -> None:
     assert (
         'add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"'
     ) in rollout
+
+
+def test_hourly_kimi_discovery_has_narrow_secret_access_wiring() -> None:
+    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
+    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
+
+    assert 'grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"' in secrets
+    assert "KIMI_API_KEY:trustedrouter-kimi-api-key" in workflow
+    assert "no project-wide Secret" in workflow

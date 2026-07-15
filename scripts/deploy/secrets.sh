@@ -149,25 +149,27 @@ ensure_secret_from_prompt_file "trustedrouter-athena-worker-prompt-v1" "$ATHENA_
 ensure_secret_from_env_file "TR_SYNTHETIC_MONITOR_API_KEY" "trustedrouter-synthetic-monitor-api-key" "SYNTHETIC_MONITOR_API_KEY"
 ensure_secret_from_env_file "SENTRY_DSN" "trustedrouter-sentry-dsn"
 
-# Self-heal LLM key for the hourly pricing refresh GHA workflow.
-# Read from the local key file like every other TR secret; pushed to
-# Secret Manager and granted to tr-deploy@ (the GHA WIF SA) so the
-# workflow can pull it via `gcloud secrets versions access`.
+# Credentials used by the hourly pricing refresh GHA workflow. Values are
+# pushed to Secret Manager like every other TR secret. The GHA WIF service
+# account receives access only to the individual secrets it needs.
 ensure_secret_from_env_file "TR_API_KEY_FOR_SELF_HEAL" "trustedrouter-tr-api-key-for-self-heal"
-# Bind tr-deploy@ here, right next to the secret creation, so that a
-# downstream `set -e` on a later step (e.g. an etag-conflict on a
-# project-role call) cannot strand this secret without an accessor.
-# `|| log` so add-iam-policy-binding's harmless "already exists" or
-# transient etag conflicts do not abort the rest of the script.
 TR_DEPLOY_SA="${TR_DEPLOY_SA:-tr-deploy@${PROJECT_ID}.iam.gserviceaccount.com}"
-if gc secrets describe trustedrouter-tr-api-key-for-self-heal >/dev/null 2>&1; then
-  log "granting ${TR_DEPLOY_SA} accessor on trustedrouter-tr-api-key-for-self-heal"
-  gc secrets add-iam-policy-binding trustedrouter-tr-api-key-for-self-heal \
+
+grant_tr_deploy_secret_access() {
+  local secret_name="$1"
+  if ! gc secrets describe "$secret_name" >/dev/null 2>&1; then
+    return
+  fi
+  log "granting ${TR_DEPLOY_SA} accessor on ${secret_name}"
+  gc secrets add-iam-policy-binding "$secret_name" \
     --member="serviceAccount:${TR_DEPLOY_SA}" \
     --role="roles/secretmanager.secretAccessor" \
     --quiet >/dev/null \
-    || log "WARN: per-secret binding returned non-zero (may already be present)"
-fi
+    || log "WARN: per-secret binding for ${secret_name} returned non-zero"
+}
+
+grant_tr_deploy_secret_access "trustedrouter-tr-api-key-for-self-heal"
+grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,
