@@ -9,9 +9,13 @@
 #              {"value": "Output (/M tokens)", "price_dollar": "<p>$2</p>"}]}
 # We extract input + output from the price array and pair them.
 """Mistral pricing-page parser."""
+
 from __future__ import annotations
 
 import re
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+from bs4 import BeautifulSoup, Tag
 
 # Display name on mistral.ai → OR-canonical id. Extended over time.
 _NAME_TO_OR_ID = {
@@ -46,12 +50,13 @@ def _to_micro_per_m(text: str | None) -> int | None:
     if not match:
         return None
     try:
-        return int(round(float(match.group(1)) * 1_000_000))
-    except (TypeError, ValueError):
+        value = Decimal(match.group(1)) * Decimal(1_000_000)
+        return int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
 
-def parse(html: str) -> dict:
+def _parse_embedded_json(html: str) -> dict:
     out: dict = {}
     # Mistral embeds the model JSON inside a Next.js __next_f payload as
     # a string literal, so the JSON quote characters are escaped:
@@ -97,4 +102,66 @@ def parse(html: str) -> dict:
             "prompt_micro_per_m": prompt,
             "completion_micro_per_m": completion,
         }
+    return out
+
+
+def _rendered_price(card: Tag, label_prefix: str) -> int | None:
+    for label in card.find_all("p"):
+        if not isinstance(label, Tag):
+            continue
+        if not label.get_text(" ", strip=True).startswith(label_prefix):
+            continue
+        row = label.parent
+        if not isinstance(row, Tag):
+            continue
+        price = row.find("mistral-atom-text-price")
+        if isinstance(price, Tag):
+            return _to_micro_per_m(price.get_text(" ", strip=True))
+    return None
+
+
+def _parse_rendered_cards(html: str) -> dict:
+    """Parse the server-rendered cards on Mistral's dedicated API page."""
+    out: dict = {}
+    soup = BeautifulSoup(html, "html.parser")
+    for name_node in soup.find_all("p"):
+        if not isinstance(name_node, Tag):
+            continue
+        name = name_node.get_text(" ", strip=True)
+        or_id = _NAME_TO_OR_ID.get(name)
+        if or_id is None or or_id in out:
+            continue
+
+        # Find the smallest enclosing card that contains both token-price
+        # rows. The model name also appears in navigation and featured-model
+        # links, so anchoring to those rows avoids crossing into another card.
+        card = name_node.parent
+        while isinstance(card, Tag):
+            recognized_names = {
+                node.get_text(" ", strip=True)
+                for node in card.find_all("p")
+                if isinstance(node, Tag) and node.get_text(" ", strip=True) in _NAME_TO_OR_ID
+            }
+            if len(recognized_names) > 1:
+                # Navigation/page-root containers span multiple models. Any
+                # larger ancestor will too, so this name is not a price-card
+                # anchor and must not inherit a neighboring model's prices.
+                break
+            prompt = _rendered_price(card, "Input (/M tokens)")
+            completion = _rendered_price(card, "Output (/M tokens)")
+            if prompt is not None and completion is not None:
+                out[or_id] = {
+                    "prompt_micro_per_m": prompt,
+                    "completion_micro_per_m": completion,
+                }
+                break
+            card = card.parent
+    return out
+
+
+def parse(html: str) -> dict:
+    # Support both the older embedded Next.js payload and the current
+    # server-rendered API cards. Current visible cards win if both exist.
+    out = _parse_embedded_json(html)
+    out.update(_parse_rendered_cards(html))
     return out
