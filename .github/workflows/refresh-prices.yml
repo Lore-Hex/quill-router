@@ -194,6 +194,18 @@ jobs:
           uv run python scripts/check_price_coverage.py --strict-model-discovery \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Validate generated catalog before commit
+        # The refresh can change parsers, provider manifests, model ownership,
+        # routing, pricing, and SEO output in one pass. GitHub suppresses
+        # push-triggered CI for commits created with GITHUB_TOKEN, so these
+        # checks must run before the bot is allowed to move main. This keeps
+        # the last known-good snapshot live when a provider page changes in a
+        # way the self-healer or catalog merger does not understand yet.
+        run: |
+          uv run ruff check .
+          uv run mypy
+          uv run pytest -q
+
       - name: Commit and push if changed
         run: |
           set -euo pipefail
