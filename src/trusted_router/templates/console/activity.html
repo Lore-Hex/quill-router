@@ -26,6 +26,14 @@
     "30d": "Last 30 days",
     "90d": "Last 90 days"
   };
+  const rangeDurations = {
+    "1h": 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+    "90d": 90 * 24 * 60 * 60 * 1000
+  };
   const granularityLabels = {
     minute: "minute",
     "5min": "5-minute",
@@ -65,6 +73,8 @@
   let chart = null;
   let breakdown = null;
   let empty = null;
+  let emptyMessage = null;
+  let expandRange = null;
   let layout = null;
   let message = null;
   let status = null;
@@ -126,6 +136,38 @@
       return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", timeZone: "UTC" });
     }
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  function formatActivityTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short"
+    });
+  }
+
+  function rangeContaining(value) {
+    const timestamp = new Date(value).getTime();
+    if (Number.isNaN(timestamp)) {
+      return null;
+    }
+    const age = Math.max(0, Date.now() - timestamp);
+    return Object.keys(rangeDurations).find((range) => age <= rangeDurations[range]) || null;
+  }
+
+  function showRange(range) {
+    const input = panel.querySelector(`input[name="usage-range"][value="${range}"]`);
+    if (!input) {
+      return;
+    }
+    input.checked = true;
+    loadUsage();
   }
 
   function renderChart(series, metric, granularity, rangeText) {
@@ -276,7 +318,22 @@
       empty.hidden = false;
       chart.replaceChildren();
       breakdown.replaceChildren();
-      setStatus("empty", "warn");
+      setStatus("0 requests", "");
+      const latestActivityAt = String(data.latest_activity_at || "");
+      const containingRange = rangeContaining(latestActivityAt);
+      if (latestActivityAt) {
+        emptyMessage.textContent = `No usage in ${rangeText.toLowerCase()}. Most recent request: ${formatActivityTime(latestActivityAt)}.`;
+      } else {
+        emptyMessage.textContent = "No activity yet. Make a request with your API key to see it here.";
+      }
+      if (containingRange && containingRange !== state.range) {
+        expandRange.dataset.range = containingRange;
+        expandRange.textContent = `Show ${rangeLabels[containingRange].replace(/^Last /, "").toLowerCase()}`;
+        expandRange.hidden = false;
+      } else {
+        expandRange.hidden = true;
+        delete expandRange.dataset.range;
+      }
       showMessage(data.truncated ? "Showing partial data." : "", "");
       return;
     }
@@ -351,6 +408,8 @@
     chart = panel.querySelector("[data-usage-chart]");
     breakdown = panel.querySelector("[data-usage-breakdown]");
     empty = panel.querySelector("[data-usage-empty]");
+    emptyMessage = panel.querySelector("[data-usage-empty-message]");
+    expandRange = panel.querySelector("[data-usage-expand-range]");
     layout = panel.querySelector("[data-usage-layout]");
     message = panel.querySelector("[data-usage-message]");
     status = panel.querySelector("[data-usage-status]");
@@ -360,6 +419,12 @@
 
     panel.querySelectorAll('input[name="usage-range"], input[name="usage-metric"]').forEach((input) => {
       input.addEventListener("change", loadUsage);
+    });
+    expandRange.addEventListener("click", () => {
+      const range = expandRange.dataset.range;
+      if (range) {
+        showRange(range);
+      }
     });
     if ("ResizeObserver" in window) {
       new ResizeObserver(rerenderOnResize).observe(chart);
@@ -451,7 +516,10 @@
         <div data-usage-breakdown></div>
       </aside>
     </div>
-    <p class="empty" data-usage-empty hidden>No activity yet. Make a request with your API key to see it here.</p>
+    <div class="empty usage-empty-state" data-usage-empty role="status" aria-live="polite" hidden>
+      <p data-usage-empty-message>No activity yet. Make a request with your API key to see it here.</p>
+      <button class="btn" type="button" data-usage-expand-range hidden></button>
+    </div>
   </div>
 </section>
 

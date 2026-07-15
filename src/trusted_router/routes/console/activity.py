@@ -73,6 +73,12 @@ def register(app: FastAPI) -> None:
         )
         result = dict(result)
         result["range"] = range_
+        latest = STORE.activity_events(
+            ctx.workspace.id,
+            api_key_hash=api_key_hash,
+            limit=1,
+        )
+        result["latest_activity_at"] = latest[0].get("created_at") if latest else None
         # A shared cache (Redis) is deferred; this per-worker TTL covers
         # occasional console reads and protects Bigtable from refresh bursts.
         _USAGE_CACHE[cache_key] = (now + _USAGE_CACHE_TTL_SECONDS, result)
