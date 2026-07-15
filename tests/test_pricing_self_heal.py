@@ -94,6 +94,75 @@ def test_self_heal_happy_path_persists_new_parser(
     assert result.heal_diff and "test/model" in result.heal_diff
 
 
+def test_self_heal_normalizes_candidate_before_persisting(
+    tmp_parser: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_fetch_html(monkeypatch, "<html>doesn't matter</html>")
+    unsorted_rewrite = textwrap.dedent(
+        """
+        from __future__ import annotations
+
+        import re
+        import json
+
+        def parse(html: str) -> dict:
+            assert re.search("matter", html)
+            price = int(json.loads("1")) * 1_000_000
+            return {
+                "test/model": {
+                    "prompt_micro_per_m": price,
+                    "completion_micro_per_m": 2_000_000,
+                }
+            }
+        """
+    ).strip() + "\n"
+    _stub_self_heal(monkeypatch, unsorted_rewrite)
+
+    result = pricing_base.fetch_provider(
+        slug="testslug",
+        url="https://example.com/pricing",
+        expected_models=["test/model"],
+    )
+
+    persisted = tmp_parser.read_text(encoding="utf-8")
+    assert result.source == "self_healed"
+    assert persisted.index("import json") < persisted.index("import re")
+
+
+def test_self_heal_rejects_candidate_with_unfixable_lint_violation(
+    tmp_parser: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = tmp_parser.read_text(encoding="utf-8")
+    _stub_fetch_html(monkeypatch, "1")
+    invalid_rewrite = textwrap.dedent(
+        """
+        def parse(html: str) -> dict:
+            try:
+                price = int(html) * 1_000_000
+            except:
+                price = 1_000_000
+            return {
+                "test/model": {
+                    "prompt_micro_per_m": price,
+                    "completion_micro_per_m": 2_000_000,
+                }
+            }
+        """
+    ).strip() + "\n"
+    _stub_self_heal(monkeypatch, invalid_rewrite)
+
+    with pytest.raises(RuntimeError, match="Ruff normalization failed"):
+        pricing_base.fetch_provider(
+            slug="testslug",
+            url="https://example.com/pricing",
+            expected_models=["test/model"],
+        )
+
+    assert tmp_parser.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize(
     "fixture_result",
     [
