@@ -86,14 +86,13 @@ def test_provider_error_type_classification(status: int, expected: str) -> None:
         ("mistral", "env://MISTRAL_API_KEY"),
         ("kimi", "env://KIMI_API_KEY"),
         ("fireworks", "env://FIREWORKS_API_KEY"),
+        ("thinkingmachines", "env://THINKING_MACHINES_API_KEY"),
         ("vertex", "env://VERTEX_ACCESS_TOKEN"),
         # Unknown providers fall back to UPPER + _API_KEY.
         ("nebula", "env://NEBULA_API_KEY"),
     ],
 )
-def test_default_provider_secret_ref_known_and_fallback(
-    provider: str, expected_ref: str
-) -> None:
+def test_default_provider_secret_ref_known_and_fallback(provider: str, expected_ref: str) -> None:
     assert default_provider_secret_ref(provider) == expected_ref
 
 

@@ -91,6 +91,7 @@ PROVIDER_SLUGS = [
     "deepinfra",
     "friendli",
     "baseten",
+    "thinkingmachines",
     "wafer",
     "crusoe",
     "minimax",

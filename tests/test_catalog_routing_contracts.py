@@ -14,6 +14,7 @@ from trusted_router.catalog import (
     EU_MODEL_ID,
     FUSION_MODEL_ID,
     GATEWAY_PREPAID_PROVIDER_SLUGS,
+    LIBERTY_1_0_1M_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
@@ -775,9 +776,18 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     expected = {
         LIBERTY_1_0_MODEL_ID: (
             "fusion_panel",
-            1_048_576,
+            262_144,
             [
                 "thinkingmachines/inkling",
+                "nvidia/nemotron-3-ultra-550b-a55b",
+                "google/gemma-4-31b-it",
+            ],
+        ),
+        LIBERTY_1_0_1M_MODEL_ID: (
+            "fusion_panel",
+            1_048_576,
+            [
+                "thinkingmachines/inkling-1m",
                 "nvidia/nemotron-3-ultra-550b-a55b",
             ],
         ),
@@ -787,7 +797,7 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
             [
                 "google/gemma-4-31b-it",
                 "openai/gpt-oss-120b",
-                LIBERTY_1_0_MODEL_ID,
+                LIBERTY_1_0_1M_MODEL_ID,
             ],
         ),
         LIBERTY_3_0_MODEL_ID: (
@@ -798,6 +808,7 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
                 "openai/gpt-oss-120b",
                 "google/gemma-4-31b-it",
                 "nvidia/nemotron-3-ultra-550b-a55b",
+                LIBERTY_1_0_1M_MODEL_ID,
             ],
         ),
     }
@@ -813,14 +824,21 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         assert metadata["open_weights"] is True
 
     inkling = MODELS["thinkingmachines/inkling"]
-    assert inkling.context_length == 1_048_576
-    assert inkling.provider == "baseten"
+    assert inkling.context_length == 262_144
+    assert inkling.provider == "thinkingmachines"
     endpoints = endpoints_for_model(inkling.id)
     assert {(endpoint.provider, endpoint.upstream_id) for endpoint in endpoints} == {
-        ("baseten", "thinkingmachines/inkling")
+        ("thinkingmachines", "thinkingmachines/Inkling:peft:262144")
     }
     assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+
+    inkling_1m = MODELS["thinkingmachines/inkling-1m"]
+    assert inkling_1m.context_length == 1_048_576
+    assert inkling_1m.provider == "baseten"
+    assert {
+        (endpoint.provider, endpoint.upstream_id) for endpoint in endpoints_for_model(inkling_1m.id)
+    } == {("baseten", "thinkingmachines/inkling")}
 
 
 def test_athena_catalog_hides_orchestration_configuration() -> None:

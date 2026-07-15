@@ -58,6 +58,11 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
     # Baseten Model APIs — OpenAI-compatible chat completions.
     "baseten": (("BASETEN_API_KEY",), "https://inference.baseten.co/v1"),
+    # Thinking Machines Lab Tinker OpenAI-compatible sampler.
+    "thinkingmachines": (
+        ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY"),
+        "https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1",
+    ),
     # Wafer serverless API — OpenAI-compatible chat completions with
     # request-scoped ZDR when `Wafer-ZDR: required` is present.
     "wafer": (("WAFER_API_KEY",), "https://pass.wafer.ai/v1"),

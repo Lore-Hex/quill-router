@@ -27,6 +27,8 @@ from trusted_router.catalog_data import (
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ORDER,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_MODEL_ORDER,
     MAPREDUCE_CATALOG_MODEL_ORDER,
@@ -332,6 +334,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
     if model_id == LIBERTY_1_0_MODEL_ID:
         return _models_for_ids(LIBERTY_1_0_MODEL_ORDER)
+    if model_id == LIBERTY_1_0_1M_MODEL_ID:
+        return _models_for_ids(LIBERTY_1_0_1M_MODEL_ORDER)
     if model_id == ZEUS_1_0_MINI_MODEL_ID:
         return _models_for_ids(SYNTH_FRONTIER_MINI_MODEL_ORDER)
     if model_id == OPEN_PATCHER_S1_MODEL_ID:
@@ -385,6 +389,7 @@ def _meta_route_kind(model_id: str) -> str:
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
+        LIBERTY_1_0_1M_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
         SYNTH_CODE_MODEL_ID,

@@ -117,9 +117,9 @@
       "cached_input_token_price_per_m": 160000
     },
     {
-      "id": "thinkingmachines/inkling",
+      "id": "thinkingmachines/inkling-1m",
       "upstream_id": "thinkingmachines/inkling",
-      "display_name": "Thinking Machines Inkling",
+      "display_name": "Thinking Machines Inkling 1M",
       "context_length": 1048576,
       "endpoints": ["chat/completions"],
       "input_token_price_per_m": 1000000,

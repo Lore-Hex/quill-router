@@ -31,7 +31,7 @@ URL = "https://inference.baseten.co/v1/models"
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.7-code",
-    "thinkingmachines/inkling",
+    "thinkingmachines/inkling-1m",
 ]
 
 _NATIVE_TO_OR_ID = {
@@ -46,7 +46,7 @@ _NATIVE_TO_OR_ID = {
     "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": ("nvidia/nvidia-nemotron-3-ultra-550b-a55b"),
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
     "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
-    "thinkingmachines/inkling": "thinkingmachines/inkling",
+    "thinkingmachines/inkling": "thinkingmachines/inkling-1m",
 }
 
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
