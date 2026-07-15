@@ -1,10 +1,11 @@
 """Mistral — human-only provider config."""
+
 from __future__ import annotations
 
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "mistral"
-URL = "https://mistral.ai/pricing"
+URL = "https://mistral.ai/pricing/api/"
 EXPECTED_MODELS = [
     "mistralai/mistral-small-2603",
 ]
