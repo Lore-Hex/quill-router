@@ -899,10 +899,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "thinkingmachines/inkling",
         "nvidia/nemotron-3-ultra-550b-a55b",
     ]
-    assert liberty_2["context_length"] == 131_072
+    assert liberty_2["context_length"] == 262_144
     assert liberty_2["trustedrouter"]["auto_candidates"] == [
-        "openai/gpt-oss-120b",
         "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
         "trustedrouter/liberty-1.0",
     ]
     assert liberty_3["context_length"] == 1_048_576

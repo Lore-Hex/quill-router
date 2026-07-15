@@ -783,10 +783,10 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         ),
         LIBERTY_2_0_MODEL_ID: (
             "advisor_orchestration",
-            131_072,
+            262_144,
             [
-                "openai/gpt-oss-120b",
                 "google/gemma-4-31b-it",
+                "openai/gpt-oss-120b",
                 LIBERTY_1_0_MODEL_ID,
             ],
         ),

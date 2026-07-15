@@ -1150,8 +1150,8 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "moonshotai/kimi-k2.6",
     ),
     LIBERTY_2_0_MODEL_ID: (
-        "openai/gpt-oss-120b",
         "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
         LIBERTY_1_0_MODEL_ID,
     ),
     LIBERTY_3_0_MODEL_ID: (
