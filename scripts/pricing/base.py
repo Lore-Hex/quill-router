@@ -633,13 +633,15 @@ def ast_whitelist_check(source: str) -> list[str]:
 
 _SANDBOX_RUNNER_TEMPLATE = textwrap.dedent(
     '''
-    import sys, json
     {parser_source}
 
+    import json as _sandbox_json
+    import sys as _sandbox_sys
+
     if __name__ == "__main__":
-        html = sys.stdin.read()
+        html = _sandbox_sys.stdin.read()
         result = parse(html)
-        sys.stdout.write(json.dumps(result))
+        _sandbox_sys.stdout.write(_sandbox_json.dumps(result))
     '''
 ).strip()
 

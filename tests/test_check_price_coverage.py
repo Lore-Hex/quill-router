@@ -67,6 +67,7 @@ def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
     payload = {
         "data": [
             {"id": "zai-org/GLM-5.2"},
+            {"id": "zai-org/GLM-5.2-FP8"},
             {"id": "accounts/fireworks/models/glm-5p2"},
             {"id": "zai-org/glm-5.1"},
             {"id": "not-a-glm-model"},
@@ -77,6 +78,11 @@ def test_provider_glm_model_discovery_normalizes_native_ids() -> None:
         "z-ai/glm-5.1",
         "z-ai/glm-5.2",
     }
+
+
+def test_kimi_discovery_ignores_unpriced_auto_alias() -> None:
+    assert check_price_coverage._kimi_model_id("moonshot-v1-auto") is None
+    assert check_price_coverage._kimi_model_id("kimi-k2.7-code") == "moonshotai/kimi-k2.7-code"
 
 
 def test_provider_glm_required_gate_targets_current_flagships() -> None:

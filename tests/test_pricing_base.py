@@ -261,6 +261,20 @@ def parse(html: str) -> dict:
     assert prices["x/y"].completion_micro_per_m == 5678
 
 
+def test_sandbox_runs_parser_with_future_import() -> None:
+    """The wrapper must not precede compile-time future imports."""
+    src = """from __future__ import annotations
+
+def parse(markdown: str) -> dict:
+    return {"x/y": {"prompt_micro_per_m": 1234, "completion_micro_per_m": 5678}}
+"""
+    prices, errors = sandbox_run_parser(src, "<html></html>")
+
+    assert errors == []
+    assert prices is not None
+    assert prices["x/y"].prompt_micro_per_m == 1234
+
+
 def test_sandbox_rejects_non_dict_return() -> None:
     src = """
 def parse(html: str) -> dict:

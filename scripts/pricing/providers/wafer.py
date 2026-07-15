@@ -39,8 +39,10 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
+    "z-ai/glm-5.1",
     "z-ai/glm-5.2",
-    "moonshotai/kimi-k2.7-code",
+    "z-ai/glm-5.2-fast",
+    "moonshotai/kimi-k2.6",
     "minimax/minimax-m3",
 ]
 
@@ -48,6 +50,7 @@ _NATIVE_TO_OR_ID = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.2-Fast": "z-ai/glm-5.2-fast",
+    "glm5.2-fast": "z-ai/glm-5.2-fast",
     "Kimi-K2.6": "moonshotai/kimi-k2.6",
     "Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
@@ -111,9 +114,17 @@ def _manifest_row(
     capabilities = _wafer_capabilities(source_row)
     chat_capabilities = capabilities.get("chat_completions")
     chat_capabilities = chat_capabilities if isinstance(chat_capabilities, dict) else {}
+    message_capabilities = capabilities.get("messages")
+    message_capabilities = (
+        message_capabilities if isinstance(message_capabilities, dict) else {}
+    )
     zdr_capabilities = capabilities.get("zdr")
     zdr_capabilities = zdr_capabilities if isinstance(zdr_capabilities, dict) else {}
-    supports_vision = bool(chat_capabilities.get("vision"))
+    supports_vision = bool(
+        capabilities.get("vision")
+        or chat_capabilities.get("vision")
+        or message_capabilities.get("vision")
+    )
 
     row: dict[str, Any] = {
         "id": model_id,
@@ -220,26 +231,16 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if not isinstance(rows, list):
         raise RuntimeError("wafer manifest has no models list")
 
-    existing_by_id: dict[str, dict[str, Any]] = {
-        row["id"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    previous_ids = {
+        row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     updated: list[str] = []
-    appended: list[str] = []
+    refreshed_rows: list[dict[str, Any]] = []
     for model_id, price in sorted(result.prices.items()):
         discovered = _DISCOVERED_MANIFEST_ROWS.get(model_id)
-        row = existing_by_id.get(model_id)
-        if row is None:
-            if discovered is None:
-                continue
-            row = dict(discovered)
-            rows.append(row)
-            existing_by_id[model_id] = row
-            appended.append(model_id)
-        elif discovered is not None:
-            for key, value in discovered.items():
-                row[key] = value
+        if discovered is None:
+            continue
+        row = dict(discovered)
 
         tier = price.tiers[0]
         row["input_token_price_per_m"] = tier.prompt_micro_per_m
@@ -248,6 +249,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
         else:
             row.pop("cached_input_token_price_per_m", None)
+        refreshed_rows.append(row)
         updated.append(model_id)
 
     missing = sorted(set(EXPECTED_MODELS) - set(updated))
@@ -256,13 +258,21 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if not updated:
         raise RuntimeError("wafer manifest update touched no rows")
 
+    # Wafer's authenticated /v1/models feed is both the availability and
+    # pricing source. Rebuild the provider supplement from that feed so
+    # retired models cannot remain routable with stale prices.
+    rows[:] = refreshed_rows
+    current_ids = set(updated)
+    appended = sorted(current_ids - previous_ids)
+    removed = sorted(previous_ids - current_ids)
+
     raw["_about"] = (
         "Provider-native supplement for Wafer serverless API. Refreshed "
         "hourly from Wafer's OpenAI-compatible /v1/models feed."
     )
     raw["source"] = URL
-    raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
+    raw["generated_at"] = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     raw["model_count"] = len(rows)
     MANIFEST_PATH.write_text(
@@ -270,5 +280,10 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         encoding="utf-8",
     )
 
-    suffix = f", appended {len(appended)}" if appended else ""
+    changes: list[str] = []
+    if appended:
+        changes.append(f"appended {len(appended)}")
+    if removed:
+        changes.append(f"removed {len(removed)} unavailable")
+    suffix = f", {', '.join(changes)}" if changes else ""
     return [f"wafer: refreshed provider_models/wafer.json ({len(updated)} priced rows{suffix})"]

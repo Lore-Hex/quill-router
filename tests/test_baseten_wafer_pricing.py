@@ -70,6 +70,16 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     payload = {
         "data": [
             {
+                "id": "GLM-5.1",
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 100,
+                        "output_cents_per_million": 320,
+                        "cache_read_cents_per_million": 10,
+                    }
+                },
+            },
+            {
                 "id": "GLM-5.2",
                 "wafer": {
                     "display_name": "GLM-5.2",
@@ -82,11 +92,11 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
                         "input_cents_per_million": 120,
                         "output_cents_per_million": 410,
                         "cache_read_cents_per_million": 20,
-                    }
+                    },
                 },
             },
             {
-                "id": "GLM-5.2-Fast",
+                "id": "glm5.2-fast",
                 "wafer": {
                     "display_name": "GLM-5.2-Fast",
                     "context_length": 1048576,
@@ -102,11 +112,16 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
                 },
             },
             {
-                "id": "Kimi-K2.7-Code",
+                "id": "Kimi-K2.6",
                 "wafer": {
+                    "capabilities": {
+                        "vision": True,
+                        "zdr": {"supported": False},
+                        "chat_completions": {"supported": True},
+                    },
                     "pricing": {
-                        "input_cents_per_million": 95,
-                        "output_cents_per_million": 400,
+                        "input_cents_per_million": 114,
+                        "output_cents_per_million": 480,
                         "cache_read_cents_per_million": 19,
                     }
                 },
@@ -142,7 +157,7 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     result = wafer.fetch()
     glm = result.prices["z-ai/glm-5.2"]
     fast = result.prices["z-ai/glm-5.2-fast"]
-    kimi = result.prices["moonshotai/kimi-k2.7-code"]
+    kimi = result.prices["moonshotai/kimi-k2.6"]
     minimax = result.prices["minimax/minimax-m3"]
 
     assert glm.prompt_micro_per_m == 1_200_000
@@ -151,16 +166,14 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
     assert fast.prompt_micro_per_m == 3_000_000
     assert fast.completion_micro_per_m == 10_250_000
     assert fast.tiers[0].prompt_cached_micro_per_m == 500_000
-    assert kimi.prompt_micro_per_m == 950_000
+    assert kimi.prompt_micro_per_m == 1_140_000
     assert minimax.completion_micro_per_m == 1_320_000
     assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "GLM-5.2"
-    assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "GLM-5.2-Fast"
-    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k2.7-code"] == "Kimi-K2.7-Code"
+    assert wafer.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "glm5.2-fast"
+    assert wafer.UPSTREAM_ID_MAP["moonshotai/kimi-k2.6"] == "Kimi-K2.6"
 
 
-def test_wafer_provider_appends_new_priced_models_to_manifest(
-    tmp_path: Path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
     manifest_path = tmp_path / "wafer.json"
     manifest_path.write_text(
         json.dumps(
@@ -208,6 +221,16 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(
     payload = {
         "data": [
             {
+                "id": "GLM-5.1",
+                "wafer": {
+                    "pricing": {
+                        "input_cents_per_million": 100,
+                        "output_cents_per_million": 320,
+                        "cache_read_cents_per_million": 10,
+                    }
+                },
+            },
+            {
                 "id": "GLM-5.2",
                 "wafer": {
                     "display_name": "GLM-5.2",
@@ -224,7 +247,7 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(
                 },
             },
             {
-                "id": "GLM-5.2-Fast",
+                "id": "glm5.2-fast",
                 "wafer": {
                     "display_name": "GLM-5.2-Fast",
                     "context_length": 1048576,
@@ -240,11 +263,16 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(
                 },
             },
             {
-                "id": "Kimi-K2.7-Code",
+                "id": "Kimi-K2.6",
                 "wafer": {
+                    "capabilities": {
+                        "vision": True,
+                        "zdr": {"supported": False},
+                        "chat_completions": {"supported": True},
+                    },
                     "pricing": {
-                        "input_cents_per_million": 95,
-                        "output_cents_per_million": 400,
+                        "input_cents_per_million": 114,
+                        "output_cents_per_million": 480,
                         "cache_read_cents_per_million": 19,
                     }
                 },
@@ -281,14 +309,17 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(
     notes = wafer.write_provider_manifest(result)
 
     assert notes == [
-        "wafer: refreshed provider_models/wafer.json (4 priced rows, appended 1)"
+        "wafer: refreshed provider_models/wafer.json "
+        "(5 priced rows, appended 3, removed 1 unavailable)"
     ]
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    assert raw["model_count"] == 4
+    assert raw["model_count"] == 5
+    assert "moonshotai/kimi-k2.7-code" not in by_id
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_200_000
-    assert by_id["z-ai/glm-5.2-fast"]["upstream_id"] == "GLM-5.2-Fast"
+    assert by_id["z-ai/glm-5.2-fast"]["upstream_id"] == "glm5.2-fast"
     assert by_id["z-ai/glm-5.2-fast"]["input_token_price_per_m"] == 3_000_000
     assert by_id["z-ai/glm-5.2-fast"]["output_token_price_per_m"] == 10_250_000
     assert by_id["z-ai/glm-5.2-fast"]["cached_input_token_price_per_m"] == 500_000
     assert by_id["z-ai/glm-5.2-fast"]["zdr_supported"] is True
+    assert by_id["moonshotai/kimi-k2.6"]["input_modalities"] == ["text", "image"]

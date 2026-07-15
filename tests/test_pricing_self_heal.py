@@ -400,3 +400,27 @@ def test_failed_provider_without_snapshot_price_still_counts_unrecovered() -> No
     assert unrecovered == [("new-provider", "temporary 502")]
     assert results["provider-with-snapshot"].source == "stale_snapshot"
     assert "new-provider" not in results
+
+
+def test_stale_snapshot_never_rewrites_provider_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[pricing_base.ProviderPricingResult] = []
+
+    class FakeProvider:
+        @staticmethod
+        def write_provider_manifest(
+            result: pricing_base.ProviderPricingResult,
+        ) -> list[str]:
+            calls.append(result)
+            return ["manifest rewritten"]
+
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: FakeProvider)
+    stale = pricing_base.ProviderPricingResult(
+        slug="fireworks",
+        prices={"provider/model": pricing_base.ModelPrice(1, 1)},
+        source="stale_snapshot",
+    )
+
+    assert refresh._write_provider_manifests({"fireworks": stale}) == []
+    assert calls == []
