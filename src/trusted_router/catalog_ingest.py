@@ -23,6 +23,7 @@ from trusted_router.catalog_data import (
     PROVIDERS,
     Model,
     ModelEndpoint,
+    _EmbeddingSpec,
 )
 from trusted_router.pricing import (
     PriceTier,
@@ -483,12 +484,25 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
 
 
 def _embedding_models() -> dict[str, Model]:
-    """Seed the embedding-model catalog (input-only pricing)."""
+    """Seed the embedding-model catalog (input-only pricing).
+
+    Provider manifests override the checked-in fallback price when an hourly
+    first-party parser has produced a current embedding row. Static specs
+    remain the last-known-good fallback for providers that do not publish a
+    parseable price source.
+    """
     models: dict[str, Model] = {}
     for spec in _EMBEDDING_SPECS:
         if spec["provider"] not in PROVIDERS:
             continue
-        prompt_price, published_price, _cost = _priced(spec["cost_dollars_per_million"])
+        manifest_cost = _embedding_manifest_cost(spec)
+        if manifest_cost is None:
+            prompt_price, published_price, _cost = _priced(
+                spec["cost_dollars_per_million"]
+            )
+        else:
+            prompt_price = _customer_price(manifest_cost)
+            published_price = prompt_price
         models[spec["id"]] = Model(
             id=spec["id"],
             name=spec["name"],
@@ -508,6 +522,34 @@ def _embedding_models() -> dict[str, Model]:
             published_price_tiers=_flat_tier(published_price, 0, None),
         )
     return models
+
+
+def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
+    """Return a provider-manifest input cost in microdollars/M, if valid."""
+    path = _PROVIDER_MODELS_DIR / f"{spec['provider']}.json"
+    if not path.exists():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        return None
+    price_scale = _provider_manifest_price_scale(raw)
+    for row in rows:
+        if not isinstance(row, dict) or row.get("id") != spec["id"]:
+            continue
+        if row.get("model_type") != "embedding":
+            return None
+        if "embeddings" not in {str(item) for item in (row.get("endpoints") or [])}:
+            return None
+        cost = _provider_manifest_price_cost(
+            row.get("input_token_price_per_m"),
+            price_scale=price_scale,
+        )
+        return cost if cost > 0 else None
+    return None
 
 
 def _filter_unserved_provider_endpoints(

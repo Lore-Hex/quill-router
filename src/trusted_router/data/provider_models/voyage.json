@@ -1,0 +1,24 @@
+{
+  "_about": "Voyage-hosted embedding models with first-party prices refreshed hourly from Voyage's official Markdown pricing page.",
+  "provider": "voyage",
+  "source": "https://docs.voyageai.com/docs/embeddings",
+  "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
+  "generated_at": "2026-07-15T22:07:54Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "voyage/voyage-3-large",
+      "upstream_id": "voyage-3-large",
+      "display_name": "Voyage 3 Large",
+      "context_length": 32000,
+      "model_type": "embedding",
+      "endpoints": [
+        "embeddings"
+      ],
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://docs.voyageai.com/docs/pricing.md"
+    }
+  ]
+}

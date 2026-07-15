@@ -1,0 +1,50 @@
+{
+  "_about": "Cohere-hosted embedding models. Embed 4 pricing refreshes hourly from Cohere's public pricing page. Cohere's current public page does not publish legacy Embed v3 token prices, so those rows remain explicitly pinned until Cohere publishes a current first-party rate.",
+  "provider": "cohere",
+  "source": "https://docs.cohere.com/docs/cohere-embed",
+  "pricing_source": "https://cohere.com/pricing",
+  "generated_at": "2026-07-15T22:07:54Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 3,
+  "models": [
+    {
+      "id": "cohere/embed-v4.0",
+      "upstream_id": "embed-v4.0",
+      "display_name": "Cohere Embed v4.0",
+      "context_length": 128000,
+      "model_type": "embedding",
+      "endpoints": [
+        "embeddings"
+      ],
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "https://cohere.com/pricing"
+    },
+    {
+      "id": "cohere/embed-english-v3.0",
+      "upstream_id": "embed-english-v3.0",
+      "display_name": "Cohere Embed English v3.0",
+      "context_length": 512,
+      "model_type": "embedding",
+      "endpoints": [
+        "embeddings"
+      ],
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "legacy-pinned"
+    },
+    {
+      "id": "cohere/embed-multilingual-v3.0",
+      "upstream_id": "embed-multilingual-v3.0",
+      "display_name": "Cohere Embed Multilingual v3.0",
+      "context_length": 512,
+      "model_type": "embedding",
+      "endpoints": [
+        "embeddings"
+      ],
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 0,
+      "pricing_source": "legacy-pinned"
+    }
+  ]
+}
