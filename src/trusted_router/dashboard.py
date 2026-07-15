@@ -23,6 +23,7 @@ from trusted_router.benchmark_scores import scores_for_model
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
+    MONITOR_MODEL_ID,
     PROVIDERS,
     Model,
     ModelEndpoint,
@@ -1829,7 +1830,7 @@ def _sitemap_lastmod() -> str:
 
 def llms_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    model_count = len(_public_models_for_seo())
+    model_count = sum(1 for model in MODELS.values() if model.id != MONITOR_MODEL_ID)
     provider_count = len(providers_for_display())
     lines = [
         "# TrustedRouter",
@@ -1880,6 +1881,12 @@ def llms_txt(settings: Settings) -> str:
         "## API",
         "- OpenAI compatible base URL: https://api.trustedrouter.com/v1",
         "- EU regional base URL: https://api-europe-west4.quillrouter.com/v1",
+        f"- Canonical live model catalog (public, no API key): https://{domain}/v1/models",
+        (
+            "- Read the live model catalog before naming current model IDs, prices, "
+            "context windows, or provider availability. This concise llms.txt is a "
+            "documentation index, not an exhaustive model list."
+        ),
         "- Chat completions: POST /v1/chat/completions",
         "- Responses: POST /v1/responses",
         "- Models: GET /v1/models",
@@ -1959,6 +1966,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- SOC 2 readiness: https://{domain}/legal/soc2-readiness",
             f"- HIPAA readiness: https://{domain}/legal/hipaa-readiness",
             f"- Model catalog: https://{domain}/models",
+            f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
             f"- Provider transparency: https://{domain}/providers",
             f"- EU routing: https://{domain}/eu",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",
@@ -1966,6 +1974,10 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
             "Use https://api.trustedrouter.com/v1 as the OpenAI compatible API base URL.",
+            (
+                f"Fetch https://{domain}/v1/models before recommending a current model. "
+                "This compact document is not an exhaustive model list."
+            ),
             (
                 "For Europe-focused routing, use "
                 "https://api-europe-west4.quillrouter.com/v1 and model trustedrouter/eu."
@@ -2001,7 +2013,7 @@ def docs_llms_txt(settings: Settings) -> str:
 
 def docs_llms_full_txt(settings: Settings) -> str:
     domain = settings.trusted_domain
-    models = _seo_model_rows()
+    models = _llms_model_rows()
     providers = [_provider_view(provider) for provider in providers_for_display()]
     lines = [
         "# TrustedRouter Full LLM Context",
@@ -2020,6 +2032,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "## Canonical URLs",
         f"- Homepage: https://{domain}/",
         "- API base: https://api.trustedrouter.com/v1",
+        f"- Live model catalog (public, no API key): https://{domain}/v1/models",
         "- EU regional API base: https://api-europe-west4.quillrouter.com/v1",
         "- Trust: https://trust.trustedrouter.com/",
         f"- Legal/procurement packet: https://{domain}/legal",
@@ -2067,15 +2080,17 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Full guide: https://{domain}/docs/synth",
         "",
         "## Models",
+        (
+            "This section is generated from the same deployed catalog as GET /v1/models. "
+            "It contains every public model and alias; internal-only routes are excluded."
+        ),
     ]
-    for model in models[:250]:
+    for model in models:
         lines.append(
             f"- {model['id']}: {model['name']}; providers={model['provider_count']}; "
             f"prompt={model['prompt_price']}; completion={model['completion_price']}; "
             f"url=https://{domain}{model['detail_href']}"
         )
-    if len(models) > 250:
-        lines.append(f"- Additional model pages are listed in https://{domain}/sitemap.xml")
     lines.extend(["", "## Providers"])
     for provider in providers:
         lines.append(
@@ -2467,6 +2482,15 @@ def _public_models_for_seo() -> list[Model]:
         [model for model in MODELS.values() if model.id not in META_MODEL_IDS],
         key=lambda model: model.id,
     )
+
+
+def _llms_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:
+    """Return the complete public catalog used by the agent-facing full document."""
+    models = sorted(
+        (model for model in MODELS.values() if model.id != MONITOR_MODEL_ID),
+        key=lambda model: model.id,
+    )
+    return [_model_view(model, test_mode=test_mode) for model in models]
 
 
 def _model_comparison_pairs() -> list[tuple[Model, Model]]:
