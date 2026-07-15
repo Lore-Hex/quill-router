@@ -345,6 +345,14 @@ body.console {
   color: var(--red);
 }
 
+.usage-empty-state p {
+  margin: 0;
+}
+
+.usage-empty-state .btn {
+  margin-top: 12px;
+}
+
 .usage-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);

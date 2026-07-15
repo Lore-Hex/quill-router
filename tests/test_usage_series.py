@@ -539,8 +539,72 @@ def test_console_usage_series_endpoint_returns_json_and_uses_cache(
     assert second.status_code == 200
     assert first.json()["granularity"] == "minute"
     assert first.json()["range"] == "1h"
+    assert first.json()["latest_activity_at"] is None
     assert first.json() == second.json()
     assert calls == [(workspace.id, 60, "minute", "key_a", True)]
+
+
+def test_console_usage_series_empty_window_reports_latest_activity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _USAGE_CACHE.clear()
+    app = create_app(Settings(environment="local"), init_observability=False)
+    client = TestClient(app)
+    user = STORE.ensure_user("usage-latest@example.com")
+    workspace = STORE.list_workspaces_for_user(user.id)[0]
+    raw_token, _session = STORE.create_auth_session(
+        user_id=user.id,
+        provider="google",
+        label="usage-latest@example.com",
+        ttl_seconds=3600,
+        state="active",
+    )
+    client.cookies.set("tr_session", raw_token)
+
+    def empty_usage_series(
+        self: InMemoryStore,
+        workspace_id: str,
+        *,
+        window_minutes: int,
+        granularity: str,
+        api_key_hash: str | None = None,
+        by_model: bool = False,
+    ) -> dict[str, Any]:
+        _ = (self, workspace_id, window_minutes, api_key_hash, by_model)
+        return {
+            "granularity": granularity,
+            "start_day": "2026-07-15",
+            "end_day": "2026-07-15",
+            "truncated": False,
+            "buckets": [],
+        }
+
+    def latest_activity(
+        self: InMemoryStore,
+        workspace_id: str,
+        *,
+        api_key_hash: str | None = None,
+        date: str | None = None,
+        limit: int = 100,
+        tag_key: str | None = None,
+        tag_value: str | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = (self, date, tag_key, tag_value)
+        assert workspace_id == workspace.id
+        assert api_key_hash == "key-a"
+        assert limit == 1
+        return [{"created_at": "2026-07-14T15:34:16Z"}]
+
+    monkeypatch.setattr(InMemoryStore, "usage_series", empty_usage_series)
+    monkeypatch.setattr(InMemoryStore, "activity_events", latest_activity)
+
+    response = client.get(
+        "/console/activity/usage.json?range=1h&api_key_hash=key-a"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["buckets"] == []
+    assert response.json()["latest_activity_at"] == "2026-07-14T15:34:16Z"
 
 
 def test_console_usage_series_endpoint_rejects_bad_range() -> None:

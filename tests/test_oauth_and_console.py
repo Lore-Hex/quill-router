@@ -678,6 +678,10 @@ def test_console_activity_renders_usage_panel(
     assert "/console/activity/usage.json" in resp.text
     assert 'range: state.range' in resp.text
     assert 'by_model: "1"' in resp.text
+    assert 'setStatus("0 requests", "")' in resp.text
+    assert "No usage in ${rangeText.toLowerCase()}" in resp.text
+    assert 'data-usage-empty-message' in resp.text
+    assert 'data-usage-expand-range' in resp.text
     assert 'const truncatedPrefix = data.truncated ? "≥" : "";' in resp.text
     assert (
         "Partial data — some rows were not scanned; narrow the range for an exact total"
