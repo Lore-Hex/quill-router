@@ -73,10 +73,9 @@ jobs:
       - name: Authenticate to GCP via WIF
         # Same WIF setup as deploy.yml — short-lived OIDC token from
         # GitHub exchanged for an impersonation token on tr-deploy@.
-        # tr-deploy@ has been granted accessor on ONLY the
-        # trustedrouter-tr-api-key-for-self-heal secret (per-secret IAM
-        # binding in scripts/deploy/secrets.sh), so this workflow
-        # cannot read any other TR secret.
+        # tr-deploy@ receives only per-secret IAM grants for the provider
+        # credentials this workflow reads. It has no project-wide Secret
+        # Manager accessor role.
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
