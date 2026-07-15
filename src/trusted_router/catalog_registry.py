@@ -40,6 +40,10 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ID,
+    LIBERTY_1_0_MODEL_ID,
+    LIBERTY_2_0_MODEL_ID,
+    LIBERTY_3_0_MODEL_ID,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -415,6 +419,42 @@ MODELS: dict[str, Model] = {
         byok_available=True,
         hidden_public_metadata=True,
     ),
+    LIBERTY_1_0_MODEL_ID: Model(
+        id=LIBERTY_1_0_MODEL_ID,
+        name="TrustedRouter Liberty 1.0",
+        provider="trustedrouter",
+        context_length=262_144,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    LIBERTY_1_0_1M_MODEL_ID: Model(
+        id=LIBERTY_1_0_1M_MODEL_ID,
+        name="TrustedRouter Liberty 1.0 1M",
+        provider="trustedrouter",
+        context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    LIBERTY_2_0_MODEL_ID: Model(
+        id=LIBERTY_2_0_MODEL_ID,
+        name="TrustedRouter Liberty 2.0",
+        provider="trustedrouter",
+        context_length=262_144,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    LIBERTY_3_0_MODEL_ID: Model(
+        id=LIBERTY_3_0_MODEL_ID,
+        name="TrustedRouter Liberty 3.0",
+        provider="trustedrouter",
+        context_length=1_048_576,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
     SYNTH_MODEL_ID: Model(
         id=SYNTH_MODEL_ID,
         name="TrustedRouter Synth",
@@ -598,10 +638,6 @@ MODELS: dict[str, Model] = {
 }
 
 
-
-
-
-
 # Folder where the OpenRouter ingest snapshot lives. Bundled into the
 # wheel so production reads from disk; refreshed by
 # `scripts/ingest_openrouter_catalog.py` and committed via PR.
@@ -609,24 +645,6 @@ MODELS: dict[str, Model] = {
 # OpenRouter publishes models as `{author}/{slug}` where author maps onto
 # one of TR's keyed providers. This drops the `Model.provider` (publisher)
 # field for an ingested entry.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # --- Embedding models -----------------------------------------------------
@@ -644,10 +662,6 @@ MODELS: dict[str, Model] = {
 # pricing-refresh job should true them up. supports_chat=False keeps chat
 # routing from ever selecting an embedding model; supports_embeddings=True
 # is what `/embeddings/models` and the embeddings route filter on.
-
-
-
-
 
 
 _EMBEDDING_MODELS = _embedding_models()
@@ -728,8 +742,6 @@ MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 #              is hosted by the open-weights providers (deepinfra/novita/parasail/
 #              gmi/lightning), which work. gemini was ranked first for these, so
 #              DEFAULT routing for Gemma was 502ing — drop gemini's Gemma routes.
-
-
 
 
 MODEL_ENDPOINTS = _filter_unserved_provider_endpoints(MODEL_ENDPOINTS)

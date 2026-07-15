@@ -366,6 +366,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "parasail",
         "friendli",
         "baseten",
+        "thinkingmachines",
         "wafer",
         "crusoe",
         "makora",

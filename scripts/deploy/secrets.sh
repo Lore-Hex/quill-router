@@ -129,6 +129,7 @@ ensure_secret_from_env_file "NEBIUS_API_KEY" "trustedrouter-nebius-api-key" "NEB
 ensure_secret_from_env_file "MINIMAX_API_KEY" "trustedrouter-minimax-api-key" "MINIMAX_TOKEN_PLAN_API_KEY"
 ensure_secret_from_env_file "FRIENDLI_API_KEY" "trustedrouter-friendli-api-key"
 ensure_secret_from_env_file "BASETEN_API_KEY" "trustedrouter-baseten-api-key"
+ensure_secret_from_env_file "THINKING_MACHINES_API_KEY" "trustedrouter-thinking-machines-api-key" "TINKER_API_KEY"
 ensure_secret_from_env_file "WAFER_API_KEY" "trustedrouter-wafer-api-key"
 ensure_secret_from_env_file "CRUSOE_API_KEY" "trustedrouter-crusoe-api-key"
 ensure_secret_from_env_file "MAKORA_API_KEY" "trustedrouter-makora-api-key" "MAKORA_OPTIMIZE_TOKEN"

@@ -407,6 +407,22 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
         ),
         (
             Model(
+                id="thinkingmachines/inkling",
+                name="Inkling 256K on Tinker",
+                provider="thinkingmachines",
+                context_length=262_144,
+                upstream_id="thinkingmachines/Inkling:peft:262144",
+            ),
+            "THINKING_MACHINES_API_KEY",
+            "thinking-machines-value",
+            (
+                "https://tinker.thinkingmachines.dev/services/tinker-prod/"
+                "oai/api/v1/chat/completions"
+            ),
+            "thinkingmachines/Inkling:peft:262144",
+        ),
+        (
+            Model(
                 id="z-ai/glm-5.2",
                 name="GLM 5.2 on Crusoe",
                 provider="crusoe",
@@ -910,9 +926,7 @@ async def test_openai_compatible_stream_records_and_passes_through_tool_calls(
                     "choices": [
                         {
                             "delta": {
-                                "tool_calls": [
-                                    {"index": 0, "function": {"arguments": ':"hello"}'}}
-                                ]
+                                "tool_calls": [{"index": 0, "function": {"arguments": ':"hello"}'}}]
                             },
                             "finish_reason": "tool_calls",
                         }
@@ -1531,9 +1545,7 @@ async def test_gemini_live_adapter_maps_roles_and_usage(tmp_path, monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_gemini_adapter_does_not_forward_raw_openai_chat_tools(
-    tmp_path, monkeypatch
-) -> None:
+async def test_gemini_adapter_does_not_forward_raw_openai_chat_tools(tmp_path, monkeypatch) -> None:
     key_file = tmp_path / "keys.private"
     key_file.write_text("GEMINI_API_KEY=gemini-value\n", encoding="utf-8")
     calls: list[dict[str, Any]] = []

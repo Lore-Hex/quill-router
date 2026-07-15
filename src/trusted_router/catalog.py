@@ -29,6 +29,12 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ORDER,
+    LIBERTY_1_0_MODEL_ID,
+    LIBERTY_1_0_MODEL_ORDER,
+    LIBERTY_2_0_MODEL_ID,
+    LIBERTY_3_0_MODEL_ID,
     MAPREDUCE_CATALOG_MODEL_ORDER,
     MAPREDUCE_MODEL_ID,
     META_MODEL_IDS,
@@ -177,8 +183,6 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
 # 10K-token call), recovered via 10K-tokens × $0.01/M = $0.0001/req.
 
 
-
-
 # ---------------------------------------------------------------------------
 # Prompt-cache pricing
 #
@@ -201,14 +205,6 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
 # confirm is the safe failure mode for margin, and those providers
 # rarely report cache fields anyway. Only Anthropic reports cache
 # WRITES; the 1.25x default keeps any future writer safe-side too.
-
-
-
-
-
-
-
-
 
 
 # Vertex is intentionally excluded until TR's GCP project gets the
@@ -283,8 +279,6 @@ def default_endpoint_for_model(model: Model) -> ModelEndpoint | None:
     return endpoints[0]
 
 
-
-
 def _meta_price_range(
     model_id: str,
     attr: str,
@@ -332,7 +326,9 @@ _OPEN_WEIGHT_PREFIXES = (
     "meta-llama/",
     "minimax/minimax-m3",
     "moonshotai/kimi",
+    "nvidia/nemotron",
     "qwen/",
+    "thinkingmachines/",
     "xiaomi/mimo",
     "z-ai/glm",
 )
@@ -608,8 +604,6 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "provider_headquarters_country": provider.provider_headquarters_country,
         "provider_us_based": provider.provider_headquarters_country == PROVIDER_JURISDICTION_US,
     }
-
-
 
 
 def providers_for_display() -> tuple[Provider, ...]:

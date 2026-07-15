@@ -12,6 +12,7 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         "FIREWORKS_API_KEY": "trustedrouter-fireworks-api-key",
         "NOVITA_API_KEY": "trustedrouter-novita-api-key",
         "BASETEN_API_KEY": "trustedrouter-baseten-api-key",
+        "THINKING_MACHINES_API_KEY": "trustedrouter-thinking-machines-api-key",
         "WAFER_API_KEY": "trustedrouter-wafer-api-key",
         "CRUSOE_API_KEY": "trustedrouter-crusoe-api-key",
         "MAKORA_API_KEY": "trustedrouter-makora-api-key",

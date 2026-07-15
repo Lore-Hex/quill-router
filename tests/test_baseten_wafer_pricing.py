@@ -36,6 +36,14 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
                     "input_cache_read": "0.00000016",
                 },
             },
+            {
+                "id": "thinkingmachines/inkling",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.00000405",
+                    "input_cache_read": "0.00000017",
+                },
+            },
         ]
     }
 
@@ -57,13 +65,18 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     result = baseten.fetch()
     glm = result.prices["z-ai/glm-5.2"]
     kimi = result.prices["moonshotai/kimi-k2.7-code"]
+    inkling = result.prices["thinkingmachines/inkling-1m"]
 
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
     assert glm.tiers[0].prompt_cached_micro_per_m == 260_000
     assert kimi.prompt_micro_per_m == 950_000
     assert kimi.completion_micro_per_m == 4_000_000
+    assert inkling.prompt_micro_per_m == 1_000_000
+    assert inkling.completion_micro_per_m == 4_050_000
+    assert inkling.tiers[0].prompt_cached_micro_per_m == 170_000
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
+    assert baseten.UPSTREAM_ID_MAP["thinkingmachines/inkling-1m"] == "thinkingmachines/inkling"
 
 
 def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # noqa: ANN001
@@ -123,7 +136,7 @@ def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # no
                         "input_cents_per_million": 114,
                         "output_cents_per_million": 480,
                         "cache_read_cents_per_million": 19,
-                    }
+                    },
                 },
             },
             {
@@ -274,7 +287,7 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
                         "input_cents_per_million": 114,
                         "output_cents_per_million": 480,
                         "cache_read_cents_per_million": 19,
-                    }
+                    },
                 },
             },
             {

@@ -576,6 +576,21 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://www.minimax.io/privacy-policy-v2.html",
     ),
+    # Thinking Machines Lab Tinker sampler. The 256K Inkling endpoint is
+    # provider-native and OpenAI-compatible. Keep its privacy posture
+    # conservative until account-specific retention terms are documented.
+    "thinkingmachines": Provider(
+        slug="thinkingmachines",
+        name="Thinking Machines Lab",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Thinking Machines Lab's "
+            "model and pricing documentation is linked for model capability "
+            "and API review."
+        ),
+        provider_policy_url="https://tinker-docs.thinkingmachines.ai/tinker/models/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1). MiMo-V2 /
     # V2.5 agent models. Models + prices are in data/provider_models/xiaomi.json.
     "xiaomi": Provider(
@@ -691,6 +706,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "deepinfra",
         "friendli",
         "baseten",
+        "thinkingmachines",
         "wafer",
         "crusoe",
         "makora",
@@ -762,6 +778,14 @@ OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
 OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 
 ATHENA_MODEL_ID = "trustedrouter/athena"
+
+LIBERTY_1_0_MODEL_ID = "trustedrouter/liberty-1.0"
+
+LIBERTY_1_0_1M_MODEL_ID = "trustedrouter/liberty-1.0-1m"
+
+LIBERTY_2_0_MODEL_ID = "trustedrouter/liberty-2.0"
+
+LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
     {
@@ -844,6 +868,10 @@ META_MODEL_IDS = frozenset(
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
         ATHENA_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+        LIBERTY_1_0_1M_MODEL_ID,
+        LIBERTY_2_0_MODEL_ID,
+        LIBERTY_3_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
         PROMETHEUS_MODEL_ID,
@@ -980,6 +1008,17 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     "deepseek/deepseek-v4-pro",
+)
+
+LIBERTY_1_0_MODEL_ORDER = (
+    "thinkingmachines/inkling",
+    "nvidia/nemotron-3-ultra-550b-a55b",
+    "google/gemma-4-31b-it",
+)
+
+LIBERTY_1_0_1M_MODEL_ORDER = (
+    "thinkingmachines/inkling-1m",
+    "nvidia/nemotron-3-ultra-550b-a55b",
 )
 
 SYNTH_FRONTIER_MODEL_ORDER = (
@@ -1134,6 +1173,18 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         ZEUS_1_0_MINI_MODEL_ID,
         "moonshotai/kimi-k2.7-code",
         "moonshotai/kimi-k2.6",
+    ),
+    LIBERTY_2_0_MODEL_ID: (
+        "google/gemma-4-31b-it",
+        "openai/gpt-oss-120b",
+        LIBERTY_1_0_1M_MODEL_ID,
+    ),
+    LIBERTY_3_0_MODEL_ID: (
+        "thinkingmachines/inkling",
+        "openai/gpt-oss-120b",
+        "google/gemma-4-31b-it",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        LIBERTY_1_0_1M_MODEL_ID,
     ),
 }
 
@@ -1389,6 +1440,8 @@ for _advisor_model_id in (
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
     ATHENA_MODEL_ID,
+    LIBERTY_2_0_MODEL_ID,
+    LIBERTY_3_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"
 
@@ -1408,5 +1461,7 @@ for _synth_model_id in (
     PROMETHEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
+    LIBERTY_1_0_MODEL_ID,
+    LIBERTY_1_0_1M_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_synth_model_id] = "synth"
