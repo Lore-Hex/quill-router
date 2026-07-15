@@ -1,4 +1,4 @@
-"""Parse Makora's homepage model lineup pricing."""
+"""Parse Makora's public homepage model lineup pricing."""
 
 from __future__ import annotations
 
@@ -9,15 +9,13 @@ MODEL_LABELS: dict[str, tuple[str, ...]] = {
     "GLM-5.2": ("z-ai/glm-5.2", "z-ai/glm-5.2-nvfp4"),
     "Kimi-K2.7-Code": ("moonshotai/kimi-k2.7-code",),
     "DeepSeek-V4-Pro": ("deepseek/deepseek-v4-pro",),
-    "DeepSeek V4 Flash": ("deepseek/deepseek-v4-flash",),
     "Qwen3.6-27B-NVFP4": ("qwen/qwen3.6-27b",),
     "Llama-3.3-70B-Instruct": (
         "meta-llama/llama-3.3-70b-instruct",
         "amd/llama-3.3-70b-instruct-fp8-kv",
     ),
-    "GPT - OSS-120B": ("openai/gpt-oss-120b",),
+    "DeepSeek V4 Flash": ("deepseek/deepseek-v4-flash",),
     "Qwen3.6-35B-A3B": ("qwen/qwen3.6-35b-a3b",),
-    "Gemma-4-26B-A4B": ("google/gemma-4-26b-a4b",),
 }
 
 
@@ -26,13 +24,13 @@ def _money_to_micro(raw: str) -> int:
 
 
 def _section_for_label(text: str, label: str) -> str:
-    match = re.search(
-        rf"(?<![A-Za-z0-9._-]){re.escape(label)}(?![A-Za-z0-9._-])",
-        text,
-    )
+    match = re.search(rf"(?<![A-Za-z0-9._-]){re.escape(label)}(?![A-Za-z0-9._-])", text)
     if not match:
         return ""
-    tail = text[match.end():]
+    tail = text[match.start() :]
+    # Makora's Jina-rendered markdown repeats "[Try Now]" at the end
+    # of each model card; bounding by it avoids accidentally reading
+    # prices from the following card if a field disappears.
     end = tail.find("[Try Now]")
     if end != -1:
         return tail[:end]
@@ -40,9 +38,11 @@ def _section_for_label(text: str, label: str) -> str:
 
 
 def _field(section: str, label: str) -> str | None:
-    # Format: "Input|$1.00/M tokens" (with possible spaces around |)
-    pattern = rf"{label}\s*\|?\s*\$([0-9]+(?:\.[0-9]+)?)\s*/\s*M\s+tokens"
-    match = re.search(pattern, section, flags=re.I)
+    match = re.search(
+        rf"{label}\s+\$([0-9]+(?:\.[0-9]+)?)\s*/\s*M\s+tokens",
+        section,
+        flags=re.I,
+    )
     return match.group(1) if match else None
 
 
@@ -55,12 +55,10 @@ def parse(html: str) -> dict:
             continue
         prompt = _field(section, "Input")
         completion = _field(section, "Output")
-        cache = _field(section, r"Cached(?:\s+Read)?")
-        if cache is None:
-            cache = _field(section, r"Cache(?:\s+Read)?")
+        cache = _field(section, r"Cache(?:\s+Read)?")
         if prompt is None or completion is None:
             continue
-        row: dict[str, int] = {
+        row = {
             "prompt_micro_per_m": _money_to_micro(prompt),
             "completion_micro_per_m": _money_to_micro(completion),
         }
