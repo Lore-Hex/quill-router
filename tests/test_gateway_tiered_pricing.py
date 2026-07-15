@@ -176,3 +176,17 @@ def test_endpoint_cost_matches_model_helper_for_multitier_no_cache() -> None:
         assert _endpoint_cost_microdollars(
             endpoint, prompt_tokens, 2_000
         ) == cost_microdollars(model, prompt_tokens, 2_000)
+
+
+def test_endpoint_cost_reserves_one_microdollar_for_positive_fractional_cost() -> None:
+    endpoint = ModelEndpoint(
+        id="test/tiny@test/prepaid",
+        model_id="test/tiny",
+        provider="openai",
+        usage_type="Credits",
+        prompt_price_microdollars_per_million_tokens=1,
+        completion_price_microdollars_per_million_tokens=1,
+    )
+
+    assert _endpoint_cost_microdollars(endpoint, 1, 1) == 1
+    assert _endpoint_cost_microdollars(endpoint, 0, 0) == 0

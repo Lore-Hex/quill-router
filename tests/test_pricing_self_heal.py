@@ -94,6 +94,67 @@ def test_self_heal_happy_path_persists_new_parser(
     assert result.heal_diff and "test/model" in result.heal_diff
 
 
+@pytest.mark.parametrize(
+    "fixture_result",
+    [
+        "return {}",
+        "return {'test/model': {'prompt_micro_per_m': 9_000_000, "
+        "'completion_micro_per_m': 2_000_000}}",
+    ],
+    ids=["removes-known-row", "changes-known-price"],
+)
+def test_self_heal_rejects_captured_fixture_regression(
+    tmp_parser: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_result: str,
+) -> None:
+    original = textwrap.dedent(
+        """
+        def parse(html: str) -> dict:
+            if "captured-layout" not in html:
+                return {}
+            return {
+                "test/model": {
+                    "prompt_micro_per_m": 1_000_000,
+                    "completion_micro_per_m": 2_000_000,
+                }
+            }
+        """
+    ).strip() + "\n"
+    tmp_parser.write_text(original, encoding="utf-8")
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir()
+    (fixture_dir / "testslug.html").write_text(
+        "captured-layout", encoding="utf-8"
+    )
+    monkeypatch.setattr(pricing_base, "PRICING_FIXTURES_DIR", fixture_dir)
+    _stub_fetch_html(monkeypatch, "live-layout")
+    candidate = textwrap.dedent(
+        f"""
+        def parse(html: str) -> dict:
+            if "live-layout" in html:
+                return {{
+                    "test/model": {{
+                        "prompt_micro_per_m": 1_000_000,
+                        "completion_micro_per_m": 2_000_000,
+                    }}
+                }}
+            {fixture_result}
+        """
+    ).strip() + "\n"
+    _stub_self_heal(monkeypatch, candidate)
+
+    with pytest.raises(RuntimeError, match="fixture regression"):
+        pricing_base.fetch_provider(
+            slug="testslug",
+            url="https://example.com/pricing",
+            expected_models=["test/model"],
+        )
+
+    assert tmp_parser.read_text(encoding="utf-8") == original
+
+
 def test_self_heal_rejects_subprocess_import(
     tmp_parser: Path,
     monkeypatch: pytest.MonkeyPatch,

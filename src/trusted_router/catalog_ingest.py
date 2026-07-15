@@ -95,6 +95,7 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "fireworks": "fireworks",
     "x-ai": "grok",
     "xai": "grok",
+    "xiaomi": "xiaomi",
     "phala": "phala",
     # Keep Meta Llama's primary TR route on Cerebras even when the
     # OpenRouter endpoint snapshot temporarily exposes only a different

@@ -1,22 +1,9 @@
-# LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
-#
-# Parses docs.venice.ai/overview/pricing via Jina. The page emits a
-# repeating block per model:
-#
-#   GLM 4.6`zai-org-glm-4.6`
-#
-#   Input Price$0.85 Output Price$2.75 Cache Read$0.30 Context 198K
-#
-# Other rows have no Cache Read field. We pull the backtick-quoted
-# native id and the Input/Output dollar amounts.
-"""Venice pricing parser (Jina-rendered markdown)."""
+"""Venice pricing parser for block and markdown-table layouts."""
 from __future__ import annotations
 
 import re
 
 # Native Venice id (in backticks on the page) → OR-canonical id.
-# Venice uses dash-separated forms ("zai-org-glm-4.6") that don't quite
-# match OR's canonical ("z-ai/glm-4.6"). Map the families we route to.
 _NAME_TO_OR_ID = {
     "zai-org-glm-5-2": "z-ai/glm-5.2",
     "zai-org-glm-5-1": "z-ai/glm-5.1",
@@ -37,39 +24,49 @@ _NAME_TO_OR_ID = {
 }
 
 
+# Match a chat-completions table row:
+#   | Display | `native-id` | $X.XX | $Y.YY | $Z.ZZ | ... |
+# Cache-read column may be "-" or "$N.NN".
+_ROW_RE = re.compile(
+    r"\|[^|\n]*\|\s*`([\w.\-]+)`\s*\|"      # native id
+    r"\s*\$([\d.]+)\s*\|"                     # input
+    r"\s*\$([\d.]+)\s*\|"                     # output
+    r"\s*(?:\$([\d.]+)|-)\s*\|"               # optional cache read (or "-")
+)
+
 _BLOCK_RE = re.compile(
-    r"`([\w.\-]+)`"                                          # native id in backticks
-    r"[\s\S]{0,300}?"                                         # short window (next price block)
+    r"`([\w.\-]+)`"
+    r"[\s\S]{0,300}?"
     r"Input Price\$([\d.]+)"
     r"\s*Output Price\$([\d.]+)"
-    r"(?:\s*Cache Read\$([\d.]+))?",                         # optional cached rate
+    r"(?:\s*Cache Read\$([\d.]+))?",
 )
+
+
+def _to_micro(value_usd: str) -> int:
+    return int(round(float(value_usd) * 1_000_000))
 
 
 def parse(md: str) -> dict:
     out: dict = {}
-    for match in _BLOCK_RE.finditer(md):
-        native, input_usd, output_usd, cached_usd = match.groups()
-        or_id = _NAME_TO_OR_ID.get(native)
-        if or_id is None:
-            continue
-        if or_id in out:
-            continue
-        try:
-            input_micro = int(round(float(input_usd) * 1_000_000))
-            output_micro = int(round(float(output_usd) * 1_000_000))
-        except ValueError:
-            continue
-        row_out: dict = {
-            "prompt_micro_per_m": input_micro,
-            "completion_micro_per_m": output_micro,
-        }
-        if cached_usd:
+    # Parse the older repeated-block render first, then fill new table rows.
+    for pattern in (_BLOCK_RE, _ROW_RE):
+        for match in pattern.finditer(md):
+            native, input_usd, output_usd, cached_usd = match.groups()
+            or_id = _NAME_TO_OR_ID.get(native)
+            if or_id is None or or_id in out:
+                continue
             try:
-                row_out["prompt_cached_micro_per_m"] = int(
-                    round(float(cached_usd) * 1_000_000)
-                )
+                row_out: dict = {
+                    "prompt_micro_per_m": _to_micro(input_usd),
+                    "completion_micro_per_m": _to_micro(output_usd),
+                }
             except ValueError:
-                pass
-        out[or_id] = row_out
+                continue
+            if cached_usd:
+                try:
+                    row_out["prompt_cached_micro_per_m"] = _to_micro(cached_usd)
+                except ValueError:
+                    pass
+            out[or_id] = row_out
     return out

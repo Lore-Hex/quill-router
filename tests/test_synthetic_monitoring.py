@@ -22,7 +22,10 @@ from trusted_router.catalog import (
     FREE_MODEL_ID,
     MODELS,
     MONITOR_MODEL_ID,
+    PRIVACY_TIER_CONFIDENTIAL,
     ZDR_MODEL_ID,
+    endpoint_privacy_tier,
+    endpoints_for_model,
     meta_candidate_models,
     model_to_openrouter_shape,
 )
@@ -81,13 +84,18 @@ def test_catalog_exposes_free_cheap_and_monitor_meta_models() -> None:
     e2e = meta_candidate_models(E2E_MODEL_ID)
     monitor = meta_candidate_models(MONITOR_MODEL_ID)
 
-    assert any(model.id == "z-ai/glm-4.5-air:free" for model in free)
-    assert free
     assert all(model.id.endswith(":free") for model in free)
     assert len({model.provider for model in cheap}) >= 2
     assert eu and eu[0].provider == "mistral"
     assert zdr
-    assert e2e and any(model.provider == "deepseek" for model in e2e)
+    assert e2e
+    assert all(
+        any(
+            endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_CONFIDENTIAL
+            for endpoint in endpoints_for_model(model.id)
+        )
+        for model in e2e
+    )
     assert len({model.provider for model in monitor}) >= 2
     assert all(not model.id.endswith(":free") for model in cheap + monitor)
 

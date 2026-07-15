@@ -85,7 +85,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     comparisons = client.get("/sitemap-comparisons.xml")
     assert comparisons.status_code == 200
     assert (
-        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1</loc>"
+        "<loc>https://trustedrouter.com/compare/models/z-ai/glm-5.2/vs/moonshotai/kimi-k2.6</loc>"
         in comparisons.text
     )
     combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
