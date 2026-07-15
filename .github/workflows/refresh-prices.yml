@@ -34,7 +34,7 @@ concurrency:
 permissions:
   id-token: write   # for Workload Identity Federation
   contents: write   # auto-commit + push the snapshot diff to main
-  actions: write    # dispatch deploy.yml when we land a new snapshot
+  actions: write    # dispatch ci.yml + deploy.yml for a new snapshot
                     # (GITHUB_TOKEN-pushed commits don't auto-trigger
                     # downstream workflows, so we explicitly fan out
                     # via workflow_dispatch — the one exception to
@@ -253,14 +253,17 @@ jobs:
           # Bot-pushed commits don't auto-trigger downstream workflows
           # (GHA loop prevention applies to the `push` event when the
           # token is GITHUB_TOKEN). `workflow_dispatch` is the only
-          # exception — explicitly fan out so the catalog snapshot we
-          # just landed actually rolls to prod within ~20 min instead
-          # of waiting for the next manual operator dispatch.
+          # exception. Dispatch CI first, then deploy; deploy.yml's
+          # same-SHA gate waits for that CI run to pass before rollout.
+          # Failing either dispatch is a release failure, not a warning:
+          # otherwise a generated catalog can land on main but never
+          # become deployable.
           # Discovered live on 2026-05-13: hourly bot was committing
           # but TR's deployed catalog was stuck on a 3-phala-endpoint
           # snapshot for hours because deploy.yml never auto-fired.
-          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" \
-            && echo "  dispatched deploy.yml for new snapshot" \
-            || echo "  WARN: failed to dispatch deploy.yml; operator can dispatch manually"
+          gh workflow run ci.yml --ref main --repo "${GITHUB_REPOSITORY}"
+          echo "  dispatched ci.yml for new snapshot"
+          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
+          echo "  dispatched deploy.yml for new snapshot"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
