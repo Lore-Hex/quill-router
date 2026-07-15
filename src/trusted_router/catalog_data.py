@@ -1155,9 +1155,10 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         LIBERTY_1_0_MODEL_ID,
     ),
     LIBERTY_3_0_MODEL_ID: (
-        "google/gemma-4-31b-it",
+        "thinkingmachines/inkling",
         "openai/gpt-oss-120b",
-        LIBERTY_1_0_MODEL_ID,
+        "google/gemma-4-31b-it",
+        "nvidia/nemotron-3-ultra-550b-a55b",
     ),
 }
 
