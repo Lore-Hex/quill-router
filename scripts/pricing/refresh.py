@@ -98,6 +98,10 @@ PROVIDER_SLUGS = [
     "xiaomi",
     "alibaba",
     "makora",
+    # First-party embedding providers. Their parsers feed committed provider
+    # manifests that the runtime embedding catalog reads directly.
+    "cohere",
+    "voyage",
 ]
 
 # >N providers failing entirely (network down, blocked, etc.) fails

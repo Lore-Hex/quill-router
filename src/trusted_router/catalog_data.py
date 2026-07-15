@@ -1230,7 +1230,7 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
         "provider": "voyage",
         "upstream_id": "voyage-3-large",
         "context_length": 32_000,
-        "cost_dollars_per_million": "0.06",
+        "cost_dollars_per_million": "0.18",
     },
     # Qwen3-Embedding-8B — open model, served serverlessly by DeepInfra
     # (api.deepinfra.com/v1/openai/embeddings, OpenAI-shaped). Tops MTEB; 4096

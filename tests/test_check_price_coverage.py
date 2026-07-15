@@ -38,13 +38,13 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
     return {"data": []}
 
 
-def test_audit_flags_uncovered_provider_and_reports_covered() -> None:
-    # Real repo state: Cohere is a prepaid provider with no scraper + no
-    # manifest (hand-coded embedding prices) -> must be flagged as a gap.
-    # If a Cohere scraper/manifest is ever added, update this expectation.
+def test_audit_reports_embedding_provider_scrapers_as_covered() -> None:
     now = dt.datetime(2026, 6, 7, tzinfo=dt.UTC)
     warnings, info = audit(max_age_days=14, now=now, check_model_discovery=False)
-    assert any("cohere" in w for w in warnings), warnings
+    assert not any("cohere" in warning for warning in warnings), warnings
+    assert not any("voyage" in warning for warning in warnings), warnings
+    assert "cohere: live scraper ✓" in info
+    assert "voyage: live scraper ✓" in info
     # Live-scraped providers are reported as covered.
     assert any("openai" in i for i in info), info
 
