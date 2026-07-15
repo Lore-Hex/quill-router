@@ -574,7 +574,14 @@ def _merge_snapshot(
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
             # /v1/models top-level pricing should show).
-            cheapest = min(priced_by_slug.values(), key=lambda p: p.tiers[0].prompt_micro_per_m)
+            _cheapest_slug, cheapest = min(
+                priced_by_slug.items(),
+                key=lambda item: (
+                    item[1].tiers[0].prompt_micro_per_m,
+                    item[1].tiers[0].completion_micro_per_m,
+                    item[0],
+                ),
+            )
             new_pricing.update(_price_to_pricing_block(cheapest))
             new_model["pricing"] = new_pricing
             # Tag pricing_source as self-healed if ANY of the slugs that
