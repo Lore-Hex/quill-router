@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://www.makora.com/; https://openrouter.ai/api/v1/models for Gemma fallback",
-  "generated_at": "2026-07-15T09:10:58Z",
+  "generated_at": "2026-07-15T11:37:53Z",
   "price_scale": "microdollars_per_million",
   "model_count": 10,
   "models": [
