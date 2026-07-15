@@ -1,7 +1,7 @@
 {
   "provider": "xiaomi",
   "source": "https://mimo.mi.com/docs/en-US/pricing",
-  "generated_at": "2026-07-15T19:14:33Z",
+  "generated_at": "2026-07-15T21:03:07Z",
   "model_count": 5,
   "_note": "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD table. V2.5 Pro UltraSpeed remains live in Xiaomi's authenticated /v1/models feed but has no public PAYG row, so its last verified price is retained until Xiaomi republishes one. Legacy V2 rows are kept only as historical fallback metadata.",
   "models": [
