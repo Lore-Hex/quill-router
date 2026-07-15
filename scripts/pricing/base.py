@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from dataclasses import dataclass, field
@@ -93,6 +94,7 @@ MAX_PARSER_SOURCE_BYTES = 30_000
 # Sandbox-subprocess timeout for running an LLM-generated parser once.
 SANDBOX_WALL_CLOCK_SECONDS = 5.0
 SANDBOX_OUTPUT_BYTES_MAX = 1_000_000
+PARSER_NORMALIZE_TIMEOUT_SECONDS = 10.0
 
 # How many attempts the LLM gets per provider per hourly run. 1 by
 # design — if the rewrite fails, we don't loop; the next hourly run
@@ -832,6 +834,70 @@ def parser_path(slug: str) -> Path:
     return PARSERS_DIR / f"{slug}.py"
 
 
+def _normalize_and_lint_parser_source(*, slug: str, source: str) -> str:
+    """Apply the repository's Ruff fixes and reject remaining violations.
+
+    Ruff only parses and rewrites the candidate; it does not import or execute
+    it. The AST whitelist runs both before and after this step, while the
+    existing isolated subprocess remains the only place candidate code runs.
+    """
+    config_path = REPO_ROOT / "pyproject.toml"
+    with tempfile.TemporaryDirectory(prefix="trustedrouter-pricing-parser-") as tmp:
+        candidate_path = Path(tmp) / f"{slug}.py"
+        candidate_path.write_text(source.rstrip() + "\n", encoding="utf-8")
+        commands = (
+            (
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                "--fix",
+                "--config",
+                str(config_path),
+                str(candidate_path),
+            ),
+            (
+                sys.executable,
+                "-m",
+                "ruff",
+                "format",
+                "--config",
+                str(config_path),
+                str(candidate_path),
+            ),
+            (
+                sys.executable,
+                "-m",
+                "ruff",
+                "check",
+                "--config",
+                str(config_path),
+                str(candidate_path),
+            ),
+        )
+        for command in commands:
+            try:
+                result = subprocess.run(  # noqa: S603
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=PARSER_NORMALIZE_TIMEOUT_SECONDS,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"{slug}: self-heal Ruff normalization timed out"
+                ) from exc
+            if result.returncode != 0:
+                details = "\n".join(
+                    part.strip() for part in (result.stdout, result.stderr) if part.strip()
+                )
+                raise RuntimeError(
+                    f"{slug}: self-heal Ruff normalization failed: {details[:2000]}"
+                )
+        return candidate_path.read_text(encoding="utf-8")
+
+
 def _assert_fixture_compatibility(
     *,
     slug: str,
@@ -903,9 +969,11 @@ def fetch_provider(
       3. validate; on success, return.
       4. on failure, call self_heal_parser to get a rewritten source.
       5. ast_whitelist_check the new source. Reject on violation.
-      6. sandbox_run_parser the new source on the captured HTML.
-      7. validate the sandbox output.
-      8. only after all pass, write the new source to disk and return.
+      6. normalize and lint the source with the repository's Ruff config.
+      7. re-run the AST whitelist on normalized source.
+      8. sandbox_run_parser the new source on the captured HTML.
+      9. validate the sandbox output.
+      10. only after all pass, write the new source to disk and return.
     """
     log.info("pricing.fetch slug=%s url=%s", slug, url)
     html = fetch_html(url, extra_headers=extra_headers)
@@ -958,6 +1026,14 @@ def fetch_provider(
     if ast_errors:
         raise RuntimeError(
             f"{slug}: self-heal AST whitelist failed: {ast_errors}"
+        )
+
+    new_src = _normalize_and_lint_parser_source(slug=slug, source=new_src)
+    normalized_ast_errors = ast_whitelist_check(new_src)
+    if normalized_ast_errors:
+        raise RuntimeError(
+            f"{slug}: normalized self-heal AST whitelist failed: "
+            f"{normalized_ast_errors}"
         )
 
     sandbox_prices, sandbox_errors = sandbox_run_parser(new_src, html)
