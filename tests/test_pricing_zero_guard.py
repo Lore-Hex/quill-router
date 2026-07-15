@@ -108,6 +108,28 @@ def test_positive_price_path_unchanged() -> None:
     assert model["pricing_source"] == "provider_direct"
 
 
+def test_equal_prompt_prices_choose_lower_completion_deterministically() -> None:
+    """Provider iteration order must not create a false completion spike."""
+    mid = "google/gemma-3-27b-it"
+    or_snap = _or_snapshot(
+        mid,
+        ["parasail", "deepinfra"],
+        {"prompt": "0.00000008", "completion": "0.00000016"},
+    )
+    provider_index = {
+        mid: {
+            "parasail": _mp(80_000, 450_000),
+            "deepinfra": _mp(80_000, 160_000),
+        }
+    }
+
+    merged = R._merge_snapshot(or_snap, provider_index, set())
+    model = next(m for m in merged["models"] if m["id"] == mid)
+
+    assert model["pricing"]["prompt"] == "0.00000008"
+    assert model["pricing"]["completion"] == "0.00000016"
+
+
 def test_is_unpriced_helper() -> None:
     assert R._is_unpriced(_mp(0, 0))
     assert not R._is_unpriced(_mp(1, 0))
