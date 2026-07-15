@@ -3,8 +3,8 @@
   "provider": "fireworks",
   "source": "https://api.fireworks.ai/inference/v1/models",
   "price_source": "https://docs.fireworks.ai/serverless/pricing",
-  "generated_at": "2026-07-01T00:00:00Z",
-  "model_count": 7,
+  "generated_at": "2026-07-15T00:38:52Z",
+  "model_count": 6,
   "models": [
     {
       "id": "moonshotai/kimi-k2.6",
@@ -16,34 +16,6 @@
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 160000,
-      "model_type": "chat",
-      "features": [
-        "function-calling",
-        "serverless",
-        "vision"
-      ],
-      "input_modalities": [
-        "text",
-        "image"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "endpoints": [
-        "chat/completions"
-      ],
-      "status": 1
-    },
-    {
-      "id": "moonshotai/kimi-k2.5",
-      "upstream_id": "accounts/fireworks/models/kimi-k2p5",
-      "display_name": "Kimi K2.5 on Fireworks",
-      "title": "accounts/fireworks/models/kimi-k2p5",
-      "context_length": 262144,
-      "max_output_tokens": 65536,
-      "input_token_price_per_m": 600000,
-      "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 100000,
       "model_type": "chat",
       "features": [
         "function-calling",
@@ -97,7 +69,7 @@
       "max_output_tokens": 65536,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
-      "cached_input_token_price_per_m": 260000,
+      "cached_input_token_price_per_m": 140000,
       "model_type": "chat",
       "features": [
         "reasoning",

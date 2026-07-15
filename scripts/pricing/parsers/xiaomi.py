@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 
 def _money_to_micro_per_m(value: str) -> int:
-    return int(round(float(value) * 1_000_000))
+    return int((Decimal(value) * Decimal(1_000_000)).to_integral_value())
 
 
 def _section(text: str, title: str) -> str:
@@ -15,9 +16,46 @@ def _section(text: str, title: str) -> str:
     return match.group(1) if match else ""
 
 
-def parse(html: str) -> dict[str, dict[str, int]]:
-    text = re.sub(r"\s+", " ", html)
+def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
+    """Parse the authoritative USD table from Xiaomi's PAYG page."""
+    section_match = re.search(
+        r"###\s*Overseas Pricing of the Model\s+(.*?)(?=###\s|$)",
+        html,
+        flags=re.I | re.S,
+    )
+    if not section_match:
+        return {}
+
+    mapping = {
+        "mimo-v2.5-pro": "xiaomi/mimo-v2.5-pro",
+        "mimo-v2.5": "xiaomi/mimo-v2.5",
+    }
     prices: dict[str, dict[str, int]] = {}
+    row_pattern = re.compile(
+        r"\|\s*`?(mimo-v2\.5(?:-pro)?)`?\s*"
+        r"\|\s*\$([0-9.]+)\s*"
+        r"\|\s*\$([0-9.]+)\s*"
+        r"\|\s*\$([0-9.]+)\s*\|",
+        flags=re.I,
+    )
+    for model, cache, prompt, completion in row_pattern.findall(section_match.group(1)):
+        model_id = mapping.get(model.casefold())
+        if model_id is None:
+            continue
+        prices[model_id] = {
+            "prompt_micro_per_m": _money_to_micro_per_m(prompt),
+            "completion_micro_per_m": _money_to_micro_per_m(completion),
+            "prompt_cached_micro_per_m": _money_to_micro_per_m(cache),
+        }
+    return prices
+
+
+def parse(html: str) -> dict[str, dict[str, int]]:
+    # The current official page publishes a Markdown table. Keep the
+    # card parser below as a compatibility fallback for older captures and
+    # for UltraSpeed if Xiaomi republishes its standalone PAYG card.
+    prices = _overseas_payg_prices(html)
+    text = re.sub(r"\s+", " ", html)
     mapping = {
         "MiMo-V2.5-Pro": "xiaomi/mimo-v2.5-pro",
         "MiMo-V2.5-Pro-UltraSpeed": "xiaomi/mimo-v2.5-pro-ultraspeed",
@@ -38,5 +76,5 @@ def parse(html: str) -> dict[str, dict[str, int]]:
         }
         if cache:
             row["prompt_cached_micro_per_m"] = _money_to_micro_per_m(cache.group(1))
-        prices[model_id] = row
+        prices.setdefault(model_id, row)
     return prices

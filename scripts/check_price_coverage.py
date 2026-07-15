@@ -63,6 +63,7 @@ def _gemini_model_id(native_id: str) -> str | None:
 _FIREWORKS_MODEL_IDS = {
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p5": "moonshotai/kimi-k2.5",
+    "accounts/fireworks/models/kimi-k2p7-code": "moonshotai/kimi-k2.7-code",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     "accounts/fireworks/models/glm-5p2": "z-ai/glm-5.2",
     "accounts/fireworks/routers/glm-5p2-fast": "z-ai/glm-5.2-fast",
@@ -104,6 +105,7 @@ _WAFER_MODEL_IDS = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
     "GLM-5.2-Fast": "z-ai/glm-5.2-fast",
+    "glm5.2-fast": "z-ai/glm-5.2-fast",
     "Kimi-K2.6": "moonshotai/kimi-k2.6",
     "Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "Qwen3.5-397B-A17B": "qwen/qwen3.5-397b-a17b",
@@ -192,6 +194,11 @@ def _alibaba_model_id(native_id: str) -> str | None:
 
 def _kimi_model_id(native_id: str) -> str | None:
     value = native_id.strip().casefold()
+    # Moonshot exposes this dynamic alias without a separately published
+    # price. Publishing it as a billable route would require guessing which
+    # concrete model/rate it selects, so the strict discovery gate ignores it.
+    if value == "moonshot-v1-auto":
+        return None
     if value.startswith(("kimi-", "moonshot-v1-")):
         return f"moonshotai/{value}"
     return None
@@ -470,6 +477,11 @@ def _normalize_glm_model_id(native_id: str) -> str | None:
     if not match:
         return None
     slug = match.group(0).removesuffix("[1m]")
+    # FP8 is a deployment quantization used by providers such as GMI and
+    # Parasail, not a distinct public/billable model in their manifests.
+    # Preserve semantic variants (for example -fast and -nvfp4), which can
+    # have different routing and prices.
+    slug = re.sub(r"-fp8(?:-block)?$", "", slug)
     return f"z-ai/{slug}"
 
 

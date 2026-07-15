@@ -714,6 +714,11 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
 
     notes: list[str] = []
     for slug, result in sorted(results.items()):
+        # A stale fallback represents the last known good catalog state. Do not
+        # let provider-specific hooks rewrite that state without fresh discovery
+        # data; destructive hooks may otherwise prune every currently live row.
+        if result.source == "stale_snapshot":
+            continue
         module = _import_provider(slug)
         hook = getattr(module, "write_provider_manifest", None)
         if not callable(hook):

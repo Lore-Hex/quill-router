@@ -23,7 +23,6 @@ MANIFEST_PATH = (
 EXPECTED_MODELS = [
     "xiaomi/mimo-v2.5",
     "xiaomi/mimo-v2.5-pro",
-    "xiaomi/mimo-v2.5-pro-ultraspeed",
 ]
 
 
@@ -66,8 +65,16 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         raise RuntimeError(f"xiaomi manifest did not update expected model(s): {missing}")
 
     raw["source"] = "https://mimo.mi.com/docs/en-US/pricing"
-    raw["generated_at"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
+    raw["_note"] = (
+        "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and "
+        "V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD "
+        "table. V2.5 Pro UltraSpeed remains live in Xiaomi's authenticated "
+        "/v1/models feed but has no public PAYG row, so its last verified "
+        "price is retained until Xiaomi republishes one. Legacy V2 rows are "
+        "kept only as historical fallback metadata."
+    )
+    raw["generated_at"] = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     raw["model_count"] = len(rows)
     MANIFEST_PATH.write_text(

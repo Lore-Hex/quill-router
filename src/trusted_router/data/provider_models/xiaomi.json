@@ -1,9 +1,9 @@
 {
   "provider": "xiaomi",
   "source": "https://mimo.mi.com/docs/en-US/pricing",
-  "generated_at": "2026-07-03T22:35:56Z",
+  "generated_at": "2026-07-15T00:38:52Z",
   "model_count": 5,
-  "_note": "Xiaomi MiMo. OpenAI-compatible chat at api.xiaomimimo.com/v1 (Bearer auth). Model ids verified live against /v1/models 2026-06-09; /v1/models does not expose context/price, so context and pricing are hand-maintained from Xiaomi MiMo docs/pages. MiMo-V2.5-Pro context/pricing updated from https://mimo.mi.com/models/en-US/mimo-v2.5-pro and https://mimo.mi.com/docs/en-US/price/pay-as-you-go on 2026-06-30. MiMo-V2 legacy rows remain at 256K. mimo-v2.5-pro-ultraspeed: 1T-param speed-serving tier with up to ~1000 tok/s; pricing from Xiaomi page.",
+  "_note": "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD table. V2.5 Pro UltraSpeed remains live in Xiaomi's authenticated /v1/models feed but has no public PAYG row, so its last verified price is retained until Xiaomi republishes one. Legacy V2 rows are kept only as historical fallback metadata.",
   "models": [
     {
       "id": "xiaomi/mimo-v2-flash",
