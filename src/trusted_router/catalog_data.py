@@ -777,6 +777,8 @@ OPEN_PATCHER_FAST1_MODEL_ID = "trustedrouter/openpatcher-fast1"
 
 OPEN_PATCHER_G1_MODEL_ID = "trustedrouter/openpatcher-g1"
 
+OPEN_PATCHER_G2_MODEL_ID = "trustedrouter/openpatcher-g2"
+
 ATHENA_MODEL_ID = "trustedrouter/athena"
 
 LIBERTY_1_0_MODEL_ID = "trustedrouter/liberty-1.0"
@@ -810,6 +812,8 @@ IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
 
 PROMETHEUS_1_0_1M_MODEL_ID = "trustedrouter/prometheus-1.0-1m"
+
+PROMETHEUS_2_0_MODEL_ID = "trustedrouter/prometheus-2.0"
 
 ZEUS_1_0_MODEL_ID = "trustedrouter/zeus-1.0"
 
@@ -867,6 +871,7 @@ META_MODEL_IDS = frozenset(
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
+        OPEN_PATCHER_G2_MODEL_ID,
         ATHENA_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
@@ -879,6 +884,7 @@ META_MODEL_IDS = frozenset(
         IRIS_1_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
+        PROMETHEUS_2_0_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         ZEUS_1_0_MINI_MODEL_ID,
         SYNTH_CODE_MODEL_ID,
@@ -924,7 +930,7 @@ CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
     IRIS_MODEL_ID: IRIS_1_0_MODEL_ID,
-    PROMETHEUS_MODEL_ID: PROMETHEUS_1_0_MODEL_ID,
+    PROMETHEUS_MODEL_ID: PROMETHEUS_2_0_MODEL_ID,
     ZEUS_MODEL_ID: ZEUS_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID: IRIS_CODE_1_0_MODEL_ID,
     PROMETHEUS_CODE_MODEL_ID: PROMETHEUS_CODE_1_0_MODEL_ID,
@@ -1008,6 +1014,14 @@ SYNTH_QUALITY_1M_MODEL_ORDER = (
     "xiaomi/mimo-v2.5-pro",
     "z-ai/glm-5.2",
     "deepseek/deepseek-v4-pro",
+)
+
+SYNTH_PROMETHEUS_2_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
+    "z-ai/glm-5.2",
+    "deepseek/deepseek-v4-pro",
+    "xiaomi/mimo-v2.5-pro",
 )
 
 LIBERTY_1_0_MODEL_ORDER = (
@@ -1166,6 +1180,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         PROMETHEUS_1_0_1M_MODEL_ID,
+    ),
+    OPEN_PATCHER_G2_MODEL_ID: (
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        PROMETHEUS_2_0_MODEL_ID,
     ),
     ATHENA_MODEL_ID: (
         "z-ai/glm-5.2-fast",
@@ -1445,6 +1464,7 @@ for _advisor_model_id in (
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
+    OPEN_PATCHER_G2_MODEL_ID,
     ATHENA_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
@@ -1458,6 +1478,7 @@ for _synth_model_id in (
     IRIS_1_0_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_1_0_1M_MODEL_ID,
+    PROMETHEUS_2_0_MODEL_ID,
     ZEUS_1_0_MODEL_ID,
     ZEUS_1_0_MINI_MODEL_ID,
     IRIS_CODE_MODEL_ID,

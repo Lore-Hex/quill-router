@@ -117,6 +117,8 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
         assert "trustedrouter/prometheus-code" in response.text
         assert "trustedrouter/iris-1.0" in response.text
         assert "trustedrouter/prometheus-1.0" in response.text
+        assert "trustedrouter/prometheus-2.0" in response.text
+        assert "trustedrouter/openpatcher-g2" in response.text
         assert "trustedrouter/zeus-1.0" in response.text
         assert "trustedrouter/prometheus-code-1.0" in response.text
         assert "https://trustedrouter.com/docs/synth" in response.text

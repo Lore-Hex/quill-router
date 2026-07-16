@@ -767,6 +767,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/iris-1.0",
         "trustedrouter/prometheus-1.0",
         "trustedrouter/prometheus-1.0-1m",
+        "trustedrouter/prometheus-2.0",
         "trustedrouter/zeus-1.0",
         "trustedrouter/zeus-1.0-mini",
         "trustedrouter/iris-code",
@@ -776,6 +777,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/prometheus-code-1.0",
         "trustedrouter/zeus-code-1.0",
         "trustedrouter/openpatcher-g1",
+        "trustedrouter/openpatcher-g2",
         "trustedrouter/athena",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
@@ -815,6 +817,19 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         models_by_id["trustedrouter/prometheus-code-1.0"]["trustedrouter"]["auto_candidates"]
         == prometheus_code_meta["auto_candidates"]
     )
+    prometheus_2_meta = models_by_id["trustedrouter/prometheus-2.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/prometheus"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/prometheus-2.0"]["context_length"] == 1_048_576
+    assert models_by_id["trustedrouter/prometheus"]["trustedrouter"]["canonical_model_id"] == (
+        "trustedrouter/prometheus-2.0"
+    )
+    assert prometheus_2_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro",
+        "xiaomi/mimo-v2.5-pro",
+    ]
     zeus_meta = models_by_id["trustedrouter/zeus"]["trustedrouter"]
     assert models_by_id["trustedrouter/zeus"]["context_length"] == 1_048_576
     assert models_by_id["trustedrouter/zeus-1.0"]["context_length"] == 1_048_576
@@ -877,6 +892,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "z-ai/glm-5.2",
         "moonshotai/kimi-k2.7-code",
         "trustedrouter/prometheus-1.0-1m",
+    ]
+    openpatcher_g2_meta = models_by_id["trustedrouter/openpatcher-g2"]["trustedrouter"]
+    assert openpatcher_g2_meta["route_kind"] == "advisor_orchestration"
+    assert openpatcher_g2_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-2.0",
     ]
     athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
     assert athena_meta["route_kind"] == "private_orchestration"

@@ -13,8 +13,8 @@
     <ul class="check-list">
       <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
       <li>Judge and final models can each have up to 8 fallbacks.</li>
-      <li>Default quality mode judges with Kimi K2.6, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
-      <li>Versioned presets are <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/prometheus-1.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
+      <li>Default quality mode judges with Kimi K2.7 Code, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
+      <li>Versioned presets include <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/prometheus-1.0</code>, <code>trustedrouter/prometheus-2.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
       <li>Code-tuned presets are <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, and <code>trustedrouter/zeus-code-1.0</code>.</li>
       <li>Unversioned aliases such as <code>trustedrouter/prometheus</code> track the latest preset.</li>
       <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
@@ -48,10 +48,10 @@
 </section>
 
 <section style="margin-top:48px" aria-label="Synth presets">
-  <h2 class="section-center">Three presets</h2>
+  <h2 class="section-center">Named presets</h2>
   <p class="section-center" style="max-width:780px;margin:0 auto 26px;color:var(--muted)">
-    Same fusion engine &mdash; a <strong>Kimi K2.6</strong> judge and a <strong>GLM 5.2</strong> synthesizer &mdash;
-    three panels. Call any of them by model id.
+    Each preset pins its panel, judge, synthesizer, and fallback order for repeatable routing.
+    Call any of them by model id.
     <a href="/blog/synth-iris-prometheus-zeus">How we measured them &rarr;</a>
   </p>
   <div class="marketing-grid three">
@@ -69,6 +69,12 @@
       <p>An all open-weights panel &mdash; MiniMax M3, Kimi K2.6, GLM 5.2, Gemma 4, DeepSeek V4 Pro.
         Near-frontier quality at open-model cost: <strong>69.2</strong> on DRACO, about <strong>$34</strong>/100 tasks &mdash;
         beating Fable 5 (65.3) at a seventh of the price.</p>
+    </div>
+    <div class="marketing-card featured">
+      <span class="card-label">Quality &middot; 1M context &middot; all open-weights</span>
+      <h3>Prometheus 2.0</h3>
+      <p><code>trustedrouter/prometheus-2.0</code></p>
+      <p>MiniMax M3, Kimi K3, GLM 5.2, DeepSeek V4 Pro, and MiMo V2.5 Pro answer in parallel. MiniMax M3 judges with Kimi K3 fallback; Kimi K3 synthesizes with GLM 5.2 and MiniMax M3 fallbacks.</p>
     </div>
     <div class="marketing-card">
       <span class="card-label">Frontier</span>

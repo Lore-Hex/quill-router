@@ -1894,7 +1894,8 @@ def llms_txt(settings: Settings) -> str:
         "- Advisor primitive: use model trustedrouter/advisor only with explicit worker_models and advisor_models.",
         "- Socrates: use model trustedrouter/socrates for the rolling advisor preset, or trustedrouter/socrates-1.1 for the current pinned version. trustedrouter/socrates-1.0 remains available for old pinned integrations.",
         "- Subagent: use a concrete parent model with tool type openrouter:subagent or trustedrouter:subagent to delegate self-contained tasks to a worker model",
-        "- Synth: use model trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, or trustedrouter/zeus-1.0 with tool type trustedrouter:synth",
+        "- Synth: use model trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-2.0, or trustedrouter/zeus-1.0 with tool type trustedrouter:synth",
+        "- OpenPatcher G2: use trustedrouter/openpatcher-g2 for a Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.",
         "- Synth Code: use trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, or trustedrouter/zeus-code-1.0 for code-tuned panel and synthesis prompts",
         "",
         "## Catalog",
@@ -1909,7 +1910,7 @@ def llms_txt(settings: Settings) -> str:
             "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
             "trustedrouter/free. Advisor orchestration IDs include the primitive trustedrouter/advisor, "
             "the rolling preset trustedrouter/socrates, and pinned presets trustedrouter/socrates-1.1 and trustedrouter/socrates-1.0. Versioned Synth aliases include trustedrouter/iris-1.0, "
-            "trustedrouter/prometheus-1.0, trustedrouter/zeus-1.0, and their -code variants. "
+            "trustedrouter/prometheus-1.0, trustedrouter/prometheus-2.0, trustedrouter/zeus-1.0, and their -code variants. "
             "Unversioned Synth aliases track the latest preset."
         ),
         "",
@@ -1992,8 +1993,13 @@ def docs_llms_txt(settings: Settings) -> str:
             (
                 "For multi-model synthesis, call model trustedrouter/synth, "
                 "trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, "
+                "trustedrouter/prometheus-2.0, "
                 "trustedrouter/zeus-1.0, or a -code variant with a trustedrouter:synth tool and "
                 "analysis_models, judge_models, final_models, or fallback_final_models."
+            ),
+            (
+                "For an advised Kimi K3 worker, call trustedrouter/openpatcher-g2. "
+                "It can consult Gemma 4 and Prometheus 2.0 in parallel."
             ),
             (
                 "Code-tuned Synth model IDs are trustedrouter/synth-code, "
@@ -2065,13 +2071,15 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/subagent: primitive for OpenRouter-compatible subtask delegation with tool type openrouter:subagent or trustedrouter:subagent.",
         "- trustedrouter/iris-1.0: budget Synth preset, MiniMax M3, Kimi K2.6, and DeepSeek V4 Pro panel.",
         "- trustedrouter/prometheus-1.0: all-open Synth preset, MiniMax M3, Kimi K2.6, GLM 5.2, Gemma 4, and DeepSeek V4 Pro panel.",
+        "- trustedrouter/prometheus-2.0: 1M-context open-weight Synth preset with MiniMax M3, Kimi K3, GLM 5.2, DeepSeek V4 Pro, and MiMo V2.5 Pro.",
+        "- trustedrouter/openpatcher-g2: Kimi K3 worker with parallel Gemma 4 and Prometheus 2.0 advisors.",
         "- trustedrouter/zeus-1.0: frontier Synth preset with commercial frontier models on the panel.",
         "- trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, trustedrouter/zeus-code-1.0: code-tuned variants with the same preset tiers.",
         "- trustedrouter/iris, trustedrouter/prometheus, trustedrouter/zeus, and their -code aliases track the latest preset version.",
         "",
         "## Synth",
         "- Endpoint shape: POST /v1/chat/completions.",
-        "- Models: trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-1.0, trustedrouter/zeus-1.0, plus trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, and trustedrouter/zeus-code-1.0.",
+        "- Models: trustedrouter/synth, trustedrouter/iris-1.0, trustedrouter/prometheus-2.0, trustedrouter/zeus-1.0, plus trustedrouter/synth-code, trustedrouter/iris-code-1.0, trustedrouter/prometheus-code-1.0, and trustedrouter/zeus-code-1.0.",
         "- Tool type: trustedrouter:synth.",
         "- Common parameters: preset, analysis_models, selection_strategy, judge_models, fallback_judges, final_models, fallback_final_models, max_completion_tokens.",
         "- Strategies: synthesize, synthesize_non_refusals, first_success, first_non_refusal.",

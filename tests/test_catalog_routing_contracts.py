@@ -25,6 +25,7 @@ from trusted_router.catalog import (
     OPEN_PATCHER_A1_MODEL_ID,
     OPEN_PATCHER_FAST1_MODEL_ID,
     OPEN_PATCHER_G1_MODEL_ID,
+    OPEN_PATCHER_G2_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
@@ -35,6 +36,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_ZERO_RETENTION,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
+    PROMETHEUS_2_0_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
@@ -628,7 +630,18 @@ def test_orchestration_taxonomy_distinguishes_primitives_presets_and_legacy_alia
             "named_preset",
             PLATO_PRO_1_0_MODEL_ID,
         ),
+        PROMETHEUS_MODEL_ID: ("synth", "rolling_alias", PROMETHEUS_2_0_MODEL_ID),
+        PROMETHEUS_2_0_MODEL_ID: (
+            "synth",
+            "named_preset",
+            PROMETHEUS_2_0_MODEL_ID,
+        ),
         OPEN_PATCHER_S1_MODEL_ID: ("synth", "named_preset", OPEN_PATCHER_S1_MODEL_ID),
+        OPEN_PATCHER_G2_MODEL_ID: (
+            "advisor",
+            "named_preset",
+            OPEN_PATCHER_G2_MODEL_ID,
+        ),
     }
 
     for model_id, (primitive, role, canonical) in expected.items():
@@ -651,6 +664,7 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         "google/gemma-4-31b-it",
         PROMETHEUS_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
+        PROMETHEUS_2_0_MODEL_ID,
         PLATO_MODEL_ID,
         PLATO_1_0_MODEL_ID,
         PLATO_PRO_MODEL_ID,
@@ -658,6 +672,7 @@ def test_open_weights_badge_is_recursive_for_combo_models() -> None:
         OPEN_PATCHER_S1_MODEL_ID,
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
+        OPEN_PATCHER_G2_MODEL_ID,
     ]
     for model_id in open_ids:
         assert model_open_weights(MODELS[model_id]), model_id
@@ -766,6 +781,11 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
             "moonshotai/kimi-k2.7-code",
             "trustedrouter/prometheus-1.0-1m",
         ],
+        OPEN_PATCHER_G2_MODEL_ID: [
+            "moonshotai/kimi-k3",
+            "google/gemma-4-31b-it",
+            "trustedrouter/prometheus-2.0",
+        ],
     }
     for model_id, candidates in expected.items():
         shape = model_to_openrouter_shape(MODELS[model_id])
@@ -777,6 +797,7 @@ def test_advisor_combo_models_are_cataloged_with_concrete_candidates() -> None:
     assert MODELS[PLATO_PRO_1_0_MODEL_ID].context_length == 1_048_576
     assert MODELS[PLATO_PRO_MODEL_ID].context_length == 1_048_576
     assert MODELS[OPEN_PATCHER_G1_MODEL_ID].context_length == 1_048_576
+    assert MODELS[OPEN_PATCHER_G2_MODEL_ID].context_length == 1_048_576
     assert MODELS[ARISTOTLE_1_1_MODEL_ID].context_length == 1_048_576
     assert MODELS[ARISTOTLE_MODEL_ID].context_length == 1_048_576
 
@@ -958,6 +979,26 @@ def test_prometheus_1m_uses_only_long_context_open_weight_components() -> None:
     assert shape["trustedrouter"]["open_weights"] is True
 
 
+def test_prometheus_2_uses_requested_one_million_open_weight_graph() -> None:
+    expected = [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
+        "deepseek/deepseek-v4-pro",
+        "xiaomi/mimo-v2.5-pro",
+    ]
+    for model_id in (PROMETHEUS_MODEL_ID, PROMETHEUS_2_0_MODEL_ID):
+        model = MODELS[model_id]
+        shape = model_to_openrouter_shape(model)
+
+        assert model.context_length == 1_048_576
+        assert [candidate.id for candidate in meta_candidate_models(model_id)] == expected
+        assert shape["trustedrouter"]["auto_candidates"] == expected
+        assert shape["trustedrouter"]["open_weights"] is True
+
+    assert canonical_orchestration_model_id(PROMETHEUS_MODEL_ID) == PROMETHEUS_2_0_MODEL_ID
+
+
 def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
     for model_id in sorted(META_MODEL_IDS):
         shape = model_to_openrouter_shape(MODELS[model_id])
@@ -979,8 +1020,10 @@ def test_trustedrouter_meta_models_are_credits_only_not_byok() -> None:
         SOCRATES_1_1_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
+        OPEN_PATCHER_G2_MODEL_ID,
         ZEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
+        PROMETHEUS_2_0_MODEL_ID,
     ],
 )
 def test_trustedrouter_meta_route_expansion_is_credits_only(model_id: str) -> None:
@@ -1034,6 +1077,17 @@ def test_openpatcher_and_athena_force_us_provider_routes(model_id: str) -> None:
     assert {"kimi", "zai", "xiaomi", "minimax", "siliconflow"}.isdisjoint(
         {endpoint.provider for _model, endpoint in endpoints}
     )
+
+
+def test_openpatcher_g2_explicitly_uses_global_moonshot_k3_route() -> None:
+    shape = model_to_openrouter_shape(MODELS[OPEN_PATCHER_G2_MODEL_ID])
+
+    assert shape["trustedrouter"]["required_provider_jurisdiction"] is None
+    assert shape["trustedrouter"]["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "google/gemma-4-31b-it",
+        "trustedrouter/prometheus-2.0",
+    ]
 
 
 def test_provider_jurisdiction_filter_keeps_only_us_based_endpoints() -> None:
