@@ -237,6 +237,18 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
         assert f'title="{provider}"' in response.text
 
 
+def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) -> None:
+    catalog = client.get("/models")
+    detail = client.get("/models/moonshotai/kimi-k2.6")
+
+    assert catalog.status_code == 200
+    assert detail.status_code == 200
+    assert "stores content" not in catalog.text.lower()
+    assert "tr stores content" not in detail.text.lower()
+    assert "Provider policy" in detail.text
+    assert "upstream varies" in detail.text
+
+
 def test_public_meta_model_detail_renders_orchestration_components(client: TestClient) -> None:
     response = client.get("/models/trustedrouter/socrates-1.1")
 

@@ -126,7 +126,6 @@
           <th>Prompt</th>
           <th>Completion</th>
           <th>Attested</th>
-          <th>TR stores content</th>
           <th>Provider policy</th>
         </tr>
       </thead>
@@ -138,7 +137,6 @@
           <td>{{ endpoint.prompt_price }}</td>
           <td>{{ endpoint.completion_price }}</td>
           <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
-          <td>{% if endpoint.stores_content %}<span class="pill warn">yes</span>{% else %}<span class="pill good">no</span>{% endif %}</td>
           <td>
             {% if endpoint.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
             {% if endpoint.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
