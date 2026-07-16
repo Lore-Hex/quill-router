@@ -2169,7 +2169,6 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         or model.prepaid_available,
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
-        "stores_content": provider.stores_content,
         "provider_zero_data_retention": provider.provider_zero_data_retention,
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
@@ -2295,7 +2294,6 @@ def _model_detail_view(
                 "prompt_microdollars_per_million_tokens": endpoint.prompt_price_microdollars_per_million_tokens,
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
                 "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
-                "stores_content": ep_provider.stores_content if ep_provider else False,
                 "provider_zero_data_retention": (
                     ep_provider.provider_zero_data_retention if ep_provider else None
                 ),
