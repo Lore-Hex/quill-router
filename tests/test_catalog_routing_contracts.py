@@ -73,6 +73,7 @@ from trusted_router.routing import chat_route_candidates, chat_route_endpoint_ca
 def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert len(PROVIDERS) >= 8
     assert "kimi" in PROVIDERS
+    assert "moonshotai/kimi-k3" in MODELS
     assert "moonshotai/kimi-k2.6" in MODELS
     assert "moonshotai/kimi-k2.7-code" in MODELS
     assert "moonshotai/kimi-k2.7-code-highspeed" in MODELS
@@ -82,6 +83,14 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k2.7-code@kimi/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k2.7-code-highspeed@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@kimi/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@kimi/byok" in MODEL_ENDPOINTS
+    kimi_k3 = MODELS["moonshotai/kimi-k3"]
+    assert kimi_k3.context_length == 1_048_576
+    assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_300_000
+    assert kimi_k3.completion_price_microdollars_per_million_tokens == 16_500_000
+    assert kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 330_000
+    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"].upstream_id == "kimi-k3"
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id
         == "kimi-k2.7-code-highspeed"
@@ -1118,6 +1127,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
 @pytest.mark.parametrize(
     ("model_id", "provider"),
     [
+        ("moonshotai/kimi-k3", "kimi"),
         ("moonshotai/kimi-k2.6", "kimi"),
         ("openai/gpt-4.1-mini", "openai"),
         ("mistralai/mistral-small-2603", "mistral"),
