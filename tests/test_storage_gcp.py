@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from tests.fakes.spanner import make_fake_store
@@ -328,7 +328,8 @@ def test_gcp_rate_limit_counts_in_same_window_and_resets_later() -> None:
 
 class _FakeCell:
     def __init__(self, value: Any) -> None:
-        self.value = json.dumps(asdict(value), separators=(",", ":"), sort_keys=True).encode()
+        body = asdict(value) if is_dataclass(value) else value
+        self.value = json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
 
 
 class _FakeReadRow:
@@ -514,6 +515,28 @@ def test_gcp_provider_benchmark_round_trips_ttfb_and_source() -> None:
     assert rows[0].ttfb_milliseconds == 120
     assert rows[0].first_token_milliseconds == 180
     assert rows[0].source == "synthetic"
+
+
+def test_gcp_provider_benchmark_read_ignores_unknown_future_fields() -> None:
+    body = {
+        "id": "bench_future",
+        "model": "openai/gpt-5.4-nano",
+        "provider": "openai",
+        "provider_name": "OpenAI",
+        "status": "success",
+        "usage_type": "Credits",
+        "streamed": True,
+        "created_at": "2026-05-02T12:00:00Z",
+        "future_field": "reader does not know this yet",
+    }
+    table = _FakeBigtable([_FakeReadRow(body)])
+
+    rows = _bt_provider_benchmark_samples(
+        table, "m", date="2026-05-02", provider="openai", model="openai/gpt-5.4-nano", limit=10
+    )
+
+    assert [row.id for row in rows] == ["bench_future"]
+    assert not hasattr(rows[0], "future_field")
 
 
 def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> None:

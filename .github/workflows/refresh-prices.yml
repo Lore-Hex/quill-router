@@ -275,7 +275,8 @@ jobs:
           # snapshot for hours because deploy.yml never auto-fired.
           gh workflow run ci.yml --ref main --repo "${GITHUB_REPOSITORY}"
           echo "  dispatched ci.yml for new snapshot"
-          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}"
+          gh workflow run deploy.yml --ref main --repo "${GITHUB_REPOSITORY}" \
+            -f deploy_synthetic_monitor=true
           echo "  dispatched deploy.yml for new snapshot"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

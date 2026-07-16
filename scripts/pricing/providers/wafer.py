@@ -42,7 +42,9 @@ EXPECTED_MODELS = [
     "z-ai/glm-5.1",
     "z-ai/glm-5.2",
     "z-ai/glm-5.2-fast",
-    "moonshotai/kimi-k2.6",
+    # Pinning a model Wafer might delist deadlocks manifest rebuilds
+    # (validate raises -> stale fallback -> prune skipped); kimi-k2.6 already
+    # flipped non-ZDR once.
     "minimax/minimax-m3",
 ]
 

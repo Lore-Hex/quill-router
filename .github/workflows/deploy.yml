@@ -316,7 +316,9 @@ jobs:
             if [ -z "$changed" ]; then
               changed="$(git diff --name-only HEAD~1 HEAD 2>/dev/null || true)"
             fi
-            if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/synthetic/|scripts/deploy/synthetic\.sh|\.github/workflows/deploy\.yml)$'; then
+            # Any app source change can affect the synthetic monitor image; it
+            # imports the same trusted_router package as the API service.
+            if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/|scripts/deploy/synthetic\.sh$|\.github/workflows/deploy\.yml$)'; then
               deploy_synthetic_monitor="true"
             fi
           fi

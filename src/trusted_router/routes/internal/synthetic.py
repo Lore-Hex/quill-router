@@ -11,6 +11,7 @@ from trusted_router.errors import api_error
 from trusted_router.routes.helpers import json_body
 from trusted_router.routes.internal._shared import require_internal_gateway
 from trusted_router.storage import STORE, ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.storage_models import scrub_provider_error_message
 from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
@@ -165,6 +166,12 @@ def _benchmark_from_body(body: Any) -> ProviderBenchmarkSample:
         "finish_reason": _optional_str(body.get("finish_reason")),
         "error_type": _optional_str(body.get("error_type")),
         "error_status": _optional_int(body.get("error_status")),
+        # Scrub server-side too: the probe already redacts, but the ingest
+        # boundary must not trust any internal caller with key-shaped material.
+        "error_message": scrub_provider_error_message(
+            _optional_str(body.get("error_message")) or ""
+        )[:300]
+        or None,
         "region": _optional_str(body.get("region")),
         # This ingest is the synthetic rotation path; default provenance is
         # synthetic (the probe also sets it explicitly).

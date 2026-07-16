@@ -82,7 +82,9 @@ WAFER_ZDR_NATIVE_MODELS = frozenset(
     {
         "GLM-5.1",
         "GLM-5.2",
-        "Kimi-K2.6",
+        # Wafer withdrew ZDR support for Kimi-K2.6 on 2026-06-26
+        # (capabilities.zdr.supported=false in their /v1/models). Keep it out
+        # of the static live-provider ZDR-header allowlist.
         "Qwen3.6-35B-A3B",
         "deepseek-v4-flash",
         "deepseek-v4-pro",

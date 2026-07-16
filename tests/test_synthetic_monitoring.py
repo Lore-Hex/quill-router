@@ -1929,8 +1929,16 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 512
     assert _rotation_max_tokens("openai", "openai/o3") == 512
     assert _rotation_max_tokens("openai", "openai/gpt-5.5") == 512
+    assert _rotation_max_tokens("baseten", "nvidia/nemotron-120b-a12b") == 512
     assert _rotation_omits_temperature("openai", "openai/o3")
     assert _rotation_omits_temperature("openai", "openai/gpt-5.5")
+    # Canary contract: probes mirror customer payloads. The enclave strips
+    # temperature for known deprecated Anthropic generations, so future missing
+    # enclave updates surface here as direct probe 400s instead of being hidden.
+    assert not _rotation_omits_temperature("anthropic", "anthropic/claude-fable-5")
+    assert not _rotation_omits_temperature("anthropic", "anthropic/claude-sonnet-5")
+    assert _rotation_omits_temperature("anthropic", "anthropic/claude-opus-4.7")
+    assert _rotation_omits_temperature("anthropic", "anthropic/claude-opus-4.8")
     assert not _rotation_omits_temperature("openai", "openai/gpt-4.1-mini")
 
 
@@ -2043,6 +2051,7 @@ async def test_provider_rotation_probe_records_sse_error_frame() -> None:
     assert sample.model == "moonshotai/kimi-k2.6"
     assert sample.error_type == "provider_error"
     assert sample.error_status == 502
+    assert sample.error_message == "provider error"
     assert sample.first_token_milliseconds is None
 
 
@@ -2137,8 +2146,17 @@ async def test_provider_rotation_probe_uses_provider_safe_request_shape() -> Non
 
 @pytest.mark.asyncio
 async def test_provider_rotation_probe_records_http_error() -> None:
+    upstream_message = (
+        "provider quota exhausted Bearer live-secret sk-live1234 rk-route5678 "
+        + ("x" * 400)
+    )
+    scrubbed_message = "provider quota exhausted Bearer *** sk-*** sk-*** " + ("x" * 400)
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "boom"})
+        return httpx.Response(
+            500,
+            json={"error": {"type": "provider_error", "message": upstream_message}},
+        )
 
     target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -2152,8 +2170,35 @@ async def test_provider_rotation_probe_records_http_error() -> None:
         )
 
     assert sample.status == "error"
-    assert sample.error_type == "http_500"
+    assert sample.error_type == "provider_error"
     assert sample.error_status == 500
+    assert sample.error_message == scrubbed_message[:300]
+    assert "live-secret" not in str(sample.error_message)
+    assert "sk-live1234" not in str(sample.error_message)
+    assert "rk-route5678" not in str(sample.error_message)
+    assert sample.first_token_milliseconds is None
+    assert sample.source == "synthetic"
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_records_httpx_error_message() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("gateway connection failed", request=request)
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+        )
+
+    assert sample.status == "error"
+    assert sample.error_type == "ConnectError"
+    assert sample.error_message == "gateway connection failed"
     assert sample.first_token_milliseconds is None
     assert sample.source == "synthetic"
 
@@ -2201,6 +2246,9 @@ def _benchmark_ingest_settings() -> Settings:
 
 def test_internal_benchmark_ingest_records_sample() -> None:
     client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+    # Key-shaped + bearer material up front proves the ingest boundary scrubs
+    # server-side (not just the probe); the x-padding proves [:300] truncation.
+    error_message = "denied for Bearer SK-LIVE-abcd1234 upstream said no " + ("x" * 400)
     payload = {
         "samples": [
             {
@@ -2214,6 +2262,7 @@ def test_internal_benchmark_ingest_records_sample() -> None:
                 "elapsed_milliseconds": 300,
                 "first_token_milliseconds": 150,
                 "ttfb_milliseconds": 90,
+                "error_message": error_message,
                 "source": "synthetic",
                 "created_at": "2026-06-04T00:00:00Z",
             }
@@ -2232,6 +2281,11 @@ def test_internal_benchmark_ingest_records_sample() -> None:
     matched = [row for row in rows if row.id == "bench-ingest-test-1"]
     assert matched, "ingested benchmark sample not found in store"
     assert matched[0].ttfb_milliseconds == 90
+    stored_message = str(matched[0].error_message)
+    assert len(stored_message) <= 300
+    assert "SK-LIVE-abcd1234" not in stored_message
+    assert "Bearer ***" in stored_message
+    assert stored_message.endswith("x" * 50)
     assert matched[0].source == "synthetic"
 
 

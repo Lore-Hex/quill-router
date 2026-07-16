@@ -16,7 +16,11 @@ import httpx
 from trusted_router.config import Settings
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
-from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
+from trusted_router.storage_models import (
+    ProviderBenchmarkSample,
+    SyntheticProbeSample,
+    scrub_provider_error_message,
+)
 from trusted_router.types import UsageType
 
 
@@ -877,7 +881,7 @@ async def provider_rotation_probe(
             served_model = response.headers.get("x-trustedrouter-served-model") or model
             if response.status_code != 200:
                 await response.aread()
-                error_type, error_status, _message = _response_error(response)
+                error_type, error_status, message = _response_error(response)
                 return _rotation_error_sample(
                     served_provider,
                     served_model,
@@ -885,6 +889,7 @@ async def provider_rotation_probe(
                     elapsed_ms=_elapsed_ms(started),
                     error_status=error_status,
                     error_type=error_type,
+                    error_message=message,
                 )
             tail = ""
             finish_reason: str | None = None
@@ -911,7 +916,7 @@ async def provider_rotation_probe(
                     break
             elapsed_ms = _elapsed_ms(started)
             if stream_error is not None:
-                error_type, status, _message = stream_error
+                error_type, status, message = stream_error
                 return _rotation_error_sample(
                     served_provider,
                     served_model,
@@ -919,6 +924,7 @@ async def provider_rotation_probe(
                     elapsed_ms=elapsed_ms,
                     error_status=status or 502,
                     error_type=error_type,
+                    error_message=message,
                 )
     except (httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
@@ -928,6 +934,7 @@ async def provider_rotation_probe(
             elapsed_ms=_elapsed_ms(started),
             error_status=None,
             error_type=exc.__class__.__name__,
+            error_message=str(exc),
         )
     if ttft_ms is None:
         error_type = "probe_config_error" if finish_reason == "length" else "empty_stream"
@@ -971,9 +978,12 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
         or "glm-4.6" in model_l
         or "glm-4.7" in model_l
         or "glm-5" in model_l
+        or "nemotron" in model_l
         or "reasoning" in model_l
         or "thinking" in model_l
     ):
+        # Crusoe nemotron-3 reasons by default without streaming reasoning
+        # deltas, so 16 tokens can finish=length with zero visible content.
         return 512
     if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
         return 128
@@ -1009,8 +1019,12 @@ def _rotation_error_sample(
     elapsed_ms: int,
     error_status: int | None,
     error_type: str,
+    error_message: str | None = None,
 ) -> ProviderBenchmarkSample:
     status = "unsupported" if _rotation_error_excluded_from_uptime(error_type) else "error"
+    truncated_error_message = None
+    if error_message is not None:
+        truncated_error_message = scrub_provider_error_message(str(error_message))[:300]
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
         model=model,
@@ -1025,6 +1039,7 @@ def _rotation_error_sample(
         finish_reason=status,
         error_type=error_type,
         error_status=error_status,
+        error_message=truncated_error_message,
         region=region,
         source="synthetic",
     )

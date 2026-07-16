@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -566,6 +567,18 @@ class Generation:
         }
 
 
+# Redaction for provider error strings persisted on benchmark samples. Shared
+# by the probe (client-side) and the internal ingest route (server-side) so a
+# buggy or future caller cannot persist key-shaped or bearer material.
+_KEY_SHAPED_RE = re.compile(r"(?i)\b(sk|rk)-[A-Za-z0-9_\-*]{4,}")
+_BEARER_TOKEN_RE = re.compile(r"(?i)bearer\s+\S+")
+
+
+def scrub_provider_error_message(value: str) -> str:
+    scrubbed = _KEY_SHAPED_RE.sub("sk-***", value)
+    return _BEARER_TOKEN_RE.sub("Bearer ***", scrubbed)
+
+
 @dataclass
 class ProviderBenchmarkSample:
     """Privacy-safe provider performance sample for future public rankings.
@@ -591,6 +604,10 @@ class ProviderBenchmarkSample:
     finish_reason: str | None = None
     error_type: str | None = None
     error_status: int | None = None
+    # Truncated upstream/provider error detail from synthetic probes. Organic
+    # samples leave it None; privacy-safe because this is a provider error
+    # string, never tenant content.
+    error_message: str | None = None
     region: str | None = None
     # Internal-only provenance: "organic" (real production traffic) or
     # "synthetic" (rotation-probe sample). Lets internal queries separate the

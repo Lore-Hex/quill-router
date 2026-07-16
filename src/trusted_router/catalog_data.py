@@ -98,6 +98,19 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
         ),
         provider_policy_url="https://platform.claude.com/docs/en/api/data-retention",
     ),
+    (
+        "moonshotai/kimi-k2.6",
+        "wafer",
+    ): ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_STANDARD,
+        provider_zero_data_retention=False,
+        provider_policy=(
+            "Wafer withdrew ZDR support for Kimi-K2.6 on 2026-06-26 "
+            "(capabilities.zdr.supported=false in their /v1/models). The "
+            "route is served at standard tier and excluded from "
+            "trustedrouter/zdr and provider.min_privacy=zdr routing."
+        ),
+    ),
 }
 
 
@@ -479,10 +492,10 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer
-    # supports request-scoped ZDR with `Wafer-ZDR: required` on models whose
-    # /v1/models rows advertise `zdr_supported=true`; the gateway sends that
-    # header on Wafer routes. The provider itself is not marked globally ZDR
-    # because several Wafer models explicitly report zdr_supported=false.
+    # supports request-scoped ZDR with `Wafer-ZDR: required`; providers.py's
+    # live-provider allowlist sends that header on Wafer routes. The provider
+    # itself is not marked globally ZDR because several Wafer models explicitly
+    # report zdr_supported=false.
     "wafer": Provider(
         slug="wafer",
         name="Wafer",
@@ -1356,6 +1369,15 @@ _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
 )
 
 _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
+    "anthropic": frozenset(
+        {
+            # Undated alias stopped serving on TR's operator key ~2026-06-21.
+            # Credits-only drop keeps BYOK visible for customers whose own keys
+            # may still serve it; PROMOTE to _PROVIDER_DEPRECATED_UPSTREAM_MODELS
+            # after Anthropic's formal retirement on 2026-08-05.
+            "anthropic/claude-opus-4.1",
+        }
+    ),
     "gmi": frozenset(
         {
             "anthropic/claude-opus-4.7",
