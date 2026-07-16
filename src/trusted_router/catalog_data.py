@@ -759,6 +759,8 @@ PLATO_MODEL_ID = "trustedrouter/plato"
 
 PLATO_PRO_1_0_MODEL_ID = "trustedrouter/plato-pro-1.0"
 
+PLATO_PRO_2_0_MODEL_ID = "trustedrouter/plato-pro-2.0"
+
 PLATO_PRO_MODEL_ID = "trustedrouter/plato-pro"
 
 SOCRATES_PRO_1_0_MODEL_ID = "trustedrouter/socrates-pro-1.0"
@@ -770,6 +772,8 @@ SOCRATES_PRO_PLUS_1_0_MODEL_ID = "trustedrouter/socrates-pro-plus-1.0"
 SOCRATES_PRO_PLUS_MODEL_ID = "trustedrouter/socrates-pro-plus"
 
 OPEN_PATCHER_S1_MODEL_ID = "trustedrouter/openpatcher-s1"
+
+OPEN_PATCHER_S2_MODEL_ID = "trustedrouter/openpatcher-s2"
 
 OPEN_PATCHER_A1_MODEL_ID = "trustedrouter/openpatcher-a1"
 
@@ -808,6 +812,8 @@ PROMETHEUS_MODEL_ID = "trustedrouter/prometheus"
 ZEUS_MODEL_ID = "trustedrouter/zeus"
 
 IRIS_1_0_MODEL_ID = "trustedrouter/iris-1.0"
+
+IRIS_2_0_MODEL_ID = "trustedrouter/iris-2.0"
 
 PROMETHEUS_1_0_MODEL_ID = "trustedrouter/prometheus-1.0"
 
@@ -862,12 +868,14 @@ META_MODEL_IDS = frozenset(
         PLATO_1_0_MODEL_ID,
         PLATO_MODEL_ID,
         PLATO_PRO_1_0_MODEL_ID,
+        PLATO_PRO_2_0_MODEL_ID,
         PLATO_PRO_MODEL_ID,
         SOCRATES_PRO_1_0_MODEL_ID,
         SOCRATES_PRO_MODEL_ID,
         SOCRATES_PRO_PLUS_1_0_MODEL_ID,
         SOCRATES_PRO_PLUS_MODEL_ID,
         OPEN_PATCHER_S1_MODEL_ID,
+        OPEN_PATCHER_S2_MODEL_ID,
         OPEN_PATCHER_A1_MODEL_ID,
         OPEN_PATCHER_FAST1_MODEL_ID,
         OPEN_PATCHER_G1_MODEL_ID,
@@ -882,6 +890,7 @@ META_MODEL_IDS = frozenset(
         PROMETHEUS_MODEL_ID,
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
+        IRIS_2_0_MODEL_ID,
         PROMETHEUS_1_0_MODEL_ID,
         PROMETHEUS_1_0_1M_MODEL_ID,
         PROMETHEUS_2_0_MODEL_ID,
@@ -926,10 +935,10 @@ CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
     SOCRATES_MODEL_ID: SOCRATES_1_1_MODEL_ID,
     ARISTOTLE_MODEL_ID: ARISTOTLE_1_1_MODEL_ID,
     PLATO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
-    PLATO_PRO_MODEL_ID: PLATO_PRO_1_0_MODEL_ID,
+    PLATO_PRO_MODEL_ID: PLATO_PRO_2_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID: SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_PLUS_MODEL_ID: SOCRATES_PRO_PLUS_1_0_MODEL_ID,
-    IRIS_MODEL_ID: IRIS_1_0_MODEL_ID,
+    IRIS_MODEL_ID: IRIS_2_0_MODEL_ID,
     PROMETHEUS_MODEL_ID: PROMETHEUS_2_0_MODEL_ID,
     ZEUS_MODEL_ID: ZEUS_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID: IRIS_CODE_1_0_MODEL_ID,
@@ -998,6 +1007,12 @@ DEFAULT_AUTO_MODEL_ORDER = [
 SYNTH_BUDGET_MODEL_ORDER = (
     "minimax/minimax-m3",
     "moonshotai/kimi-k2.6",
+    "deepseek/deepseek-v4-pro",
+)
+
+SYNTH_IRIS_2_MODEL_ORDER = (
+    "minimax/minimax-m3",
+    "moonshotai/kimi-k3",
     "deepseek/deepseek-v4-pro",
 )
 
@@ -1151,9 +1166,13 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         "z-ai/glm-5.2",
         PROMETHEUS_1_0_1M_MODEL_ID,
     ),
+    PLATO_PRO_2_0_MODEL_ID: (
+        "z-ai/glm-5.2",
+        PROMETHEUS_2_0_MODEL_ID,
+    ),
     PLATO_PRO_MODEL_ID: (
         "z-ai/glm-5.2",
-        PROMETHEUS_1_0_1M_MODEL_ID,
+        PROMETHEUS_2_0_MODEL_ID,
     ),
     SOCRATES_PRO_1_0_MODEL_ID: (
         "cerebras/zai-glm-4.7",
@@ -1456,6 +1475,7 @@ for _advisor_model_id in (
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
+    PLATO_PRO_2_0_MODEL_ID,
     PLATO_PRO_MODEL_ID,
     SOCRATES_PRO_1_0_MODEL_ID,
     SOCRATES_PRO_MODEL_ID,
@@ -1476,6 +1496,7 @@ for _synth_model_id in (
     PROMETHEUS_MODEL_ID,
     ZEUS_MODEL_ID,
     IRIS_1_0_MODEL_ID,
+    IRIS_2_0_MODEL_ID,
     PROMETHEUS_1_0_MODEL_ID,
     PROMETHEUS_1_0_1M_MODEL_ID,
     PROMETHEUS_2_0_MODEL_ID,
@@ -1488,6 +1509,7 @@ for _synth_model_id in (
     PROMETHEUS_CODE_1_0_MODEL_ID,
     ZEUS_CODE_1_0_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
+    OPEN_PATCHER_S2_MODEL_ID,
     LIBERTY_1_0_MODEL_ID,
     LIBERTY_1_0_1M_MODEL_ID,
 ):

@@ -260,7 +260,7 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
     assert "Canonical: <a href=\"/models/trustedrouter/socrates-1.1\"" in rolling.text
 
 
-def test_public_prometheus_two_and_openpatcher_g2_pages_render_exact_graphs(
+def test_public_k3_combo_pages_render_exact_graphs(
     client: TestClient,
 ) -> None:
     prometheus = client.get("/models/trustedrouter/prometheus-2.0")
@@ -278,6 +278,25 @@ def test_public_prometheus_two_and_openpatcher_g2_pages_render_exact_graphs(
     assert "moonshotai/kimi-k3" in openpatcher.text
     assert "google/gemma-4-31b-it" in openpatcher.text
     assert "trustedrouter/prometheus-2.0" in openpatcher.text
+
+    openpatcher_s2 = client.get("/models/trustedrouter/openpatcher-s2")
+    assert openpatcher_s2.status_code == 200
+    assert "TrustedRouter OpenPatcher-S2" in openpatcher_s2.text
+    assert "moonshotai/kimi-k3" in openpatcher_s2.text
+    assert "z-ai/glm-5.2" in openpatcher_s2.text
+
+    iris = client.get("/models/trustedrouter/iris-2.0")
+    assert iris.status_code == 200
+    assert "TrustedRouter Iris 2.0" in iris.text
+    assert "minimax/minimax-m3" in iris.text
+    assert "moonshotai/kimi-k3" in iris.text
+    assert "deepseek/deepseek-v4-pro" in iris.text
+
+    plato = client.get("/models/trustedrouter/plato-pro-2.0")
+    assert plato.status_code == 200
+    assert "TrustedRouter Plato Pro 2.0" in plato.text
+    assert "z-ai/glm-5.2" in plato.text
+    assert "trustedrouter/prometheus-2.0" in plato.text
 
 
 def test_public_athena_model_detail_hides_orchestration_components(client: TestClient) -> None:

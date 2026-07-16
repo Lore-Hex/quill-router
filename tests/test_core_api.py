@@ -759,12 +759,14 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/plato-1.0",
         "trustedrouter/plato-pro",
         "trustedrouter/plato-pro-1.0",
+        "trustedrouter/plato-pro-2.0",
         "trustedrouter/socrates-1.1",
         "trustedrouter/socrates-pro",
         "trustedrouter/socrates-pro-1.0",
         "trustedrouter/socrates-pro-plus",
         "trustedrouter/socrates-pro-plus-1.0",
         "trustedrouter/iris-1.0",
+        "trustedrouter/iris-2.0",
         "trustedrouter/prometheus-1.0",
         "trustedrouter/prometheus-1.0-1m",
         "trustedrouter/prometheus-2.0",
@@ -778,6 +780,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "trustedrouter/zeus-code-1.0",
         "trustedrouter/openpatcher-g1",
         "trustedrouter/openpatcher-g2",
+        "trustedrouter/openpatcher-s2",
         "trustedrouter/athena",
         "trustedrouter/selector",
         "trustedrouter/mapreduce",
@@ -803,9 +806,28 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert models_by_id["trustedrouter/plato"]["context_length"] == 1_048_576
     assert plato_meta["canonical_model_id"] == "trustedrouter/plato-pro-1.0"
     assert plato_meta["auto_candidates"] == plato_pro_meta["auto_candidates"]
+    plato_pro_2_meta = models_by_id["trustedrouter/plato-pro-2.0"]["trustedrouter"]
+    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["canonical_model_id"] == (
+        "trustedrouter/plato-pro-2.0"
+    )
+    assert models_by_id["trustedrouter/plato-pro"]["trustedrouter"]["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "trustedrouter/prometheus-2.0",
+    ]
+    assert plato_pro_2_meta["auto_candidates"] == [
+        "z-ai/glm-5.2",
+        "trustedrouter/prometheus-2.0",
+    ]
     iris_meta = models_by_id["trustedrouter/iris"]["trustedrouter"]
     assert iris_meta["route_kind"] == "fusion_panel"
+    assert iris_meta["canonical_model_id"] == "trustedrouter/iris-2.0"
+    assert models_by_id["trustedrouter/iris"]["context_length"] == 1_048_576
     assert iris_meta["auto_candidates"] == [
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k3",
+        "deepseek/deepseek-v4-pro",
+    ]
+    assert models_by_id["trustedrouter/iris-1.0"]["trustedrouter"]["auto_candidates"] == [
         "minimax/minimax-m3",
         "moonshotai/kimi-k2.6",
         "deepseek/deepseek-v4-pro",
@@ -899,6 +921,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "moonshotai/kimi-k3",
         "google/gemma-4-31b-it",
         "trustedrouter/prometheus-2.0",
+    ]
+    openpatcher_s2_meta = models_by_id["trustedrouter/openpatcher-s2"]["trustedrouter"]
+    assert openpatcher_s2_meta["route_kind"] == "fusion_panel"
+    assert openpatcher_s2_meta["auto_candidates"] == [
+        "moonshotai/kimi-k3",
+        "z-ai/glm-5.2",
     ]
     athena_meta = models_by_id["trustedrouter/athena"]["trustedrouter"]
     assert athena_meta["route_kind"] == "private_orchestration"
