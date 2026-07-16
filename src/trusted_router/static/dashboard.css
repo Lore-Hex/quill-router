@@ -634,6 +634,7 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .home-hero h1 { font-size:52px; line-height:1.08; letter-spacing:-0.02em; color:var(--inkstrong); margin:0 0 20px; font-weight:750; }
 .home-hero .lead { color:var(--muted); font-size:19px; line-height:1.55; max-width:640px; margin:0 auto 28px; }
 .home-hero .hero-actions, .hero-actions.center { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+.home-hero .hero-links { justify-content:center; }
 .hero-sublink { display:inline-block; margin-top:18px; color:var(--muted); font-size:14px; text-decoration:none; }
 .hero-sublink:hover { color:var(--blue); }
 .br-wide { display:none; }

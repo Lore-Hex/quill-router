@@ -5,6 +5,7 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
 
   await expect(page.getByRole("heading", { name: "Own your alpha." })).toBeVisible();
   await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
+  await expect(page.locator(".home-hero .hero-links")).toHaveCSS("justify-content", "center");
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
