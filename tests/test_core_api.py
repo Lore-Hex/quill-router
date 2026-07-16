@@ -795,10 +795,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     models_by_id = {model["id"]: model for model in models}
     fast_meta = models_by_id["trustedrouter/fast"]["trustedrouter"]
     assert fast_meta["route_kind"] == "fast_pool"
-    assert fast_meta["auto_candidates"][:4] == [
+    assert fast_meta["auto_candidates"] == [
         "cerebras/gpt-oss-120b",
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "xiaomi/mimo-v2-flash",
         "cerebras/zai-glm-4.7",
     ]
     plato_meta = models_by_id["trustedrouter/plato"]["trustedrouter"]

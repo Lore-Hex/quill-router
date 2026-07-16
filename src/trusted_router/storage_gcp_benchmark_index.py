@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import Any
 
@@ -78,10 +79,15 @@ def _benchmark_prefix(
 
 
 def _samples_from_rows(rows: Any, family: str) -> list[ProviderBenchmarkSample]:
+    field_names = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
     samples: list[ProviderBenchmarkSample] = []
     for row in rows:
         cells = row.cells.get(family, {}).get(b"body", [])
         if not cells:
             continue
-        samples.append(ProviderBenchmarkSample(**json.loads(cells[0].value.decode("utf-8"))))
+        decoded = json.loads(cells[0].value.decode("utf-8"))
+        # Forward-compat: rollback readers predating a new stored field must
+        # not crash on rows that already carry it.
+        filtered = {key: value for key, value in decoded.items() if key in field_names}
+        samples.append(ProviderBenchmarkSample(**filtered))
     return samples

@@ -180,9 +180,6 @@ def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
 
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
-    gemini_lite_preview = MODEL_ENDPOINTS[
-        "google/gemini-3.1-flash-lite-preview@gemini/prepaid"
-    ]
     image_preview = MODEL_ENDPOINTS[
         "google/gemini-3.1-flash-image-preview@gemini/prepaid"
     ]
@@ -191,7 +188,6 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     assert gemini_35.upstream_id == "gemini-3.5-flash"
     assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_650_000
     assert gemini_35.completion_price_microdollars_per_million_tokens == 9_900_000
-    assert gemini_lite_preview.upstream_id == "gemini-3.1-flash-lite-preview"
     image_model = MODELS["google/gemini-3.1-flash-image-preview"]
     assert image_model.context_length == 65_536
     assert image_model.supports_chat

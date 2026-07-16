@@ -240,10 +240,10 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
         ),
         (
             "gemini",
-            6,
+            5,
             [
                 "google/gemini-3.5-flash",
-                "google/gemini-3.1-flash-lite-preview",
+                "google/gemini-3.1-flash-image-preview",
             ],
         ),
         (
@@ -508,6 +508,36 @@ def test_reverification_required_providers_are_not_marked_zdr() -> None:
     for provider in sorted(configured):
         assert PROVIDERS[provider].provider_zero_data_retention is not True
         assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
+
+
+def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
+    quarantined_routes = [
+        ("xiaomi", "xiaomi/mimo-v2-flash"),
+        ("xiaomi", "xiaomi/mimo-v2-pro"),
+        ("friendli", "meta-llama/llama-3.3-70b-instruct"),
+        ("gemini", "google/gemini-3.1-flash-lite-preview"),
+        ("novita", "baidu/ernie-4.5-vl-28b-a3b"),
+        ("novita", "meta-llama/llama-3-70b-instruct"),
+        ("makora", "amd/llama-3.3-70b-instruct-fp8-kv"),
+    ]
+
+    for provider, model_id in quarantined_routes:
+        assert not [
+            endpoint
+            for endpoint in MODEL_ENDPOINTS.values()
+            if endpoint.provider == provider and endpoint.model_id == model_id
+        ], f"{provider}/{model_id} should be quarantined"
+
+
+def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:
+    endpoints = [
+        endpoint
+        for endpoint in endpoints_for_model("anthropic/claude-opus-4.1")
+        if endpoint.provider == "anthropic"
+    ]
+
+    assert not [endpoint for endpoint in endpoints if endpoint.usage_type == "Credits"]
+    assert [endpoint for endpoint in endpoints if endpoint.usage_type == "BYOK"]
 
 
 def test_synth_alias_is_cataloged_but_not_silent_auto_route() -> None:
@@ -1303,7 +1333,7 @@ def test_route_candidate_validation_errors_are_specific(body: dict, message: str
 
 
 def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
-    """Xiaomi MiMo onboarding: the 5 chat models load from the static manifest,
+    """Xiaomi MiMo onboarding: the live chat models load from the static manifest,
     map to the right upstream ids, and have a prepaid (Credits) xiaomi endpoint
     the attested gateway can dispatch."""
     from trusted_router.catalog import PROVIDERS, endpoints_for_model
@@ -1311,8 +1341,6 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     assert "xiaomi" in PROVIDERS
     assert "xiaomi" in GATEWAY_PREPAID_PROVIDER_SLUGS
     expected = {
-        "xiaomi/mimo-v2-flash": "mimo-v2-flash",
-        "xiaomi/mimo-v2-pro": "mimo-v2-pro",
         "xiaomi/mimo-v2.5": "mimo-v2.5",
         "xiaomi/mimo-v2.5-pro": "mimo-v2.5-pro",
         "xiaomi/mimo-v2.5-pro-ultraspeed": "mimo-v2.5-pro-ultraspeed",
@@ -1403,14 +1431,13 @@ def test_makora_provider_models_present_and_routable() -> None:
         "moonshotai/kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
         "qwen/qwen3.6-27b": "unsloth/Qwen3.6-27B-NVFP4",
         "qwen/qwen3.6-35b-a3b": "unsloth/Qwen3.6-35B-A3B-NVFP4",
-        "amd/llama-3.3-70b-instruct-fp8-kv": "amd/Llama-3.3-70B-Instruct-FP8-KV",
     }
     makora_model_ids = {
         endpoint.model_id
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
-    assert len(makora_model_ids) >= 10
+    assert len(makora_model_ids) >= 9
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
@@ -1484,6 +1511,48 @@ def test_anthropic_claude_fable_5_is_available_but_not_zdr_routable() -> None:
                 "model": "anthropic/claude-fable-5",
                 "messages": [{"role": "user", "content": "pong"}],
                 "provider": {"min_privacy": "zdr"},
+            },
+            Settings(environment="test"),
+        )
+    assert getattr(exc.value, "status_code", None) == 400
+    assert "No route candidates match" in str(exc.value)
+
+
+def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
+    model = MODELS["moonshotai/kimi-k2.6"]
+    wafer_endpoints = [
+        endpoint for endpoint in endpoints_for_model(model.id) if endpoint.provider == "wafer"
+    ]
+    if not wafer_endpoints:
+        pytest.skip("wafer no longer lists kimi-k2.6 — delisted upstream")
+    assert all(
+        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+        for endpoint in wafer_endpoints
+    )
+
+    shape = model_to_openrouter_shape(model)
+    wafer_meta = [
+        endpoint for endpoint in shape["trustedrouter"]["endpoints"] if endpoint["provider"] == "wafer"
+    ]
+    assert wafer_meta
+    assert all(endpoint["provider_zero_data_retention"] is False for endpoint in wafer_meta)
+    assert "withdrew ZDR support" in str(wafer_meta[0]["provider_policy"])
+
+    zdr_endpoints = chat_route_endpoint_candidates(
+        {"model": ZDR_MODEL_ID},
+        Settings(environment="test"),
+    )
+    assert not [
+        endpoint
+        for _model, endpoint in zdr_endpoints
+        if endpoint.provider == "wafer" and endpoint.model_id == "moonshotai/kimi-k2.6"
+    ]
+    with pytest.raises(Exception) as exc:
+        chat_route_endpoint_candidates(
+            {
+                "model": "moonshotai/kimi-k2.6",
+                "messages": [{"role": "user", "content": "pong"}],
+                "provider": {"only": ["wafer"], "min_privacy": "zdr"},
             },
             Settings(environment="test"),
         )

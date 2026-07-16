@@ -143,7 +143,6 @@ def fast_candidate_models(limit: int = 8) -> list[Model]:
     preferred_ids = [
         "cerebras/gpt-oss-120b",
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "xiaomi/mimo-v2-flash",
         "cerebras/zai-glm-4.7",
     ]
     candidates: list[Model] = []

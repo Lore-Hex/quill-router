@@ -110,6 +110,17 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # Xiaomi retired the MiMo V2 family upstream on 2026-06-29; these manifest
+    # rows are historical fallback metadata and have shown 100% probe failure
+    # since 2026-06-29. Keep provider-scoped: V2.5 Xiaomi routes remain alive.
+    "xiaomi": frozenset(
+        {
+            "xiaomi/mimo-v2-flash",
+            "mimo-v2-flash",
+            "xiaomi/mimo-v2-pro",
+            "mimo-v2-pro",
+        }
+    ),
     # Nebius notified customers that these Token Factory model APIs / UI
     # entries will be disabled on 2026-06-22. This is provider-scoped:
     # equivalent model families on MiniMax, Kimi, Z.AI, Cerebras, etc. remain
@@ -164,13 +175,43 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "qwen/qwen3-vl-32b-thinking",
             "qwen/qwen3-vl-8b-instruct",
             "qwen/qwen3-vl-8b-thinking",
+            # 100% MODEL_NOT_AVAILABLE-class probe failures since 2026-06-05.
+            "baidu/ernie-4.5-vl-28b-a3b",
+            # 100% MODEL_NOT_AVAILABLE-class probe failures since 2026-06-23.
+            "meta-llama/llama-3-70b-instruct",
         }
     ),
     # Friendli notified customers that GLM-5 serverless Model APIs stop being
     # supported at 2026-07-03 00:00 UTC. Dedicated endpoints are unaffected, but
     # TrustedRouter's Friendli route is the serverless API, so remove only this
-    # provider/model pair from routable candidates.
-    "friendli": frozenset({"z-ai/glm-5", "zai-org/GLM-5"}),
+    # provider/model pair from routable candidates. Friendli also dropped
+    # Llama 3.3 70B from serverless /models around 2026-06-26; it has shown
+    # 100% probe failure since 2026-06-26.
+    "friendli": frozenset(
+        {
+            "z-ai/glm-5",
+            "zai-org/GLM-5",
+            "meta-llama/llama-3.3-70b-instruct",
+            "meta-llama-3.3-70b-instruct",
+        }
+    ),
+    # Google retired the Gemini 3.1 Flash Lite preview id on 2026-07-09; the
+    # direct Gemini preview route has shown 100% probe failure since then. GA
+    # flash-lite routes on reseller providers are unaffected.
+    "gemini": frozenset(
+        {
+            "google/gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite-preview",
+        }
+    ),
+    # Makora's AMD Llama 3.3 70B FP8 KV row was added on 2026-07-03 but never
+    # served a request; probes hang or 502, giving 100% failure since 2026-07-03.
+    "makora": frozenset(
+        {
+            "amd/llama-3.3-70b-instruct-fp8-kv",
+            "amd/Llama-3.3-70B-Instruct-FP8-KV",
+        }
+    ),
 }
 
 

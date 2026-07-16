@@ -372,10 +372,9 @@ def test_gateway_authorize_expands_fast_router_pool() -> None:
     assert data["model"] == "cerebras/gpt-oss-120b"
     assert data["provider"] == "cerebras"
     route_candidates = data["route_candidates"]
-    assert [item["model"] for item in route_candidates[:4]] == [
+    assert [item["model"] for item in route_candidates] == [
         "cerebras/gpt-oss-120b",
         "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "xiaomi/mimo-v2-flash",
         "cerebras/zai-glm-4.7",
     ]
     assert {item["provider"] for item in route_candidates} == {"cerebras", "xiaomi"}
