@@ -865,32 +865,6 @@
       "status": 1
     },
     {
-      "id": "nvidia/Nemotron-3-Ultra-550b-a55b",
-      "upstream_id": "nvidia/Nemotron-3-Ultra-550b-a55b",
-      "display_name": "Nemotron-3-Ultra-550b-a55b",
-      "title": "nvidia/Nemotron-3-Ultra-550b-a55b",
-      "created": 1783118261,
-      "context_length": 8000,
-      "max_output_tokens": 65536,
-      "input_token_price_per_m": 1000000,
-      "output_token_price_per_m": 3000000,
-      "model_type": "chat",
-      "features": [
-        "serverless",
-        "function-calling"
-      ],
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "endpoints": [
-        "chat/completions"
-      ],
-      "status": 1
-    },
-    {
       "id": "openbmb/MiniCPM-V-4_5",
       "upstream_id": "openbmb/MiniCPM-V-4_5",
       "display_name": "openbmb/MiniCPM-V-4_5",

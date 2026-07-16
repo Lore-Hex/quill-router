@@ -1322,6 +1322,9 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         {
             "anthropic/claude-opus-4.7",
             "openai/gpt-5.5",
+            # 2026-07-15: the snapshot route returns 404 when pinned to GMI.
+            # Keep the directly verified Baseten route.
+            "nvidia/nemotron-3-ultra-550b-a55b",
             # 2026-06-24: GMI returns HTTP 200 with an empty assistant message
             # for these Gemma 4 routes when pinned through the live gateway.
             # Treat as unserved for prepaid routing until GMI returns usable
@@ -1338,6 +1341,9 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         {
             "meta-llama/llama-3.1-8b-instruct",
             "meta-llama/llama-3.1-70b-instruct",
+            # 2026-07-15: the snapshot route returns 404 when pinned to
+            # Together. Keep the directly verified Baseten route.
+            "nvidia/nemotron-3-ultra-550b-a55b",
             "qwen/qwen-2.5-72b-instruct",
         }
     ),

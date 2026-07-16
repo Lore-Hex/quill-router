@@ -841,6 +841,23 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     } == {("baseten", "thinkingmachines/inkling")}
 
 
+def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() -> None:
+    model_id = "nvidia/nemotron-3-ultra-550b-a55b"
+    assert model_id in MODELS
+    assert "nvidia/nvidia-nemotron-3-ultra-550b-a55b" not in MODELS
+    assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in MODELS
+
+    prepaid = {
+        endpoint.provider: endpoint.upstream_id
+        for endpoint in endpoints_for_model(model_id)
+        if endpoint.usage_type == "Credits"
+    }
+    assert prepaid["baseten"] == "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
+    assert "nebius" not in prepaid
+    assert "together" not in prepaid
+    assert "gmi" not in prepaid
+
+
 def test_athena_catalog_hides_orchestration_configuration() -> None:
     from trusted_router.catalog import ATHENA_MODEL_ID
 
