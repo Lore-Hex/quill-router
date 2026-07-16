@@ -31,10 +31,10 @@ class BlogPost:
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
         slug="introducing-liberty",
-        title="Introducing Liberty: the models for questions other models won't answer",
+        title="Liberty-2.0: all American open-weights model",
         description=(
-            "Liberty is a new family of TrustedRouter Synth presets built from the most permissive "
-            "open-weights models available, behind a Confidential compute and E2EE gateway."
+            "Liberty 2.0 combines open-weights models from NVIDIA, Google, OpenAI, and Thinking "
+            "Machines — all American, all run in the US — into one private model."
         ),
         published_date="2026-07-15",
         source_label=None,
@@ -43,67 +43,38 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
 <rect width="1200" height="630" fill="#ffffff"/>
-<text x="60" y="52" font-size="32" font-weight="700" fill="#111827">Introducing Liberty</text>
-<text x="60" y="88" font-size="19" fill="#6b7280">Open-weights Synth for the questions other models refuse — with provable privacy</text>
-<rect x="60" y="130" width="1120" height="1" fill="#e5e7eb"/>
-<text x="60" y="168" font-size="15" font-weight="600" fill="#374151">Liberty 1.0</text>
-<text x="60" y="190" font-size="13" fill="#6b7280">256k context &#183; Confidential + E2EE</text>
-<rect x="300" y="155" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="380" y="176" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">inkling</text>
-<text x="380" y="194" font-size="11" fill="#6b7280" text-anchor="middle">reasoning · 256k</text>
-<rect x="480" y="155" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="560" y="176" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">nemotron-3-ultra</text>
-<text x="560" y="194" font-size="11" fill="#6b7280" text-anchor="middle">NVIDIA · 550B</text>
-<rect x="660" y="155" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="740" y="176" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">gemma-4-31b</text>
-<text x="740" y="194" font-size="11" fill="#6b7280" text-anchor="middle">Google · open weights</text>
-<text x="60" y="248" font-size="15" font-weight="600" fill="#374151">Liberty 1.0 1M</text>
-<text x="60" y="270" font-size="13" fill="#6b7280">1M context &#183; Zero retention</text>
-<rect x="300" y="235" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="380" y="256" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">inkling-1m</text>
-<text x="380" y="274" font-size="11" fill="#6b7280" text-anchor="middle">reasoning · 1M ctx</text>
-<rect x="480" y="235" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="560" y="256" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">nemotron-3-ultra</text>
-<text x="560" y="274" font-size="11" fill="#6b7280" text-anchor="middle">NVIDIA · 550B</text>
-<text x="60" y="328" font-size="15" font-weight="600" fill="#374151">Liberty 2.0</text>
-<text x="60" y="350" font-size="13" fill="#6b7280">256k context &#183; Confidential + E2EE</text>
-<rect x="300" y="315" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="380" y="336" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">gemma-4-31b</text>
-<text x="380" y="354" font-size="11" fill="#6b7280" text-anchor="middle">Google · open weights</text>
-<rect x="480" y="315" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="560" y="336" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">gpt-oss-120b</text>
-<text x="560" y="354" font-size="11" fill="#6b7280" text-anchor="middle">OpenAI · open weights</text>
-<rect x="660" y="315" width="160" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="740" y="336" font-size="13" font-weight="600" fill="#0f6e56" text-anchor="middle">Liberty 1.0 1M</text>
-<text x="740" y="354" font-size="11" fill="#6b7280" text-anchor="middle">nested Synth</text>
-<text x="60" y="408" font-size="15" font-weight="600" fill="#374151">Liberty 3.0</text>
-<text x="60" y="430" font-size="13" fill="#6b7280">1M context &#183; Confidential + E2EE &#183; full panel</text>
-<rect x="300" y="395" width="120" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="360" y="416" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">inkling</text>
-<text x="360" y="434" font-size="10" fill="#6b7280" text-anchor="middle">reasoning</text>
-<rect x="432" y="395" width="120" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="492" y="416" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">gpt-oss-120b</text>
-<text x="492" y="434" font-size="10" fill="#6b7280" text-anchor="middle">OpenAI OSS</text>
-<rect x="564" y="395" width="120" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="624" y="416" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">gemma-4-31b</text>
-<text x="624" y="434" font-size="10" fill="#6b7280" text-anchor="middle">Google</text>
-<rect x="696" y="395" width="120" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="756" y="416" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">nemotron</text>
-<text x="756" y="434" font-size="10" fill="#6b7280" text-anchor="middle">NVIDIA 550B</text>
-<rect x="828" y="395" width="120" height="48" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
-<text x="888" y="416" font-size="12" font-weight="600" fill="#0f6e56" text-anchor="middle">Liberty 1.0 1M</text>
-<text x="888" y="434" font-size="10" fill="#6b7280" text-anchor="middle">Synth</text>
-<rect x="60" y="490" width="1120" height="1" fill="#e5e7eb"/>
-<text x="60" y="524" font-size="14" fill="#374151">All Liberty tiers: open weights &#183; attested gateway &#183; synthesizes from the first model that answers</text>
-<text x="1188" y="621" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+<text x="60" y="70" font-size="44" font-weight="700" fill="#111827">Liberty 2.0</text>
+<text x="60" y="112" font-size="21" fill="#6b7280">American open models, combined into one &#8212; run only in the US, private by default</text>
+<rect x="60" y="150" width="1080" height="1" fill="#e5e7eb"/>
+<defs><marker id="lba" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 z" fill="#9ca3af"/></marker></defs>
+<rect x="60" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="187" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Gemma</text>
+<text x="187" y="282" font-size="16" fill="#374151" text-anchor="middle">Google</text>
+<text x="187" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="335" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="462" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">gpt-oss</text>
+<text x="462" y="282" font-size="16" fill="#374151" text-anchor="middle">OpenAI</text>
+<text x="462" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="610" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="737" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Nemotron</text>
+<text x="737" y="282" font-size="16" fill="#374151" text-anchor="middle">NVIDIA</text>
+<text x="737" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<rect x="885" y="200" width="255" height="120" rx="10" fill="#e1f5ee" stroke="#1d9e75" stroke-width="1.5"/>
+<text x="1012" y="250" font-size="26" font-weight="700" fill="#0f6e56" text-anchor="middle">Inkling</text>
+<text x="1012" y="282" font-size="16" fill="#374151" text-anchor="middle">Thinking Machines</text>
+<text x="1012" y="304" font-size="13" fill="#6b7280" text-anchor="middle">open weights</text>
+<path d="M600 340 L600 400" stroke="#9ca3af" stroke-width="2" marker-end="url(#lba)"/>
+<rect x="420" y="410" width="360" height="70" rx="10" fill="#1d9e75"/>
+<text x="600" y="454" font-size="22" font-weight="700" fill="#ffffff" text-anchor="middle">trustedrouter/liberty-2.0</text>
+<rect x="60" y="520" width="1080" height="1" fill="#e5e7eb"/>
+<text x="60" y="560" font-size="17" fill="#374151">Every model American and open-weights &#183; every provider in the US &#183; private, encrypted gateway</text>
+<text x="1140" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 </figure>
-<p>Today we are launching Liberty, a family of TrustedRouter <a href="/synth">Synth</a> presets built for the questions other models refuse. Four tiers, all open weights, all running behind the <a href="/blog/attestation-is-all-you-need">attested E2EE gateway</a>.</p>
-<p>The Liberty panel draws from the most permissive open-weights models available right now. <a href="/models/thinkingmachines/inkling">inkling</a>, from Thinking Machines Lab, is a 256k-context reasoning model that answers more of the <a href="/blog/the-models-that-say-no">PrometheusBench</a> unsafe prompts than any Anthropic Opus model. <a href="/models/nvidia/nemotron-3-ultra-550b">Nemotron-3-Ultra-550B</a> is NVIDIA's open-weights frontier model. <a href="/models/google/gemma-4-31b-it">Gemma-4-31B</a> is Google's most capable open-weights release and sits near the top of our permissiveness table. OpenAI's <a href="/models/openai/gpt-oss-120b">gpt-oss-120b</a> rounds out the larger tiers.</p>
-<p>Synth synthesizes from the first panel member that answers. If one model in the panel will engage with a question, the panel answers it. The coverage compounds: three models that each refuse 70–85% of hard prompts together cover far more than any one of them alone. Liberty 3.0 takes this further — its panel includes Liberty 1.0 1M as a nested Synth, so a difficult prompt gets a second pass through a dedicated long-context ensemble if the base models decline.</p>
-<p>The privacy argument matters here more than in most places. Sensitive questions deserve private infrastructure. Every Liberty call passes through the TrustedRouter Confidential compute gateway — a sealed TEE whose code you can <a href="https://trust.trustedrouter.com">verify against the published digest</a>. Liberty 1.0 1M uses zero-retention providers. The prompt path is end-to-end encrypted; nobody between you and the model reads what you sent. That is what private uncensored access actually means: the gateway is not just honest about it, it is built so you can check.</p>
-<p>The four tiers differ in context length and panel depth. Liberty 1.0 is the starting point: 256k context, inkling plus Nemotron plus Gemma, Confidential + E2EE. Liberty 1.0 1M doubles the context to a million tokens with a long-context reasoning panel. Liberty 2.0 adds OpenAI's open-weights model and nests Liberty 1.0 1M as a fallback synthesizer. Liberty 3.0 is the full panel at 1M context. Start with 1.0; move up when a question requires more coverage or more context than the base tier provides.</p>
-<p>Try it with the same key and base URL you use for everything else on TrustedRouter. The model ID is <span class="mono">trustedrouter/liberty-1.0</span>.</p>
+<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
+<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
+<p>Every model in Liberty 2.0 is open-weights, and every one runs on US-based providers. Your requests pass through TrustedRouter's private, encrypted gateway and never leave the country &#8212; what you send stays in the US, and stays private.</p>
+<p>Call it with the same key and base URL as everything else on TrustedRouter. The model ID is <span class="mono">trustedrouter/liberty-2.0</span>.</p>
 """,
     ),
     BlogPost(
