@@ -40,10 +40,6 @@ on:
         description: "Skip synthetic-watchdog + CI-green gating (ship aggressively when prod is sick)"
         type: boolean
         default: false
-      deploy_cold_regions:
-        description: "Also deploy scale-to-zero cold regions"
-        type: boolean
-        default: false
       deploy_synthetic_monitor:
         description: "Force redeploy synthetic monitor jobs"
         type: boolean
@@ -294,13 +290,9 @@ jobs:
         id: optional
         run: |
           set -euo pipefail
-          deploy_cold_regions="false"
           deploy_synthetic_monitor="false"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ "${{ inputs.deploy_cold_regions }}" = "true" ]; then
-              deploy_cold_regions="true"
-            fi
             if [ "${{ inputs.deploy_synthetic_monitor }}" = "true" ]; then
               deploy_synthetic_monitor="true"
             fi
@@ -323,9 +315,7 @@ jobs:
             fi
           fi
 
-          echo "deploy_cold_regions=${deploy_cold_regions}" >> "$GITHUB_OUTPUT"
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}" >> "$GITHUB_OUTPUT"
-          echo "deploy_cold_regions=${deploy_cold_regions}"
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}"
 
       - name: Deploy us-central1 (no-traffic)
@@ -470,15 +460,15 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy cold regions (no canary, parallel, scale-to-zero)
-        if: ${{ steps.optional.outputs.deploy_cold_regions == 'true' }}
+      - name: Deploy cold regions (no canary, scale-to-zero)
         # Stage 3.5 cold region: southamerica-east1. min-instances=0
         # means ~$0/mo idle plus a ~5-10s cold-start tax on the first
-        # request from that geography. No canary because (a) it's
-        # lowest-volume by construction and (b) the warm regions already
-        # validated the image. rollout.sh handles min-instances=0
-        # automatically when a region is in TR_CONTROL_PLANE_REGIONS
-        # but not TR_WARM_REGIONS.
+        # request from that geography. Every region attached to the public
+        # load balancer must run the same reader schema before a newer
+        # synthetic monitor can write shared Bigtable rows. No canary is
+        # needed because the warm regions already validated the image.
+        # rollout.sh handles min-instances=0 automatically when a region is
+        # in TR_CONTROL_PLANE_REGIONS but not TR_WARM_REGIONS.
         env:
           TR_DEPLOY_TARGET_REGIONS: southamerica-east1
         run: bash scripts/deploy/rollout.sh
@@ -520,7 +510,7 @@ jobs:
 
       - name: Smoke test prod
         run: |
-          set -e
+          set -euo pipefail
           check_url() {
             local name="$1"
             local url="$2"
@@ -542,6 +532,16 @@ jobs:
           check_url regions https://trustedrouter.com/v1/regions
           check_url status_json https://trustedrouter.com/status.json
           check_url status_host https://status.trustedrouter.com/status.json
+
+          # A global request can repeatedly land on a healthy warm region and
+          # miss a stale cold revision. Exercise the shared-storage reader in
+          # every load-balanced control-plane region directly.
+          for region in us-central1 us-east4 europe-west4 southamerica-east1; do
+            service_url=$(gcloud run services describe "${SERVICE}" \
+              --project="${PROJECT_ID}" --region="${region}" \
+              --format='value(status.url)')
+            check_url "status_${region}" "${service_url}/status.json"
+          done
 
           python3 - <<'PY'
           import json
