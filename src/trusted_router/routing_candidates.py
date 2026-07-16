@@ -24,6 +24,7 @@ from trusted_router.catalog_data import (
     FUSION_CODE_MODEL_ID,
     FUSION_MODEL_ID,
     IRIS_1_0_MODEL_ID,
+    IRIS_2_0_MODEL_ID,
     IRIS_CODE_1_0_MODEL_ID,
     IRIS_CODE_MODEL_ID,
     IRIS_MODEL_ID,
@@ -36,6 +37,7 @@ from trusted_router.catalog_data import (
     META_MODEL_IDS,
     MONITOR_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
+    OPEN_PATCHER_S2_MODEL_ID,
     PRIVACY_TIER_CONFIDENTIAL,
     PRIVACY_TIER_STANDARD,
     PRIVACY_TIER_ZERO_RETENTION,
@@ -57,6 +59,7 @@ from trusted_router.catalog_data import (
     SYNTH_CODE_QUALITY_MODEL_ORDER,
     SYNTH_FRONTIER_MINI_MODEL_ORDER,
     SYNTH_FRONTIER_MODEL_ORDER,
+    SYNTH_IRIS_2_MODEL_ORDER,
     SYNTH_MODEL_ID,
     SYNTH_PROMETHEUS_2_MODEL_ORDER,
     SYNTH_QUALITY_1M_MODEL_ORDER,
@@ -332,7 +335,9 @@ def meta_candidate_models(model_id: str) -> list[Model]:
         return _models_for_ids(SYNTH_PROMETHEUS_2_MODEL_ORDER)
     if model_id == PROMETHEUS_1_0_MODEL_ID:
         return _models_for_ids(SYNTH_QUALITY_MODEL_ORDER)
-    if model_id in (IRIS_MODEL_ID, IRIS_1_0_MODEL_ID):
+    if model_id in (IRIS_MODEL_ID, IRIS_2_0_MODEL_ID):
+        return _models_for_ids(SYNTH_IRIS_2_MODEL_ORDER)
+    if model_id == IRIS_1_0_MODEL_ID:
         return _models_for_ids(SYNTH_BUDGET_MODEL_ORDER)
     if model_id in (ZEUS_MODEL_ID, ZEUS_1_0_MODEL_ID):
         return _models_for_ids(SYNTH_FRONTIER_MODEL_ORDER)
@@ -349,6 +354,8 @@ def meta_candidate_models(model_id: str) -> list[Model]:
                 "z-ai/glm-5.2",
             )
         )
+    if model_id == OPEN_PATCHER_S2_MODEL_ID:
+        return _models_for_ids(("moonshotai/kimi-k3", "z-ai/glm-5.2"))
     if model_id in (
         PROMETHEUS_CODE_MODEL_ID,
         PROMETHEUS_CODE_1_0_MODEL_ID,
@@ -387,6 +394,7 @@ def _meta_route_kind(model_id: str) -> str:
     if model_id in (
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
+        IRIS_2_0_MODEL_ID,
         PROMETHEUS_MODEL_ID,
         ZEUS_MODEL_ID,
         IRIS_1_0_MODEL_ID,
@@ -405,6 +413,7 @@ def _meta_route_kind(model_id: str) -> str:
         PROMETHEUS_CODE_1_0_MODEL_ID,
         ZEUS_CODE_1_0_MODEL_ID,
         OPEN_PATCHER_S1_MODEL_ID,
+        OPEN_PATCHER_S2_MODEL_ID,
         FUSION_MODEL_ID,
         FUSION_CODE_MODEL_ID,
     ):

@@ -14,7 +14,7 @@
       <li>Panel calls, judge calls, and final synthesis calls stay in the attested gateway.</li>
       <li>Judge and final models can each have up to 8 fallbacks.</li>
       <li>Default quality mode judges with Kimi K2.7 Code, falls back to MiniMax M3, synthesizes with GLM 5.2, then falls back to MiniMax M3.</li>
-      <li>Versioned presets include <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/prometheus-1.0</code>, <code>trustedrouter/prometheus-2.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
+      <li>Versioned presets include <code>trustedrouter/iris-1.0</code>, <code>trustedrouter/iris-2.0</code>, <code>trustedrouter/prometheus-1.0</code>, <code>trustedrouter/prometheus-2.0</code>, and <code>trustedrouter/zeus-1.0</code>.</li>
       <li>Code-tuned presets are <code>trustedrouter/iris-code-1.0</code>, <code>trustedrouter/prometheus-code-1.0</code>, and <code>trustedrouter/zeus-code-1.0</code>.</li>
       <li>Unversioned aliases such as <code>trustedrouter/prometheus</code> track the latest preset.</li>
       <li><code>synthesize_non_refusals</code> is the default and removes panel refusals before synthesis.</li>
@@ -61,6 +61,12 @@
       <p><code>trustedrouter/iris-1.0</code></p>
       <p>A small budget panel &mdash; the cheapest way into Synth. <strong>62.6</strong> on DRACO deep research,
         about <strong>$20</strong> to run all 100 tasks.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Budget &middot; Kimi K3 &middot; 1M context</span>
+      <h3>Iris 2.0</h3>
+      <p><code>trustedrouter/iris-2.0</code></p>
+      <p>MiniMax M3, Kimi K3, and DeepSeek V4 Pro answer in parallel. Kimi K3 judges with MiniMax M3 fallback; GLM 5.2 synthesizes with MiniMax M3 fallback.</p>
     </div>
     <div class="marketing-card featured">
       <span class="card-label">Quality &middot; all open-weights</span>
