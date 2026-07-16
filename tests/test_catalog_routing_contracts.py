@@ -795,20 +795,20 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
             "advisor_orchestration",
             262_144,
             [
-                "google/gemma-4-31b-it",
-                "openai/gpt-oss-120b",
+                "nvidia/nemotron-3-ultra-550b-a55b",
                 LIBERTY_1_0_1M_MODEL_ID,
+                LIBERTY_1_0_MODEL_ID,
             ],
         ),
         LIBERTY_3_0_MODEL_ID: (
             "advisor_orchestration",
             1_048_576,
             [
-                "thinkingmachines/inkling",
-                "openai/gpt-oss-120b",
-                "google/gemma-4-31b-it",
                 "nvidia/nemotron-3-ultra-550b-a55b",
+                "google/gemma-4-31b-it",
+                "openai/gpt-oss-120b",
                 LIBERTY_1_0_1M_MODEL_ID,
+                "thinkingmachines/inkling",
             ],
         ),
     }
