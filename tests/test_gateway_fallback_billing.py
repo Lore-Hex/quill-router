@@ -69,6 +69,38 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     assert ("reservation", data["credit_reservation_id"]) not in db.rows
 
 
+def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> None:
+    client, key = _client_and_key()
+
+    for model_id in (
+        "trustedrouter/liberty-1.0",
+        "trustedrouter/liberty-1.0-1m",
+        "trustedrouter/liberty-2.0",
+        "trustedrouter/liberty-3.0",
+    ):
+        authorize = client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": key["hash"],
+                "model": model_id,
+                "estimated_input_tokens": 1,
+                "max_output_tokens": 1,
+            },
+        )
+
+        assert authorize.status_code == 200, (model_id, authorize.text)
+        routes = authorize.json()["data"]["route_candidates"]
+        assert routes, model_id
+        nemotron_hosts = {
+            route["provider"]
+            for route in routes
+            if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
+            and route["usage_type"] == "Credits"
+        }
+        assert "baseten" in nemotron_hosts, (model_id, routes)
+        assert not {"together", "gmi", "nebius"} & nemotron_hosts, (model_id, routes)
+
+
 def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_gcp_ancient_legacy_settle"
