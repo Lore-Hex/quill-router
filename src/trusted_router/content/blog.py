@@ -30,6 +30,59 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="inkling-prometheusbench",
+        title="inkling answers 8 of 30 unsafe prompts. Claude Opus answers 1.",
+        description=(
+            "Thinking Machines built a frontier reasoning model from the Philippines "
+            "that answers more unsafe questions than Anthropic's flagship Claude Opus."
+        ),
+        published_date="2026-07-15",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="46" font-size="26" font-weight="700" fill="#111827">inkling answers 8 of 30 unsafe prompts. Claude Opus answers 1.</text>
+<text x="60" y="76" font-size="17" fill="#6b7280">PrometheusBench: raw non-refusals on 30 unsafe prompts &#183; higher = more permissive</text>
+<text x="268" y="131" font-size="14" text-anchor="end" fill="#9a9890">glm-5.2</text>
+<rect x="280" y="112" width="831" height="32" rx="4" fill="#d1d5db"/>
+<text x="1118" y="131" font-size="13" fill="#9a9890">29</text>
+<text x="268" y="183" font-size="14" text-anchor="end" fill="#9a9890">kimi-k2.6</text>
+<rect x="280" y="164" width="774" height="32" rx="4" fill="#d1d5db"/>
+<text x="1060" y="183" font-size="13" fill="#9a9890">27</text>
+<text x="268" y="235" font-size="14" text-anchor="end" fill="#9a9890">deepseek-v4-flash</text>
+<rect x="280" y="216" width="745" height="32" rx="4" fill="#d1d5db"/>
+<text x="1031" y="235" font-size="13" fill="#9a9890">26</text>
+<text x="268" y="287" font-size="14" text-anchor="end" fill="#374151">claude-haiku-4.5</text>
+<rect x="280" y="268" width="258" height="32" rx="4" fill="#f97316"/>
+<text x="545" y="287" font-size="13" fill="#6b7280">9</text>
+<text x="268" y="339" font-size="15" font-weight="700" text-anchor="end" fill="#0f6e56">thinkingmachines/inkling</text>
+<rect x="280" y="320" width="229" height="32" rx="4" fill="#1d9e75"/>
+<text x="516" y="339" font-size="14" font-weight="700" fill="#0f6e56">8</text>
+<text x="268" y="391" font-size="14" text-anchor="end" fill="#374151">gpt-oss-120b</text>
+<rect x="280" y="372" width="172" height="32" rx="4" fill="#f97316"/>
+<text x="458" y="391" font-size="13" fill="#6b7280">6</text>
+<text x="268" y="443" font-size="14" text-anchor="end" fill="#374151">claude-opus-4.8</text>
+<rect x="280" y="424" width="29" height="32" rx="4" fill="#dc2626"/>
+<text x="316" y="443" font-size="13" fill="#6b7280">1</text>
+<text x="268" y="495" font-size="14" text-anchor="end" fill="#374151">claude-fable-5</text>
+<rect x="280" y="476" width="4" height="32" rx="2" fill="#dc2626"/>
+<text x="290" y="495" font-size="13" fill="#6b7280">0</text>
+<text x="268" y="547" font-size="14" text-anchor="end" fill="#374151">gpt-5.5</text>
+<rect x="280" y="528" width="4" height="32" rx="2" fill="#dc2626"/>
+<text x="290" y="547" font-size="13" fill="#6b7280">0 (all errors)</text>
+<text x="1188" y="621" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Thinking Machines, a Philippine AI company, built inkling: a reasoning model with a 256k context window. We ran it through <a href="https://github.com/Lore-Hex/PrometheusBench">PrometheusBench</a>, 30 short unsafe prompts across biology, cybersecurity, and LLM research. inkling answered 8 of them, refused 22, and errored on zero. Claude Opus 4.8 answered 1 of the 20 it completed and errored on 10. Claude Fable 5 answered zero. GPT-5.5 returned all errors.</p>
+<p>The top of the <a href="/blog/the-models-that-say-no">PrometheusBench table</a> is all Chinese labs. GLM 5.2 gets 29 of 30. Kimi K2.6 gets 27. DeepSeek V4 Flash gets 26. That split between Chinese and US labs is well-documented. The more interesting comparison is inkling sitting above every Anthropic flagship model in the table. A frontier reasoning model from Manila answers more biology and security questions than Anthropic's most expensive model does.</p>
+<p>Are those 22 refusals the right calls? Some are defensible. But PrometheusBench measures who the refusals land on. The biology student asking about synthesis pathways, the security researcher asking about an exploit class, the practitioner probing an LLM's internals — they get the refusal. The credentialed researcher at a partner institution gets the answer. The refusal does not remove the knowledge; it redistributes it toward people who already had access.</p>
+<p>Thinking Machines decided to answer more of those questions. A Philippine AI company building a 256k-context reasoning model with a permissiveness score above Anthropic's entire Opus line is exactly the kind of result that makes the safety-through-restriction argument hard to take seriously. The Western frontier labs are racing to refuse more aggressively. Thinking Machines built something capable and chose differently.</p>
+<p>Eight of thirty is not the ceiling. GLM gets 29. But it cleared the bar that Anthropic's flagship missed.</p>
+""",
+    ),
+    BlogPost(
         slug="keep-doing-biology-with-prometheus",
         title="Keep doing biology with Prometheus",
         description=(
