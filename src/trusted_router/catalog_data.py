@@ -748,6 +748,8 @@ ZDR_MODEL_ID = "trustedrouter/zdr"
 
 E2E_MODEL_ID = "trustedrouter/e2e"
 
+CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
+
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"
@@ -869,6 +871,7 @@ META_MODEL_IDS = frozenset(
         EU_MODEL_ID,
         ZDR_MODEL_ID,
         E2E_MODEL_ID,
+        CONFIDENTIAL_MODEL_ID,
         MONITOR_MODEL_ID,
         SOCRATES_1_0_MODEL_ID,
         SOCRATES_1_1_MODEL_ID,
@@ -959,6 +962,13 @@ CANONICAL_ORCHESTRATION_MODEL_ID: dict[str, str] = {
     ZEUS_CODE_MODEL_ID: ZEUS_CODE_1_0_MODEL_ID,
     FUSION_MODEL_ID: SYNTH_MODEL_ID,
     FUSION_CODE_MODEL_ID: SYNTH_CODE_MODEL_ID,
+}
+
+# Public routing aliases resolve before candidate selection. Keep this map
+# separate from the orchestration aliases above: these names select the same
+# routing policy, not a versioned orchestration preset.
+ROUTING_MODEL_ALIAS_TARGETS: dict[str, str] = {
+    CONFIDENTIAL_MODEL_ID: E2E_MODEL_ID,
 }
 
 ORCHESTRATION_LEGACY_ALIAS_MODEL_IDS = frozenset({FUSION_MODEL_ID, FUSION_CODE_MODEL_ID})

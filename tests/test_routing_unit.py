@@ -580,6 +580,71 @@ def test_explicit_provider_order_overrides_reliability_preference() -> None:
     assert ordered[0][1].provider == "parasail"  # caller's explicit order wins
 
 
+def test_glm_52_defaults_to_parasail_with_fallbacks_intact() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {"model": "z-ai/glm-5.2", "provider": {"usage": "credits"}},
+        _settings(),
+    )
+
+    assert candidates[0][1].provider == "parasail"
+    assert len(candidates) > 1
+
+
+def test_glm_52_explicit_provider_preferences_override_parasail_default() -> None:
+    ordered = chat_route_endpoint_candidates(
+        {
+            "model": "z-ai/glm-5.2",
+            "provider": {"usage": "credits", "order": ["baseten"]},
+        },
+        _settings(),
+    )
+    price_sorted = chat_route_endpoint_candidates(
+        {
+            "model": "z-ai/glm-5.2",
+            "provider": {"usage": "credits", "sort": "price"},
+        },
+        _settings(),
+    )
+
+    assert ordered[0][1].provider == "baseten"
+    assert (
+        price_sorted[0][1].prompt_price_microdollars_per_million_tokens
+        + price_sorted[0][1].completion_price_microdollars_per_million_tokens
+    ) == min(
+        endpoint.prompt_price_microdollars_per_million_tokens
+        + endpoint.completion_price_microdollars_per_million_tokens
+        for _model, endpoint in price_sorted
+    )
+
+
+def test_glm_52_provider_preference_does_not_override_primary_model_order() -> None:
+    candidates = chat_route_endpoint_candidates(
+        {
+            "model": "deepseek/deepseek-v4-flash",
+            "models": ["z-ai/glm-5.2"],
+            "provider": {"usage": "credits"},
+        },
+        _settings(),
+    )
+
+    assert candidates[0][0].id == "deepseek/deepseek-v4-flash"
+
+
+def test_confidential_alias_uses_exact_e2e_endpoint_pool() -> None:
+    confidential = chat_route_endpoint_candidates(
+        {"model": "trustedrouter/confidential"},
+        _settings(),
+    )
+    e2e = chat_route_endpoint_candidates(
+        {"model": "trustedrouter/e2e"},
+        _settings(),
+    )
+
+    assert [endpoint.id for _model, endpoint in confidential] == [
+        endpoint.id for _model, endpoint in e2e
+    ]
+
+
 def test_same_preference_tier_keeps_catalog_order() -> None:
     # Two reliable hosts share the default tier -> original order preserved.
     a = _credits_endpoint("deepinfra")

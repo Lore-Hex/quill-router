@@ -48,6 +48,7 @@ from trusted_router.catalog_data import (
     PROMETHEUS_CODE_MODEL_ID,
     PROMETHEUS_MODEL_ID,
     PROVIDERS,
+    ROUTING_MODEL_ALIAS_TARGETS,
     SELECTOR_CATALOG_MODEL_ORDER,
     SELECTOR_MODEL_ID,
     SOCRATES_CATALOG_MODEL_ORDER,
@@ -309,6 +310,7 @@ def socrates_candidate_models() -> list[Model]:
 
 
 def meta_candidate_models(model_id: str) -> list[Model]:
+    model_id = ROUTING_MODEL_ALIAS_TARGETS.get(model_id, model_id)
     if model_id == AUTO_MODEL_ID:
         return auto_candidate_models()
     if model_id == FREE_MODEL_ID:
@@ -372,6 +374,7 @@ def meta_candidate_models(model_id: str) -> list[Model]:
 
 
 def _meta_route_kind(model_id: str) -> str:
+    model_id = ROUTING_MODEL_ALIAS_TARGETS.get(model_id, model_id)
     if model_id == FREE_MODEL_ID:
         return "free_pool"
     if model_id == CHEAP_MODEL_ID:

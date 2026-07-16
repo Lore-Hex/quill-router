@@ -134,6 +134,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert "OpenRouter alternative" in root_llms.text
     assert "lower-cost open-weight models" in root_llms.text
     assert "trustedrouter/e2e" in root_llms.text
+    assert "trustedrouter/confidential" in root_llms.text
     assert "https://trustedrouter.com/v1/models" in root_llms.text
     assert "not an exhaustive model list" in root_llms.text
 
@@ -141,6 +142,7 @@ def test_llms_text_files_are_public_and_do_not_leak_secret_material(
     assert catalog.status_code == 200
     catalog_ids = {row["id"] for row in catalog.json()["data"]}
     assert "z-ai/glm-5.2" in catalog_ids
+    assert "trustedrouter/confidential" in catalog_ids
 
     full_llms = client.get("/docs/llms-full.txt")
     assert "same deployed catalog as GET /v1/models" in full_llms.text

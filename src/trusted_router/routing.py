@@ -20,6 +20,7 @@ from trusted_router.catalog import (
     PRIVACY_TIER_NO_STORE,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    ROUTING_MODEL_ALIAS_TARGETS,
     SELECTOR_MODEL_ID,
     SYNTH_CODE_MODEL_ID,
     SYNTH_MODEL_ID,
@@ -155,6 +156,12 @@ _PROVIDER_PREFERENCE = {
     "novita": 3,
     "parasail": 4,
     "gmi": 5,
+}
+
+# Narrow, evidence-backed exceptions to the global provider preference. These
+# affect only default routing; caller-supplied provider.order/sort still wins.
+_MODEL_PROVIDER_PREFERENCE: dict[str, dict[str, int]] = {
+    "z-ai/glm-5.2": {"parasail": -1},
 }
 
 _CandidateT = TypeVar("_CandidateT")
@@ -431,6 +438,8 @@ def resolve_model_alias(model_id: str) -> str:
     (already vendor-prefixed) short-circuit on the first check, so real ids and
     meta ids (AUTO / fusion / zdr / …) are never altered.
     """
+    if model_id in ROUTING_MODEL_ALIAS_TARGETS:
+        return ROUTING_MODEL_ALIAS_TARGETS[model_id]
     if model_id in MODELS:
         return model_id
     base = _DATED_SNAPSHOT_RE.sub("", model_id)
@@ -619,9 +628,11 @@ def _sort_endpoint_candidates(
 ) -> list[tuple[Model, ModelEndpoint]]:
     with_index = list(enumerate(candidates))
     provider_order = {provider: index for index, provider in enumerate(prefs.order)}
+    candidate_model_ids = {model.id for model, _endpoint in candidates}
+    single_model_id = next(iter(candidate_model_ids)) if len(candidate_model_ids) == 1 else None
 
     def key(item: tuple[int, tuple[Model, ModelEndpoint]]) -> tuple[int, int, int]:
-        original_index, (_model, endpoint) = item
+        original_index, (model, endpoint) = item
         order_rank = provider_order.get(endpoint.provider, len(provider_order))
         if prefs.sort == "price":
             sort_rank = (
@@ -633,7 +644,17 @@ def _sort_endpoint_candidates(
         else:
             # Default: reliability-informed preference (Phase 4), catalog order
             # preserved within a tier via the original_index tiebreaker below.
-            sort_rank = _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE)
+            # A provider preference for one model must not promote that model
+            # ahead of a caller's primary model or a meta-router's model order.
+            model_preference = (
+                _MODEL_PROVIDER_PREFERENCE.get(model.id, {})
+                if model.id == single_model_id
+                else {}
+            )
+            sort_rank = model_preference.get(
+                endpoint.provider,
+                _PROVIDER_PREFERENCE.get(endpoint.provider, _DEFAULT_PROVIDER_PREFERENCE),
+            )
         return order_rank, sort_rank, original_index
 
     return [candidate for _, candidate in sorted(with_index, key=key)]
