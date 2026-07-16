@@ -118,6 +118,11 @@
       (or append <code>:nitro</code> to the model id) to route to the
       fastest provider instead.
     </p>
+    <p style="color:var(--muted);font-size:14px">
+      <strong>Trust boundary:</strong> TR router attestation verifies the
+      TrustedRouter gateway only. Provider policy separately describes the
+      upstream model host's retention, confidential compute, and E2EE posture.
+    </p>
     <table data-sortable="true">
       <thead>
         <tr>
@@ -125,7 +130,7 @@
           <th>Usage</th>
           <th>Prompt</th>
           <th>Completion</th>
-          <th>Attested</th>
+          <th>TR router attested</th>
           <th>Provider policy</th>
         </tr>
       </thead>

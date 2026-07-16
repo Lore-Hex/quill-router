@@ -249,6 +249,23 @@ def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) ->
     assert "upstream varies" in detail.text
 
 
+def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
+    client: TestClient,
+) -> None:
+    catalog = client.get("/models")
+    detail = client.get("/models/moonshotai/kimi-k3")
+
+    assert catalog.status_code == 200
+    assert detail.status_code == 200
+    assert "TR router attested" in catalog.text
+    assert "TR router attestation verifies the\n      TrustedRouter gateway only" in detail.text
+    assert "<th>TR router attested</th>" in detail.text
+    assert "<th>Attested</th>" not in detail.text
+    assert "Provider policy" in detail.text
+    assert "upstream varies" in detail.text
+    assert "provider E2EE" not in detail.text
+
+
 def test_public_meta_model_detail_renders_orchestration_components(client: TestClient) -> None:
     response = client.get("/models/trustedrouter/socrates-1.1")
 
