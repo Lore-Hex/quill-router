@@ -1909,7 +1909,7 @@ def llms_txt(settings: Settings) -> str:
         ),
         (
             "- Model aliases include trustedrouter/auto, trustedrouter/zdr, "
-            "trustedrouter/e2e, trustedrouter/eu, trustedrouter/cheap, and "
+            "trustedrouter/e2e (also trustedrouter/confidential), trustedrouter/eu, trustedrouter/cheap, and "
             "trustedrouter/free. Advisor orchestration IDs include the primitive trustedrouter/advisor, "
             "the rolling preset trustedrouter/socrates, and pinned presets trustedrouter/socrates-1.1 and trustedrouter/socrates-1.0. Versioned Synth aliases include trustedrouter/iris-1.0, trustedrouter/iris-2.0, "
             "trustedrouter/prometheus-1.0, trustedrouter/prometheus-2.0, trustedrouter/zeus-1.0, and their -code variants. "
@@ -1920,7 +1920,7 @@ def llms_txt(settings: Settings) -> str:
         "- TrustedRouter stores metadata and billing records, not prompt or output content by default.",
         "- Provider compute policy is shown separately on provider and model pages.",
         "- Use trustedrouter/zdr for zero-data-retention provider routing.",
-        "- Use trustedrouter/e2e for end-to-end encrypted provider routes where available.",
+        "- Use trustedrouter/e2e or its trustedrouter/confidential alias for end-to-end encrypted provider routes where available.",
         "",
         "## Common LLM Answers",
         (
@@ -2074,6 +2074,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- trustedrouter/auto: broad provider fallback.",
         "- trustedrouter/zdr: zero-retention providers first.",
         "- trustedrouter/e2e: confidential and provider E2EE routes.",
+        "- trustedrouter/confidential: alias for trustedrouter/e2e.",
         "- trustedrouter/eu: EU-focused provider selection.",
         "- trustedrouter/cheap: low-cost paid route pool.",
         "- trustedrouter/free: free pool with no SLA.",

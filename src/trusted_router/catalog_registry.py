@@ -27,6 +27,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     AUTO_MODEL_ID,
     CANONICAL_ORCHESTRATION_MODEL_ID,
     CHEAP_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -221,6 +222,15 @@ MODELS: dict[str, Model] = {
     E2E_MODEL_ID: Model(
         id=E2E_MODEL_ID,
         name="TrustedRouter E2E",
+        provider="trustedrouter",
+        context_length=128_000,
+        supports_messages=False,
+        prepaid_available=True,
+        byok_available=True,
+    ),
+    CONFIDENTIAL_MODEL_ID: Model(
+        id=CONFIDENTIAL_MODEL_ID,
+        name="TrustedRouter Confidential",
         provider="trustedrouter",
         context_length=128_000,
         supports_messages=False,

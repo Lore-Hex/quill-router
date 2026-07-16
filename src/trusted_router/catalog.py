@@ -16,6 +16,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     AUTO_MODEL_ID,
     CANONICAL_ORCHESTRATION_MODEL_ID,
     CHEAP_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     DEFAULT_AUTO_MODEL_ORDER,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
@@ -70,6 +71,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PROMETHEUS_MODEL_ID,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    ROUTING_MODEL_ALIAS_TARGETS,
     SELECTOR_CATALOG_MODEL_ORDER,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
@@ -231,7 +233,10 @@ def orchestration_primitive(model_id: str) -> str | None:
 def canonical_orchestration_model_id(model_id: str) -> str | None:
     if model_id not in META_MODEL_IDS:
         return None
-    return CANONICAL_ORCHESTRATION_MODEL_ID.get(model_id, model_id)
+    return ROUTING_MODEL_ALIAS_TARGETS.get(
+        model_id,
+        CANONICAL_ORCHESTRATION_MODEL_ID.get(model_id, model_id),
+    )
 
 
 def orchestration_role(model_id: str) -> str | None:

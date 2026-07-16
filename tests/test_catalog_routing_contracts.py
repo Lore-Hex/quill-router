@@ -9,6 +9,7 @@ from trusted_router.catalog import (
     ARISTOTLE_MODEL_ID,
     ATHENA_MODEL_ID,
     AUTO_MODEL_ID,
+    CONFIDENTIAL_MODEL_ID,
     E2E_MODEL_ID,
     EU_FOCUSED_PROVIDER_ORDER,
     EU_MODEL_ID,
@@ -461,25 +462,31 @@ def test_auto_candidate_order_dedupes_unknowns() -> None:
 def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert ZDR_MODEL_ID in MODELS
     assert E2E_MODEL_ID in MODELS
+    assert CONFIDENTIAL_MODEL_ID in MODELS
     assert EU_MODEL_ID in MODELS
     assert SYNTH_MODEL_ID in MODELS
     assert FUSION_MODEL_ID in MODELS
 
     zdr = meta_candidate_models(ZDR_MODEL_ID)
     e2e = meta_candidate_models(E2E_MODEL_ID)
+    confidential = meta_candidate_models(CONFIDENTIAL_MODEL_ID)
     eu = meta_candidate_models(EU_MODEL_ID)
 
     assert zdr
     assert e2e
+    assert [model.id for model in confidential] == [model.id for model in e2e]
     assert eu
     assert eu[0].provider == "mistral"
     assert all(model.supports_chat for model in zdr + e2e)
 
     zdr_shape = model_to_openrouter_shape(MODELS[ZDR_MODEL_ID])
     e2e_shape = model_to_openrouter_shape(MODELS[E2E_MODEL_ID])
+    confidential_shape = model_to_openrouter_shape(MODELS[CONFIDENTIAL_MODEL_ID])
     eu_shape = model_to_openrouter_shape(MODELS[EU_MODEL_ID])
     assert zdr_shape["trustedrouter"]["route_kind"] == "zdr_pool"
     assert e2e_shape["trustedrouter"]["route_kind"] == "e2e_pool"
+    assert confidential_shape["trustedrouter"]["route_kind"] == "e2e_pool"
+    assert confidential_shape["trustedrouter"]["canonical_model_id"] == E2E_MODEL_ID
     assert eu_shape["trustedrouter"]["route_kind"] == "eu_pool"
     assert zdr_shape["trustedrouter"]["auto_candidates"]
     assert e2e_shape["trustedrouter"]["auto_candidates"]
