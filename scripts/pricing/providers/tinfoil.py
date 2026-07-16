@@ -78,9 +78,21 @@ def fetch() -> ProviderPricingResult:
             output_usd = float(pricing.get("outputTokenPricePer1M"))
         except (TypeError, ValueError):
             continue
+        cached_input_usd: float | None = None
+        try:
+            cached_raw = pricing.get("cachedInputTokenPricePer1M")
+            if cached_raw is not None:
+                cached_input_usd = float(cached_raw)
+        except (TypeError, ValueError):
+            notes.append(f"invalid cached-input price for {native_id}: {cached_raw!r}")
         prices[or_id] = ModelPrice(
             prompt_micro_per_m=int(round(input_usd * 1_000_000)),
             completion_micro_per_m=int(round(output_usd * 1_000_000)),
+            prompt_cached_micro_per_m=(
+                int(round(cached_input_usd * 1_000_000))
+                if cached_input_usd is not None
+                else None
+            ),
         )
 
     errors = validate(prices, EXPECTED_MODELS)

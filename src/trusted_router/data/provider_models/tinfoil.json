@@ -1,8 +1,8 @@
 {
-  "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil announced GLM 5.2 as native glm-5-2 and the GLM 5.1 / Qwen3-VL-30B deprecations for 2026-06-22; this manifest publishes the current replacement routes while deprecated Tinfoil routes are filtered in catalog.py.",
+  "_about": "Provider-native supplement for Tinfoil models whose live API is ahead of the snapshot. Tinfoil announced GLM 5.2 prompt caching on 2026-07-14 at a 75% cached-input discount. Deprecated Tinfoil routes are filtered in catalog.py.",
   "provider": "tinfoil",
   "source": "https://inference.tinfoil.sh/v1/models",
-  "generated_at": "2026-06-18T00:00:00Z",
+  "generated_at": "2026-07-16T00:00:00Z",
   "model_count": 2,
   "models": [
     {
@@ -13,6 +13,7 @@
       "context_length": 384000,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 375000,
       "output_token_price_per_m": 5250000,
       "model_type": "chat",
       "features": ["reasoning", "function-calling"],
