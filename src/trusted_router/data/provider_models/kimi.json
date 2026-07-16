@@ -70,6 +70,23 @@
       "cached_input_token_price_per_m": 380000
     },
     {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "kimi-k3",
+      "display_name": "Kimi K3",
+      "title": "kimi-k3",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "context_length": 1048576,
+      "supports_image_in": true,
+      "supports_video_in": true,
+      "supports_reasoning": true,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
       "id": "moonshotai/moonshot-v1-128k",
       "upstream_id": "moonshot-v1-128k",
       "display_name": "Moonshot V1 128K",
@@ -169,6 +186,6 @@
   "_about": "Provider-native Moonshot/Kimi routes. Refreshed hourly only for models present in both the official pricing docs and authenticated /v1/models feed.",
   "source": "https://api.moonshot.ai/v1/models",
   "pricing_source": "https://platform.kimi.ai/docs/llms.txt",
-  "generated_at": "2026-07-15T21:03:07Z",
-  "model_count": 10
+  "generated_at": "2026-07-16T15:49:39Z",
+  "model_count": 11
 }

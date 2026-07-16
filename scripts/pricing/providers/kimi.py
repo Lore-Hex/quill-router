@@ -33,6 +33,7 @@ SLUG = "kimi"
 DOC_INDEX_URL = "https://platform.kimi.ai/docs/llms.txt"
 MODELS_URL = "https://api.moonshot.ai/v1/models"
 FALLBACK_SUBPAGES = (
+    "https://platform.kimi.ai/docs/pricing/chat-k3.md",
     "https://platform.kimi.ai/docs/pricing/chat-k27-code.md",
     "https://platform.kimi.ai/docs/pricing/chat-k26.md",
     "https://platform.kimi.ai/docs/pricing/chat-k25.md",
@@ -50,6 +51,7 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
+    "moonshotai/kimi-k3",
     "moonshotai/kimi-k2.6",
     "moonshotai/kimi-k2.7-code",
     "moonshotai/kimi-k2.7-code-highspeed",

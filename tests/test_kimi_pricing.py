@@ -22,8 +22,8 @@ def _pricing_doc(*, include_k3: bool = True, include_ghost: bool = False) -> str
     ]
     if include_k3:
         rows.append(
-            '["kimi-k3", "1M tokens", <>{"$"}0.20</>, <>{"$"}1.00</>, '
-            '<>{"$"}5.00</>, "1,048,576 tokens"]'
+            '["kimi-k3", "1M tokens", <>{"$"}0.30</>, <>{"$"}3.00</>, '
+            '<>{"$"}15.00</>, "1,048,576 tokens"]'
         )
     if include_ghost:
         rows.append(
@@ -80,9 +80,9 @@ def test_parser_accepts_future_kimi_family_without_code_change() -> None:
     parsed = kimi_parser.parse(_pricing_doc(include_k3=True))
 
     assert parsed["moonshotai/kimi-k3"] == {
-        "prompt_micro_per_m": 1_000_000,
-        "completion_micro_per_m": 5_000_000,
-        "prompt_cached_micro_per_m": 200_000,
+        "prompt_micro_per_m": 3_000_000,
+        "completion_micro_per_m": 15_000_000,
+        "prompt_cached_micro_per_m": 300_000,
     }
 
 
@@ -117,8 +117,9 @@ def test_fetch_intersects_live_models_and_writes_manifest(
     assert "moonshotai/kimi-ghost" not in result.prices
     assert by_id["moonshotai/kimi-k3"]["upstream_id"] == "kimi-k3"
     assert by_id["moonshotai/kimi-k3"]["context_length"] == 1_048_576
-    assert by_id["moonshotai/kimi-k3"]["input_token_price_per_m"] == 1_000_000
-    assert by_id["moonshotai/kimi-k3"]["output_token_price_per_m"] == 5_000_000
+    assert by_id["moonshotai/kimi-k3"]["input_token_price_per_m"] == 3_000_000
+    assert by_id["moonshotai/kimi-k3"]["output_token_price_per_m"] == 15_000_000
+    assert by_id["moonshotai/kimi-k3"]["cached_input_token_price_per_m"] == 300_000
     assert notes == ["kimi: refreshed provider_models/kimi.json (4 priced rows, appended 4)"]
 
 
@@ -139,9 +140,8 @@ def test_live_model_without_first_party_price_is_not_published(
         lambda _url, **_kwargs: _live_payload(include_k3=True),
     )
 
-    result = kimi.fetch()
-
-    assert "moonshotai/kimi-k3" not in result.prices
+    with pytest.raises(RuntimeError, match="expected models missing.*moonshotai/kimi-k3"):
+        kimi.fetch()
 
 
 def test_manifest_removes_models_no_longer_live_or_priced(
