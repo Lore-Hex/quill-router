@@ -956,25 +956,64 @@ async def provider_rotation_probe(
     )
 
 
+# Model-id substrings for models that reason/think before emitting visible
+# content. They must get REASONING_MAX_TOKENS headroom in the rotation probe:
+# with the cheap default they exhaust the budget mid-thought and stream ends
+# with finish_reason=length before any content/reasoning delta, which the
+# classifier records as `probe_config_error` — inflating the model's error
+# column on the public /leaderboard even though the provider is healthy.
+#
+# DRIFT DETECTOR: the leaderboard's per-model `probe_config_error` rate is the
+# signal that a new reasoning family has shipped and needs adding here. As of
+# 2026-07-13 the whole modern reasoning lineup (Gemini 2.5+/3.x, Qwen3.5/3.6,
+# Gemma-4 thinking, Nemotron-3, DeepSeek V4 Pro, MiniMax M) was silently
+# defaulting to 16 and failing. Non-reasoning models keep the cheap cap — the
+# extra tokens are only spent where a model actually needs to finish thinking.
+REASONING_MAX_TOKENS = 512
+_REASONING_MODEL_MARKERS = (
+    # explicit self-describing ids
+    "reasoning",
+    "thinking",
+    # OpenAI o-series + GPT-5 (also matched provider-scoped below)
+    "gpt-5",
+    # open-weight reasoners
+    "gpt-oss",
+    "glm-4.6",
+    "glm-4.7",
+    "glm-5",
+    # Gemini Pro + 3.x preview models reason server-side and emit content only
+    # after; the OpenAI-compat stream carries no recognizable reasoning delta,
+    # so they need room to reach the visible answer. Deliberately NOT
+    # "gemini-2.5" broadly — that would sweep in gemini-2.5-flash-lite, a
+    # non-reasoning model and our single highest-volume route, whose probe
+    # measurement we don't want to perturb.
+    "gemini-2.5-pro",
+    "gemini-3",
+    # Qwen3 thinking generations (3.5 / 3.6, incl. a3b/a17b MoE variants)
+    "qwen3.5",
+    "qwen3.6",
+    # NVIDIA Nemotron 3 family (nano / super / omni all reason)
+    "nemotron-3",
+    "nemotron",
+    # DeepSeek reasoners (V4 Pro + R1); V4 Flash streams content fast → cheap
+    "deepseek-v4-pro",
+    "deepseek-r1",
+    # MiniMax M-series (m2.5 / m3) reason before answering
+    "minimax-m",
+    # Gemma 4 thinking variants (observed hitting length on makora/parasail)
+    "gemma-4",
+)
+
+
 def _rotation_max_tokens(provider: str, model: str) -> int:
     provider_l = provider.lower()
     model_l = model.lower()
     if provider_l == "openai" and (
-        "/o1" in model_l
-        or "/o3" in model_l
-        or "/o4" in model_l
-        or "/gpt-5" in model_l
+        "/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l
     ):
-        return 512
-    if (
-        "gpt-oss" in model_l
-        or "glm-4.6" in model_l
-        or "glm-4.7" in model_l
-        or "glm-5" in model_l
-        or "reasoning" in model_l
-        or "thinking" in model_l
-    ):
-        return 512
+        return REASONING_MAX_TOKENS
+    if any(marker in model_l for marker in _REASONING_MODEL_MARKERS):
+        return REASONING_MAX_TOKENS
     if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
         return 128
     return 16
