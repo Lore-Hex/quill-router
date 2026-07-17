@@ -28,6 +28,7 @@ to `_NATIVE_TO_OR_ID`. Refresh.py overlays the price automatically.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
 import httpx
 
@@ -40,6 +41,10 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from trusted_router.provider_lifecycle import (
+    provider_model_retired,
+    provider_price_microdollars,
+)
 
 SLUG = "phala"
 URL = "https://api.redpill.ai/v1/models"
@@ -82,6 +87,33 @@ _NATIVE_TO_OR_ID = {
     "phala/minimax-m2.5": "minimax/minimax-m2.5",
 }
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
+
+
+def _apply_lifecycle_policy(
+    prices: dict[str, ModelPrice],
+    *,
+    at: datetime | str | None = None,
+) -> dict[str, ModelPrice]:
+    effective = {
+        model_id: price
+        for model_id, price in prices.items()
+        if not provider_model_retired(
+            SLUG,
+            model_id,
+            UPSTREAM_ID_MAP.get(model_id),
+            at=at,
+        )
+    }
+    for model_id, existing in tuple(effective.items()):
+        announced = provider_price_microdollars(SLUG, model_id, at=at)
+        if announced is None:
+            continue
+        effective[model_id] = ModelPrice(
+            announced.prompt_microdollars_per_million_tokens,
+            announced.completion_microdollars_per_million_tokens,
+            prompt_cached_micro_per_m=existing.tiers[0].prompt_cached_micro_per_m,
+        )
+    return effective
 
 
 def _extract_rates(pricing: object) -> tuple[float, float, float | None] | None:
@@ -149,6 +181,7 @@ def fetch() -> ProviderPricingResult:
             ),
         )
 
+    prices = _apply_lifecycle_policy(prices)
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
     if errors:

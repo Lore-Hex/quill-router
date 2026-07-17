@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime
+
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -164,6 +167,10 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     cache_token_prices_microdollars,
     select_price_tier,
 )
+from trusted_router.provider_lifecycle import (
+    provider_model_retired,
+    provider_price_microdollars,
+)
 from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for back-compat
     InvalidAutoModelOrder,
     _is_regular_chat_model,
@@ -271,8 +278,50 @@ def orchestration_role(model_id: str) -> str | None:
 # mid-tier model. (gpt-5.5 works too but is the pricey flagship.)
 
 
+def effective_endpoint(
+    endpoint: ModelEndpoint,
+    *,
+    at: datetime | str | None = None,
+) -> ModelEndpoint:
+    """Return an endpoint with any effective-dated announced price applied."""
+    provider_price = provider_price_microdollars(
+        endpoint.provider,
+        endpoint.model_id,
+        at=at,
+    )
+    if provider_price is None:
+        return endpoint
+    prompt_price = _customer_price(
+        provider_price.prompt_microdollars_per_million_tokens
+    )
+    completion_price = _customer_price(
+        provider_price.completion_microdollars_per_million_tokens
+    )
+    tiers = _flat_tier(prompt_price, completion_price)
+    return replace(
+        endpoint,
+        prompt_price_microdollars_per_million_tokens=prompt_price,
+        completion_price_microdollars_per_million_tokens=completion_price,
+        published_prompt_price_microdollars_per_million_tokens=prompt_price,
+        published_completion_price_microdollars_per_million_tokens=completion_price,
+        price_tiers=tiers,
+        published_price_tiers=tiers,
+    )
+
+
 def endpoints_for_model(model_id: str) -> list[ModelEndpoint]:
-    return [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.model_id == model_id]
+    endpoints: list[ModelEndpoint] = []
+    for endpoint in MODEL_ENDPOINTS.values():
+        if endpoint.model_id != model_id:
+            continue
+        if provider_model_retired(
+            endpoint.provider,
+            endpoint.model_id,
+            endpoint.upstream_id,
+        ):
+            continue
+        endpoints.append(effective_endpoint(endpoint))
+    return endpoints
 
 
 def endpoint_for_id(endpoint_id: str | None) -> ModelEndpoint | None:
@@ -429,15 +478,14 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     is_meta = model.id in META_MODEL_IDS
     endpoints = endpoints_for_model(model.id)
     prepaid_available = (
-        any(endpoint.usage_type == "Credits" for endpoint in endpoints) or model.prepaid_available
+        model.prepaid_available
+        if is_meta
+        else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     )
     byok_available = (
         False
         if is_meta
-        else (
-            any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
-            or (model.byok_available and PROVIDERS[model.provider].supports_byok)
-        )
+        else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
 
     # For meta routers, derive prompt/completion price from the candidate range
@@ -456,7 +504,28 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     pub_prompt_max = pub_prompt_min
     pub_completion_min = model.published_completion_price_microdollars_per_million_tokens
     pub_completion_max = pub_completion_min
-    if is_meta:
+    if not is_meta and endpoints:
+        prompt_min = min(
+            endpoint.prompt_price_microdollars_per_million_tokens
+            for endpoint in endpoints
+        )
+        completion_min = min(
+            endpoint.completion_price_microdollars_per_million_tokens
+            for endpoint in endpoints
+        )
+        prompt_max = prompt_min
+        completion_max = completion_min
+        pub_prompt_min = min(
+            endpoint.published_prompt_price_microdollars_per_million_tokens
+            for endpoint in endpoints
+        )
+        pub_completion_min = min(
+            endpoint.published_completion_price_microdollars_per_million_tokens
+            for endpoint in endpoints
+        )
+        pub_prompt_max = pub_prompt_min
+        pub_completion_max = pub_completion_min
+    elif is_meta:
         prompt_min, prompt_max = _meta_price_range(
             model.id, "prompt_price_microdollars_per_million_tokens"
         )
