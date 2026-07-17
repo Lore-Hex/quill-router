@@ -1930,6 +1930,12 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert _rotation_max_tokens("openai", "openai/o3") == 512
     assert _rotation_max_tokens("openai", "openai/gpt-5.5") == 512
     assert _rotation_max_tokens("baseten", "nvidia/nemotron-120b-a12b") == 512
+    # Claude 5 thinking models emit no visible token within 16 (adaptive
+    # thinking burns the budget), so they get the reasoning-safe budget too.
+    assert _rotation_max_tokens("anthropic", "anthropic/claude-fable-5") == 512
+    assert _rotation_max_tokens("anthropic", "anthropic/claude-sonnet-5") == 512
+    # Non-thinking Claude models keep the small budget.
+    assert _rotation_max_tokens("anthropic", "anthropic/claude-haiku-4.5") == 16
     assert _rotation_omits_temperature("openai", "openai/o3")
     assert _rotation_omits_temperature("openai", "openai/gpt-5.5")
     # Canary contract: probes mirror customer payloads. The enclave strips
