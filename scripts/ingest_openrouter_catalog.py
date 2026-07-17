@@ -10,13 +10,11 @@ Usage:
     python scripts/ingest_openrouter_catalog.py            # refresh snapshot
     python scripts/ingest_openrouter_catalog.py --check    # CI guard: exits 1 if the file would change
 
-The filter keeps models whose endpoints[].provider_name resolves to one
-of TR's 8 keyed providers (anthropic, openai, gemini, cerebras, deepseek,
-mistral, kimi, zai). Within each kept model we keep only those endpoints
-— secondary inference providers (DeepInfra, Together, etc.) are dropped
-because TR has no key for them. Vertex is intentionally excluded until
-TR's GCP project gets the Anthropic-on-Vertex / Gemini-on-Vertex quota
-approvals.
+The filter keeps endpoints that resolve to a configured TrustedRouter
+downstream. Most use provider-direct keys. The deliberately labelled Meta via
+OpenRouter route uses TrustedRouter's OpenRouter inference key because Muse
+Spark is not currently available through a direct Meta endpoint. Vertex rows
+remain excluded until the required project quota is available.
 """
 
 from __future__ import annotations
@@ -40,6 +38,10 @@ MAX_WORKERS = 8
 # OpenRouter's per-endpoint `provider_name` → TR provider slug. Anything
 # not in this table gets filtered out (TR has no key/gateway client for it).
 PROVIDER_NAME_TO_SLUG: dict[str, str] = {
+    # Muse Spark is currently available from Meta only through OpenRouter's
+    # standard inference surface. Keep this provider distinct from Meta Llama
+    # weights hosted by Cerebras/Novita/etc. so downstream custody is explicit.
+    "Meta": "meta",
     "Anthropic": "anthropic",
     "OpenAI": "openai",
     "Google": "gemini",
