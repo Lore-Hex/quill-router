@@ -33,10 +33,10 @@
         {% for provider in providers %}
         <tr>
           <td><a href="{{ provider.detail_href }}"><strong>{{ provider.name }}</strong></a><br><code>{{ provider.id }}</code></td>
-          <td><span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span></td>
+          <td><span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs', 'No logs (prepaid)'] %}good{% endif %}">{{ provider.privacy_tier }}</span></td>
           <td>{% if provider.supports_prepaid %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>{% if provider.supports_byok %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
-          <td><span class="pill {% if provider.zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td>
+          <td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td>
           <td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td>
           <td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td>
           <td>

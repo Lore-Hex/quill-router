@@ -54,7 +54,37 @@ def model_provider_privacy_tier(model_id: str, provider_slug: str) -> int:
 
 
 def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
-    return model_provider_privacy_tier(endpoint.model_id, endpoint.provider)
+    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    if override is not None:
+        return override.privacy_tier
+    provider = PROVIDERS[endpoint.provider]
+    if endpoint.usage_type == "Credits" and provider.prepaid_zero_data_retention:
+        return max(provider_privacy_tier(provider), PRIVACY_TIER_ZERO_RETENTION)
+    return provider_privacy_tier(provider)
+
+
+def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
+    """Return the ZDR guarantee that applies to this exact credential path."""
+    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    if override is not None and override.provider_zero_data_retention is not None:
+        return override.provider_zero_data_retention
+    provider = PROVIDERS[endpoint.provider]
+    if endpoint.usage_type == "Credits" and provider.prepaid_zero_data_retention:
+        return True
+    return provider.provider_zero_data_retention
+
+
+def endpoint_zero_data_retention_scope(endpoint: ModelEndpoint) -> str | None:
+    """Describe why an endpoint qualifies without broadening the claim."""
+    if endpoint_zero_data_retention(endpoint) is not True:
+        return None
+    override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
+    if override is not None and override.provider_zero_data_retention is True:
+        return "model_endpoint"
+    provider = PROVIDERS[endpoint.provider]
+    if endpoint.usage_type == "Credits" and provider.prepaid_zero_data_retention:
+        return "trustedrouter_prepaid"
+    return "provider"
 
 
 def model_provider_zero_data_retention(model_id: str, provider_slug: str) -> bool | None:

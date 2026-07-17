@@ -493,7 +493,7 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert eu_shape["trustedrouter"]["auto_candidates"]
 
 
-def test_reverification_required_providers_are_not_marked_zdr() -> None:
+def test_uncontracted_closed_providers_are_not_marked_zdr() -> None:
     """Keep public ZDR claims fail-closed for major closed providers.
 
     If Amazon/Bedrock or Google/Vertex are added as explicit providers later,
@@ -506,15 +506,21 @@ def test_reverification_required_providers_are_not_marked_zdr() -> None:
         "bedrock",
         "gemini",
         "google",
-        "openai",
         "vertex",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
 
-    assert {"anthropic", "gemini", "openai"} <= configured
+    assert {"anthropic", "gemini"} <= configured
     for provider in sorted(configured):
         assert PROVIDERS[provider].provider_zero_data_retention is not True
         assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
+
+    # OpenAI's guarantee is deliberately narrower: it belongs to
+    # TrustedRouter's managed prepaid account, starts on July 28, and is not
+    # activated until a live retention smoke passes.
+    assert PROVIDERS["openai"].provider_zero_data_retention is False
+    assert PROVIDERS["openai"].prepaid_zero_data_retention is False
+    assert PROVIDERS["openai"].prepaid_zero_data_retention_effective_on == "2026-07-28"
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
@@ -1234,7 +1240,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert "gemini" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "openai" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
-        provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_ZERO_RETENTION
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in zdr_endpoints
     )
     assert all(
@@ -1543,13 +1549,14 @@ def test_wafer_kimi_k26_is_available_but_standard_tier_only() -> None:
     if not wafer_endpoints:
         pytest.skip("wafer no longer lists kimi-k2.6 — delisted upstream")
     assert all(
-        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
-        for endpoint in wafer_endpoints
+        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD for endpoint in wafer_endpoints
     )
 
     shape = model_to_openrouter_shape(model)
     wafer_meta = [
-        endpoint for endpoint in shape["trustedrouter"]["endpoints"] if endpoint["provider"] == "wafer"
+        endpoint
+        for endpoint in shape["trustedrouter"]["endpoints"]
+        if endpoint["provider"] == "wafer"
     ]
     assert wafer_meta
     assert all(endpoint["provider_zero_data_retention"] is False for endpoint in wafer_meta)

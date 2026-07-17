@@ -274,6 +274,20 @@ def _provider_subprocessor_row(provider: Provider) -> dict[str, Any]:
         "purpose": "Downstream model inference provider when a workspace selects this provider, this model, or an alias that routes to this provider.",
         "data_access": "Prompt/output content in transit only for requests routed to this provider; request metadata needed for billing, routing, abuse controls, and support.",
         "zdr": provider.provider_zero_data_retention,
+        "prepaid_zdr": provider.prepaid_zero_data_retention,
+        "prepaid_zdr_effective_on": provider.prepaid_zero_data_retention_effective_on,
+        "zdr_label": (
+            "prepaid only"
+            if provider.prepaid_zero_data_retention
+            and provider.provider_zero_data_retention is not True
+            else f"scheduled {provider.prepaid_zero_data_retention_effective_on}"
+            if provider.prepaid_zero_data_retention_effective_on
+            else "yes"
+            if provider.provider_zero_data_retention is True
+            else "no"
+            if provider.provider_zero_data_retention is False
+            else "unknown"
+        ),
         "confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "privacy_tier": tier,

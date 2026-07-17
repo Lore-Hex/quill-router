@@ -33,6 +33,11 @@ class Provider:
     # higher tier only with an explicit, cited flag below.
     stores_content: bool = True
     provider_zero_data_retention: bool | None = None
+    # Some upstream privacy agreements apply only to TrustedRouter's managed
+    # provider account. Keep that distinct from provider-wide ZDR so customer
+    # BYOK credentials never inherit contractual controls they may not have.
+    prepaid_zero_data_retention: bool = False
+    prepaid_zero_data_retention_effective_on: str | None = None
     provider_confidential_compute: bool | None = None
     provider_e2ee: bool | None = None
     provider_policy: str = (
@@ -220,10 +225,18 @@ PROVIDERS: dict[str, Provider] = {
         supports_embeddings=True,
         supports_prepaid=True,
         provider_zero_data_retention=False,
+        # Activation gate: flip only after the managed production key passes
+        # the store=true/create then retrieve-must-fail ZDR smoke on/after the
+        # contractual effective date. BYOK remains outside this flag.
+        prepaid_zero_data_retention=False,
+        prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
-            "Not currently marked ZDR in TrustedRouter. OpenAI may offer endpoint- "
-            "or account-specific data-retention controls, but this provider is "
-            "excluded from trustedrouter/zdr until that posture is reverified."
+            "Contracted Zero Data Retention is scheduled to begin for "
+            "TrustedRouter's managed OpenAI account on July 28, 2026. OpenAI remains "
+            "outside trustedrouter/zdr until live activation verification passes. "
+            "Once verified, the guarantee will apply only to TrustedRouter-funded "
+            "prepaid routes; customer BYOK credentials use the data controls on the "
+            "customer's own OpenAI organization or project."
         ),
         provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,

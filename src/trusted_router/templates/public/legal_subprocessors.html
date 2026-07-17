@@ -62,7 +62,7 @@
         {% for provider in provider_subprocessors %}
         <tr>
           <td><a href="/providers/{{ provider.id }}"><strong>{{ provider.name }}</strong></a><br><code>{{ provider.id }}</code></td>
-          <td><span class="pill {% if provider.zdr is sameas true %}good{% endif %}">{% if provider.zdr is sameas true %}yes{% elif provider.zdr is sameas false %}no{% else %}unknown{% endif %}</span></td>
+          <td><span class="pill {% if provider.zdr is sameas true or provider.prepaid_zdr %}good{% endif %}">{{ provider.zdr_label }}</span></td>
           <td><span class="pill {% if provider.confidential_compute is sameas true %}good{% endif %}">{% if provider.confidential_compute is sameas true %}yes{% elif provider.confidential_compute is sameas false %}no{% else %}unknown{% endif %}</span></td>
           <td><span class="pill {% if provider.provider_e2ee is sameas true %}good{% endif %}">{% if provider.provider_e2ee is sameas true %}yes{% elif provider.provider_e2ee is sameas false %}no{% else %}unknown{% endif %}</span></td>
           <td>{{ provider.data_access }}<br>{{ provider.policy }}</td>
