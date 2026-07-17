@@ -979,11 +979,17 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
         or "glm-4.7" in model_l
         or "glm-5" in model_l
         or "nemotron" in model_l
+        or "claude-fable-5" in model_l
+        or "claude-sonnet-5" in model_l
         or "reasoning" in model_l
         or "thinking" in model_l
     ):
-        # Crusoe nemotron-3 reasons by default without streaming reasoning
-        # deltas, so 16 tokens can finish=length with zero visible content.
+        # Reasoning models that think before emitting visible content: at 16
+        # tokens they finish=length with zero streamed content and register as
+        # probe_config_error. Crusoe nemotron-3 reasons by default without
+        # streaming reasoning deltas; Claude Fable 5 (adaptive thinking always
+        # on) and Sonnet 5 do the same, so they need the larger budget to emit
+        # a visible token.
         return 512
     if "kimi-k2" in model_l or "grok" in model_l or "claude-opus" in model_l:
         return 128
