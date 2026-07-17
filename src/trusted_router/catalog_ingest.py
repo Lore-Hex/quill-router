@@ -238,6 +238,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         {
             "anthropic/claude-fable-5",
             "anthropic/claude-sonnet-5",
+            # route-health flag 2026-07-18 (post-first-sweep): 100% failure over 6 samples.
+            "google/gemini-3.5-flash",
             # route-health first sweep 2026-07-18, 100% failure.
             "z-ai/glm-5.1",
             "moonshotai/kimi-k2.7-code",
