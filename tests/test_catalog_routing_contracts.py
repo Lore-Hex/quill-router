@@ -1452,7 +1452,6 @@ def test_makora_provider_models_present_and_routable() -> None:
         "z-ai/glm-5.2": "zai-org/GLM-5.2-FP8",
         "z-ai/glm-5.2-nvfp4": "zai-org/GLM-5.2-NVFP4",
         "moonshotai/kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
-        "qwen/qwen3.6-27b": "unsloth/Qwen3.6-27B-NVFP4",
         "qwen/qwen3.6-35b-a3b": "unsloth/Qwen3.6-35B-A3B-NVFP4",
     }
     makora_model_ids = {
@@ -1460,7 +1459,9 @@ def test_makora_provider_models_present_and_routable() -> None:
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
-    assert len(makora_model_ids) >= 9
+    assert len(makora_model_ids) >= 8
+    assert "qwen/qwen3.6-27b" not in makora_model_ids
+    assert "openai/gpt-oss-120b" not in makora_model_ids
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
