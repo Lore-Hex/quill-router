@@ -29,6 +29,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     Provider,
     canonical_orchestration_model_id,
+    endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
     model_eu_focused_provider_available,
@@ -2170,7 +2171,9 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         or model.prepaid_available,
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
-        "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "provider_zero_data_retention": any(
+            endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "open_weights": model_open_weights(model),
@@ -2219,9 +2222,20 @@ def _provider_view(provider: Provider) -> dict[str, object]:
         "attested_gateway": provider.attested_gateway,
         "gateway_stores_content": provider.stores_content,
         "zero_data_retention": provider.provider_zero_data_retention,
+        "prepaid_zero_data_retention": provider.prepaid_zero_data_retention,
+        "prepaid_zero_data_retention_effective_on": (
+            provider.prepaid_zero_data_retention_effective_on
+        ),
         "confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
-        "zero_data_retention_label": _policy_label(provider.provider_zero_data_retention),
+        "zero_data_retention_label": (
+            "prepaid only"
+            if provider.prepaid_zero_data_retention
+            and provider.provider_zero_data_retention is not True
+            else f"scheduled {provider.prepaid_zero_data_retention_effective_on}"
+            if provider.prepaid_zero_data_retention_effective_on
+            else _policy_label(provider.provider_zero_data_retention)
+        ),
         "confidential_compute_label": _policy_label(provider.provider_confidential_compute),
         "provider_e2ee_label": _policy_label(provider.provider_e2ee),
         "policy": provider.provider_policy,
@@ -2250,6 +2264,8 @@ def _provider_privacy_tier(provider: Provider) -> str:
         return "Confidential"
     if provider.provider_zero_data_retention:
         return "No logs"
+    if provider.prepaid_zero_data_retention:
+        return "No logs (prepaid)"
     if provider.provider_confidential_compute:
         return "Confidential compute"
     return "No provider claim"
@@ -2296,7 +2312,7 @@ def _model_detail_view(
                 "completion_microdollars_per_million_tokens": endpoint.completion_price_microdollars_per_million_tokens,
                 "attested_gateway": ep_provider.attested_gateway if ep_provider else False,
                 "provider_zero_data_retention": (
-                    ep_provider.provider_zero_data_retention if ep_provider else None
+                    endpoint_zero_data_retention(endpoint) if ep_provider else None
                 ),
                 "provider_confidential_compute": (
                     ep_provider.provider_confidential_compute if ep_provider else None
@@ -2618,7 +2634,7 @@ def _privacy_summary(model: Model) -> str:
         return "has provider E2EE route"
     if any(provider and provider.provider_confidential_compute for provider in providers):
         return "has confidential-compute route"
-    if any(provider and provider.provider_zero_data_retention for provider in providers):
+    if any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints):
         return "has ZDR route"
     return "provider posture varies"
 

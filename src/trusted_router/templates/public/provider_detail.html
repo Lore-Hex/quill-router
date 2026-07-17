@@ -3,7 +3,7 @@
 <section class="panel">
   <div class="panel-head">
     <h2><code>{{ provider.id }}</code></h2>
-    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
+    <span class="pill {% if provider.privacy_tier in ['Confidential', 'TR gateway', 'No logs', 'No logs (prepaid)'] %}good{% endif %}">{{ provider.privacy_tier }}</span>
   </div>
   <div class="panel-body">
     <p><a href="/providers">All providers</a></p>
@@ -13,7 +13,7 @@
         <tr><th>Models</th><td>{{ provider.served_model_count }} public model{{ '' if provider.served_model_count == 1 else 's' }}</td></tr>
         <tr><th>Prepaid routes</th><td>{{ provider.prepaid_model_count }}</td></tr>
         <tr><th>BYOK routes</th><td>{{ provider.byok_model_count }}</td></tr>
-        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td></tr>
+        <tr><th>Zero data retention</th><td><span class="pill {% if provider.zero_data_retention or provider.prepaid_zero_data_retention %}good{% endif %}">{{ provider.zero_data_retention_label }}</span></td></tr>
         <tr><th>Confidential compute</th><td><span class="pill {% if provider.confidential_compute %}good{% endif %}">{{ provider.confidential_compute_label }}</span></td></tr>
         <tr><th>Provider E2EE</th><td><span class="pill {% if provider.provider_e2ee %}good{% endif %}">{{ provider.provider_e2ee_label }}</span></td></tr>
         <tr><th>Policy note</th><td>{{ provider.policy }}{% if provider.policy_url %}<br><a href="{{ provider.policy_url }}">Policy source</a>{% endif %}</td></tr>

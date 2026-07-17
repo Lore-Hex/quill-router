@@ -567,6 +567,15 @@ def test_embeddings_and_model_endpoints(
         for item in openai_endpoints
         if item["provider"] == "openai"
     ] == ["Credits", "BYOK"]
+    openai_by_usage = {
+        item["trustedrouter"]["usage_type"]: item["trustedrouter"]
+        for item in openai_endpoints
+        if item["provider"] == "openai"
+    }
+    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is False
+    assert openai_by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert openai_by_usage["BYOK"]["provider_zero_data_retention"] is False
+    assert openai_by_usage["BYOK"]["zero_data_retention_scope"] is None
 
     us_filtered = client.get(
         "/v1/models/z-ai/glm-5.2/endpoints",
@@ -1042,9 +1051,14 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     # DeepInfra is memory-only / no-training — earns ZDR with a citation.
     assert provider_flags["deepinfra"]["provider_zero_data_retention"] is True
     assert provider_flags["openai"]["provider_zero_data_retention"] is False
+    assert provider_flags["openai"]["prepaid_zero_data_retention"] is False
+    assert provider_flags["openai"]["prepaid_zero_data_retention_effective_on"] == ("2026-07-28")
+    assert provider_flags["openai"]["zero_data_retention_scope"] is None
     assert provider_flags["gemini"]["provider_zero_data_retention"] is False
     assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
-    assert "Not currently marked ZDR" in provider_flags["openai"]["provider_policy"]
+    assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
+    assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
+    assert "customer BYOK" in provider_flags["openai"]["provider_policy"]
     assert "Not currently marked ZDR" in provider_flags["gemini"]["provider_policy"]
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
@@ -1070,6 +1084,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         assert provider_flags[provider]["provider_policy_url"] == source
     zdr = client.get("/v1/endpoints/zdr").json()["data"]
     assert zdr
+    for endpoint in zdr:
+        if (
+            endpoint["provider_zero_data_retention"] is not True
+            and endpoint["prepaid_zero_data_retention"] is not True
+        ):
+            assert endpoint["zero_data_retention_scope"] is None
     zdr_providers = {item["provider"] for item in zdr}
     assert {
         "trustedrouter",

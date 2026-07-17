@@ -133,6 +133,8 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
 # keeps working for every existing caller.
 from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for back-compat
     endpoint_privacy_tier,
+    endpoint_zero_data_retention,
+    endpoint_zero_data_retention_scope,
     model_provider_policy,
     model_provider_policy_url,
     model_provider_privacy_tier,
@@ -291,12 +293,8 @@ def effective_endpoint(
     )
     if provider_price is None:
         return endpoint
-    prompt_price = _customer_price(
-        provider_price.prompt_microdollars_per_million_tokens
-    )
-    completion_price = _customer_price(
-        provider_price.completion_microdollars_per_million_tokens
-    )
+    prompt_price = _customer_price(provider_price.prompt_microdollars_per_million_tokens)
+    completion_price = _customer_price(provider_price.completion_microdollars_per_million_tokens)
     tiers = _flat_tier(prompt_price, completion_price)
     return replace(
         endpoint,
@@ -483,9 +481,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         else any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     )
     byok_available = (
-        False
-        if is_meta
-        else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
+        False if is_meta else any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
     )
 
     # For meta routers, derive prompt/completion price from the candidate range
@@ -506,12 +502,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
     pub_completion_max = pub_completion_min
     if not is_meta and endpoints:
         prompt_min = min(
-            endpoint.prompt_price_microdollars_per_million_tokens
-            for endpoint in endpoints
+            endpoint.prompt_price_microdollars_per_million_tokens for endpoint in endpoints
         )
         completion_min = min(
-            endpoint.completion_price_microdollars_per_million_tokens
-            for endpoint in endpoints
+            endpoint.completion_price_microdollars_per_million_tokens for endpoint in endpoints
         )
         prompt_max = prompt_min
         completion_max = completion_min
@@ -566,6 +560,9 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "provider_zero_data_retention": model_provider_zero_data_retention(
             model.id, model.provider
         ),
+        "zero_data_retention_available": any(
+            endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": model_provider_policy(model.id, model.provider),
@@ -614,9 +611,10 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "upstream_id": endpoint.upstream_id,
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                 "stores_content": PROVIDERS[endpoint.provider].stores_content,
-                "provider_zero_data_retention": model_provider_zero_data_retention(
-                    endpoint.model_id, endpoint.provider
-                ),
+                "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
+                "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
+                "privacy_tier": endpoint_privacy_tier(endpoint),
+                "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
                 "provider_confidential_compute": PROVIDERS[
                     endpoint.provider
                 ].provider_confidential_compute,
@@ -678,6 +676,17 @@ def provider_to_openrouter_shape(provider: Provider) -> dict[str, object]:
         "attested_gateway": provider.attested_gateway,
         "stores_content": provider.stores_content,
         "provider_zero_data_retention": provider.provider_zero_data_retention,
+        "prepaid_zero_data_retention": provider.prepaid_zero_data_retention,
+        "prepaid_zero_data_retention_effective_on": (
+            provider.prepaid_zero_data_retention_effective_on
+        ),
+        "zero_data_retention_scope": (
+            "trustedrouter_prepaid"
+            if provider.prepaid_zero_data_retention
+            else "provider"
+            if provider.provider_zero_data_retention is True
+            else None
+        ),
         "provider_confidential_compute": provider.provider_confidential_compute,
         "provider_e2ee": provider.provider_e2ee,
         "provider_policy": provider.provider_policy,
