@@ -182,6 +182,24 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://trust.trustedrouter.com",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "meta": Provider(
+        slug="meta",
+        name="Meta via OpenRouter",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "TrustedRouter sends requests through its attested gateway to "
+            "OpenRouter, which routes them to Meta. This downstream route is "
+            "not marked zero-retention, confidential-compute, or end-to-end "
+            "encrypted."
+        ),
+        provider_policy_url="https://openrouter.ai/docs/features/privacy-and-logging",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     "anthropic": Provider(
         slug="anthropic",
         name="Anthropic",
@@ -731,6 +749,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "voyage",
         # Xiaomi MiMo — OpenAI-compatible chat (api.xiaomimimo.com/v1).
         "xiaomi",
+        # Meta-hosted Muse is currently exposed through OpenRouter's standard
+        # inference API. The public provider label says "Meta via OpenRouter"
+        # and the privacy posture remains standard/non-ZDR.
+        "meta",
     }
 )
 

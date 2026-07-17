@@ -1,6 +1,6 @@
 {
-  "source": "provider-direct (anthropic.com, openai.com, ai.google.dev, ...) with openrouter.ai used only for cross-check sanity",
-  "filter": "kept ONLY models with provider-direct prices; OR-only models are dropped (TR never routes via OR — every model in this snapshot is billable at the price set by the provider's own pricing page)",
+  "source": "authoritative downstream APIs; provider-direct except explicitly labelled proxy-backed routes such as Meta via OpenRouter",
+  "filter": "kept only models with a configured, billable downstream route; unconfigured OpenRouter-only models are dropped",
   "tr_keyed_providers": [
     "anthropic",
     "baseten",

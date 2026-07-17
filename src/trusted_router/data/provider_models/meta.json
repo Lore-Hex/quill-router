@@ -1,0 +1,22 @@
+{
+  "_about": "Meta Muse Spark served through OpenRouter. This is not a direct Meta, ZDR, confidential-compute, or downstream-attested route.",
+  "provider": "meta",
+  "source": "https://openrouter.ai/api/v1/models/meta/muse-spark-1.1/endpoints",
+  "generated_at": "2026-07-16T00:00:00Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "meta/muse-spark-1.1",
+      "upstream_id": "meta/muse-spark-1.1",
+      "display_name": "Meta Muse Spark 1.1 via OpenRouter",
+      "context_length": 1048576,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 4250000,
+      "cached_input_token_price_per_m": 150000
+    }
+  ]
+}

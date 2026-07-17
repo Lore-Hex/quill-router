@@ -59,10 +59,14 @@ from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapsho
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
 
-# Provider modules in order of execution. Together first because it's
-# the JSON-API path that doesn't touch the LLM-rewriteable parser tier.
+# Provider modules in order of execution. Together stays first because existing
+# refresh contracts depend on it; Meta is another JSON API path that does not
+# touch the LLM-rewriteable parser tier.
 PROVIDER_SLUGS = [
     "together",
+    # Meta Muse is served through OpenRouter, so OpenRouter is the provider API
+    # and billing source for this one explicitly labelled downstream route.
+    "meta",
     "anthropic",
     "openai",
     "gemini",
@@ -122,6 +126,19 @@ MAX_TOLERATED_FAILURES = int(os.environ.get("TR_PRICING_MAX_FAILURES", "2"))
 # Threshold for cross-check disagreements between provider-direct and
 # OR. Above this, we log a note. Provider-direct still wins.
 CROSS_CHECK_DISAGREE_THRESHOLD = 0.02  # 2%
+
+# OpenRouter is the actual serving and billing API for this deliberately
+# labelled downstream provider. Keep its provenance distinct from both direct
+# provider prices and emergency OpenRouter fallback prices.
+_OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta"})
+
+
+def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
+    if slug in healed_slugs:
+        return "self_healed_provider"
+    if slug in _OPENROUTER_BACKED_PROVIDER_SLUGS:
+        return "openrouter_provider"
+    return "provider_direct"
 
 
 def _import_provider(slug: str):
@@ -531,11 +548,11 @@ def _merge_snapshot(
 ) -> dict[str, Any]:
     """Build the final snapshot.
 
-    Policy: only models we have provider-direct prices for are in the
-    snapshot. OR is a cross-check signal, never a billing source — TR
-    routes directly to each provider (Anthropic, OpenAI, Gemini, etc.)
-    using TR's own keys, so prices MUST come from provider-direct
-    parsers. Anything OR-only falls out of the catalog by design.
+    Policy: only models with an authoritative price from the API we actually
+    pay are in the snapshot. Almost every route is provider-direct, with OR
+    used only as a cross-check. The explicitly labelled Meta via OpenRouter
+    route is the narrow exception: its OpenRouter endpoint is both the serving
+    API and billing source. Unconfigured OR-only models still fall out.
 
     A single model can have multiple provider-direct endpoints (e.g.
     meta-llama/llama-3.1-8b on both Cerebras and Novita;
@@ -579,7 +596,7 @@ def _merge_snapshot(
             # Model-level headline pricing = the cheapest *positively-priced*
             # provider-direct tier (matches OR's convention and what
             # /v1/models top-level pricing should show).
-            _cheapest_slug, cheapest = min(
+            cheapest_slug, cheapest = min(
                 priced_by_slug.items(),
                 key=lambda item: (
                     item[1].tiers[0].prompt_micro_per_m,
@@ -591,10 +608,9 @@ def _merge_snapshot(
             new_model["pricing"] = new_pricing
             # Tag pricing_source as self-healed if ANY of the slugs that
             # priced this model went through the LLM rewrite.
-            if any(slug in healed_slugs for slug in priced_by_slug):
-                new_model["pricing_source"] = "self_healed_provider"
-            else:
-                new_model["pricing_source"] = "provider_direct"
+            new_model["pricing_source"] = _endpoint_pricing_source(
+                cheapest_slug, healed_slugs
+            )
         else:
             # Every keyed provider returned $0 for a model that OR prices
             # above $0 — a feed glitch across all of them at once. Fall
@@ -641,9 +657,7 @@ def _merge_snapshot(
             new_ep_pricing = dict(new_ep.get("pricing") or {})
             new_ep_pricing.update(_price_to_pricing_block(ep_price))
             new_ep["pricing"] = new_ep_pricing
-            new_ep["pricing_source"] = (
-                "self_healed_provider" if ep_slug in healed_slugs else "provider_direct"
-            )
+            new_ep["pricing_source"] = _endpoint_pricing_source(ep_slug, healed_slugs)
             # If this provider's config module exports an
             # UPSTREAM_ID_MAP, override the endpoint's model_id with
             # the provider-native id so the enclave sends what the
@@ -675,9 +689,7 @@ def _merge_snapshot(
                 "tr_provider_slug": missing_slug,
                 "context_length": int(new_model.get("context_length") or 0),
                 "pricing": _price_to_pricing_block(missing_price),
-                "pricing_source": (
-                    "self_healed_provider" if missing_slug in healed_slugs else "provider_direct"
-                ),
+                "pricing_source": _endpoint_pricing_source(missing_slug, healed_slugs),
                 "supported_parameters": list(new_model.get("supported_parameters") or []),
                 "quantization": "unknown",
             }
@@ -692,13 +704,12 @@ def _merge_snapshot(
     merged_models.sort(key=lambda m: str(m.get("id") or ""))
     return {
         "source": (
-            "provider-direct (anthropic.com, openai.com, ai.google.dev, ...) "
-            "with openrouter.ai used only for cross-check sanity"
+            "authoritative downstream APIs; provider-direct except explicitly "
+            "labelled proxy-backed routes such as Meta via OpenRouter"
         ),
         "filter": (
-            "kept ONLY models with provider-direct prices; OR-only models are "
-            "dropped (TR never routes via OR — every model in this snapshot is "
-            "billable at the price set by the provider's own pricing page)"
+            "kept only models with a configured, billable downstream route; "
+            "unconfigured OpenRouter-only models are dropped"
         ),
         "tr_keyed_providers": or_snapshot.get("tr_keyed_providers", []),
         "model_count": len(merged_models),

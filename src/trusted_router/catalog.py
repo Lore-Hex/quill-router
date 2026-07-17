@@ -267,9 +267,9 @@ def orchestration_role(model_id: str) -> str | None:
 # provider allowlist in their agreement and request body.
 # IDs follow snapshot naming exactly. The picks span the 8 keyed
 # providers so `trustedrouter/auto` rolls over across providers if any
-# one is down. Each entry must have a provider-direct price in the
-# snapshot — OR-only models can no longer reach the catalog (see
-# scripts/pricing/refresh.py:_merge_snapshot).
+# one is down. Each entry must have an authoritative price for the API that the
+# gateway actually calls. Unconfigured OR-only models cannot reach the catalog;
+# explicitly labelled proxy-backed routes are never auto candidates.
 #
 # 2026-06 update: OpenAI's GPT-5.4 line (incl. gpt-5.4-nano) and the "-pro"
 # tiers 502 on our key — verified via the gateway probe; see

@@ -378,9 +378,10 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
 ]:
     """Read provider-native model manifests for providers whose live API
     lists more routes than OpenRouter's endpoint feed. These manifests
-    preserve exact upstream model IDs and provider-direct prices, so the
-    control plane can authorize routes the attested gateway can actually
-    call and bill.
+    preserve exact upstream model IDs and authoritative downstream prices, so
+    the control plane can authorize routes the attested gateway can actually
+    call and bill. Most are provider-direct; Meta Muse is explicitly labelled
+    as Meta via OpenRouter.
 
     Novita, Nebius, MiniMax, Crusoe, Cerebras, Gemini, Fireworks, DeepInfra,
     Moonshot/Kimi, and Z.AI currently use this path because their
@@ -418,6 +419,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "zai",
         "tinfoil",
         "xiaomi",
+        "meta",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
         if not path.exists() or provider_slug not in PROVIDERS:
