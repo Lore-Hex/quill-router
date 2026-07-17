@@ -44,7 +44,7 @@ from trusted_router.storage_gcp_synthetic_index import (
 from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
-from trusted_router.storage_models import iso_now, utcnow
+from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
     _rotation_max_tokens,
@@ -65,6 +65,11 @@ from trusted_router.synthetic.rollups import (
     apply_sample_to_rollup,
     new_rollup_for_sample,
     sample_rollup_ids,
+)
+from trusted_router.synthetic.route_health import (
+    RouteHealthFlag,
+    evaluate_route_health,
+    report_route_health,
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
 
@@ -1745,6 +1750,86 @@ async def test_one_probe_pass_keeps_gateway_accounting_probes_ordered(
     assert events.index("billing-end") < events.index("fallback-start")
 
 
+@pytest.mark.asyncio
+async def test_route_health_caller_logs_flags_and_does_not_fail_pass(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-trustedrouter-internal-token"] == "internal"
+        if request.url.path.endswith("/failure"):
+            return httpx.Response(500, json={"error": "unavailable"})
+        return httpx.Response(200, json={"data": {"flagged": [{"provider": "dead"}]}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await cli_module._post_route_health(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/route-health",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+        await cli_module._post_route_health(
+            client,
+            url="https://trustedrouter.com/failure",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+        )
+
+    output = capsys.readouterr()
+    assert "route-health flagged: 1" in output.out
+    assert "route-health check failed:" in output.err
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("minute", "every_pass", "should_post"),
+    [
+        (4, None, True),
+        (5, None, False),
+        (37, "1", True),
+    ],
+)
+async def test_route_health_caller_obeys_hourly_gate_and_override(
+    monkeypatch: pytest.MonkeyPatch,
+    minute: int,
+    every_pass: str | None,
+    should_post: bool,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    if every_pass is None:
+        monkeypatch.delenv("TR_SYNTHETIC_ROUTE_HEALTH_EVERY_PASS", raising=False)
+    else:
+        monkeypatch.setenv("TR_SYNTHETIC_ROUTE_HEALTH_EVERY_PASS", every_pass)
+
+    posted: list[tuple[str, str]] = []
+
+    async def fake_post_route_health(
+        _client: httpx.AsyncClient,
+        *,
+        url: str,
+        internal_token: str,
+    ) -> None:
+        posted.append((url, internal_token))
+
+    monkeypatch.setattr(cli_module, "_post_route_health", fake_post_route_health)
+    now = dt.datetime(2026, 7, 17, 10, minute, tzinfo=dt.UTC)
+    async with httpx.AsyncClient() as client:
+        await cli_module._post_route_health_if_due(
+            client,
+            url="https://trustedrouter.com/v1/internal/synthetic/route-health",
+            internal_token="internal",  # noqa: S106 - test placeholder.
+            now=now,
+        )
+
+    expected = [
+        (
+            "https://trustedrouter.com/v1/internal/synthetic/route-health",
+            "internal",
+        )
+    ]
+    assert posted == (expected if should_post else [])
+
+
 def test_synthetic_deploy_targets_public_api_domain() -> None:
     deploy_script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = deploy_script.read_text()
@@ -2303,3 +2388,297 @@ def test_internal_benchmark_ingest_requires_token() -> None:
         json={"samples": []},
     )
     assert resp.status_code in (401, 403)
+
+
+class _RouteHealthStore:
+    def __init__(self, samples: list[ProviderBenchmarkSample]) -> None:
+        self.samples = samples
+        self.calls: list[dict[str, Any]] = []
+
+    def provider_benchmark_samples(
+        self,
+        *,
+        date: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        limit: int = 1000,
+    ) -> list[ProviderBenchmarkSample]:
+        self.calls.append(
+            {"date": date, "provider": provider, "model": model, "limit": limit}
+        )
+        samples = [
+            sample
+            for sample in self.samples
+            if (provider is None or sample.provider == provider)
+            and (model is None or sample.model == model)
+        ]
+        samples.sort(key=lambda sample: sample.created_at, reverse=True)
+        return samples[:limit]
+
+
+def _route_health_sample(
+    sample_id: str,
+    *,
+    provider: str,
+    model: str,
+    status: str,
+    age_hours: int = 0,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    source: str = "synthetic",
+) -> ProviderBenchmarkSample:
+    created_at = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=age_hours)).isoformat()
+    return ProviderBenchmarkSample(
+        id=sample_id,
+        model=model,
+        provider=provider,
+        provider_name=provider,
+        status=status,
+        usage_type="Credits",
+        streamed=True,
+        error_type=error_type,
+        error_message=error_message,
+        source=source,
+        created_at=created_at,
+    )
+
+
+def test_evaluate_route_health_flags_dead_route_but_not_healthy_or_thin_routes() -> None:
+    samples = [
+        _route_health_sample(
+            f"dead-{index}",
+            provider="dead",
+            model="model-dead",
+            status="error",
+            age_hours=index,
+            error_type="provider_error",
+            error_message="latest failure" if index == 0 else "older failure",
+        )
+        for index in range(6)
+    ]
+    samples.extend(
+        _route_health_sample(
+            f"healthy-{index}",
+            provider="healthy",
+            model="model-healthy",
+            status="error" if index == 0 else "success",
+            error_type="provider_error" if index == 0 else None,
+        )
+        for index in range(6)
+    )
+    samples.extend(
+        _route_health_sample(
+            f"thin-{index}",
+            provider="thin",
+            model="model-thin",
+            status="error",
+        )
+        for index in range(5)
+    )
+    store = _RouteHealthStore(samples)
+
+    routes = [
+        ("dead", "model-dead"),
+        ("healthy", "model-healthy"),
+        ("thin", "model-thin"),
+    ]
+    flags = evaluate_route_health(store, routes=routes)  # type: ignore[arg-type]
+
+    assert flags == [
+        RouteHealthFlag(
+            provider="dead",
+            model="model-dead",
+            samples=6,
+            failures=6,
+            failure_rate=1.0,
+            newest_error_type="provider_error",
+            newest_error_message="latest failure",
+        )
+    ]
+    assert store.calls == [
+        {"date": None, "provider": provider, "model": model, "limit": 48}
+        for provider, model in routes
+    ]
+
+
+def test_evaluate_route_health_excludes_unsupported_samples_from_rate() -> None:
+    samples = [
+        _route_health_sample(
+            f"error-{index}",
+            provider="reseller",
+            model="model-a",
+            status="error",
+            error_type="provider_error",
+        )
+        for index in range(6)
+    ]
+    samples.extend(
+        _route_health_sample(
+            f"unsupported-{index}",
+            provider="reseller",
+            model="model-a",
+            status="unsupported",
+            error_type="unsupported_route",
+        )
+        for index in range(10)
+    )
+
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples),
+        routes=[("reseller", "model-a")],
+    )
+
+    assert len(flags) == 1
+    assert flags[0].samples == 6
+    assert flags[0].failures == 6
+    assert flags[0].failure_rate == 1.0
+
+
+def test_evaluate_route_health_ignores_organic_samples() -> None:
+    samples = [
+        _route_health_sample(
+            f"organic-error-{index}",
+            provider="reseller",
+            model="model-a",
+            status="error",
+            error_type="provider_error",
+            source="organic",
+        )
+        for index in range(10)
+    ]
+    samples.extend(
+        _route_health_sample(
+            f"synthetic-success-{index}",
+            provider="reseller",
+            model="model-a",
+            status="success",
+        )
+        for index in range(2)
+    )
+
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(samples),
+        routes=[("reseller", "model-a")],
+        failure_threshold=0.8,
+    )
+
+    assert flags == []
+
+
+def test_evaluate_route_health_derives_routes_from_rotation_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import route_health as route_health_module
+
+    candidates = {
+        "provider-b": ["model-2", "model-1"],
+        "provider-a": ["model-3"],
+    }
+    monkeypatch.setattr(route_health_module, "rotation_candidates", lambda: candidates)
+    samples = [
+        _route_health_sample(
+            f"error-{index}",
+            provider="provider-a",
+            model="model-3",
+            status="error",
+            error_type="provider_error",
+        )
+        for index in range(6)
+    ]
+    store = _RouteHealthStore(samples)
+
+    flags = evaluate_route_health(store)  # type: ignore[arg-type]
+
+    assert [(flag.provider, flag.model) for flag in flags] == [("provider-a", "model-3")]
+    assert store.calls == [
+        {"date": None, "provider": provider, "model": model, "limit": 48}
+        for provider, models in candidates.items()
+        for model in models
+    ]
+
+
+def test_report_route_health_uses_one_sentry_fingerprint_per_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sentry_sdk
+
+    class CapturedScope:
+        def __init__(self) -> None:
+            self.fingerprint: list[str] = []
+            self.tags: dict[str, str] = {}
+
+        def set_tag(self, key: str, value: str) -> None:
+            self.tags[key] = value
+
+    class ScopeManager:
+        def __init__(self, scope: CapturedScope) -> None:
+            self.scope = scope
+
+        def __enter__(self) -> CapturedScope:
+            return self.scope
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+    scopes: list[CapturedScope] = []
+    captured: list[tuple[str, str]] = []
+
+    def push_scope() -> ScopeManager:
+        scope = CapturedScope()
+        scopes.append(scope)
+        return ScopeManager(scope)
+
+    def capture_message(message: str, *, level: str) -> None:
+        captured.append((message, level))
+
+    monkeypatch.setattr(sentry_sdk, "push_scope", push_scope)
+    monkeypatch.setattr(sentry_sdk, "capture_message", capture_message)
+    flags = [
+        RouteHealthFlag("gmi", "model-a", 6, 6, 1.0, "provider_error", "missing"),
+        RouteHealthFlag("phala", "model-b", 8, 8, 1.0, "provider_error", "missing"),
+    ]
+
+    report_route_health(flags)
+
+    assert len(captured) == len(flags)
+    assert all(level == "error" for _, level in captured)
+    assert [scope.fingerprint for scope in scopes] == [
+        ["route-health", "gmi", "model-a"],
+        ["route-health", "phala", "model-b"],
+    ]
+    assert scopes[0].tags == {
+        "route_provider": "gmi",
+        "route_model": "model-a",
+        "failure_rate": "1.0000",
+    }
+
+
+def test_internal_route_health_reports_flags_and_requires_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.routes.internal import synthetic as synthetic_routes
+
+    flag = RouteHealthFlag(
+        "gmi",
+        "anthropic/claude-fable-5",
+        6,
+        6,
+        1.0,
+        "provider_error",
+        "model unavailable",
+    )
+    reported: list[RouteHealthFlag] = []
+    monkeypatch.setattr(synthetic_routes, "evaluate_route_health", lambda _store: [flag])
+    monkeypatch.setattr(synthetic_routes, "report_route_health", reported.extend)
+    client = TestClient(create_app(_benchmark_ingest_settings(), init_observability=False))
+
+    unauthorized = client.post("/v1/internal/synthetic/route-health")
+    response = client.post(
+        "/v1/internal/synthetic/route-health",
+        headers={"x-trustedrouter-internal-token": "test-internal-secret"},
+    )
+
+    assert unauthorized.status_code in (401, 403)
+    assert response.status_code == 200
+    assert response.json() == {"data": {"flagged": [asdict(flag)]}}
+    assert reported == [flag]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import os
 import random
 import sys
@@ -144,6 +145,42 @@ async def _rotation_pass(
         return list(await asyncio.gather(*probes))
 
 
+async def _post_route_health(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    internal_token: str,
+) -> None:
+    try:
+        response = await client.post(
+            url,
+            headers={"x-trustedrouter-internal-token": internal_token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        flagged = payload.get("data", {}).get("flagged") if isinstance(payload, dict) else None
+        if not isinstance(flagged, list):
+            raise ValueError("route-health response did not contain a flagged list")
+        print(f"route-health flagged: {len(flagged)}")
+    except Exception as exc:
+        print(f"route-health check failed: {exc}", file=sys.stderr)
+
+
+async def _post_route_health_if_due(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    internal_token: str,
+    now: dt.datetime | None = None,
+) -> None:
+    # Fingerprinting groups emissions into one Sentry issue per route. Hourly
+    # re-emission (~24/day/route) keeps the signal fresh without burning quota.
+    every_pass = os.environ.get("TR_SYNTHETIC_ROUTE_HEALTH_EVERY_PASS") == "1"
+    if not every_pass and (now or dt.datetime.now(dt.UTC)).minute >= 5:
+        return
+    await _post_route_health(client, url=url, internal_token=internal_token)
+
+
 async def run() -> int:
     settings = get_settings()
     monitor_region = (
@@ -239,6 +276,15 @@ async def run() -> int:
             )
             print(bench_response.text)
             ok = ok and bench_response.status_code == 200
+            route_health_url = os.environ.get(
+                "TR_SYNTHETIC_ROUTE_HEALTH_URL",
+                f"{control_plane.rstrip('/')}/v1/internal/synthetic/route-health",
+            )
+            await _post_route_health_if_due(
+                client,
+                url=route_health_url,
+                internal_token=internal_token,
+            )
     return 0 if ok else 1
 
 

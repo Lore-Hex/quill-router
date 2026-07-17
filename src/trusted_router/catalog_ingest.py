@@ -213,6 +213,28 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "amd/Llama-3.3-70B-Instruct-FP8-KV",
         }
     ),
+    # These resellers list Claude ids their APIs do not actually serve: 100%
+    # provider_error in synthetic probes since the first sample, verified
+    # 2026-07-17. Anthropic-direct and Lightning routes are unaffected.
+    "gmi": frozenset(
+        {
+            "anthropic/claude-fable-5",
+            "anthropic/claude-sonnet-5",
+            "anthropic/claude-opus-4.1",
+        }
+    ),
+    "deepinfra": frozenset(
+        {
+            "anthropic/claude-fable-5",
+            "anthropic/claude-sonnet-5",
+        }
+    ),
+    "phala": frozenset(
+        {
+            "anthropic/claude-sonnet-5",
+            "anthropic/claude-opus-4.1",
+        }
+    ),
 }
 
 
