@@ -1237,9 +1237,13 @@ def _endpoint_cost_microdollars(
         and rates.completion_price_microdollars_per_million_tokens > 0
     )
     if cache_read_tokens or cache_creation_tokens:
-        # Endpoint path prices cache via provider multipliers; the tier cached rate is the model-level path's policy.
-        read_price, write_price = cache_token_prices_microdollars(
+        default_read_price, write_price = cache_token_prices_microdollars(
             endpoint.provider, prompt_price
+        )
+        read_price = (
+            rates.prompt_cached_price_microdollars_per_million_tokens
+            if rates.prompt_cached_price_microdollars_per_million_tokens is not None
+            else default_read_price
         )
         cost += token_cost_microdollars(cache_read_tokens, read_price)
         cost += token_cost_microdollars(cache_creation_tokens, write_price)

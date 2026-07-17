@@ -32,15 +32,24 @@ def _client_and_key() -> tuple[TestClient, dict]:
     return client, created.json()["data"]
 
 
-def _authorize(client: TestClient, key: dict, model: str) -> dict:
+def _authorize(
+    client: TestClient,
+    key: dict,
+    model: str,
+    *,
+    provider: dict | None = None,
+) -> dict:
+    body = {
+        "api_key_hash": key["hash"],
+        "model": model,
+        "estimated_input_tokens": 8_000,
+        "max_output_tokens": 1_000,
+    }
+    if provider is not None:
+        body["provider"] = provider
     authorize = client.post(
         "/v1/internal/gateway/authorize",
-        json={
-            "api_key_hash": key["hash"],
-            "model": model,
-            "estimated_input_tokens": 8_000,
-            "max_output_tokens": 1_000,
-        },
+        json=body,
     )
     assert authorize.status_code == 200, authorize.text
     return authorize.json()["data"]
@@ -128,6 +137,48 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
     generation = STORE.get_generation(data["generation_id"])
     assert generation is not None
     assert generation.tokens_prompt == 1_000
+
+
+def test_tinfoil_glm_52_uses_published_cached_input_rate() -> None:
+    client, key = _client_and_key()
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
+    endpoint = endpoint_for_id(auth["endpoint_id"])
+    assert endpoint is not None and endpoint.provider == "tinfoil"
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth["authorization_id"],
+            "actual_input_tokens": 1_000,
+            "actual_output_tokens": 50,
+            "cache_read_input_tokens": 900,
+            "request_id": "gw-cache-tinfoil",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+
+    tier = endpoint.price_tiers[0]
+    cached_price = tier.prompt_cached_price_microdollars_per_million_tokens
+    assert cached_price == 412_500
+    expected = (
+        token_cost_microdollars(
+            100, tier.prompt_price_microdollars_per_million_tokens
+        )
+        + token_cost_microdollars(
+            900,
+            cached_price,
+        )
+        + token_cost_microdollars(
+            50, tier.completion_price_microdollars_per_million_tokens
+        )
+    )
+    assert settle.json()["data"]["cost_microdollars"] == expected
 
 
 def test_settle_without_cache_fields_is_unchanged() -> None:
