@@ -1005,6 +1005,10 @@ def _execute_sql(
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
+    if "SELECT id, body FROM tr_entities WHERE kind=@kind" in sql:
+        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind]
+        rows.sort(key=lambda item: item[0])
+        return [[entity_id, body] for entity_id, body in rows]
     if "WHERE kind=@kind" in sql:
         rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind]
         rows.sort(key=lambda item: item[0])

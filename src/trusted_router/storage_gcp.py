@@ -425,24 +425,6 @@ class SpannerBigtableStore:
     def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         return self._read_entity("credit", workspace_id, CreditAccount)
 
-    def credit_money_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
-        # Fallback money read for live_credit_summary when the typed snapshot is
-        # unavailable (mirror flag off, or the typed row not yet seeded). The
-        # stored 'credit' JSON still carries the legacy money on pre-C2b rows
-        # (they are only dropped when constructing the metadata-only
-        # CreditAccount, never from storage), so read the raw entity — matching
-        # the pre-C2b behavior where live_credit_summary fell back to the JSON
-        # CreditAccount. A tr_credit_balance point-read is deliberately NOT used:
-        # that table may not exist in a deploy-before-DDL state.
-        raw = self._read_entity("credit", workspace_id, dict)
-        if raw is None:
-            return None
-        return (
-            int(raw.get("total_credits_microdollars", 0)),
-            int(raw.get("total_usage_microdollars", 0)),
-            int(raw.get("reserved_microdollars", 0)),
-        )
-
     def _credit_shard_count_loader(self, workspace_id: str) -> Callable[[], int]:
         def load() -> int:
             account = self.get_credit_account(workspace_id)
@@ -894,32 +876,9 @@ class SpannerBigtableStore:
                 )
                 if updated != 0:
                     continue
-                if shard_count != 1:
-                    raise RuntimeError(
-                        f"missing tr_credit_balance shard {shard} for sharded workspace"
-                    )
-                # Seed path for legacy/missing typed rows; preserve any old JSON
-                # money if this is the first typed grant for a pre-C2b row.
-                raw_credit = (
-                    self._read_entity_tx(transaction, "credit", workspace_id, dict) or {}
-                )
-                new_total = int(raw_credit.get("total_credits_microdollars", 0)) + amount
-                transaction.execute_update(
-                    "INSERT INTO tr_credit_balance "
-                    "(workspace_id, shard, total_credits, source_updated_at, updated_at) "
-                    "VALUES (@ws, @shard, @total, @now, @now)",
-                    params={
-                        "ws": workspace_id,
-                        "shard": UNSHARDED,
-                        "total": new_total,
-                        "now": now,
-                    },
-                    param_types={
-                        "ws": pt.STRING,
-                        "shard": pt.INT64,
-                        "total": pt.INT64,
-                        "now": pt.TIMESTAMP,
-                    },
+                raise RuntimeError(
+                    "missing authoritative tr_credit_balance shard "
+                    f"{shard} for workspace {workspace_id}"
                 )
 
             insert_entity_dml_at(
@@ -1479,10 +1438,9 @@ class SpannerBigtableStore:
     def typed_credit_snapshot(self, workspace_id: str) -> tuple[int, int, int] | None:
         """Sum the workspace's active authoritative credit sub-ledgers.
 
-        Returns (total_credits, total_usage, reserved) microdollars, or None when
-        a one-shard row is not seeded. A configured multi-shard workspace fails
-        closed if any active row is missing; falling back to stale JSON usage
-        would overstate availability.
+        Returns (total_credits, total_usage, reserved) microdollars. A workspace
+        without a metadata account returns None. Any missing active typed shard
+        is ledger corruption and fails closed; JSON money is never consulted.
         """
         pt = self._param_types
         # This exact snapshot also feeds auto-refill decisions. Do not reuse the
@@ -1500,12 +1458,16 @@ class SpannerBigtableStore:
                 param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             ))
         if not rows:
-            return None
+            raise RuntimeError(
+                f"missing authoritative tr_credit_balance rows for workspace {workspace_id}"
+            )
         observed_shards = [int(row[0]) for row in rows]
         if observed_shards != list(range(shard_count)):
-            if shard_count == 1:
-                return None
-            raise RuntimeError("configured tr_credit_balance shard set is incomplete")
+            raise RuntimeError(
+                "configured tr_credit_balance shard set is incomplete for "
+                f"workspace {workspace_id}: expected {list(range(shard_count))}, "
+                f"observed {observed_shards}"
+            )
         return (
             sum(int(row[1]) for row in rows),
             sum(int(row[2]) for row in rows),

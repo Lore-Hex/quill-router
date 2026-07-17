@@ -599,9 +599,9 @@ gcloud spanner databases execute-sql trusted-router \
          FROM tr_credit_balance WHERE workspace_id='<ws>'"
 ```
 
-Never read `total_credits_microdollars` off the JSON `credit` row for money — it
-is frozen/stale. App money reads go through `live_credit_summary` /
-`typed_aware_credit_account`.
+Never read money from the JSON `credit` row. App and operator money reads go
+through `live_credit_summary`, which reads `tr_credit_balance` in production and
+fails closed if the configured typed shard set is incomplete.
 
 **The two standing tripwires (kept when the reconcile tooling was deleted):**
 
@@ -617,15 +617,24 @@ is frozen/stale. App money reads go through `live_credit_summary` /
   from live open holds. Run read-only/dry first, then `--apply`. It still refuses
   nonzero-shard rows it can't reconcile — do not force it.
 
-**Grant / adjust credit**: use the grant scripts (`scripts/credit_grant_*.py`)
-or the Stripe webhook path — both go typed-direct (`credit_workspace_typed_direct`)
-and are idempotent on a `stripe_event` row, distributing the delta across active
-shards. Do not hand-write `tr_credit_balance`.
+**Grant credit**: use `scripts/grant_credit.py` or the Stripe webhook path. Both
+go typed-direct (`credit_workspace_typed_direct`) and are idempotent on a
+`stripe_event` row, distributing the delta across active shards. The operator
+command is dry-run-first and reports the authoritative available balance:
 
-**Known residual (display-only)**: workspace `ea7dd3d8` carries 3 open legacy
-(JSON-era) reservations with `reserved=29373` on its dead JSON row. It is
-invisible to the typed book and the audit, harmless (display-only), and can be
-cleaned up opportunistically — do not let it distract from a real audit failure.
+```bash
+uv run python scripts/grant_credit.py \
+  --email user@example.com --amount 100 \
+  --event-id manual_grant_YYYY_MM_DD_reason --apply
+```
+
+Do not hand-write `tr_credit_balance`.
+
+**Retired JSON-field cleanup**: `scripts/cleanup_legacy_credit_json.py` verifies
+the typed invariant and every configured shard before removing the three stale
+money keys. It preserves the credit row's Stripe, auto-refill, shard, and future
+metadata. Run once without flags, review, then run with `--apply`. Re-running is
+idempotent.
 
 ---
 

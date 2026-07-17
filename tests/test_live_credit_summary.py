@@ -63,12 +63,7 @@ def test_live_credit_summary_typed_row_wins() -> None:
     }
 
 
-def test_live_credit_summary_typed_row_absent_falls_back_to_json() -> None:
-    # No typed snapshot available (row not yet seeded, or the mirror flag is
-    # off) but the 'credit' entity still carries legacy JSON money. Must fall
-    # back to that money — matching pre-C2b behavior. Returning None here would
-    # 404 the billing/mcp reads and stop auto-refill for a workspace that has
-    # real credit.
+def test_live_credit_summary_typed_row_absent_fails_closed_despite_stale_json() -> None:
     store, _db, _ = make_fake_store()
     workspace_id = "ws_json_summary"
     store._write_entity(
@@ -82,12 +77,14 @@ def test_live_credit_summary_typed_row_absent_falls_back_to_json() -> None:
         },
     )
 
-    assert live_credit_summary(workspace_id, store=store) == {
-        "total_credits": 5_000_000,
-        "total_usage": 1_500_000,
-        "reserved": 500_000,
-        "available": 3_000_000,
-    }
+    with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance"):
+        live_credit_summary(workspace_id, store=store)
+
+
+def test_spanner_store_exposes_no_json_money_snapshot() -> None:
+    store, _db, _ = make_fake_store()
+
+    assert not hasattr(store, "credit_money_snapshot")
 
 
 def test_live_credit_summary_no_credit_entity_returns_none() -> None:
