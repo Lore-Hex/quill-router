@@ -1395,6 +1395,14 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
             # 2026-07-15: the snapshot route returns 404 when pinned to GMI.
             # Keep the directly verified Baseten route.
             "nvidia/nemotron-3-ultra-550b-a55b",
+            # 2026-07-16: GMI 404s ("No matching target server found for model
+            # kimi-k3") when pinned through the live gateway, and the default
+            # route preferred GMI — which took down prometheus-2.0 and every
+            # K3 combo (kimi-k3 is their synthesizer/judge). The Moonshot
+            # first-party route (provider "moonshot", upstream id kimi-k3)
+            # verified OK end-to-end at the same moment. Same failure class
+            # as the nemotron entry above.
+            "moonshotai/kimi-k3",
             # 2026-06-24: GMI returns HTTP 200 with an empty assistant message
             # for these Gemma 4 routes when pinned through the live gateway.
             # Treat as unserved for prepaid routing until GMI returns usable
