@@ -942,7 +942,7 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
         if endpoint.usage_type == "Credits"
     }
     assert prepaid["baseten"] == "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
-    assert "nebius" not in prepaid
+    assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
     assert "together" not in prepaid
     assert "gmi" not in prepaid
 
