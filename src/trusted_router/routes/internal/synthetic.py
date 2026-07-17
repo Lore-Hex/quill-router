@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from trusted_router.synthetic.probes import (
     gateway_fallback_probe,
     run_synthetic_once,
 )
+from trusted_router.synthetic.route_health import evaluate_route_health, report_route_health
 from trusted_router.types import ErrorType
 
 
@@ -58,6 +60,13 @@ def register(router: APIRouter) -> None:
         samples = [_benchmark_from_body(item) for item in raw_samples]
         await run_in_threadpool(_record_benchmark_samples, samples)
         return {"data": {"recorded": len(samples)}}
+
+    @router.post("/internal/synthetic/route-health")
+    async def synthetic_route_health(request: Request, settings: SettingsDep) -> dict[str, Any]:
+        require_internal_gateway(request, settings)
+        flags = await run_in_threadpool(evaluate_route_health, STORE)
+        await run_in_threadpool(report_route_health, flags)
+        return {"data": {"flagged": [asdict(flag) for flag in flags]}}
 
     @router.post("/internal/synthetic/run")
     async def synthetic_run(request: Request, settings: SettingsDep) -> dict[str, Any]:

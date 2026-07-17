@@ -526,6 +526,13 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ("novita", "baidu/ernie-4.5-vl-28b-a3b"),
         ("novita", "meta-llama/llama-3-70b-instruct"),
         ("makora", "amd/llama-3.3-70b-instruct-fp8-kv"),
+        ("gmi", "anthropic/claude-fable-5"),
+        ("gmi", "anthropic/claude-sonnet-5"),
+        ("gmi", "anthropic/claude-opus-4.1"),
+        ("deepinfra", "anthropic/claude-fable-5"),
+        ("deepinfra", "anthropic/claude-sonnet-5"),
+        ("phala", "anthropic/claude-sonnet-5"),
+        ("phala", "anthropic/claude-opus-4.1"),
     ]
 
     for provider, model_id in quarantined_routes:
@@ -534,6 +541,9 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
             for endpoint in MODEL_ENDPOINTS.values()
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
+
+    assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@lightning/prepaid" in MODEL_ENDPOINTS
 
 
 def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:
