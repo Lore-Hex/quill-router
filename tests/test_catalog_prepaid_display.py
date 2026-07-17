@@ -182,6 +182,31 @@ def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
     assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
 
 
+def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
+    flagged_routes = {
+        ("openai/gpt-oss-120b", "together"),
+        ("openai/gpt-5.6-sol", "lightning"),
+        ("x-ai/grok-4.5", "gmi"),
+        ("anthropic/claude-opus-4.8", "phala"),
+        ("z-ai/glm-5.1", "deepinfra"),
+        ("moonshotai/kimi-k2", "kimi"),
+    }
+
+    for model_id, provider in flagged_routes:
+        assert not [
+            endpoint
+            for endpoint in endpoints_for_model(model_id)
+            if endpoint.provider == provider
+        ]
+
+    # Quarantine is provider-scoped: healthy sibling routes survive.
+    assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS
+    assert (
+        "mistralai/mistral-small-24b-instruct-2501@deepinfra/prepaid"
+        in MODEL_ENDPOINTS
+    )
+
+
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
     image_preview = MODEL_ENDPOINTS[

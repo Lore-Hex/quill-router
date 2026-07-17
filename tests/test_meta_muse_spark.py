@@ -14,7 +14,7 @@ MODEL_ID = "meta/muse-spark-1.1"
 ENDPOINT_ID = f"{MODEL_ID}@meta/prepaid"
 
 
-def test_muse_spark_is_a_prepaid_openrouter_backed_route() -> None:
+def test_muse_spark_route_is_quarantined_but_provider_stays_configured() -> None:
     provider = PROVIDERS["meta"]
     assert provider.name == "Meta via OpenRouter"
     assert provider.supports_prepaid is True
@@ -27,18 +27,8 @@ def test_muse_spark_is_a_prepaid_openrouter_backed_route() -> None:
     assert provider.provider_policy_url
 
     assert "meta" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    model = MODELS[MODEL_ID]
-    assert model.context_length == 1_048_576
-    assert model.prepaid_available is False
-    assert model.byok_available is False
-
-    endpoint = MODEL_ENDPOINTS[ENDPOINT_ID]
-    assert endpoint.provider == "meta"
-    assert endpoint.usage_type == "Credits"
-    assert endpoint.upstream_id == MODEL_ID
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 1_375_000
-    assert endpoint.completion_price_microdollars_per_million_tokens == 4_675_000
-    assert endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 165_000
+    assert MODEL_ID not in MODELS
+    assert ENDPOINT_ID not in MODEL_ENDPOINTS
     assert f"{MODEL_ID}@meta/byok" not in MODEL_ENDPOINTS
 
 

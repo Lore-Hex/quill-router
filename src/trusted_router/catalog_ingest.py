@@ -180,6 +180,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "baidu/ernie-4.5-vl-28b-a3b",
             # 100% MODEL_NOT_AVAILABLE-class probe failures since 2026-06-23.
             "meta-llama/llama-3-70b-instruct",
+            # route-health first sweep 2026-07-18, 100% failure.
+            "zai-org/glm-4.5",
         }
     ),
     # Friendli notified customers that GLM-5 serverless Model APIs stop being
@@ -211,6 +213,9 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         {
             "amd/llama-3.3-70b-instruct-fp8-kv",
             "amd/Llama-3.3-70B-Instruct-FP8-KV",
+            # route-health first sweep 2026-07-18, 100% failure.
+            "qwen/qwen3.6-27b",
+            "openai/gpt-oss-120b",
         }
     ),
     # These resellers list Claude ids their APIs do not actually serve: 100%
@@ -221,18 +226,85 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "anthropic/claude-fable-5",
             "anthropic/claude-sonnet-5",
             "anthropic/claude-opus-4.1",
+            # route-health first sweep 2026-07-18, 100% failure.
+            "x-ai/grok-4.5",
+            "anthropic/claude-sonnet-4.5",
+            "openai/gpt-5.6-luna",
+            "qwen/qwen3.5-27b",
+            "google/gemini-3-flash-preview",
         }
     ),
     "deepinfra": frozenset(
         {
             "anthropic/claude-fable-5",
             "anthropic/claude-sonnet-5",
+            # route-health first sweep 2026-07-18, 100% failure.
+            "z-ai/glm-5.1",
+            "moonshotai/kimi-k2.7-code",
+            "qwen/qwen3-32b",
         }
     ),
     "phala": frozenset(
         {
             "anthropic/claude-sonnet-5",
             "anthropic/claude-opus-4.1",
+            # route-health first sweep 2026-07-18, 100% failure.
+            "anthropic/claude-opus-4.8",
+            "deepseek/deepseek-v4-pro",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure. These ids may be
+    # remappable to newer upstream ids — revisit with per-provider manifest hooks.
+    "together": frozenset(
+        {
+            "openai/gpt-oss-120b",
+            "deepseek/deepseek-r1-distill-llama-70b",
+            "qwen/qwen3-vl-8b-instruct",
+            "qwen/qwen2.5-vl-72b-instruct",
+            "mistralai/mistral-small-24b-instruct-2501",
+            "moonshotai/kimi-k2.7-code",
+            "minimax/minimax-m3",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure.
+    "lightning": frozenset(
+        {
+            "openai/gpt-5.6-sol",
+            "openai/gpt-5.6-luna",
+            "openai/gpt-4-turbo-preview",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure. These ids may be
+    # remappable to newer upstream ids — revisit with per-provider manifest hooks.
+    "kimi": frozenset(
+        {
+            "moonshotai/kimi-k2",
+            "moonshotai/kimi-k2-0905",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure.
+    "openai": frozenset(
+        {
+            "openai/gpt-4-turbo-preview",
+            "openai/gpt-5.2-chat",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure.
+    "mistral": frozenset(
+        {
+            "mistralai/mistral-small-24b-instruct-2501",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure.
+    "meta": frozenset(
+        {
+            "meta/muse-spark-1.1",
+        }
+    ),
+    # route-health first sweep 2026-07-18, 100% failure.
+    "deepseek": frozenset(
+        {
+            "deepseek/deepseek-v3.1-terminus",
         }
     ),
 }

@@ -1783,8 +1783,8 @@ async def test_route_health_caller_logs_flags_and_does_not_fail_pass(
 @pytest.mark.parametrize(
     ("minute", "every_pass", "should_post"),
     [
-        (4, None, True),
-        (5, None, False),
+        (1, None, True),
+        (2, None, False),
         (37, "1", True),
     ],
 )

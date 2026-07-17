@@ -176,7 +176,7 @@ async def _post_route_health_if_due(
     # Fingerprinting groups emissions into one Sentry issue per route. Hourly
     # re-emission (~24/day/route) keeps the signal fresh without burning quota.
     every_pass = os.environ.get("TR_SYNTHETIC_ROUTE_HEALTH_EVERY_PASS") == "1"
-    if not every_pass and (now or dt.datetime.now(dt.UTC)).minute >= 5:
+    if not every_pass and (now or dt.datetime.now(dt.UTC)).minute >= 2:
         return
     await _post_route_health(client, url=url, internal_token=internal_token)
 
