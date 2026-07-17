@@ -1,6 +1,6 @@
 {
   "source": "https://tinker-docs.thinkingmachines.ai/tinker/models/",
-  "generated_at": "2026-07-15T00:00:00Z",
+  "generated_at": "2026-07-17T01:10:13Z",
   "provider": "thinkingmachines",
   "currency": "USD",
   "price_unit": "microdollars_per_million_tokens",
@@ -11,7 +11,9 @@
       "upstream_id": "thinkingmachines/Inkling:peft:262144",
       "display_name": "Thinking Machines Inkling 256K",
       "context_length": 262144,
-      "endpoints": ["chat/completions"],
+      "endpoints": [
+        "chat/completions"
+      ],
       "input_token_price_per_m": 3740000,
       "output_token_price_per_m": 9360000,
       "cached_input_token_price_per_m": 748000
