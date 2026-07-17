@@ -529,6 +529,9 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         for raw_model in raw_models:
             if not isinstance(raw_model, dict):
                 continue
+            # Discovery-only metadata rows must never produce catalog routes.
+            if raw_model.get("routable") is False:
+                continue
             model_id = raw_model.get("id")
             if not isinstance(model_id, str) or not model_id:
                 continue

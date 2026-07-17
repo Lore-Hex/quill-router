@@ -48,6 +48,7 @@ from scripts.pricing.base import (
     ModelPrice,
     PriceTier,
     ProviderPricingResult,
+    guard_manifest_prune,
     log,
 )
 
@@ -745,8 +746,44 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
         module = _import_provider(slug)
         hook = getattr(module, "write_provider_manifest", None)
         if not callable(hook):
+            # TODO: vet novita/together/kimi discovery semantics separately
+            # before adding or expanding provider-owned rebuild behavior.
             continue
+        manifest_path_value = getattr(module, "MANIFEST_PATH", None)
+        manifest_path = (
+            Path(manifest_path_value) if manifest_path_value is not None else None
+        )
+        before_text: str | None = None
+        before_rows: list[Any] | None = None
+        if manifest_path is not None and manifest_path.exists():
+            before_text = manifest_path.read_text(encoding="utf-8")
+            try:
+                before_raw = json.loads(before_text)
+            except (TypeError, ValueError):
+                before_raw = None
+            if isinstance(before_raw, dict) and isinstance(before_raw.get("models"), list):
+                before_rows = before_raw["models"]
+
         raw_notes = hook(result)
+
+        # Provider hooks own their JSON shape, but this dispatch is the final
+        # shared safety boundary. Restore the exact old file if any hook omits
+        # its local guard or accidentally writes an invalid/empty manifest.
+        if before_text is not None and before_rows is not None and manifest_path is not None:
+            try:
+                after_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, TypeError, ValueError):
+                after_raw = None
+            after_rows = after_raw.get("models") if isinstance(after_raw, dict) else None
+            candidate_rows = after_rows if isinstance(after_rows, list) else []
+            guarded = guard_manifest_prune(
+                before_rows,
+                candidate_rows,
+                provider_slug=slug,
+            )
+            if guarded is before_rows:
+                manifest_path.write_text(before_text, encoding="utf-8")
+                raw_notes = [f"{slug}: kept old manifest (mass-prune guard)"]
         if raw_notes is None:
             continue
         notes.extend(str(note) for note in raw_notes)

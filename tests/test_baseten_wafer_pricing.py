@@ -323,12 +323,13 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
 
     assert notes == [
         "wafer: refreshed provider_models/wafer.json "
-        "(5 priced rows, appended 3, removed 1 unavailable)"
+        "(5 priced rows, appended 3)"
     ]
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_id = {row["id"]: row for row in raw["models"]}
-    assert raw["model_count"] == 5
-    assert "moonshotai/kimi-k2.7-code" not in by_id
+    assert raw["model_count"] == 6
+    assert by_id["moonshotai/kimi-k2.7-code"]["missing_since"]
+    assert by_id["moonshotai/kimi-k2.7-code"].get("routable") is not False
     assert by_id["z-ai/glm-5.2"]["input_token_price_per_m"] == 1_200_000
     assert by_id["z-ai/glm-5.2-fast"]["upstream_id"] == "glm5.2-fast"
     assert by_id["z-ai/glm-5.2-fast"]["input_token_price_per_m"] == 3_000_000
@@ -336,3 +337,66 @@ def test_wafer_provider_appends_new_priced_models_to_manifest(tmp_path: Path, mo
     assert by_id["z-ai/glm-5.2-fast"]["cached_input_token_price_per_m"] == 500_000
     assert by_id["z-ai/glm-5.2-fast"]["zdr_supported"] is True
     assert by_id["moonshotai/kimi-k2.6"]["input_modalities"] == ["text", "image"]
+
+
+def test_wafer_delisted_expected_model_reaches_manifest_prune(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "wafer.json"
+    live_ids = {
+        "z-ai/glm-5.1": "GLM-5.1",
+        "z-ai/glm-5.2": "GLM-5.2",
+        "z-ai/glm-5.2-fast": "glm5.2-fast",
+        "moonshotai/kimi-k2.6": "Kimi-K2.6",
+    }
+    old_ids = {**live_ids, "minimax/minimax-m3": "MiniMax-M3"}
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "wafer",
+                "models": [
+                    {
+                        "id": model_id,
+                        "upstream_id": native_id,
+                        "endpoints": ["chat/completions"],
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    }
+                    for model_id, native_id in old_ids.items()
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    prices = {model_id: wafer.ModelPrice(100, 200) for model_id in live_ids}
+    discovered = {
+        model_id: {
+            "id": model_id,
+            "upstream_id": native_id,
+            "endpoints": ["chat/completions"],
+        }
+        for model_id, native_id in live_ids.items()
+    }
+    result = wafer.ProviderPricingResult(slug="wafer", prices=prices, source="api")
+    monkeypatch.setattr(wafer, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(wafer, "_DISCOVERED_MANIFEST_ROWS", discovered)
+
+    assert wafer.validate(prices, wafer.EXPECTED_MODELS) == []
+    wafer.write_provider_manifest(result)
+
+    first_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    first_missing = next(
+        row for row in first_raw["models"] if row["id"] == "minimax/minimax-m3"
+    )
+    assert first_missing["missing_since"]
+    assert first_missing.get("routable") is not False
+
+    wafer.write_provider_manifest(result)
+
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    missing = next(row for row in raw["models"] if row["id"] == "minimax/minimax-m3")
+    assert missing["routable"] is False
+    assert missing["routable_reason"] == "delisted-upstream"
+    assert missing["missing_since"] == first_missing["missing_since"]
+    assert "minimax/minimax-m3" in capsys.readouterr().err
