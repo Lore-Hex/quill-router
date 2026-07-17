@@ -28,6 +28,7 @@ import tempfile
 import textwrap
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -331,6 +332,159 @@ def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
 
 
 # ----------------------------------------------------------------------
+# Workflow warnings and manifest safety.
+# ----------------------------------------------------------------------
+
+
+def emit_workflow_warning(message: str) -> None:
+    """Emit a warning locally and in the GitHub Actions step summary."""
+
+    line = f"WARNING: {message}"
+    print(line, file=sys.stderr)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    try:
+        with Path(summary_path).open("a", encoding="utf-8") as summary:
+            summary.write(f"{line}\n")
+    except OSError as exc:
+        print(f"WARNING: could not append to GITHUB_STEP_SUMMARY: {exc}", file=sys.stderr)
+
+
+def guard_manifest_prune(
+    old_rows: list[Any],
+    new_rows: list[Any],
+    *,
+    provider_slug: str | None = None,
+) -> list[Any]:
+    """Keep the old manifest when one pass would disable 50% of its routes.
+
+    Delisted tombstones remain in the baseline so repeated smaller upstream
+    changes cannot compound against a shrinking denominator. Curated
+    metadata-only rows and never-priced discovery rows were never routes and
+    therefore do not dilute that baseline.
+    """
+
+    def routable_ids(rows: list[Any]) -> set[str]:
+        return {
+            row["id"]
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("routable") is not False
+            and isinstance(row.get("id"), str)
+            and row["id"]
+        }
+
+    old_routable_ids = routable_ids(old_rows)
+    new_routable_ids = routable_ids(new_rows)
+    baseline_ids = {
+        row["id"]
+        for row in old_rows
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and row["id"]
+        and (
+            row.get("routable") is not False
+            or row.get("routable_reason") == "delisted-upstream"
+        )
+    }
+    disabled = old_routable_ids - new_routable_ids
+    emptied_manifest = bool(old_rows) and not new_rows
+    mass_prune = bool(disabled) and len(disabled) * 2 >= len(baseline_ids)
+    if not emptied_manifest and not mass_prune:
+        return new_rows
+
+    provider = f"{provider_slug}: " if provider_slug else ""
+    emit_workflow_warning(
+        f"{provider}manifest rebuild blocked by mass-prune guard "
+        f"(would disable {len(disabled)} of {len(baseline_ids)} baseline routes; "
+        f"old={len(old_rows)}, new={len(new_rows)}); kept old manifest unchanged"
+    )
+    return old_rows
+
+
+def reconcile_manifest_tombstones(
+    old_rows: list[Any],
+    present_rows: dict[str, dict[str, Any]],
+    *,
+    priced_ids: set[str],
+    source: str,
+    missing_date: str | None = None,
+) -> list[Any]:
+    """Merge a fresh discovery feed without deleting committed rows.
+
+    An absent route is stamped on its first fresh API miss and tombstoned on
+    its second. System-created tombstones recover when the model reappears;
+    hand-curated ``routable: false`` rows are preserved byte-for-byte at the
+    row-data level. ``present_rows`` must contain already-merged provider
+    metadata and prices for every feed-present model, including models whose
+    price failed to parse.
+    """
+
+    fresh = source == "api"
+    today = missing_date or datetime.now(UTC).date().isoformat()
+    existing_ids = {
+        row["id"]
+        for row in old_rows
+        if isinstance(row, dict)
+        and isinstance(row.get("id"), str)
+        and row["id"]
+    }
+    reconciled: list[Any] = []
+
+    for old_row in old_rows:
+        if not isinstance(old_row, dict):
+            reconciled.append(old_row)
+            continue
+        model_id = old_row.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            reconciled.append(dict(old_row))
+            continue
+
+        # A false row without a machine-owned reason is curated metadata. Its
+        # contents and route state are outside discovery's authority.
+        curated_unroutable = (
+            old_row.get("routable") is False
+            and "routable_reason" not in old_row
+        )
+        if curated_unroutable:
+            reconciled.append(dict(old_row))
+            continue
+
+        present = present_rows.get(model_id)
+        if present is not None:
+            row = dict(present)
+            if fresh:
+                row.pop("missing_since", None)
+                reason = old_row.get("routable_reason")
+                if reason == "delisted-upstream" or (
+                    reason == "awaiting-price" and model_id in priced_ids
+                ):
+                    row["routable"] = True
+                    row.pop("routable_reason", None)
+            reconciled.append(row)
+            continue
+
+        row = dict(old_row)
+        if fresh:
+            if row.get("missing_since"):
+                row["routable"] = False
+                row["routable_reason"] = "delisted-upstream"
+            else:
+                row["missing_since"] = today
+        reconciled.append(row)
+
+    for model_id in sorted(present_rows.keys() - existing_ids):
+        row = dict(present_rows[model_id])
+        if model_id not in priced_ids:
+            row["routable"] = False
+            row["routable_reason"] = "awaiting-price"
+        reconciled.append(row)
+
+    return reconciled
+
+
+# ----------------------------------------------------------------------
 # Validation — applied to deterministic parser output AND self-healed
 # parser output. Same rules either way.
 # ----------------------------------------------------------------------
@@ -479,7 +633,7 @@ def validate(
     Checks:
       - non-empty
       - every tier's prompt/completion in [MIN, MAX]
-      - every model in `expected_models` is present (drift detector)
+      - warn when a model in `expected_models` is absent (drift detector)
       - units sanity: at least one tier across all models has nonzero
         price (otherwise the parser likely missed the price column)
     """
@@ -508,7 +662,10 @@ def validate(
                 )
     missing = [m for m in expected_models if m not in prices]
     if missing:
-        errors.append(f"expected models missing: {missing}")
+        emit_workflow_warning(
+            f"expected models missing from fresh provider feed: {missing}; "
+            "accepting feed so retired models can be pruned"
+        )
     has_nonzero = any(
         tier.prompt_micro_per_m > 0 or tier.completion_micro_per_m > 0
         for row in prices.values()

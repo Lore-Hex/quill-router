@@ -14,6 +14,7 @@ expectation is that fetch_provider:
 """
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -554,3 +555,41 @@ def test_stale_snapshot_never_rewrites_provider_manifest(
 
     assert refresh._write_provider_manifests({"fireworks": stale}) == []
     assert calls == []
+
+
+def test_manifest_dispatch_restores_mass_pruned_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "fake.json"
+    old_text = json.dumps(
+        {"provider": "fake", "models": [{"id": "a"}, {"id": "b"}]},
+        indent=2,
+    ) + "\n"
+    manifest_path.write_text(old_text, encoding="utf-8")
+
+    class FakeProvider:
+        MANIFEST_PATH = manifest_path
+
+        @staticmethod
+        def write_provider_manifest(
+            _result: pricing_base.ProviderPricingResult,
+        ) -> list[str]:
+            manifest_path.write_text(
+                json.dumps({"provider": "fake", "models": [{"id": "a"}]}) + "\n",
+                encoding="utf-8",
+            )
+            return ["fake: rewrote manifest"]
+
+    monkeypatch.setattr(refresh, "_import_provider", lambda _slug: FakeProvider)
+    result = pricing_base.ProviderPricingResult(
+        slug="fake",
+        prices={"a": pricing_base.ModelPrice(1, 1)},
+        source="api",
+    )
+
+    refresh._write_provider_manifests({"fake": result})
+
+    assert manifest_path.read_text(encoding="utf-8") == old_text
+    assert "mass-prune guard" in capsys.readouterr().err

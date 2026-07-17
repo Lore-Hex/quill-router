@@ -23,6 +23,8 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_UA,
     ModelPrice,
     ProviderPricingResult,
+    guard_manifest_prune,
+    reconcile_manifest_tombstones,
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
@@ -109,7 +111,6 @@ def _manifest_row(
     model_id: str,
     native_id: str,
     source_row: dict[str, Any],
-    price: ModelPrice,
 ) -> dict[str, Any]:
     wafer = source_row.get("wafer")
     wafer = wafer if isinstance(wafer, dict) else {}
@@ -133,8 +134,6 @@ def _manifest_row(
         "upstream_id": native_id,
         "display_name": str(wafer.get("display_name") or native_id),
         "endpoints": ["chat/completions"],
-        "input_token_price_per_m": price.prompt_micro_per_m,
-        "output_token_price_per_m": price.completion_micro_per_m,
         "zdr_supported": bool(zdr_capabilities.get("supported")),
     }
     context_length = _positive_int(wafer.get("context_length"))
@@ -143,15 +142,13 @@ def _manifest_row(
     if supports_vision:
         row["input_modalities"] = ["text", "image"]
         row["output_modalities"] = ["text"]
-    tier = price.tiers[0]
-    if tier.prompt_cached_micro_per_m is not None:
-        row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
     return row
 
 
 def fetch() -> ProviderPricingResult:
-    global _DISCOVERED_MANIFEST_ROWS
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
+    _DISCOVERED_MANIFEST_ROWS = {}
     api_key = os.environ.get("WAFER_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
@@ -181,6 +178,14 @@ def fetch() -> ProviderPricingResult:
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
+        # Feed presence is authoritative even when Wafer renames a pricing
+        # key. Record it before parsing so a schema drift cannot look like a
+        # delisting and destroy the route's committed price.
+        manifest_rows[or_id] = _manifest_row(
+            model_id=or_id,
+            native_id=native_id,
+            source_row=row,
+        )
         pricing = _wafer_pricing(row)
         if not isinstance(pricing, dict):
             continue
@@ -195,12 +200,6 @@ def fetch() -> ProviderPricingResult:
             prompt_cached_micro_per_m=cache_read,
         )
         prices[or_id] = price
-        manifest_rows[or_id] = _manifest_row(
-            model_id=or_id,
-            native_id=native_id,
-            source_row=row,
-            price=price,
-        )
 
     _DISCOVERED_MANIFEST_ROWS = manifest_rows
 
@@ -233,40 +232,69 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if not isinstance(rows, list):
         raise RuntimeError("wafer manifest has no models list")
 
-    previous_ids = {
-        row["id"] for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
+    if not _DISCOVERED_MANIFEST_ROWS:
+        guarded = guard_manifest_prune(rows, [], provider_slug=SLUG)
+        if guarded is rows:
+            return ["wafer: kept old manifest (mass-prune guard)"]
+        raise RuntimeError("wafer discovery returned no supported model rows")
+
+    existing_by_id: dict[str, dict[str, Any]] = {
+        row["id"]: row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     updated: list[str] = []
-    refreshed_rows: list[dict[str, Any]] = []
-    for model_id, price in sorted(result.prices.items()):
-        discovered = _DISCOVERED_MANIFEST_ROWS.get(model_id)
-        if discovered is None:
-            continue
-        row = dict(discovered)
+    present_rows: dict[str, dict[str, Any]] = {}
+    for model_id, discovered in sorted(_DISCOVERED_MANIFEST_ROWS.items()):
+        existing = existing_by_id.get(model_id)
+        # Preserve human annotations and routable:false for rows that persist.
+        row = dict(existing) if existing is not None else {}
+        row.update(discovered)
 
-        tier = price.tiers[0]
-        row["input_token_price_per_m"] = tier.prompt_micro_per_m
-        row["output_token_price_per_m"] = tier.completion_micro_per_m
-        if tier.prompt_cached_micro_per_m is not None:
-            row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
-        else:
-            row.pop("cached_input_token_price_per_m", None)
-        refreshed_rows.append(row)
-        updated.append(model_id)
+        price = result.prices.get(model_id)
+        if price is not None:
+            tier = price.tiers[0]
+            row["input_token_price_per_m"] = tier.prompt_micro_per_m
+            row["output_token_price_per_m"] = tier.completion_micro_per_m
+            if tier.prompt_cached_micro_per_m is not None:
+                row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
+            else:
+                row.pop("cached_input_token_price_per_m", None)
+            updated.append(model_id)
+        present_rows[model_id] = row
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
-    if missing:
-        raise RuntimeError(f"wafer manifest did not update expected model(s): {missing}")
-    if not updated:
-        raise RuntimeError("wafer manifest update touched no rows")
+    refreshed_rows = reconcile_manifest_tombstones(
+        rows,
+        present_rows,
+        priced_ids=set(result.prices),
+        source=result.source,
+    )
+    guarded = guard_manifest_prune(rows, refreshed_rows, provider_slug=SLUG)
+    if guarded is rows:
+        return ["wafer: kept old manifest (mass-prune guard)"]
 
     # Wafer's authenticated /v1/models feed is both the availability and
     # pricing source. Rebuild the provider supplement from that feed so
-    # retired models cannot remain routable with stale prices.
+    # retired models become reversible tombstones without losing metadata.
     rows[:] = refreshed_rows
-    current_ids = set(updated)
+    previous_ids = set(existing_by_id)
+    current_ids = {
+        row["id"]
+        for row in refreshed_rows
+        if isinstance(row.get("id"), str)
+    }
     appended = sorted(current_ids - previous_ids)
-    removed = sorted(previous_ids - current_ids)
+    refreshed_by_id = {
+        row["id"]: row
+        for row in refreshed_rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    tombstoned = sorted(
+        model_id
+        for model_id, old_row in existing_by_id.items()
+        if old_row.get("routable") is not False
+        and refreshed_by_id.get(model_id, {}).get("routable") is False
+    )
 
     raw["_about"] = (
         "Provider-native supplement for Wafer serverless API. Refreshed "
@@ -285,7 +313,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     changes: list[str] = []
     if appended:
         changes.append(f"appended {len(appended)}")
-    if removed:
-        changes.append(f"removed {len(removed)} unavailable")
+    if tombstoned:
+        changes.append(f"tombstoned {len(tombstoned)} unavailable")
     suffix = f", {', '.join(changes)}" if changes else ""
     return [f"wafer: refreshed provider_models/wafer.json ({len(updated)} priced rows{suffix})"]

@@ -10,6 +10,7 @@ from scripts.pricing.base import (
     ModelPrice,
     _coerce_to_model_prices,
     ast_whitelist_check,
+    guard_manifest_prune,
     sandbox_run_parser,
     validate,
 )
@@ -31,10 +32,17 @@ def test_validate_fails_on_empty_dict() -> None:
     assert any("empty" in e for e in errors)
 
 
-def test_validate_fails_when_expected_model_missing() -> None:
+def test_validate_warns_when_expected_model_missing(
+    tmp_path, monkeypatch, capsys
+) -> None:  # noqa: ANN001
+    summary_path = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
     prices = {"foo/bar": ModelPrice(1_000_000, 1_000_000)}
     errors = validate(prices, ["expected/missing"])
-    assert any("expected/missing" in e for e in errors)
+
+    assert errors == []
+    assert "expected/missing" in capsys.readouterr().err
+    assert "expected/missing" in summary_path.read_text(encoding="utf-8")
 
 
 def test_validate_fails_on_out_of_range_prompt_price() -> None:
@@ -60,6 +68,41 @@ def test_validate_allows_one_zero_row_when_others_nonzero() -> None:
         "a/b": ModelPrice(1_000_000, 2_000_000),
     }
     assert validate(prices, []) == []
+
+
+def test_guard_manifest_prune_blocks_half_or_more_and_empty(
+    tmp_path, monkeypatch, capsys
+) -> None:  # noqa: ANN001
+    summary_path = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+    old_rows = [{"id": "a"}, {"id": "b"}]
+
+    assert guard_manifest_prune(old_rows, [{"id": "a"}], provider_slug="test") is old_rows
+    assert guard_manifest_prune(old_rows, [], provider_slug="test") is old_rows
+    stderr = capsys.readouterr().err
+    assert stderr.count("mass-prune guard") == 2
+    assert summary_path.read_text(encoding="utf-8").count("mass-prune guard") == 2
+
+
+def test_guard_manifest_prune_allows_small_prune() -> None:
+    old_rows = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    new_rows = [{"id": "a"}, {"id": "b"}]
+
+    assert guard_manifest_prune(old_rows, new_rows) is new_rows
+
+
+def test_guard_manifest_prune_keeps_delisted_rows_in_baseline() -> None:
+    old_rows = [
+        {
+            "id": f"old-{index}",
+            "routable": False,
+            "routable_reason": "delisted-upstream",
+        }
+        for index in range(4)
+    ] + [{"id": "live-a"}, {"id": "live-b"}]
+    new_rows = [*old_rows[:-2], {"id": "live-a"}, {"id": "live-b", "routable": False}]
+
+    assert guard_manifest_prune(old_rows, new_rows) is new_rows
 
 
 # ----------------------------------------------------------------------

@@ -238,6 +238,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         {
             "anthropic/claude-fable-5",
             "anthropic/claude-sonnet-5",
+            # route-health flag 2026-07-18 (post-first-sweep): 100% failure over 6 samples.
+            "google/gemini-3.5-flash",
             # route-health first sweep 2026-07-18, 100% failure.
             "z-ai/glm-5.1",
             "moonshotai/kimi-k2.7-code",
@@ -526,6 +528,9 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         price_scale = _provider_manifest_price_scale(raw)
         for raw_model in raw_models:
             if not isinstance(raw_model, dict):
+                continue
+            # Discovery-only metadata rows must never produce catalog routes.
+            if raw_model.get("routable") is False:
                 continue
             model_id = raw_model.get("id")
             if not isinstance(model_id, str) or not model_id:

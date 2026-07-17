@@ -125,6 +125,7 @@ def test_fetch_intersects_live_models_and_writes_manifest(
 
 def test_live_model_without_first_party_price_is_not_published(
     monkeypatch: Any,
+    capsys: Any,
 ) -> None:
     def docs_without_k3(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
         del extra_headers
@@ -140,8 +141,10 @@ def test_live_model_without_first_party_price_is_not_published(
         lambda _url, **_kwargs: _live_payload(include_k3=True),
     )
 
-    with pytest.raises(RuntimeError, match="expected models missing.*moonshotai/kimi-k3"):
-        kimi.fetch()
+    result = kimi.fetch()
+
+    assert "moonshotai/kimi-k3" not in result.prices
+    assert "moonshotai/kimi-k3" in capsys.readouterr().err
 
 
 def test_manifest_removes_models_no_longer_live_or_priced(
