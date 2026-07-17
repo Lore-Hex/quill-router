@@ -1044,6 +1044,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
     assert provider_flags["together"]["provider_zero_data_retention"] is True
     assert provider_flags["nebius"]["provider_zero_data_retention"] is True
+    assert provider_flags["parasail"]["provider_zero_data_retention"] is True
     assert provider_flags["venice"]["provider_zero_data_retention"] is True
     # Venice runs TEE + E2EE inference — it's confidential, not merely no-logs.
     assert provider_flags["venice"]["provider_confidential_compute"] is True
@@ -1075,6 +1076,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "together": "https://docs.together.ai/docs/privacy-and-security",
         "deepinfra": "https://docs.deepinfra.com/account/data-privacy",
         "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
+        "parasail": (
+            "https://docs.parasail.io/parasail-docs/security-and-account-management/"
+            "data-privacy-retention"
+        ),
         "alibaba": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
         "deepseek": (
             "https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US"
@@ -1096,6 +1101,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "cerebras",
         "deepinfra",
         "nebius",
+        "parasail",
         "phala",
         "tinfoil",
         "together",

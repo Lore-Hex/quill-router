@@ -450,9 +450,14 @@ PROVIDERS: dict[str, Provider] = {
         slug="parasail",
         name="Parasail",
         supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
         provider_policy=(
-            "Parasail documents no input logging/storage for serverless and dedicated "
-            "service paths, with different handling for batch service."
+            "Tracked as ZDR for serverless and dedicated inference. Parasail documents "
+            "no storage or logging of submitted input on those service paths, retention "
+            "only while generating and delivering output, and no training on input or "
+            "output. Batch service is excluded from this claim; TrustedRouter does not "
+            "route Parasail traffic through batch."
         ),
         provider_policy_url=(
             "https://docs.parasail.io/parasail-docs/security-and-account-management/"
