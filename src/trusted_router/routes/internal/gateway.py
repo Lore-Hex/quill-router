@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import uuid
+from datetime import datetime
 from time import perf_counter
 from typing import Any
 
@@ -30,6 +31,7 @@ from trusted_router.catalog import (
     ModelEndpoint,
     cache_token_prices_microdollars,
     default_endpoint_for_model,
+    effective_endpoint,
     endpoint_for_id,
 )
 from trusted_router.config import Settings
@@ -877,6 +879,7 @@ def _settle_gateway_authorization(
         output_tokens,
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_creation,
+        effective_at=authorization.created_at,
     )
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
@@ -1215,10 +1218,12 @@ def _endpoint_cost_microdollars(
     *,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    effective_at: datetime | str | None = None,
 ) -> int:
     """input_tokens must be the UNCACHED prompt tokens when cache counts
     are passed — cached reads/writes bill at the provider-specific
     multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
+    endpoint = effective_endpoint(endpoint, at=effective_at)
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),

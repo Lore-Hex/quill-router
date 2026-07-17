@@ -37,6 +37,7 @@ from trusted_router.pricing import (
     _provider_manifest_price_tiers,
     _read_pricing_tiers,
 )
+from trusted_router.provider_lifecycle import provider_model_retired
 
 
 def _endpoint(
@@ -220,6 +221,8 @@ def _is_provider_deprecated_model(
     model_id: str,
     upstream_id: str | None,
 ) -> bool:
+    if provider_model_retired(provider_slug, model_id, upstream_id):
+        return True
     deprecated = _PROVIDER_DEPRECATED_UPSTREAM_MODELS.get(provider_slug)
     if not deprecated:
         return False
