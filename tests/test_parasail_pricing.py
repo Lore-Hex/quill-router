@@ -108,7 +108,7 @@ def test_fetch_prices_only_models_on_both_page_and_api(monkeypatch) -> None:  # 
     assert kimi.prompt_cached_micro_per_m == 160_000
 
     joined = "\n".join(result.notes)
-    assert "nvidia/nvidia-nemotron-3-ultra-550b-a55b" in joined  # page-only
+    assert "nvidia/nemotron-3-ultra-550b-a55b" in joined  # page-only
     assert "Brand New Model 9000" in joined  # unmapped page row
     assert "z-ai/glm-5.2" in joined  # api-only, page missing
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
 from scripts.pricing.providers import nebius
@@ -104,7 +106,9 @@ class _FakeResponse:
         return self._payload
 
 
-def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(monkeypatch) -> None:  # noqa: ANN001
+def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
+    tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
     payload = {
         "data": [
             {
@@ -130,6 +134,14 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(monkeypatch) -> 
                 "context_length": 202752,
                 "architecture": {"modality": "text->text"},
                 "pricing": {"prompt": "0.0000014", "completion": "0.0000044"},
+            },
+            {
+                "id": "nvidia/Nemotron-3-Ultra-550b-a55b",
+                "name": "NVIDIA Nemotron 3 Ultra 550B A55B",
+                "created": 1,
+                "context_length": 262144,
+                "architecture": {"modality": "text->text"},
+                "pricing": {"prompt": "0.0000006", "completion": "0.0000024"},
             },
             {
                 "id": "Qwen/Qwen3-Embedding-8B",
@@ -161,4 +173,23 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(monkeypatch) -> 
 
     assert result.prices["openai/gpt-oss-120b"].prompt_micro_per_m == 150_000
     assert result.prices["deepseek-ai/DeepSeek-V4-Pro"].completion_micro_per_m == 3_500_000
+    canonical = "nvidia/nemotron-3-ultra-550b-a55b"
+    assert result.prices[canonical].prompt_micro_per_m == 600_000
+    assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in result.prices
+    assert nebius._DISCOVERED_ROWS[canonical]["id"] == canonical
+    assert (
+        nebius._DISCOVERED_ROWS[canonical]["upstream_id"]
+        == "nvidia/Nemotron-3-Ultra-550b-a55b"
+    )
     assert "Qwen/Qwen3-Embedding-8B" not in result.prices
+
+    manifest = tmp_path / "nebius.json"
+    manifest.write_text('{"models": []}\n', encoding="utf-8")
+    monkeypatch.setattr(nebius, "MANIFEST_PATH", manifest)
+
+    nebius.write_provider_manifest(result)
+
+    rows = json.loads(manifest.read_text(encoding="utf-8"))["models"]
+    ids = {row["id"] for row in rows}
+    assert canonical in ids
+    assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in ids
