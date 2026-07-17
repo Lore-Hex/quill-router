@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.fakes.spanner import make_fake_store
@@ -53,7 +54,7 @@ def test_credit_workspace_typed_direct_applies_once_in_one_transaction() -> None
     assert _typed_credit(db, ws)["total_credits"] == 1_500_000
 
 
-def test_credit_workspace_typed_direct_creates_missing_typed_row_from_json() -> None:
+def test_credit_workspace_typed_direct_refuses_missing_typed_row() -> None:
     store, db, _ = make_fake_store()
     ws = "ws_b2_missing_typed"
     store._write_entity(
@@ -63,14 +64,12 @@ def test_credit_workspace_typed_direct_creates_missing_typed_row_from_json() -> 
     )
     assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
 
-    assert store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed") is True
+    with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance"):
+        store.credit_workspace_typed_direct(ws, 750_000, "evt_b2_seed")
 
     assert _json_credit(db, ws)["total_credits_microdollars"] == 2_000_000
-    typed = _typed_credit(db, ws)
-    assert typed["total_credits"] == 2_750_000
-    assert typed["total_usage"] == 0
-    assert typed["reserved"] == 0
-    assert ("stripe_event", "evt_b2_seed") in db.rows
+    assert (ws, 0) not in db.typed.get(CREDIT_BALANCE_TABLE, {})
+    assert ("stripe_event", "evt_b2_seed") not in db.rows
 
 
 def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:

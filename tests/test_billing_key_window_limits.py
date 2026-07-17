@@ -302,33 +302,3 @@ def test_window_check_passes_through_idempotent_replay() -> None:
         key_hash=key.hash, estimate=900, window_limits={"daily": 1_000},
         idempotency_scope="scope-1", idempotency_fingerprint="fp-1",
     ) is None
-
-
-def test_flip_seed_carries_window_limit_config() -> None:
-    """codex #93 round 2: reconcile_for_flip's seed must include the window
-    config columns."""
-    from trusted_router.storage import Workspace
-    from trusted_router.storage_gcp_counter_reconcile import reconcile_for_flip
-    from trusted_router.storage_gcp_counters import KEY_LIMIT_TABLE as KLT
-
-    store, db, _ = make_fake_store()
-    ws = "ws_seed"
-    store._write_entity(
-        "workspace", ws, Workspace(id=ws, name="t", owner_user_id="u", billing_paused=True)
-    )
-    store._write_entity(
-        "credit", ws,
-        {"workspace_id": ws, "total_credits_microdollars": 1_000_000},
-    )
-    _raw, key = store.api_keys.create(
-        workspace_id=ws, name="k", creator_user_id=None,
-        limit_daily_microdollars=4_000, limit_monthly_microdollars=90_000,
-    )
-    del db.typed[KLT][(key.hash, 0)]  # simulate a key without a typed row
-
-    res = reconcile_for_flip(store, ws, apply=True)
-    assert res.applied, res.reasons
-    row = db.typed[KLT][(key.hash, 0)]
-    assert row["day_limit_micro"] == 4_000
-    assert row["week_limit_micro"] is None
-    assert row["month_limit_micro"] == 90_000

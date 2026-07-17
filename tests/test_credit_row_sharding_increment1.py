@@ -231,7 +231,7 @@ def test_typed_direct_grant_rolls_back_when_active_shard_is_missing() -> None:
     _seed_sharded_credit(store, database, workspace_id, [50, 50])
     del database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 1)]
 
-    with pytest.raises(RuntimeError, match="missing tr_credit_balance shard 1"):
+    with pytest.raises(RuntimeError, match="missing authoritative tr_credit_balance shard 1"):
         store.credit_workspace_typed_direct(workspace_id, 10, "evt-missing")
 
     assert database.typed[CREDIT_BALANCE_TABLE][(workspace_id, 0)]["total_credits"] == 50
