@@ -38,6 +38,14 @@ EXPECTED_MODELS = [
 
 _DISCOVERED_ROWS: dict[str, dict[str, Any]] = {}
 
+_NATIVE_TO_CANONICAL = {
+    # Nebius added this spelling after the same model was already published
+    # under TrustedRouter's canonical cross-provider ID. Keep the native ID
+    # only for upstream requests so refreshes cannot create a duplicate model.
+    "nvidia/Nemotron-3-Ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
+    "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": "nvidia/nemotron-3-ultra-550b-a55b",
+}
+
 
 def _dollars_per_token_to_micro_per_m(value: object) -> int | None:
     try:
@@ -59,15 +67,20 @@ def _positive_int(value: object) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _manifest_row(row: dict[str, Any], price: ModelPrice) -> dict[str, Any]:
-    model_id = str(row["id"])
+def _manifest_row(
+    row: dict[str, Any],
+    price: ModelPrice,
+    *,
+    model_id: str,
+    upstream_id: str,
+) -> dict[str, Any]:
     architecture = row.get("architecture")
     architecture = architecture if isinstance(architecture, dict) else {}
     modality = str(architecture.get("modality") or "")
     input_modalities = ["text", "image"] if modality.startswith("text+image") else ["text"]
     out: dict[str, Any] = {
         "id": model_id,
-        "upstream_id": model_id,
+        "upstream_id": upstream_id,
         "display_name": str(row.get("name") or model_id.rsplit("/", 1)[-1]),
         "title": model_id,
         "created": _positive_int(row.get("created")) or int(
@@ -119,9 +132,10 @@ def fetch() -> ProviderPricingResult:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        model_id = row.get("id")
-        if not isinstance(model_id, str):
+        upstream_id = row.get("id")
+        if not isinstance(upstream_id, str):
             continue
+        model_id = _NATIVE_TO_CANONICAL.get(upstream_id, upstream_id)
         architecture = row.get("architecture")
         architecture = architecture if isinstance(architecture, dict) else {}
         modality = str(architecture.get("modality") or "")
@@ -136,7 +150,12 @@ def fetch() -> ProviderPricingResult:
             continue
         price = ModelPrice(prompt_micro_per_m=prompt, completion_micro_per_m=completion)
         prices[model_id] = price
-        discovered[model_id] = _manifest_row(row, price)
+        discovered[model_id] = _manifest_row(
+            row,
+            price,
+            model_id=model_id,
+            upstream_id=upstream_id,
+        )
 
     _DISCOVERED_ROWS = discovered
     missing = sorted(set(EXPECTED_MODELS) - set(prices))

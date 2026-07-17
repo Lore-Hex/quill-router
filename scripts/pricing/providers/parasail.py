@@ -249,7 +249,7 @@ _DISPLAY_TO_OR_ID = {
     "Mistral Small 3.2 24B": "mistralai/mistral-small-3.2-24b-instruct",
     "Llama 4 Maverick (FP8)": "meta-llama/llama-4-maverick",
     "Llama 3.3 70B (FP8)": "meta-llama/llama-3.3-70b-instruct",
-    "Nemotron 3 Ultra 550B (NVFP4)": "nvidia/nvidia-nemotron-3-ultra-550b-a55b",
+    "Nemotron 3 Ultra 550B (NVFP4)": "nvidia/nemotron-3-ultra-550b-a55b",
     "Trinity Large (Thinking)": "arcee-ai/trinity-large-thinking",
     "Gemma 4 26B-A4B": "google/gemma-4-26b-a4b-it",
     "Gemma 4 31B": "google/gemma-4-31b-it",
