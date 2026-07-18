@@ -4,15 +4,15 @@
   <div>
     <span class="eyebrow">Smart · Cheap · Fast — pick two</span>
     <h1>Choose the right model for the job.</h1>
-    <p class="lead">Describe your task and how private it has to be. We plot every route on the iron
-      triangle, keep the ones that fit, and recommend the model — then show you the one-line shortcut.</p>
+    <p class="lead">Describe your task and how private it has to be. We combine independent quality
+      scores with live provider routes, integer pricing, privacy posture, and measured performance.</p>
     <div class="hero-actions">
       <button class="btn primary" type="button" data-action="open-signin">Create key</button>
       <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-    <div><strong>220+</strong><span>models &amp; routes</span></div>
+    <div><strong>Hundreds</strong><span>of live models &amp; routes</span></div>
     <div><strong>E2E</strong><span>encrypted routes available</span></div>
     <div><strong>0</strong><span>prompt logs by default</span></div>
   </div>
@@ -79,12 +79,13 @@ Estimate cost and speed before making billable calls.</code></pre>
   <div class="marketing-copy">
     <span class="eyebrow">How the triangle works</span>
     <h2>Three axes, one honest tradeoff.</h2>
-    <p><strong>Smart</strong> is reasoning quality. <strong>Cheap</strong> is dollars per million tokens,
-      straight from the live catalog. <strong>Fast</strong> is throughput — Cerebras-served gpt-oss,
-      MiMo Ultraspeed and GLM-4.7 Flash sit right at the tip.</p>
+    <p><strong>Smart</strong> uses independent AI IQ scores. <strong>Cheap</strong> uses integer
+      microdollar prices for the least expensive route that clears your privacy floor.
+      <strong>Fast</strong> uses recent measured throughput and time to first token.</p>
     <p>Pick a privacy floor — <strong>Open</strong>, <strong>Zero-retention&nbsp;(ZDR)</strong>, or a
       hardware <strong>Trusted Execution Environment&nbsp;(TEE)</strong> with end-to-end encryption — and the
-      board only keeps routes that clear it. Every route is attested at
+      board only keeps models with an exact provider route that clears it. The TrustedRouter gateway
+      hop is attested at
       <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>
   </div>
   <div class="copy-terminal">
@@ -92,10 +93,11 @@ Estimate cost and speed before making billable calls.</code></pre>
     <pre><code>base_url="{{ api_base_url }}"
 
 # let the router pick, per request:
-model="trustedrouter/auto"     # best fit, zero-retention
-model="trustedrouter/cheap"    # cheapest capable, TEE
+model="trustedrouter/auto"     # general rollover, no upstream privacy floor
+model="trustedrouter/cheap"    # lowest-cost paid candidate pool
+model="trustedrouter/zdr"      # zero-retention or stronger routes
 model="trustedrouter/e2e"      # end-to-end encrypted routes
-model="trustedrouter/synth"   # synthesize open models &gt; frontier</code></pre>
+model="trustedrouter/synth"    # billable panel + judge + synthesizer</code></pre>
   </div>
 </section>
 
@@ -106,8 +108,9 @@ model="trustedrouter/synth"   # synthesize open models &gt; frontier</code></pre
   </div>
   <div>
     <p>Frontier-smart, real-time-fast, dirt-cheap and private almost never coexist in a single model.
-      TrustedRouter's <code>auto</code>, <code>cheap</code> and <code>synth</code> routes dissolve the
-      tradeoff — one OpenAI-shaped endpoint that picks per request and proves it never logged your prompt.
+      TrustedRouter's <code>auto</code>, <code>cheap</code> and <code>synth</code> routes handle the
+      tradeoff through one OpenAI-shaped endpoint. Gateway attestation verifies TrustedRouter does not
+      log prompt content; the upstream privacy guarantee depends on the selected route.
       <button class="btn primary" type="button" data-action="open-signin">Create a key</button></p>
   </div>
 </section>

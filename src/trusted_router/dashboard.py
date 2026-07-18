@@ -280,34 +280,36 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         og_card="choose.png",
         title="Choose a Model — Smart, Cheap, Fast",
         description=(
-            "Describe your task and privacy needs and we plot 220+ LLM routes on the "
-            "smart-cheap-fast triangle, then recommend the model. Open, zero-retention, or TEE."
+            "Describe your task and privacy needs and compare independently scored models "
+            "against live price, provider, privacy, and performance data."
         ),
         faq_items=(
             (
                 "How do you decide which model fits?",
                 "Tell us the task and we estimate the intelligence it needs (simple to "
                 "frontier), the latency you can tolerate (real-time to overnight), and a "
-                "privacy floor. We keep only the routes that clear all three, then rank them "
-                "by the smart/cheap/fast tradeoff you set on the triangle.",
+                "privacy floor. We keep only models with an exact provider route that clears "
+                "the selected floor, then rank them by the smart/cheap/fast tradeoff.",
             ),
             (
                 "What do the privacy tiers mean?",
-                "Open routes any attested provider. Zero-retention (ZDR) only uses providers "
-                "that contractually keep nothing. Trusted Execution Environment (TEE) runs in "
-                "confidential compute with end-to-end encryption, so even the provider can't "
-                "read your prompt.",
+                "The TrustedRouter gateway hop is attested on every request. Open permits any "
+                "upstream posture. Zero-retention (ZDR) requires a provider endpoint whose "
+                "verified policy or contract retains nothing. TEE requires provider confidential "
+                "compute plus provider-side end-to-end encryption.",
             ),
             (
                 "Which models are fastest?",
-                "Cerebras-served gpt-oss, Xiaomi MiMo v2.5 Ultraspeed and GLM-4.7 Flash sit at "
-                "the fast tip of the triangle — hundreds to thousands of tokens per second.",
+                "The picker uses recent measured median throughput and time to first token for "
+                "the exact provider routes that satisfy your privacy selection. Unmeasured "
+                "routes are labeled instead of receiving an invented speed.",
             ),
             (
                 "Do I have to pick one model?",
-                "No. trustedrouter/auto picks the best fit per request, trustedrouter/cheap "
-                "takes the cheapest capable route in a TEE, and trustedrouter/synth combines "
-                "open models to beat any single frontier model — all through one OpenAI-shaped API.",
+                "No. trustedrouter/auto provides general rollover without an implicit upstream "
+                "privacy floor, trustedrouter/cheap chooses low-cost paid candidates, "
+                "trustedrouter/zdr enforces zero retention, and trustedrouter/e2e enforces "
+                "confidential compute plus provider-side encryption.",
             ),
         ),
     ),

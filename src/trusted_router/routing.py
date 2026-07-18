@@ -21,6 +21,7 @@ from trusted_router.catalog import (
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
+    ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SELECTOR_MODEL_ID,
     SYNTH_CODE_MODEL_ID,
     SYNTH_MODEL_ID,
@@ -479,14 +480,17 @@ def _requested_model_ids(
             )
         if ovr:
             overrides.update(ovr)
+        enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
+        if enforced_privacy_tier is not None:
+            overrides["min_privacy"] = (
+                "e2ee" if enforced_privacy_tier >= 3 else "zdr"
+            )
         if stripped == ZDR_MODEL_ID:
-            overrides["min_privacy"] = "zdr"
             overrides["order"] = (
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
             )
         elif stripped == E2E_MODEL_ID:
-            overrides["min_privacy"] = "e2ee"
-            overrides["order"] = "tinfoil,venice,phala,gmi"
+            overrides["order"] = "tinfoil,venice,phala"
         elif stripped == EU_MODEL_ID:
             provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
             overrides["order"] = provider_order

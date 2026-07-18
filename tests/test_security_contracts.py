@@ -511,6 +511,7 @@ def test_playwright_server_runs_with_test_observability_disabled() -> None:
     config = (Path(__file__).resolve().parents[1] / "playwright.config.js").read_text(encoding="utf-8")
 
     assert "TR_ENVIRONMENT=test" in config
+    assert "TR_STORAGE_BACKEND=memory" in config
     assert "TR_SENTRY_DSN=" in config
 
 

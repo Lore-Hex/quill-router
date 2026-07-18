@@ -808,6 +808,15 @@ E2E_MODEL_ID = "trustedrouter/e2e"
 
 CONFIDENTIAL_MODEL_ID = "trustedrouter/confidential"
 
+# Upstream privacy floors enforced by routing aliases. Keep this as the single
+# source of truth for authorization, public catalog copy, and recommendation
+# surfaces. General-purpose aliases such as auto and cheap intentionally have
+# no implicit privacy floor; callers can add provider.min_privacy explicitly.
+ROUTING_MODEL_MIN_PRIVACY_TIERS: dict[str, int] = {
+    ZDR_MODEL_ID: PRIVACY_TIER_ZERO_RETENTION,
+    E2E_MODEL_ID: PRIVACY_TIER_CONFIDENTIAL,
+}
+
 MONITOR_MODEL_ID = "trustedrouter/monitor"
 
 SOCRATES_1_0_MODEL_ID = "trustedrouter/socrates-1.0"

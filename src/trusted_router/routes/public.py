@@ -31,6 +31,7 @@ from trusted_router.catalog import (
     provider_to_openrouter_shape,
     providers_for_display,
 )
+from trusted_router.choose_catalog import choose_catalog_payload
 from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
@@ -102,6 +103,10 @@ LEADERBOARD_MIN_SAMPLES = 1
 LEADERBOARD_RECENT_WINDOW_MINUTES = 180
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
+CHOOSE_PAGE_CACHE_SECONDS = 300
+CHOOSE_PAGE_STALE_SECONDS = 86_400
+CHOOSE_CATALOG_CACHE_SECONDS = 300
+CHOOSE_CATALOG_STALE_SECONDS = 86_400
 INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
@@ -429,8 +434,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_page_html(settings, "pricing")
 
     @public_html_route("/choose")
-    async def choose() -> str:
-        return public_page_html(settings, "choose")
+    async def choose(background_tasks: BackgroundTasks) -> Response:
+        return _cached_public_response(
+            settings,
+            key=f"choose:page:{settings.release}",
+            media_type="text/html",
+            ttl_seconds=CHOOSE_PAGE_CACHE_SECONDS,
+            stale_seconds=CHOOSE_PAGE_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: public_page_html(settings, "choose").encode(),
+        )
+
+    @app.get("/choose/catalog.json")
+    async def choose_catalog(background_tasks: BackgroundTasks) -> Response:
+        return _cached_public_response(
+            settings,
+            key=f"choose:catalog:{settings.release}",
+            media_type="application/json",
+            ttl_seconds=CHOOSE_CATALOG_CACHE_SECONDS,
+            stale_seconds=CHOOSE_CATALOG_STALE_SECONDS,
+            background_tasks=background_tasks,
+            build=lambda: _json_body(
+                choose_catalog_payload(test_mode=settings.environment == "test")
+            ),
+        )
 
     @app.get("/ai-iq/models.json")
     async def ai_iq_models() -> JSONResponse:

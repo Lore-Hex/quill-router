@@ -75,6 +75,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     ROUTING_MODEL_ALIAS_TARGETS,
+    ROUTING_MODEL_MIN_PRIVACY_TIERS,
     SELECTOR_CATALOG_MODEL_ORDER,
     SELECTOR_MODEL_ID,
     SOCRATES_1_0_MODEL_ID,
