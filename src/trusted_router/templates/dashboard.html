@@ -292,6 +292,44 @@ const response = await client.chat.completions.create({
       </div>
     </section>
 
+    {# 6b. Global footprint map — visual proof of the multi-region scale
+       claimed in the reliability section above. Markup restored after the
+       2026-06 homepage redesign dropped it; the .regions-map CSS, the
+       data-regions-stage JS in dashboard.js, world-map.svg, and the
+       map_regions context (dashboard.py) were all left intact. #}
+    <section class="home-section">
+      <div class="home-wrap">
+        <section class="regions-map">
+          <div class="regions-map-head">
+            <h2>Global footprint: {{ map_regions|length }} regions</h2>
+            <p>Verified live gateways plus regional expansion points for lower latency and faster failover. Public status separates router health from provider health.</p>
+          </div>
+          <div class="regions-map-stage" data-regions-stage>
+            <svg viewBox="0 0 1000 500" class="regions-map-svg" role="img" aria-label="World map of TrustedRouter regions">
+              <image href="/static/world-map.svg" x="0" y="0" width="1000" height="500"/>
+              {% for region in map_regions %}
+              <g class="region-marker {{ 'is-primary' if region.primary else '' }} {{ 'is-serving' if region.serving else 'is-edge' }}" data-region-id="{{ region.id }}">
+                <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '20' if region.primary else '18' }}" class="region-pulse"/>
+                <circle cx="{{ '%.2f'|format(region.x) }}" cy="{{ '%.2f'|format(region.y) }}" r="{{ '10' if region.primary else '9' }}" class="region-dot"/>
+                <title>{{ region.id }} in {{ region.city }}. {{ region.status_label }}{% if region.primary %}. Primary{% endif %}</title>
+              </g>
+              {% endfor %}
+            </svg>
+            <ul class="region-list">
+              {% for region in map_regions %}
+              <li class="{{ 'is-primary' if region.primary else '' }} {{ 'is-serving' if region.serving else 'is-edge' }}" data-region-id="{{ region.id }}" tabindex="0" role="button" aria-label="Highlight region {{ region.id }}, {{ region.city }}">
+                <span class="region-list-id">{{ region.id }}</span>
+                <span class="region-list-city">{{ region.city }}</span>
+                {% if region.primary %}<span class="pill good">primary</span>{% endif %}
+                {% if not region.primary %}<span class="pill {{ 'good' if region.serving else '' }}">{{ region.status_label }}</span>{% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </section>
+      </div>
+    </section>
+
     {# 7. Privacy comparison #}
     <section class="home-section">
       <div class="home-wrap">
