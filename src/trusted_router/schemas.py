@@ -198,6 +198,11 @@ class GatewayAuthorizeRequest(_Lenient):
     app: str | None = Field(default=None, max_length=120)
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
+    # Route-failover visibility from the attested gateway: pre-output provider
+    # attempts that failed before the winning candidate answered, as
+    # "provider|endpoint|error_class" strings (metadata only, no content).
+    route_fallbacks: int | None = Field(default=None, ge=0)
+    route_failures: list[str] | None = None
     route_type: str | None = None
 
     @model_validator(mode="after")

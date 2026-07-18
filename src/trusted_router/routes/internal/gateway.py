@@ -815,6 +815,45 @@ def _force_custom_model_credit_routes(body: dict[str, Any]) -> None:
         body["provider"] = {"usage": "credits"}
 
 
+def _report_route_fallbacks(body: GatewaySettleRequest) -> None:
+    """Accumulate successful provider failovers in Sentry as warnings.
+
+    Each event means one provider route failed pre-output and the attested
+    gateway routed around it — harmless individually, invisible in aggregate
+    until now. A model+provider pair that accumulates these is a dead default
+    route (GMI/nemotron 2026-07-15, GMI/kimi-k3 2026-07-16): alert on volume,
+    then demote the route (see _PROVIDER_UNSERVED_CREDITS_MODELS).
+    Grouping: message embeds model + failed providers, so each pair gets its
+    own Sentry issue whose event count IS the accumulation signal.
+    """
+    try:
+        import sentry_sdk
+
+        failures = [
+            f for f in (getattr(body, "route_failures", None) or []) if isinstance(f, str)
+        ][:8]
+        providers = sorted({f.split("|", 1)[0] for f in failures if f})
+        model = body.selected_model or body.model or "unknown"
+        with sentry_sdk.push_scope() as scope:
+            scope.set_level("warning")
+            scope.set_tag("failover.model", model[:100])
+            if providers:
+                scope.set_tag("failover.failed_providers", ",".join(providers)[:200])
+            scope.set_context(
+                "route_failover",
+                {
+                    "fallbacks": getattr(body, "route_fallbacks", None),
+                    "failures": failures,
+                    "served_by": body.selected_endpoint or body.endpoint,
+                },
+            )
+            sentry_sdk.capture_message(
+                f"provider failover: {model} routed around {','.join(providers) or 'unknown'}"
+            )
+    except Exception:  # noqa: BLE001 - observability must never break settlement
+        logger.warning("route fallback sentry report failed", exc_info=True)
+
+
 def _settle_gateway_authorization(
     body: GatewaySettleRequest,
     *,
@@ -823,6 +862,10 @@ def _settle_gateway_authorization(
     background_tasks: BackgroundTasks | None = None,
 ) -> dict[str, Any]:
     timing_start = perf_counter()
+    # getattr: some callers/tests build the settle body via model_construct,
+    # which skips defaults for unset fields.
+    if success and getattr(body, "route_fallbacks", None):
+        _report_route_fallbacks(body)
     authorization = STORE.get_gateway_authorization(body.authorization_id)
     if authorization is None:
         raise api_error(404, "Gateway authorization not found", ErrorType.NOT_FOUND)
