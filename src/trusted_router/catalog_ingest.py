@@ -712,6 +712,13 @@ def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
     return None
 
 
+# Providers through which we route Anthropic-authored (anthropic/*) models on
+# Credits. Anthropic-direct only today; add "vertex"/"bedrock" here if/when
+# first-party Claude routing through those surfaces is enabled. Resellers that
+# merely list Claude ids are intentionally excluded (see _keep policy below).
+_ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+
+
 def _filter_unserved_provider_endpoints(
     endpoints: dict[str, ModelEndpoint],
 ) -> dict[str, ModelEndpoint]:
@@ -720,12 +727,14 @@ def _filter_unserved_provider_endpoints(
     those 502 on an account mismatch — BYOK routes use the customer's own key
     (their account may serve a different model set), so they're left intact.
 
-    Four complementary filters apply:
+    Five complementary filters apply:
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
       * allowlist        — keep ONLY the listed Credits models for a provider (Cerebras).
       * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
       * provider denylist — drop a Credits model on ONE provider only (gmi closed models).
+      * Claude first-party — route Anthropic-authored models via Anthropic only
+        for Credits, never resellers (policy; see _ANTHROPIC_FIRST_PARTY_PROVIDERS).
     """
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST
 
@@ -736,6 +745,18 @@ def _filter_unserved_provider_endpoints(
             return False
         if endpoint.usage_type != "Credits":
             return True
+        # Policy (2026-07-18): serve Anthropic-authored models via Anthropic
+        # directly for Credits, not resellers. Resellers list Claude ids they
+        # mostly don't actually serve (uniform upstream 404s) and add no value
+        # over first-party; keeping them only produced dead routes and alert
+        # noise. BYOK is untouched — a customer's own reseller key is their
+        # choice. Extend _ANTHROPIC_FIRST_PARTY_PROVIDERS if first-party
+        # Vertex/Bedrock Claude routing is ever enabled.
+        if (
+            endpoint.model_id.startswith("anthropic/")
+            and endpoint.provider not in _ANTHROPIC_FIRST_PARTY_PROVIDERS
+        ):
+            return False
         if endpoint.provider in allow and endpoint.model_id not in allow[endpoint.provider]:
             return False
         if endpoint.model_id in _UNSERVED_CREDITS_MODELS:
