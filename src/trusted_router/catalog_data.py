@@ -378,7 +378,7 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Novita — multi-model serverless inference. OpenAI-compatible
-    # at api.novita.ai/v3/openai. Hosts DeepSeek, Qwen, Llama,
+    # at api.novita.ai/openai/v1. Hosts DeepSeek, Qwen, Llama,
     # GLM, Kimi (and many more) at competitive rates.
     "novita": Provider(
         slug="novita",
@@ -1450,6 +1450,11 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         {
             "anthropic/claude-opus-4.7",
             "openai/gpt-5.5",
+            # 2026-07-18: GMI's authenticated /models feed still advertises
+            # Kimi K3, but direct prepaid inference returns 404 "No matching
+            # target server found". Keep BYOK visible for accounts with
+            # different capacity while removing the broken operator route.
+            "moonshotai/kimi-k3",
             # 2026-07-15: the snapshot route returns 404 when pinned to GMI.
             # Keep the directly verified Baseten route.
             "nvidia/nemotron-3-ultra-550b-a55b",

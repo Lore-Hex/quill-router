@@ -60,6 +60,7 @@ _DISPLAY_TO_OR_ID: dict[str, str] = {
     # Hunyuan
     "Hy3": "tencent/hy3",
     # MoonshotAI
+    "Kimi K3": "moonshotai/kimi-k3",
     "Kimi K2.7 Code": "moonshotai/kimi-k2.7-code",
     "Kimi K2.6": "moonshotai/kimi-k2.6",
     "Kimi K2.5": "moonshotai/kimi-k2.5",
