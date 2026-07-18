@@ -281,7 +281,15 @@ def eu_candidate_models(limit: int = 12) -> list[Model]:
 def zdr_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         min_tier=PRIVACY_TIER_ZERO_RETENTION,
-        preferred_providers=("anthropic", "openai", "gemini", "tinfoil", "venice", "phala"),
+        preferred_providers=(
+            "anthropic",
+            "openai",
+            "google-vertex",
+            "google-ai-studio",
+            "tinfoil",
+            "venice",
+            "phala",
+        ),
         limit=limit,
     )
 

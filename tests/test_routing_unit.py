@@ -235,7 +235,20 @@ def test_provider_route_preferences_normalizes_provider_aliases() -> None:
             }
         }
     )
-    assert prefs.only == frozenset({"gemini", "mistral", "kimi"})
+    assert prefs.only == frozenset(
+        {"google-ai-studio", "google-vertex", "mistral", "kimi"}
+    )
+
+
+@pytest.mark.parametrize("legacy", ["gemini", "google"])
+def test_provider_route_preferences_expands_legacy_google_group(legacy: str) -> None:
+    prefs = provider_route_preferences(
+        {"provider": {"order": [legacy], "only": [legacy], "ignore": [legacy]}}
+    )
+    expected = ("google-vertex", "google-ai-studio")
+    assert prefs.order == expected
+    assert prefs.only == frozenset(expected)
+    assert prefs.ignore == frozenset(expected)
 
 
 def test_provider_route_preferences_accepts_comma_separated_order() -> None:

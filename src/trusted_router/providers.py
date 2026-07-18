@@ -129,9 +129,9 @@ class ProviderClient:
                 )
             if model.provider == "anthropic":
                 return await self._anthropic_chat(model, request)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 return await self._gemini_chat(model, request)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return await self._vertex_openai_compatible_chat(model, request)
 
         started = time.monotonic()
@@ -176,9 +176,9 @@ class ProviderClient:
                 return self._anthropic_messages_stream(
                     model, request, state, output_format="openai"
                 )
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 return self._gemini_chat_stream(model, request, state)
-            if model.provider == "vertex" and is_vertex_openai_model(model):
+            if model.provider == "google-vertex" and is_vertex_openai_model(model):
                 return self._vertex_openai_compatible_chat_stream(model, request, state)
         return self._synthetic_chat_stream(model, request, state)
 
@@ -199,7 +199,7 @@ class ProviderClient:
                 if not api_key:
                     raise RuntimeError("COHERE_API_KEY is not configured")
                 return await cohere_embeddings(model, request, api_key=api_key)
-            if model.provider == "gemini":
+            if model.provider == "google-ai-studio":
                 api_key = self._secret("GEMINI_API_KEY")
                 if not api_key:
                     raise RuntimeError("GEMINI_API_KEY is not configured")

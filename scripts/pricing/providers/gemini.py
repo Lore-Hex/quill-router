@@ -12,8 +12,10 @@ The Gemini docs pricing page has explicit context-tier breakdowns
 for Gemini 2.5 Pro) which the parser converts into PriceTier objects
 for tier-aware billing.
 
-Vertex AI pricing (cloud.google.com/vertex-ai/...) is a different
-surface that TR doesn't route to and is intentionally ignored.
+TrustedRouter publishes Google AI Studio and Google Vertex as separate runtime
+providers. This adapter owns AI Studio model discovery. The shared refresh may
+apply Google's standard Gemini token prices to existing Vertex endpoint rows,
+but it never invents Vertex availability from AI Studio discovery.
 """
 from __future__ import annotations
 
@@ -43,7 +45,7 @@ MANIFEST_PATH = (
     / "trusted_router"
     / "data"
     / "provider_models"
-    / "gemini.json"
+    / "google-ai-studio.json"
 )
 
 EXPECTED_MODELS = [
@@ -244,7 +246,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         and rebuilt_by_id.get(model_id, {}).get("routable") is False
     )
     raw["models"] = rebuilt
-    raw["provider"] = SLUG
+    raw["provider"] = "google-ai-studio"
     raw["source"] = MODELS_URL
     raw["pricing_source"] = URL
     raw["generated_at"] = (
@@ -255,7 +257,6 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-
     changes: list[str] = []
     if appended:
         changes.append(f"appended {len(appended)}")
@@ -263,6 +264,6 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         changes.append(f"tombstoned {len(tombstoned)} unavailable")
     suffix = f", {', '.join(changes)}" if changes else ""
     return [
-        f"gemini: refreshed provider_models/gemini.json "
+        f"gemini: refreshed Google AI Studio manifest "
         f"({len(updated)} priced rows{suffix})"
     ]

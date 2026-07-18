@@ -231,9 +231,16 @@ def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     provider_modules = {
         path.stem for path in Path("scripts/pricing/providers").glob("*.py")
     } - {"__init__"}
+    aliased_manifest_slugs = {
+        alias
+        for aliases in refresh._PRICING_RESULT_PROVIDER_ALIASES.values()
+        for alias in aliases
+    }
     hourly = set(refresh.PROVIDER_SLUGS)
 
-    missing_modules = sorted(manifest_slugs - provider_modules - legacy_manual)
+    missing_modules = sorted(
+        manifest_slugs - provider_modules - aliased_manifest_slugs - legacy_manual
+    )
     missing_hourly = sorted((manifest_slugs & provider_modules) - hourly)
 
     assert not missing_modules

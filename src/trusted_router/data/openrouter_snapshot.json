@@ -10,8 +10,9 @@
     "deepseek",
     "fireworks",
     "friendli",
-    "gemini",
     "gmi",
+    "google-ai-studio",
+    "google-vertex",
     "grok",
     "kimi",
     "lightning",
@@ -3008,6 +3009,49 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-2.5-flash",
+          "model_id": "google/gemini-2.5-flash",
+          "model_name": "Google: Gemini 2.5 Flash",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000003",
+            "completion": "0.0000025",
+            "image": "0.0000003",
+            "audio": "0.000001",
+            "input_audio_cache": "0.0000001",
+            "web_search": "0.014",
+            "internal_reasoning": "0.0000025",
+            "input_cache_read": "0.00000003",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65535,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "tools",
+            "tool_choice",
+            "stop"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.98881160609395,
+          "uptime_last_5m": 99.98676022772408,
+          "uptime_last_1d": 99.93888702404723,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-2.5-flash",
           "model_id": "google/gemini-2.5-flash",
           "model_name": "Google: Gemini 2.5 Flash",
@@ -3047,93 +3091,7 @@
           "uptime_last_5m": 99.98676022772408,
           "uptime_last_1d": 99.93888702404723,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-flash",
-          "model_id": "google/gemini-2.5-flash",
-          "model_name": "Google: Gemini 2.5 Flash",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.00000015",
-            "audio": "0.0000005",
-            "input_audio_cache": "0.00000005",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00000125",
-            "input_cache_read": "0.000000015",
-            "input_cache_write": "0.00000004166666666666667",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.98881160609395,
-          "uptime_last_5m": 99.98676022772408,
-          "uptime_last_1d": 99.93888702404723,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-flash",
-          "model_id": "google/gemini-2.5-flash",
-          "model_name": "Google: Gemini 2.5 Flash",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000003",
-            "completion": "0.0000025",
-            "image": "0.00000054",
-            "audio": "0.0000018",
-            "input_audio_cache": "0.00000018",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000045",
-            "input_cache_read": "0.000000054",
-            "input_cache_write": "0.000000150000000000000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.98881160609395,
-          "uptime_last_5m": 99.98676022772408,
-          "uptime_last_1d": 99.93888702404723,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -3227,6 +3185,49 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-2.5-flash-lite",
+          "model_id": "google/gemini-2.5-flash-lite",
+          "model_name": "Google: Gemini 2.5 Flash Lite",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000001",
+            "completion": "0.0000004",
+            "image": "0.0000001",
+            "audio": "0.0000003",
+            "input_audio_cache": "0.00000003",
+            "web_search": "0.014",
+            "internal_reasoning": "0.0000004",
+            "input_cache_read": "0.00000001",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65535,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "tools",
+            "tool_choice",
+            "stop"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.37450976448584,
+          "uptime_last_5m": 99.38172043010752,
+          "uptime_last_1d": 99.56049212821972,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-2.5-flash-lite",
           "model_id": "google/gemini-2.5-flash-lite",
           "model_name": "Google: Gemini 2.5 Flash Lite",
@@ -3266,93 +3267,7 @@
           "uptime_last_5m": 99.38172043010752,
           "uptime_last_1d": 99.56049212821972,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-flash-lite",
-          "model_id": "google/gemini-2.5-flash-lite",
-          "model_name": "Google: Gemini 2.5 Flash Lite",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.00000005",
-            "audio": "0.00000015",
-            "input_audio_cache": "0.000000015",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000002",
-            "input_cache_read": "0.000000005",
-            "input_cache_write": "0.00000004166666666666667",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.37450976448584,
-          "uptime_last_5m": 99.38172043010752,
-          "uptime_last_1d": 99.56049212821972,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-flash-lite",
-          "model_id": "google/gemini-2.5-flash-lite",
-          "model_name": "Google: Gemini 2.5 Flash Lite",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000001",
-            "completion": "0.0000004",
-            "image": "0.00000018",
-            "audio": "0.00000054",
-            "input_audio_cache": "0.000000054",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00000072",
-            "input_cache_read": "0.000000018",
-            "input_cache_write": "0.000000150000000000000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65535,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice",
-            "stop"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.37450976448584,
-          "uptime_last_5m": 99.38172043010752,
-          "uptime_last_1d": 99.56049212821972,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -3424,6 +3339,78 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-2.5-pro",
+          "model_id": "google/gemini-2.5-pro",
+          "model_name": "Google: Gemini 2.5 Pro",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000125",
+            "completion": "0.00001",
+            "image": "0.00000125",
+            "audio": "0.00000125",
+            "input_audio_cache": "0.000000125",
+            "web_search": "0.014",
+            "internal_reasoning": "0.00001",
+            "input_cache_read": "0.000000125",
+            "input_cache_write": "0.000000375",
+            "discount": 0,
+            "overrides": [
+              {
+                "min_prompt_tokens": 200000,
+                "prompt": "0.0000025",
+                "completion": "0.000015",
+                "audio": "0.0000025",
+                "input_audio_cache": "0.00000025",
+                "input_cache_read": "0.00000025"
+              }
+            ],
+            "prompt_tiers": [
+              {
+                "max_prompt_tokens": 200000,
+                "prompt": "0.00000125"
+              },
+              {
+                "max_prompt_tokens": null,
+                "prompt": "0.0000025"
+              }
+            ],
+            "completion_tiers": [
+              {
+                "max_prompt_tokens": 200000,
+                "completion": "0.00001"
+              },
+              {
+                "max_prompt_tokens": null,
+                "completion": "0.000015"
+              }
+            ]
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "structured_outputs",
+            "response_format",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.2815153494448,
+          "uptime_last_5m": 99.08814589665653,
+          "uptime_last_1d": 99.05745032091899,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-2.5-pro",
           "model_id": "google/gemini-2.5-pro",
           "model_name": "Google: Gemini 2.5 Pro",
@@ -3492,151 +3479,7 @@
           "uptime_last_5m": 99.08814589665653,
           "uptime_last_1d": 99.05745032091899,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.000000625",
-            "audio": "0.000000625",
-            "input_audio_cache": "0.0000000625",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000005",
-            "input_cache_read": "0.0000000625",
-            "input_cache_write": "0.0000001875",
-            "discount": 0,
-            "overrides": [
-              {
-                "min_prompt_tokens": 200000,
-                "prompt": "0.00000125",
-                "completion": "0.0000075",
-                "audio": "0.00000125",
-                "input_audio_cache": "0.000000125",
-                "input_cache_read": "0.000000125"
-              }
-            ],
-            "prompt_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "prompt": "0.00000125"
-              },
-              {
-                "max_prompt_tokens": null,
-                "prompt": "0.0000025"
-              }
-            ],
-            "completion_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "completion": "0.00001"
-              },
-              {
-                "max_prompt_tokens": null,
-                "completion": "0.000015"
-              }
-            ]
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.2815153494448,
-          "uptime_last_5m": 99.08814589665653,
-          "uptime_last_1d": 99.05745032091899,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-2.5-pro",
-          "model_id": "google/gemini-2.5-pro",
-          "model_name": "Google: Gemini 2.5 Pro",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000125",
-            "completion": "0.00001",
-            "image": "0.00000225",
-            "audio": "0.00000225",
-            "input_audio_cache": "0.000000225",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000018",
-            "input_cache_read": "0.000000225",
-            "input_cache_write": "0.000000675",
-            "discount": 0,
-            "overrides": [
-              {
-                "min_prompt_tokens": 200000,
-                "prompt": "0.0000045",
-                "completion": "0.000027",
-                "audio": "0.0000045",
-                "input_audio_cache": "0.00000045",
-                "input_cache_read": "0.00000045"
-              }
-            ],
-            "prompt_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "prompt": "0.00000125"
-              },
-              {
-                "max_prompt_tokens": null,
-                "prompt": "0.0000025"
-              }
-            ],
-            "completion_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "completion": "0.00001"
-              },
-              {
-                "max_prompt_tokens": null,
-                "completion": "0.000015"
-              }
-            ]
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "structured_outputs",
-            "response_format",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "tools",
-            "tool_choice"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.2815153494448,
-          "uptime_last_5m": 99.08814589665653,
-          "uptime_last_1d": 99.05745032091899,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -3730,6 +3573,49 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-3-flash-preview-20251217",
+          "model_id": "google/gemini-3-flash-preview",
+          "model_name": "Google: Gemini 3 Flash Preview",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000005",
+            "completion": "0.000003",
+            "image": "0.0000005",
+            "audio": "0.000001",
+            "input_audio_cache": "0.0000001",
+            "web_search": "0.014",
+            "internal_reasoning": "0.000003",
+            "input_cache_read": "0.00000005",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "reasoning_effort"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.94016790381991,
+          "uptime_last_5m": 99.94504739662041,
+          "uptime_last_1d": 99.63061099769472,
+          "supports_implicit_caching": true,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-3-flash-preview-20251217",
           "model_id": "google/gemini-3-flash-preview",
           "model_name": "Google: Gemini 3 Flash Preview",
@@ -3769,93 +3655,7 @@
           "uptime_last_5m": 99.94504739662041,
           "uptime_last_1d": 99.63061099769472,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3-flash-preview-20251217",
-          "model_id": "google/gemini-3-flash-preview",
-          "model_name": "Google: Gemini 3 Flash Preview",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000005",
-            "completion": "0.000003",
-            "image": "0.00000025",
-            "audio": "0.0000005",
-            "input_audio_cache": "0.00000005",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000015",
-            "input_cache_read": "0.000000025",
-            "input_cache_write": "0.00000004166666666666667",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "structured_outputs",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.94016790381991,
-          "uptime_last_5m": 99.94504739662041,
-          "uptime_last_1d": 99.63061099769472,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3-flash-preview-20251217",
-          "model_id": "google/gemini-3-flash-preview",
-          "model_name": "Google: Gemini 3 Flash Preview",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000005",
-            "completion": "0.000003",
-            "image": "0.0000009",
-            "audio": "0.0000018",
-            "input_audio_cache": "0.00000018",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000054",
-            "input_cache_read": "0.00000009",
-            "input_cache_write": "0.000000150000000000000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "structured_outputs",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.94016790381991,
-          "uptime_last_5m": 99.94504739662041,
-          "uptime_last_1d": 99.63061099769472,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -3932,11 +3732,11 @@
       "per_request_limits": null,
       "endpoints": [
         {
-          "name": "Google AI Studio | google/gemini-3-pro-image-20260528",
+          "name": "Google Vertex AI | google/gemini-3-pro-image-20260528",
           "model_id": "google/gemini-3-pro-image",
           "model_name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/global",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
           "context_length": 131072,
           "pricing": {
             "prompt": "0.000002",
@@ -3971,7 +3771,50 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 99.70508343034537,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "openrouter_fallback"
+        },
+        {
+          "name": "Google AI Studio | google/gemini-3-pro-image-20260528",
+          "model_id": "google/gemini-3-pro-image",
+          "model_name": "Google: Nano Banana Pro (Gemini 3 Pro Image)",
+          "provider_name": "Google AI Studio",
+          "tag": "google-ai-studio",
+          "context_length": 131072,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000012",
+            "image": "0.000002",
+            "image_output": "0.00012",
+            "audio": "0.000002",
+            "input_audio_cache": "0.0000002",
+            "web_search": "0.014",
+            "internal_reasoning": "0.000012",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.000000375",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 32768,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "structured_outputs",
+            "tools",
+            "tool_choice"
+          ],
+          "status": 0,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.70508343034537,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "openrouter_fallback"
         }
       ],
@@ -4017,6 +3860,49 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-3.1-flash-lite-20260507",
+          "model_id": "google/gemini-3.1-flash-lite",
+          "model_name": "Google: Gemini 3.1 Flash Lite",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.00000025",
+            "completion": "0.0000015",
+            "image": "0.00000025",
+            "audio": "0.0000005",
+            "input_audio_cache": "0.00000005",
+            "web_search": "0.014",
+            "internal_reasoning": "0.0000015",
+            "input_cache_read": "0.000000025",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "reasoning_effort"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.4648742128104,
+          "uptime_last_5m": 99.73575310365459,
+          "uptime_last_1d": 99.71196269384227,
+          "supports_implicit_caching": true,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-3.1-flash-lite-20260507",
           "model_id": "google/gemini-3.1-flash-lite",
           "model_name": "Google: Gemini 3.1 Flash Lite",
@@ -4056,93 +3942,7 @@
           "uptime_last_5m": 99.73575310365459,
           "uptime_last_1d": 99.71196269384227,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.1-flash-lite-20260507",
-          "model_id": "google/gemini-3.1-flash-lite",
-          "model_name": "Google: Gemini 3.1 Flash Lite",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.0000015",
-            "image": "0.000000125",
-            "audio": "0.00000025",
-            "input_audio_cache": "0.000000025",
-            "web_search": "0.014",
-            "internal_reasoning": "0.00000075",
-            "input_cache_read": "0.0000000125",
-            "input_cache_write": "0.00000004166666666666667",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "structured_outputs",
-            "tool_choice",
-            "tools",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.4648742128104,
-          "uptime_last_5m": 99.73575310365459,
-          "uptime_last_1d": 99.71196269384227,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.1-flash-lite-20260507",
-          "model_id": "google/gemini-3.1-flash-lite",
-          "model_name": "Google: Gemini 3.1 Flash Lite",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.00000025",
-            "completion": "0.0000015",
-            "image": "0.00000045",
-            "audio": "0.0000009",
-            "input_audio_cache": "0.00000009",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000027",
-            "input_cache_read": "0.000000045",
-            "input_cache_write": "0.000000150000000000000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "structured_outputs",
-            "tool_choice",
-            "tools",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.4648742128104,
-          "uptime_last_5m": 99.73575310365459,
-          "uptime_last_1d": 99.71196269384227,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -4309,6 +4109,79 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-3.1-pro-preview-20260219",
+          "model_id": "google/gemini-3.1-pro-preview",
+          "model_name": "Google: Gemini 3.1 Pro Preview",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.000012",
+            "image": "0.000002",
+            "audio": "0.000002",
+            "input_audio_cache": "0.0000002",
+            "web_search": "0.014",
+            "internal_reasoning": "0.000012",
+            "input_cache_read": "0.0000002",
+            "input_cache_write": "0.000000375",
+            "discount": 0,
+            "overrides": [
+              {
+                "min_prompt_tokens": 200000,
+                "prompt": "0.000004",
+                "completion": "0.000018",
+                "audio": "0.000004",
+                "input_audio_cache": "0.0000004",
+                "input_cache_read": "0.0000004"
+              }
+            ],
+            "prompt_tiers": [
+              {
+                "max_prompt_tokens": 200000,
+                "prompt": "0.000002"
+              },
+              {
+                "max_prompt_tokens": null,
+                "prompt": "0.000004"
+              }
+            ],
+            "completion_tiers": [
+              {
+                "max_prompt_tokens": 200000,
+                "completion": "0.000012"
+              },
+              {
+                "max_prompt_tokens": null,
+                "completion": "0.000018"
+              }
+            ]
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "structured_outputs",
+            "reasoning_effort"
+          ],
+          "status": 0,
+          "uptime_last_30m": 98.61157024793388,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.39196926881971,
+          "supports_implicit_caching": false,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-3.1-pro-preview-20260219",
           "model_id": "google/gemini-3.1-pro-preview",
           "model_name": "Google: Gemini 3.1 Pro Preview",
@@ -4378,153 +4251,7 @@
           "uptime_last_5m": 100,
           "uptime_last_1d": 99.39196926881971,
           "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.1-pro-preview-20260219",
-          "model_id": "google/gemini-3.1-pro-preview",
-          "model_name": "Google: Gemini 3.1 Pro Preview",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.000012",
-            "image": "0.000001",
-            "audio": "0.000001",
-            "input_audio_cache": "0.0000001",
-            "web_search": "0.014",
-            "internal_reasoning": "0.000006",
-            "input_cache_read": "0.0000001",
-            "input_cache_write": "0.0000001875",
-            "discount": 0,
-            "overrides": [
-              {
-                "min_prompt_tokens": 200000,
-                "prompt": "0.000002",
-                "completion": "0.000009",
-                "audio": "0.000002",
-                "input_audio_cache": "0.0000002",
-                "input_cache_read": "0.0000002"
-              }
-            ],
-            "prompt_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "prompt": "0.000002"
-              },
-              {
-                "max_prompt_tokens": null,
-                "prompt": "0.000004"
-              }
-            ],
-            "completion_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "completion": "0.000012"
-              },
-              {
-                "max_prompt_tokens": null,
-                "completion": "0.000018"
-              }
-            ]
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "structured_outputs",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.61157024793388,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.39196926881971,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.1-pro-preview-20260219",
-          "model_id": "google/gemini-3.1-pro-preview",
-          "model_name": "Google: Gemini 3.1 Pro Preview",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.000012",
-            "image": "0.0000036",
-            "audio": "0.0000036",
-            "input_audio_cache": "0.00000036",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000216",
-            "input_cache_read": "0.00000036",
-            "input_cache_write": "0.000000675",
-            "discount": 0,
-            "overrides": [
-              {
-                "min_prompt_tokens": 200000,
-                "prompt": "0.0000072",
-                "completion": "0.0000324",
-                "audio": "0.0000072",
-                "input_audio_cache": "0.00000072",
-                "input_cache_read": "0.00000072"
-              }
-            ],
-            "prompt_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "prompt": "0.000002"
-              },
-              {
-                "max_prompt_tokens": null,
-                "prompt": "0.000004"
-              }
-            ],
-            "completion_tiers": [
-              {
-                "max_prompt_tokens": 200000,
-                "completion": "0.000012"
-              },
-              {
-                "max_prompt_tokens": null,
-                "completion": "0.000018"
-              }
-            ]
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "tools",
-            "tool_choice",
-            "structured_outputs",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 98.61157024793388,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.39196926881971,
-          "supports_implicit_caching": false,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {
@@ -4602,6 +4329,49 @@
       "per_request_limits": null,
       "endpoints": [
         {
+          "name": "Google Vertex AI | google/gemini-3.5-flash-20260519",
+          "model_id": "google/gemini-3.5-flash",
+          "model_name": "Google: Gemini 3.5 Flash",
+          "provider_name": "Google Vertex AI",
+          "tag": "google-vertex",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000015",
+            "completion": "0.000009",
+            "image": "0.0000015",
+            "audio": "0.000003",
+            "input_audio_cache": "0.0000003",
+            "web_search": "0.014",
+            "internal_reasoning": "0.000009",
+            "input_cache_read": "0.00000015",
+            "input_cache_write": "0.00000008333333333333334",
+            "discount": 0
+          },
+          "quantization": "unknown",
+          "max_completion_tokens": 65536,
+          "max_prompt_tokens": null,
+          "supported_parameters": [
+            "reasoning",
+            "include_reasoning",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "seed",
+            "response_format",
+            "structured_outputs",
+            "tool_choice",
+            "tools",
+            "reasoning_effort"
+          ],
+          "status": 0,
+          "uptime_last_30m": 99.19747520288549,
+          "uptime_last_5m": 98.01230477993374,
+          "uptime_last_1d": 99.6518479511439,
+          "supports_implicit_caching": true,
+          "tr_provider_slug": "google-vertex",
+          "pricing_source": "provider_direct"
+        },
+        {
           "name": "Google AI Studio | google/gemini-3.5-flash-20260519",
           "model_id": "google/gemini-3.5-flash",
           "model_name": "Google: Gemini 3.5 Flash",
@@ -4641,93 +4411,7 @@
           "uptime_last_5m": 98.01230477993374,
           "uptime_last_1d": 99.6518479511439,
           "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.5-flash-20260519",
-          "model_id": "google/gemini-3.5-flash",
-          "model_name": "Google: Gemini 3.5 Flash",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/flex",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000015",
-            "completion": "0.000009",
-            "image": "0.00000075",
-            "audio": "0.0000015",
-            "input_audio_cache": "0.00000015",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000045",
-            "input_cache_read": "0.000000075",
-            "input_cache_write": "0.00000004166666666666667",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "structured_outputs",
-            "tool_choice",
-            "tools",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.19747520288549,
-          "uptime_last_5m": 98.01230477993374,
-          "uptime_last_1d": 99.6518479511439,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
-          "pricing_source": "provider_direct"
-        },
-        {
-          "name": "Google AI Studio | google/gemini-3.5-flash-20260519",
-          "model_id": "google/gemini-3.5-flash",
-          "model_name": "Google: Gemini 3.5 Flash",
-          "provider_name": "Google AI Studio",
-          "tag": "google-ai-studio/priority",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000015",
-            "completion": "0.000009",
-            "image": "0.0000027",
-            "audio": "0.0000054",
-            "input_audio_cache": "0.00000054",
-            "web_search": "0.014",
-            "internal_reasoning": "0.0000162",
-            "input_cache_read": "0.00000027",
-            "input_cache_write": "0.000000150000000000000012",
-            "discount": 0
-          },
-          "quantization": "unknown",
-          "max_completion_tokens": 65536,
-          "max_prompt_tokens": null,
-          "supported_parameters": [
-            "reasoning",
-            "include_reasoning",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "response_format",
-            "structured_outputs",
-            "tool_choice",
-            "tools",
-            "reasoning_effort"
-          ],
-          "status": 0,
-          "uptime_last_30m": 99.19747520288549,
-          "uptime_last_5m": 98.01230477993374,
-          "uptime_last_1d": 99.6518479511439,
-          "supports_implicit_caching": true,
-          "tr_provider_slug": "gemini",
+          "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
         },
         {

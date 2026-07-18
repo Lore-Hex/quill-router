@@ -11,6 +11,10 @@ from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
+from trusted_router.provider_compat import (
+    byok_storage_provider_candidates,
+    canonical_byok_provider,
+)
 from trusted_router.schemas import UpsertByokRequest
 from trusted_router.security import key_label
 from trusted_router.serialization import byok_provider_shape
@@ -24,15 +28,25 @@ def register_byok_routes(router: APIRouter) -> None:
     @router.get("/byok/providers")
     async def byok_providers(principal: ManagementPrincipal) -> dict[str, list[dict[str, Any]]]:
         configs = STORE.list_byok_providers(principal.workspace.id)
-        return {"data": [byok_provider_shape(c) for c in configs]}
+        # Prefer a post-split row when both exist, and never expose the retired
+        # `gemini` storage key as a third public provider.
+        rows: dict[str, dict[str, Any]] = {}
+        for config in sorted(configs, key=lambda item: item.provider == "gemini"):
+            public_provider = canonical_byok_provider(config.provider)
+            shape = byok_provider_shape(config)
+            shape["provider"] = public_provider
+            rows.setdefault(public_provider, shape)
+        return {"data": list(rows.values())}
 
     @router.get("/byok/providers/{provider}")
     async def byok_provider(provider: str, principal: ManagementPrincipal) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
-        config = STORE.get_byok_provider(principal.workspace.id, slug)
+        config = _get_byok_provider(principal.workspace.id, slug)
         if config is None:
             raise api_error(404, "BYOK provider is not configured", ErrorType.NOT_FOUND)
-        return {"data": byok_provider_shape(config)}
+        shape = byok_provider_shape(config)
+        shape["provider"] = slug
+        return {"data": shape}
 
     @router.put("/byok/providers/{provider}")
     async def upsert_byok_provider(
@@ -120,7 +134,7 @@ def register_byok_routes(router: APIRouter) -> None:
                 ErrorType.BAD_REQUEST,
             )
 
-        created = STORE.get_byok_provider(principal.workspace.id, slug) is None
+        created = _get_byok_provider(principal.workspace.id, slug) is None
         config = STORE.upsert_byok_provider(
             workspace_id=principal.workspace.id,
             provider=slug,
@@ -139,13 +153,16 @@ def register_byok_routes(router: APIRouter) -> None:
         principal: ManagementPrincipal,
     ) -> dict[str, Any]:
         slug = _require_byok_provider(provider)
-        if not STORE.delete_byok_provider(principal.workspace.id, slug):
+        deleted = False
+        for storage_slug in byok_storage_provider_candidates(slug):
+            deleted = STORE.delete_byok_provider(principal.workspace.id, storage_slug) or deleted
+        if not deleted:
             raise api_error(404, "BYOK provider is not configured", ErrorType.NOT_FOUND)
         return {"data": {"deleted": True, "provider": slug}}
 
 
 def _require_byok_provider(provider: str) -> str:
-    slug = provider.strip().lower()
+    slug = canonical_byok_provider(provider)
     catalog_provider = PROVIDERS.get(slug)
     if catalog_provider is None or not catalog_provider.supports_byok:
         raise api_error(
@@ -154,6 +171,14 @@ def _require_byok_provider(provider: str) -> str:
             ErrorType.PROVIDER_NOT_SUPPORTED,
         )
     return slug
+
+
+def _get_byok_provider(workspace_id: str, provider: str) -> Any | None:
+    for storage_slug in byok_storage_provider_candidates(provider):
+        config = STORE.get_byok_provider(workspace_id, storage_slug)
+        if config is not None:
+            return config
+    return None
 
 
 def _default_byok_secret_ref(workspace_id: str, provider: str) -> str:

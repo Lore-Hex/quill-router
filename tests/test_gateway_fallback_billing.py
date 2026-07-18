@@ -228,6 +228,38 @@ def test_gateway_settle_can_bill_authorized_fallback_model() -> None:
     assert refreshed_key.byok_usage_microdollars == expected_cost
 
 
+def test_gateway_uses_legacy_gemini_envelope_identity_for_ai_studio() -> None:
+    client, key = _client_and_key()
+    STORE.upsert_byok_provider(
+        workspace_id=key["workspace_id"],
+        provider="gemini",
+        secret_ref="env://GEMINI_API_KEY",  # noqa: S106 - provider secret ref.
+        key_hint="AIza...1234",
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "google/gemini-2.5-flash",
+            "provider": {"only": ["google-ai-studio"], "usage": "byok"},
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+        },
+    )
+
+    assert authorize.status_code == 200, authorize.text
+    data = authorize.json()["data"]
+    assert data["provider"] == "google-ai-studio"
+    assert data["usage_type"] == "BYOK"
+    assert data["limit_usage_type"] == "BYOK"
+    assert data["byok_provider"] == "gemini"
+    assert data["byok_secret_ref"] == "env://GEMINI_API_KEY"  # noqa: S105
+    assert {row["provider"] for row in data["route_candidates"]} == {
+        "google-ai-studio"
+    }
+
+
 def test_gateway_authorize_and_settle_embeddings_model() -> None:
     # The attested-enclave prod path: authorize an embedding model (which is
     # supports_chat=False), then settle it billing INPUT tokens only.
@@ -537,6 +569,7 @@ def test_gateway_can_prefer_byok_endpoint_for_dual_mode_model() -> None:
             "byok_encrypted_secret": None,
             "byok_cache_key": None,
             "byok_key_hint": "kim...1234",
+            "byok_provider": "kimi",
             "region": "us-central1",
         }
     ]

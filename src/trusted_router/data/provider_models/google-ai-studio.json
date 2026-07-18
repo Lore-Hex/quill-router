@@ -1,6 +1,6 @@
 {
-  "_about": "Provider-native supplement for Gemini chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
-  "provider": "gemini",
+  "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
+  "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
   "generated_at": "2026-07-04T00:00:00Z",
   "model_count": 3,

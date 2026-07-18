@@ -13,8 +13,8 @@ Usage:
 The filter keeps endpoints that resolve to a configured TrustedRouter
 downstream. Most use provider-direct keys. The deliberately labelled Meta via
 OpenRouter route uses TrustedRouter's OpenRouter inference key because Muse
-Spark is not currently available through a direct Meta endpoint. Vertex rows
-remain excluded until the required project quota is available.
+Spark is not currently available through a direct Meta endpoint. Google AI
+Studio and Google Vertex remain separate provider identities.
 """
 
 from __future__ import annotations
@@ -44,8 +44,11 @@ PROVIDER_NAME_TO_SLUG: dict[str, str] = {
     "Meta": "meta",
     "Anthropic": "anthropic",
     "OpenAI": "openai",
-    "Google": "gemini",
-    "Google AI Studio": "gemini",
+    "Google": "google-vertex",
+    "Google Vertex": "google-vertex",
+    "Google Vertex AI": "google-vertex",
+    "Vertex AI": "google-vertex",
+    "Google AI Studio": "google-ai-studio",
     "Cerebras": "cerebras",
     "DeepSeek": "deepseek",
     "Mistral": "mistral",
@@ -176,26 +179,57 @@ def fetch_endpoints(client: httpx.Client, model_id: str) -> list[dict[str, Any]]
     return list(data.get("endpoints") or [])
 
 
-def filter_endpoints(endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_endpoints(
+    endpoints: list[dict[str, Any]], *, public_model_id: str
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    google_endpoints: dict[str, tuple[int, dict[str, Any]]] = {}
     for raw in endpoints:
         provider_name = str(raw.get("provider_name") or "").strip()
         slug = PROVIDER_NAME_TO_SLUG.get(provider_name)
         if slug is None:
             continue
-        # OpenRouter labels Vertex-served endpoints with `provider_name="Google"`
-        # *and* `tag="google-vertex/..."`. Without the tag check the snapshot
-        # would lump those into our `gemini` provider and surface them as
-        # routable models, which is wrong — TR doesn't have GCP quota for
-        # Anthropic-on-Vertex / Gemini-on-Vertex yet.
         tag = str(raw.get("tag") or "").lower()
-        if tag.startswith("google-vertex"):
-            continue
         kept = {key: raw.get(key) for key in ENDPOINT_FIELDS if key in raw}
         kept["tr_provider_slug"] = slug
+
+        if slug in {"google-ai-studio", "google-vertex"}:
+            # Vertex also hosts third-party publishers. The enclave's
+            # google-vertex adapter is intentionally Gemini-native, so only
+            # Google-authored catalog models are valid on either Google
+            # product route.
+            if not public_model_id.startswith("google/"):
+                continue
+
+            # OpenRouter exposes service-tier variants as separate endpoints,
+            # while TrustedRouter's direct adapters use the standard product
+            # tier. Keep one deterministic standard row per Google product so
+            # flex/priority prices cannot overwrite ordinary billing.
+            rank = _google_standard_endpoint_rank(slug, tag)
+            if rank is None:
+                continue
+            current = google_endpoints.get(slug)
+            if current is None or rank < current[0]:
+                google_endpoints[slug] = (rank, kept)
+            continue
+
         out.append(kept)
+
+    out.extend(endpoint for _rank, endpoint in google_endpoints.values())
     out.sort(key=lambda e: (e["tr_provider_slug"], str(e.get("provider_name") or "")))
     return out
+
+
+def _google_standard_endpoint_rank(slug: str, tag: str) -> int | None:
+    if slug == "google-ai-studio":
+        return 0 if tag == "google-ai-studio" else None
+    if tag == "google-vertex/global":
+        return 0
+    if tag == "google-vertex":
+        return 1
+    if tag == "google-vertex/eu":
+        return 2
+    return None
 
 
 def slim_model(raw: dict[str, Any], endpoints: list[dict[str, Any]]) -> dict[str, Any]:
@@ -222,7 +256,10 @@ def build_snapshot() -> dict[str, Any]:
                 except httpx.HTTPError as exc:
                     print(f"WARN: {model['id']} endpoints fetch failed: {exc}", file=sys.stderr)
                     continue
-                filtered = filter_endpoints(endpoints)
+                filtered = filter_endpoints(
+                    endpoints,
+                    public_model_id=str(model["id"]),
+                )
                 if not filtered:
                     continue
                 kept.append(slim_model(model, filtered))

@@ -49,7 +49,11 @@ PROBES = [
     {"provider": "cohere", "model": "cohere/embed-v4.0", "required": INCLUDE_COHERE},
     {"provider": "voyage", "model": "voyage/voyage-3-large", "required": INCLUDE_VOYAGE},
     {"provider": "deepinfra", "model": "Qwen/Qwen3-Embedding-8B", "required": INCLUDE_DEEPINFRA},
-    {"provider": "gemini", "model": "google/gemini-embedding-001", "required": INCLUDE_GEMINI},
+    {
+        "provider": "google-ai-studio",
+        "model": "google/gemini-embedding-001",
+        "required": INCLUDE_GEMINI,
+    },
 ]
 
 

@@ -520,8 +520,12 @@ def test_embeddings_and_model_endpoints(
     rows = models.json()["data"]
     embedding_ids = {row["id"] for row in rows}
     assert {"openai/text-embedding-3-large", "cohere/embed-v4.0"} <= embedding_ids
-    # OpenAI, Gemini, Together, and Cohere are all represented.
-    assert {"openai", "gemini", "together", "cohere"} <= {
+    # OpenAI, AI Studio, Together, and Cohere are all represented. Vertex
+    # remains absent until its native embedding adapter is implemented.
+    assert {"openai", "google-ai-studio", "together", "cohere"} <= {
+        row["trustedrouter"]["provider"] for row in rows
+    }
+    assert "google-vertex" not in {
         row["trustedrouter"]["provider"] for row in rows
     }
     assert all(row["trustedrouter"]["supports_embeddings"] for row in rows)
@@ -1024,7 +1028,8 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert {
         "anthropic",
         "openai",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "deepseek",
         "kimi",
         "mistral",
@@ -1055,12 +1060,16 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["openai"]["prepaid_zero_data_retention"] is False
     assert provider_flags["openai"]["prepaid_zero_data_retention_effective_on"] == ("2026-07-28")
     assert provider_flags["openai"]["zero_data_retention_scope"] is None
-    assert provider_flags["gemini"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-ai-studio"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-ai-studio"]["supports_byok"] is True
+    assert provider_flags["google-vertex"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-vertex"]["supports_byok"] is False
     assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
     assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
     assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
     assert "customer BYOK" in provider_flags["openai"]["provider_policy"]
-    assert "Not currently marked ZDR" in provider_flags["gemini"]["provider_policy"]
+    assert "Not currently marked ZDR" in provider_flags["google-ai-studio"]["provider_policy"]
+    assert "Not currently marked ZDR" in provider_flags["google-vertex"]["provider_policy"]
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
@@ -1108,7 +1117,8 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "venice",
     }.issubset(zdr_providers)
     assert "anthropic" not in zdr_providers
-    assert "gemini" not in zdr_providers
+    assert "google-ai-studio" not in zdr_providers
+    assert "google-vertex" not in zdr_providers
     assert "openai" not in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
@@ -1227,6 +1237,14 @@ def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     assert unsupported.status_code == 400
     assert unsupported.json()["error"]["type"] == "provider_not_supported"
 
+    explicit_vertex = client.put(
+        "/v1/byok/providers/google-vertex",
+        headers=user_headers,
+        json={"secret_ref": "env://VERTEX_API_KEY"},
+    )
+    assert explicit_vertex.status_code == 400
+    assert explicit_vertex.json()["error"]["type"] == "provider_not_supported"
+
     raw_ref = client.put(
         "/v1/byok/providers/openai",
         headers=user_headers,
@@ -1234,6 +1252,27 @@ def test_byok_provider_config_rejects_unsupported_and_raw_secret_refs(
     )
     assert raw_ref.status_code == 400
     assert raw_ref.json()["error"]["type"] == "bad_request"
+
+
+def test_legacy_gemini_byok_route_canonicalizes_to_ai_studio(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    create = client.put(
+        "/v1/byok/providers/gemini",
+        headers=user_headers,
+        json={"secret_ref": "env://GEMINI_API_KEY", "key_hint": "AIza...1234"},
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["data"]["provider"] == "google-ai-studio"
+
+    listed = client.get("/v1/byok/providers", headers=user_headers)
+    assert [row["provider"] for row in listed.json()["data"]] == [
+        "google-ai-studio"
+    ]
+    fetched = client.get("/v1/byok/providers/gemini", headers=user_headers)
+    assert fetched.status_code == 200
+    assert fetched.json()["data"]["provider"] == "google-ai-studio"
 
 
 def test_byok_provider_config_can_use_secret_ref_and_delete(

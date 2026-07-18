@@ -241,19 +241,36 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
-    "gemini": Provider(
-        slug="gemini",
-        name="Gemini",
+    "google-ai-studio": Provider(
+        slug="google-ai-studio",
+        name="Google AI Studio",
         supports_embeddings=True,
         supports_prepaid=True,
         provider_zero_data_retention=False,
         provider_policy=(
-            "Not currently marked ZDR in TrustedRouter. Google Gemini / Vertex "
-            "routes may have account- or product-specific data-governance terms, "
-            "but this provider is excluded from trustedrouter/zdr until that "
-            "posture is reverified."
+            "Not currently marked ZDR in TrustedRouter. Google AI Studio and the "
+            "Gemini Developer API have product- and billing-specific data-use terms, "
+            "so this route stays outside trustedrouter/zdr."
         ),
-        provider_policy_url="https://docs.cloud.google.com/vertex-ai/generative-ai/docs/data-governance",
+        provider_policy_url="https://ai.google.dev/gemini-api/terms",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "google-vertex": Provider(
+        slug="google-vertex",
+        name="Google Vertex AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_zero_data_retention=False,
+        provider_policy=(
+            "Not currently marked ZDR in TrustedRouter. Vertex AI documents a "
+            "separate zero-data-retention configuration process, but this managed "
+            "route stays outside trustedrouter/zdr until its live account settings "
+            "are verified."
+        ),
+        provider_policy_url=(
+            "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/"
+            "vertex-ai-zero-data-retention"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "cerebras": Provider(
@@ -713,7 +730,8 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
     {
         "anthropic",
         "openai",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "cerebras",
         "deepseek",
         "mistral",
@@ -1043,7 +1061,7 @@ ORCHESTRATION_PRIMITIVE_MODEL_IDS = frozenset(
 
 EU_FOCUSED_PROVIDER_ORDER: tuple[str, ...] = (
     "mistral",
-    "gemini",
+    "google-vertex",
     "openai",
     "anthropic",
     "tinfoil",
@@ -1329,7 +1347,7 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
     {
         "id": "google/gemini-embedding-001",
         "name": "Gemini Embedding 001",
-        "provider": "gemini",
+        "provider": "google-ai-studio",
         "upstream_id": "gemini-embedding-001",
         "context_length": 2048,
         "cost_dollars_per_million": "0.15",
@@ -1520,7 +1538,16 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     # Credits routes. BYOK remains available because customer accounts can
     # have different model behavior/entitlements.
     "minimax": frozenset({"minimax/minimax-m2.1", "minimax/minimax-m2.5"}),
-    "gemini": frozenset(
+    "google-ai-studio": frozenset(
+        {
+            "google/gemma-3-4b-it",
+            "google/gemma-3-12b-it",
+            "google/gemma-3-27b-it",
+            "google/gemma-4-26b-a4b-it",
+            "google/gemma-4-31b-it",
+        }
+    ),
+    "google-vertex": frozenset(
         {
             "google/gemma-3-4b-it",
             "google/gemma-3-12b-it",

@@ -51,6 +51,8 @@ def default_provider_secret_ref(provider: str) -> str:
         "anthropic": "ANTHROPIC_API_KEY",
         "openai": "OPENAI_API_KEY",
         "gemini": "GEMINI_API_KEY",
+        "google-ai-studio": "GEMINI_API_KEY",
+        "google-vertex": "VERTEX_ACCESS_TOKEN",
         "cerebras": "CEREBRAS_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
         "mistral": "MISTRAL_API_KEY",

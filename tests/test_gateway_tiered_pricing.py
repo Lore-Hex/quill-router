@@ -16,7 +16,7 @@ def _gemini_pro_credits_endpoint() -> ModelEndpoint:
     endpoint = next(
         endpoint
         for endpoint in endpoints_for_model("google/gemini-2.5-pro")
-        if endpoint.provider == "gemini" and endpoint.usage_type == "Credits"
+        if endpoint.provider == "google-ai-studio" and endpoint.usage_type == "Credits"
     )
     assert len(endpoint.price_tiers) >= 2
     return endpoint

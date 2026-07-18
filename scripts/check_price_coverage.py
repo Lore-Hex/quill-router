@@ -220,7 +220,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         _cerebras_model_id,
     ),
     (
-        "gemini",
+        "google-ai-studio",
         "https://generativelanguage.googleapis.com/v1beta/models",
         ("GEMINI_API_KEY",),
         _gemini_model_id,

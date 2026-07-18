@@ -161,7 +161,7 @@ def _gemini_pro_model() -> Model:
     return Model(
         id="google/gemini-2.5-pro",
         name="Gemini 2.5 Pro",
-        provider="gemini",
+        provider="google-ai-studio",
         context_length=1_000_000,
         prompt_price_microdollars_per_million_tokens=1_375_000,
         completion_price_microdollars_per_million_tokens=11_000_000,

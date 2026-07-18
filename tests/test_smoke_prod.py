@@ -117,7 +117,8 @@ def test_api_catalog_and_regions_are_publicly_reachable(client: httpx.Client) ->
     assert {
         "anthropic",
         "openai",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "cerebras",
         "deepseek",
         "mistral",
@@ -137,7 +138,7 @@ def test_embeddings_catalog_lists_embedding_models(client: httpx.Client) -> None
     rows = response.json()["data"]
     ids = {row["id"] for row in rows}
     assert {"openai/text-embedding-3-large", "cohere/embed-v4.0"}.issubset(ids), ids
-    assert {"openai", "gemini", "together", "cohere"}.issubset(
+    assert {"openai", "google-ai-studio", "together", "cohere"}.issubset(
         {row["trustedrouter"]["provider"] for row in rows}
     )
     for row in rows:

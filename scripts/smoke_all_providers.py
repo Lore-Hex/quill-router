@@ -32,7 +32,8 @@ PROBES: list[tuple[str, str]] = [
     # (returns 400 globally now). 4.1-mini is the current low-end probe
     # — same OpenAI auth path, same TTFB envelope, still routable.
     ("openai", "openai/gpt-4.1-mini"),
-    ("gemini", "google/gemini-2.5-flash"),
+    ("google-vertex", "google/gemini-2.5-flash"),
+    ("google-ai-studio", "google/gemini-2.5-flash"),
     ("cerebras", "openai/gpt-oss-120b"),
     ("deepseek", "deepseek/deepseek-v4-flash"),
     ("mistral", "mistralai/mistral-small-2603"),
