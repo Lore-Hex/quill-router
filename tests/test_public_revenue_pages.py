@@ -139,20 +139,23 @@ def test_choose_app_static_asset_is_served(client: TestClient) -> None:
     response = client.get("/static/choose-app.html")
 
     assert response.status_code == 200
-    assert "iron triangle of LLMs" in response.text
-    # Embedded-mode hook that hides the in-app header inside the iframe.
-    assert "tr-choose-height" in response.text
-    assert "Tinfoil-first TEE providers" not in response.text
-    assert "trustedrouter/e2e" in response.text
-    assert "E2E pool includes Tinfoil" not in response.text
-    assert "provider route choices shown on each model card" in response.text
-    assert "PROVIDER_LOOKUP" in response.text
-    assert "AI_IQ_LOOKUP" in response.text
-    assert "/v1/models" in response.text
-    assert "/ai-iq/models.json" in response.text
+    assert "Choose with route-level facts." in response.text
+    assert "Upstream privacy floor" in response.text
+    assert "/static/choose-app.css?v=2" in response.text
+    assert "/static/choose-app.js?v=2" in response.text
+    assert "fonts.googleapis.com" not in response.text
     # Privacy floor defaults to Open (any provider), not ZDR.
     assert '<option value="0" selected>' in response.text
-    assert "priv: 0," in response.text
+
+    script = client.get("/static/choose-app.js")
+    assert script.status_code == 200
+    assert 'const CATALOG_URL = "/choose/catalog.json"' in script.text
+    assert "tr-choose-height" in script.text
+    assert "/v1/models" not in script.text
+    assert "/ai-iq/models.json" not in script.text
+    assert "PROVIDER_LOOKUP" not in script.text
+    assert "AI_IQ_LOOKUP" not in script.text
+    assert "No upstream privacy floor is implied" not in response.text
 
 
 def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClient) -> None:

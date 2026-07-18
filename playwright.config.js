@@ -9,7 +9,7 @@ module.exports = defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "TR_ENVIRONMENT=test TR_SENTRY_DSN= TR_STRIPE_SECRET_KEY= TR_STRIPE_WEBHOOK_SECRET= TR_GOOGLE_CLIENT_ID= TR_GOOGLE_CLIENT_SECRET= TR_GITHUB_CLIENT_ID= TR_GITHUB_CLIENT_SECRET= uv run uvicorn trusted_router.main:app --host 127.0.0.1 --port 18081",
+    command: "TR_ENVIRONMENT=test TR_STORAGE_BACKEND=memory TR_SENTRY_DSN= TR_STRIPE_SECRET_KEY= TR_STRIPE_WEBHOOK_SECRET= TR_GOOGLE_CLIENT_ID= TR_GOOGLE_CLIENT_SECRET= TR_GITHUB_CLIENT_ID= TR_GITHUB_CLIENT_SECRET= uv run uvicorn trusted_router.main:app --host 127.0.0.1 --port 18081",
     url: "http://127.0.0.1:18081/health",
     reuseExistingServer: true,
     timeout: 30_000,

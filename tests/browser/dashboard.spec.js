@@ -169,3 +169,71 @@ test("synth preserves streamed thinking when final visible answer is empty", asy
   await expect(page.locator("[data-fusion-details]")).toContainText("Final synthesizer raw thinking and output");
   await expect(page.locator("[data-fusion-details]")).toContainText("Final synthesizer demo thinking.");
 });
+
+test("model picker applies privacy to exact provider routes", async ({ page }) => {
+  await page.goto("/choose");
+  const picker = page.frameLocator("#tr-choose-frame");
+
+  await expect(picker.locator("#loadState")).toContainText("independently scored models");
+  await picker.getByRole("button", { name: /Simple/ }).click();
+  await picker.getByRole("button", { name: /Any/ }).click();
+  await picker.locator("#privacy").selectOption("3");
+
+  await expect(picker.locator(".model-card").first()).toBeVisible();
+  await expect(picker.locator(".route-recommendation code").first()).toHaveText(
+    "trustedrouter/e2e",
+  );
+  await expect(picker.locator(".model-card", { hasText: "DeepSeek V4 Pro" })).toHaveCount(0);
+  const routeLabels = await picker.locator(".provider-route").allTextContents();
+  expect(routeLabels.length).toBeGreaterThan(0);
+  expect(routeLabels.every((label) => label.endsWith("· TEE"))).toBe(true);
+
+  await picker.locator("#privacy").selectOption("2");
+  await expect(picker.locator(".route-recommendation code").first()).toHaveText(
+    "trustedrouter/zdr",
+  );
+  const zdrRouteLabels = await picker.locator(".provider-route").allTextContents();
+  expect(zdrRouteLabels.every((label) => !label.endsWith("· Open"))).toBe(true);
+});
+
+test("model picker triangle is keyboard adjustable", async ({ page }) => {
+  await page.goto("/static/choose-app.html");
+  await expect(page.locator("#loadState")).toContainText("independently scored models");
+
+  const before = Number(await page.locator("#qualityWeight").textContent());
+  await page.locator("#triangle").focus();
+  await page.keyboard.press("ArrowUp");
+  const after = Number(await page.locator("#qualityWeight").textContent());
+  expect(after).toBeGreaterThan(before);
+
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator("#qualityWeight")).toHaveText("33");
+  await expect(page.locator("#costWeight")).toHaveText("33");
+  await expect(page.locator("#speedWeight")).toHaveText("33");
+});
+
+test("model picker fails closed when route facts are unavailable", async ({ page }) => {
+  await page.route("**/choose/catalog.json", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/static/choose-app.html");
+
+  await expect(page.locator("#loadState")).toContainText("HTTP 503");
+  await expect(page.locator("#retry-catalog")).toBeVisible();
+  await expect(page.locator(".alias-card")).toHaveCount(0);
+  await expect(page.locator(".model-card")).toHaveCount(0);
+  await expect(page.locator("#modelResults")).toContainText(
+    "Recommendations are unavailable",
+  );
+});
+
+test("model picker has no horizontal overflow at mobile width", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/static/choose-app.html");
+  await expect(page.locator("#loadState")).toContainText("independently scored models");
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(2);
+});

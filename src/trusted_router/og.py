@@ -149,7 +149,7 @@ def choose_og_image_svg(_settings: Settings) -> str:
     has no colour-emoji support, so vertex meaning is carried by labels."""
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="Choose a model on the iron triangle">
   <title>Choose a model — smart, cheap, fast</title>
-  <desc>TrustedRouter plots 220+ models on a smart, cheap, fast triangle and recommends the right one.</desc>
+  <desc>TrustedRouter compares independently scored models with exact live provider route facts.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#07131f"/>
@@ -204,7 +204,7 @@ def choose_og_image_svg(_settings: Settings) -> str:
     <text x="80" y="214" font-size="21" font-weight="800" fill="#7be0b1" letter-spacing="3">THE IRON TRIANGLE OF LLMs</text>
     <text x="80" y="292" font-size="64" font-weight="850" fill="#ffffff">Choose a model.</text>
     <text x="80" y="362" font-size="46" font-weight="850"><tspan fill="#a78bfa">Smart</tspan><tspan fill="#5e7290"> &#183; </tspan><tspan fill="#34d399">Cheap</tspan><tspan fill="#5e7290"> &#183; </tspan><tspan fill="#f59e0b">Fast</tspan><tspan fill="#cfe1f1" font-weight="700" font-size="34"> &#8212; pick two.</tspan></text>
-    <text x="82" y="414" font-size="22" font-weight="600" fill="#cfe1f1">Tell us the task. We plot 220+ routes and pick the fit.</text>
+    <text x="82" y="414" font-size="22" font-weight="600" fill="#cfe1f1">Independent quality. Exact route price, privacy, and speed.</text>
   </g>
 
   <!-- Footer -->
