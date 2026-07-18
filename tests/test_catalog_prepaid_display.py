@@ -65,6 +65,32 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
     } <= cerebras_credits
 
 
+def test_gmi_only_credits_serves_allowlisted_models() -> None:
+    # GMI's /models listing is aspirational: 7d probes (2026-07-18) show four
+    # models served on our account and ~45 listed phantoms with zero successes
+    # ever. Credits endpoints must stay within the verified set; BYOK uses the
+    # customer's own key and keeps GMI's full listing visible.
+    allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["gmi"]
+    gmi_credits = {
+        e.model_id
+        for e in MODEL_ENDPOINTS.values()
+        if e.provider == "gmi" and e.usage_type == "Credits"
+    }
+    assert gmi_credits <= allow
+    assert gmi_credits == {
+        "deepseek/deepseek-v4-pro",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+    gmi_byok = {
+        e.model_id
+        for e in MODEL_ENDPOINTS.values()
+        if e.provider == "gmi" and e.usage_type != "Credits"
+    }
+    assert len(gmi_byok) > len(gmi_credits)
+
+
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
     assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
         "gpt-oss-120b"
