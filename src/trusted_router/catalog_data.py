@@ -1434,6 +1434,20 @@ _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
             "cerebras/zai-glm-4.7",
         }
     ),
+    # 2026-07-18: GMI's /models listing is aspirational — 7d synthetic probes
+    # show exactly four models served on our account (590-670 successes each)
+    # while the other ~45 listed models have ZERO successes ever (uniform
+    # upstream 404 "No matching target server found"). Route Credits traffic
+    # only to the verified set; BYOK stays visible (customer accounts may
+    # differ). A new GMI model earns its way in via probe successes.
+    "gmi": frozenset(
+        {
+            "deepseek/deepseek-v4-pro",
+            "z-ai/glm-5",
+            "z-ai/glm-5.1",
+            "z-ai/glm-5.2",
+        }
+    ),
 }
 
 _UNSERVED_CREDITS_MODELS: frozenset[str] = frozenset(
