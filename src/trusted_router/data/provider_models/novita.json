@@ -3,8 +3,8 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-06-20T00:00:00Z",
-  "model_count": 106,
+  "generated_at": "2026-07-18T19:00:00Z",
+  "model_count": 107,
   "models": [
     {
       "id": "Sao10K/L3-8B-Stheno-v3.2",
@@ -1446,6 +1446,37 @@
       "max_output_tokens": 262144,
       "input_token_price_per_m": 8000,
       "output_token_price_per_m": 34000,
+      "model_type": "chat",
+      "features": [
+        "function-calling",
+        "reasoning",
+        "serverless",
+        "structured-outputs"
+      ],
+      "input_modalities": [
+        "image",
+        "text",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "anthropic",
+        "chat/completions"
+      ],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "display_name": "Kimi K3",
+      "title": "moonshotai/kimi-k3",
+      "created": 1784168859,
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 3000,
       "model_type": "chat",
       "features": [
         "function-calling",

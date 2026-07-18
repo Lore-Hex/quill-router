@@ -227,6 +227,26 @@ Free
     }
 
 
+def test_novita_parser_tracks_kimi_k3_launch_pricing() -> None:
+    module = importlib.import_module("scripts.pricing.parsers.novita")
+    result = module.parse(
+        """
+MoonshotAI
+
+--
+
+Model Name\tContext\tInput\tOutput\tActions
+Kimi K3\t1,048,576\t$3 /Mt· Cache Read $0.3 /Mt\t$15 /Mt\tMore
+"""
+    )
+
+    assert result["moonshotai/kimi-k3"] == {
+        "prompt_micro_per_m": 3_000_000,
+        "completion_micro_per_m": 15_000_000,
+        "prompt_cached_micro_per_m": 300_000,
+    }
+
+
 @pytest.mark.parametrize(
     "slug",
     ["anthropic", "cerebras", "gemini", "mistral", "deepseek", "openai", "kimi", "zai"],

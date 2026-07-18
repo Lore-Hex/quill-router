@@ -93,12 +93,20 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k2.7-code-highspeed@kimi/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@kimi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@kimi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@novita/prepaid" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@novita/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@gmi/prepaid" not in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@gmi/byok" in MODEL_ENDPOINTS
     kimi_k3 = MODELS["moonshotai/kimi-k3"]
     assert kimi_k3.context_length == 1_048_576
     assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_300_000
     assert kimi_k3.completion_price_microdollars_per_million_tokens == 16_500_000
     assert kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 330_000
     assert MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"].upstream_id == "kimi-k3"
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
+        == "moonshotai/kimi-k3"
+    )
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id
         == "kimi-k2.7-code-highspeed"
