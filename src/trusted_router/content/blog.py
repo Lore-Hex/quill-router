@@ -43,36 +43,46 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
 <rect width="1200" height="630" fill="#ffffff"/>
-<text x="60" y="56" font-size="34" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="12">Prometheus 2.0 sets a new DRACO state of the art</tspan></text>
-<text x="60" y="90" font-size="19" fill="#6b7280">Full 100-task DRACO &#183; agentic deep research &#183; whiskers = 95% bootstrap CI over tasks (B=20k)</text>
-<line x1="360" y1="140" x2="360" y2="520" stroke="#eef0f2"/><text x="360" y="546" font-size="15" text-anchor="middle" fill="#9a9890">60</text>
-<line x1="556" y1="140" x2="556" y2="520" stroke="#eef0f2"/><text x="556" y="546" font-size="15" text-anchor="middle" fill="#9a9890">65</text>
-<line x1="752" y1="140" x2="752" y2="520" stroke="#eef0f2"/><text x="752" y="546" font-size="15" text-anchor="middle" fill="#9a9890">70</text>
-<line x1="948" y1="140" x2="948" y2="520" stroke="#eef0f2"/><text x="948" y="546" font-size="15" text-anchor="middle" fill="#9a9890">75</text>
-<line x1="1144" y1="140" x2="1144" y2="520" stroke="#eef0f2"/><text x="1144" y="546" font-size="15" text-anchor="middle" fill="#9a9890">80</text>
-<text x="340" y="185" font-size="18" font-weight="700" text-anchor="end" fill="#111827">Prometheus 2.0</text>
-<rect x="164" y="162" width="878" height="34" rx="4" fill="#1d9e75"/>
-<line x1="928" y1="179" x2="1152" y2="179" stroke="#1f2937" stroke-width="2.5"/>
-<line x1="928" y1="167" x2="928" y2="191" stroke="#1f2937" stroke-width="2.5"/>
-<line x1="1152" y1="167" x2="1152" y2="191" stroke="#1f2937" stroke-width="2.5"/>
-<text x="1050" y="152" font-size="21" font-weight="700" text-anchor="middle" fill="#111827">77.4</text>
-<text x="340" y="285" font-size="17" text-anchor="end" fill="#374151">Zeus 1.0</text>
-<rect x="164" y="262" width="722" height="34" rx="4" fill="#c9c7bf"/>
-<text x="900" y="285" font-size="18" font-weight="600" fill="#6b7280">73.4</text>
-<text x="340" y="385" font-size="17" text-anchor="end" fill="#374151">Prometheus 1.0</text>
-<rect x="164" y="362" width="557" height="34" rx="4" fill="#c9c7bf"/>
-<text x="735" y="385" font-size="18" font-weight="600" fill="#6b7280">69.2</text>
-<text x="340" y="485" font-size="17" text-anchor="end" fill="#374151">Iris 1.0</text>
-<rect x="164" y="462" width="298" height="34" rx="4" fill="#c9c7bf"/>
-<text x="476" y="485" font-size="18" font-weight="600" fill="#6b7280">62.6</text>
-<text x="60" y="600" font-size="16" fill="#888780">Bars are DRACO scores (0&#8211;100, weighted rubric criteria met). The 77.4 interval clears every prior score.</text>
-<text x="1188" y="621" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+<text x="60" y="54" font-size="30" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Prometheus 2.0 &#8212; new DRACO state of the art</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">Full 100-task DRACO, agentic deep research &#183; whiskers = 95% bootstrap CI over tasks (B=20k)</text>
+<line x1="332" y1="112" x2="332" y2="540" stroke="#eef0f2"/><text x="332" y="562" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="478" y1="112" x2="478" y2="540" stroke="#eef0f2"/><text x="478" y="562" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="624" y1="112" x2="624" y2="540" stroke="#eef0f2"/><text x="624" y="562" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="770" y1="112" x2="770" y2="540" stroke="#eef0f2"/><text x="770" y="562" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<line x1="916" y1="112" x2="916" y2="540" stroke="#eef0f2"/><text x="916" y="562" font-size="14" text-anchor="middle" fill="#9a9890">75</text>
+<line x1="1062" y1="112" x2="1062" y2="540" stroke="#eef0f2"/><text x="1062" y="562" font-size="14" text-anchor="middle" fill="#9a9890">80</text>
+<rect x="332" y="124" width="654" height="30" rx="4" fill="#1d9e75"/>
+<text x="322" y="145" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Prometheus 2.0</text>
+<line x1="901" y1="139" x2="1068" y2="139" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="901" y1="128" x2="901" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="1068" y1="128" x2="1068" y2="150" stroke="#1f2937" stroke-width="2.5"/>
+<text x="1082" y="145" font-size="19" font-weight="700" fill="#111827">77.4</text>
+<rect x="332" y="184" width="537" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="205" font-size="16" text-anchor="end" fill="#374151">Zeus 1.0</text>
+<text x="879" y="205" font-size="17" font-weight="600" fill="#6b7280">73.4</text>
+<rect x="332" y="244" width="415" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="265" font-size="16" text-anchor="end" fill="#374151">Prometheus 1.0</text>
+<text x="757" y="265" font-size="17" font-weight="600" fill="#6b7280">69.2</text>
+<rect x="332" y="304" width="409" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="325" font-size="16" text-anchor="end" fill="#374151">OpenRouter best fusion &#8224;</text>
+<text x="751" y="325" font-size="17" font-weight="600" fill="#6b7280">69.0</text>
+<rect x="332" y="364" width="301" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="385" font-size="16" text-anchor="end" fill="#374151">Fable-5 solo</text>
+<text x="643" y="385" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="424" width="242" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="445" font-size="16" text-anchor="end" fill="#374151">GPT-5.5 solo</text>
+<text x="584" y="445" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="484" width="155" height="30" rx="4" fill="#c9c7bf"/>
+<text x="322" y="505" font-size="16" text-anchor="end" fill="#374151">Opus 4.8 solo</text>
+<text x="497" y="505" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="596" font-size="15" fill="#888780">&#8224; OpenRouter paper's best published fusion (Fable-5 + GPT-5.5). Solo baselines: same harness, same grader-calibrated protocol.</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 </figure>
-<p>Prometheus 2.0 just posted the best score we have ever measured on <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark we use to keep ourselves honest: <strong>77.4</strong>, with a 95% confidence interval of [74.5, 80.2]. That interval sits entirely above <a href="/blog/synth-iris-prometheus-zeus">Zeus 1.0's 73.4</a> &mdash; the frontier-panel preset that was our previous state of the art &mdash; and a full eight points above Prometheus 1.0's 69.2.</p>
-<p>Every task is real agentic research: the model searches the live web, reads primary sources, runs calculations, and writes a long cited report, which is then graded criterion by criterion against a ~39-item rubric it never sees. No canned answers, no cherry-picking &mdash; all 100 tasks ran, all 100 were graded, and the error bars are bootstrap intervals over tasks. If you have read <a href="/blog/ten-cheap-runs-beat-the-frontier">our</a> <a href="/blog/fusion-works-now-even-self-fusion">earlier</a> <a href="/blog/self-fusion-gain-lives-in-the-synthesizer">results</a>, you know the pattern: combining models beats any single model, and the combination keeps getting better.</p>
-<p>The headline is simple. A preset built entirely from open-weights models now outperforms the commercial frontier panel on deep research &mdash; at a fraction of the cost. It was strongest exactly where careful research pays: Law (93.3), Medicine (86.1), General Knowledge (83.4), Academic (82.8).</p>
-<p>Prometheus 2.0 is live on TrustedRouter today. Call it like any other model &mdash; same key, same base URL, model id <span class="mono">trustedrouter/prometheus-2.0</span> &mdash; and the whole thing runs behind the same <a href="/synth">attested gateway</a> as everything else. The <a href="/models/trustedrouter/prometheus">rolling <span class="mono">trustedrouter/prometheus</span> alias</a> already points at it.</p>
+<p>Prometheus 2.0 posted the best score we have measured on <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark: <strong>77.4</strong>, 95% confidence interval [74.5, 80.2]. The interval sits entirely above <a href="/blog/synth-iris-prometheus-zeus">Zeus 1.0's 73.4</a> &mdash; the frontier-panel preset that held our previous best &mdash; and eight points above Prometheus 1.0's 69.2.</p>
+<p>For context beyond our own presets: the OpenRouter paper that introduced DRACO published <strong>69.0</strong> as its best result, Fable-5 drafting with GPT-5.5 fusing. The strongest single frontier models, run through the same harness and grader-calibrated protocol, land lower still: Fable-5 solo 65.3, GPT-5.5 solo 63.3, Claude Opus 4.8 solo 60.3. Prometheus 2.0 clears every one of them, and it is built entirely from open-weights models, at a fraction of the frontier panel's cost.</p>
+<p>Each DRACO task is real research: the model searches the live web, reads primary sources, runs its own calculations, and writes a long cited report, which is then graded criterion by criterion against a ~39-item rubric it never sees. All 100 tasks ran and all 100 were graded; the whiskers are bootstrap intervals over tasks. It was strongest where careful reading pays: Law (93.3), Medicine (86.1), General Knowledge (83.4), Academic (82.8). This continues what <a href="/blog/ten-cheap-runs-beat-the-frontier">our</a> <a href="/blog/fusion-works-now-even-self-fusion">earlier</a> <a href="/blog/self-fusion-gain-lives-in-the-synthesizer">results</a> kept showing: a well-fused panel beats any single model, and the fusions keep improving.</p>
+<p>Prometheus 2.0 is live on TrustedRouter today. Same key, same base URL, model id <span class="mono">trustedrouter/prometheus-2.0</span>, running behind the same <a href="/synth">attested gateway</a> as everything else. The rolling <a href="/models/trustedrouter/prometheus"><span class="mono">trustedrouter/prometheus</span></a> alias already points at it.</p>
 """,
     ),
     BlogPost(
