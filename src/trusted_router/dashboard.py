@@ -171,10 +171,17 @@ _PROVIDER_MODEL_INFO_LINKS: dict[str, tuple[dict[str, str], ...]] = {
             "kind": "Official model information",
         },
     ),
-    "gemini": (
+    "google-ai-studio": (
         {
-            "label": "Gemini model docs",
+            "label": "Google AI Studio model docs",
             "href": "https://ai.google.dev/gemini-api/docs/models",
+            "kind": "Official model information",
+        },
+    ),
+    "google-vertex": (
+        {
+            "label": "Vertex AI model docs",
+            "href": "https://cloud.google.com/vertex-ai/generative-ai/docs/models",
             "kind": "Official model information",
         },
     ),

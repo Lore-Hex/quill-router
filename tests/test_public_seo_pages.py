@@ -478,7 +478,9 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     system_names = {row["name"] for row in payload["system_subprocessors"]}
     model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
     assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
-    assert {"Anthropic", "OpenAI", "Gemini"}.issubset(model_names)
+    assert {"Anthropic", "OpenAI", "Google AI Studio", "Google Vertex AI"}.issubset(
+        model_names
+    )
     anthropic = next(
         row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"
     )

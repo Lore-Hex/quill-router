@@ -134,7 +134,9 @@ def _customer_price(cost_microdollars_per_million: int) -> int:
 _CACHE_READ_PRICE_MULTIPLIER: dict[str, Decimal] = {
     "anthropic": Decimal("0.1"),
     "openai": Decimal("0.5"),
-    "gemini": Decimal("0.25"),
+    "gemini": Decimal("0.25"),  # pre-split settlement compatibility
+    "google-ai-studio": Decimal("0.25"),
+    "google-vertex": Decimal("0.25"),
     "vertex": Decimal("0.25"),
 }
 

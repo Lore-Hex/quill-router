@@ -110,6 +110,20 @@ PROVIDER_SLUGS = [
     "voyage",
 ]
 
+# Google's official Gemini pricing/model feed is shared by the two product
+# adapters for now, but their public provider identities, credentials, health,
+# cache affinity, and settlement records remain separate. This alias is applied
+# only at catalog-refresh time; runtime routing never collapses the providers.
+_PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
+    "gemini": ("google-ai-studio", "google-vertex"),
+}
+
+# A shared official price feed does not prove shared model availability.
+# Vertex routes must already exist in the endpoint snapshot before the merger
+# prices them; only the AI Studio side may be synthesized from Gemini's live
+# model discovery feed.
+_NO_SYNTHETIC_ENDPOINT_PROVIDER_SLUGS = frozenset({"google-vertex"})
+
 # >N providers failing entirely (network down, blocked, etc.) fails
 # the workflow and prevents committing a partial snapshot. ≤N failures
 # are tolerated: those providers keep last hour's snapshot value.
@@ -135,7 +149,15 @@ _OPENROUTER_BACKED_PROVIDER_SLUGS = frozenset({"meta"})
 
 
 def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
-    if slug in healed_slugs:
+    source_slug = next(
+        (
+            result_slug
+            for result_slug, provider_slugs in _PRICING_RESULT_PROVIDER_ALIASES.items()
+            if slug in provider_slugs
+        ),
+        slug,
+    )
+    if source_slug in healed_slugs:
         return "self_healed_provider"
     if slug in _OPENROUTER_BACKED_PROVIDER_SLUGS:
         return "openrouter_provider"
@@ -229,8 +251,10 @@ def _index_provider_prices(
     Together) — each gets its own provider-direct price for billing."""
     out: dict[str, dict[str, ModelPrice]] = {}
     for slug, result in results.items():
+        provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
         for model_id, price in result.prices.items():
-            out.setdefault(model_id, {})[slug] = price
+            for provider_slug in provider_slugs:
+                out.setdefault(model_id, {})[provider_slug] = price
     return out
 
 
@@ -329,8 +353,19 @@ def _stale_results_from_snapshot(
         for endpoint in endpoints:
             if not isinstance(endpoint, dict):
                 continue
-            slug = endpoint.get("tr_provider_slug")
-            if not isinstance(slug, str) or slug not in failed:
+            endpoint_slug = endpoint.get("tr_provider_slug")
+            if not isinstance(endpoint_slug, str):
+                continue
+            slug = next(
+                (
+                    failed_slug
+                    for failed_slug in failed
+                    if endpoint_slug
+                    in _PRICING_RESULT_PROVIDER_ALIASES.get(failed_slug, (failed_slug,))
+                ),
+                None,
+            )
+            if slug is None:
                 continue
             pricing = endpoint.get("pricing")
             if not isinstance(pricing, dict):
@@ -445,8 +480,18 @@ def _cross_check_ids(
             if not isinstance(ep, dict):
                 continue
             slug = ep.get("tr_provider_slug")
-            if isinstance(slug, str) and slug in or_by_slug:
-                or_by_slug[slug].add(model_id)
+            if not isinstance(slug, str):
+                continue
+            result_slug = next(
+                (
+                    candidate
+                    for candidate, provider_slugs in _PRICING_RESULT_PROVIDER_ALIASES.items()
+                    if slug in provider_slugs
+                ),
+                slug,
+            )
+            if result_slug in or_by_slug:
+                or_by_slug[result_slug].add(model_id)
 
     # Build {slug: set(model_ids_returned_by_parser)} from results.
     provider_by_slug: dict[str, set[str]] = {
@@ -678,6 +723,8 @@ def _merge_snapshot(
         # the price straight off the provider's own pricing page / API.
         for missing_slug, missing_price in priced_by_slug.items():
             if missing_slug in seen_slugs:
+                continue
+            if missing_slug in _NO_SYNTHETIC_ENDPOINT_PROVIDER_SLUGS:
                 continue
             synth_slug_map = upstream_id_maps.get(missing_slug) or {}
             synth_model_id = synth_slug_map.get(model_id, model_id)

@@ -55,12 +55,11 @@ class RoutePreferences:
 
 
 _PROVIDER_ALIASES = {
-    "google": "gemini",
-    "google-ai-studio": "gemini",
-    "google-vertex": "gemini",
-    "google-vertex-ai": "gemini",
-    "vertex": "gemini",
-    "vertex-ai": "gemini",
+    "google-ai": "google-ai-studio",
+    "ai-studio": "google-ai-studio",
+    "google-vertex-ai": "google-vertex",
+    "vertex": "google-vertex",
+    "vertex-ai": "google-vertex",
     "chatgpt": "openai",
     "chat-gpt": "openai",
     "mistralai": "mistral",
@@ -73,6 +72,13 @@ _PROVIDER_ALIASES = {
     "zhipuai": "zai",
     "together-ai": "together",
     "togetherai": "together",
+}
+_PROVIDER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
+    # Before the provider split, both products were exposed as `gemini`.
+    # Expand legacy filters to both real failure domains rather than silently
+    # changing existing callers to just one of them.
+    "gemini": ("google-vertex", "google-ai-studio"),
+    "google": ("google-vertex", "google-ai-studio"),
 }
 _ROUTER_PROVIDER_SLUGS = frozenset(
     {
@@ -121,22 +127,23 @@ _THROUGHPUT_RANK = {
     "cerebras": 20,
     "mistral": 21,
     "openai": 22,
-    "gemini": 23,
-    "together": 24,
-    "zai": 25,
-    "anthropic": 26,
-    "tinfoil": 27,
-    "venice": 28,
-    "grok": 29,
-    "lightning": 30,
-    "nebius": 31,
-    "friendli": 32,
-    "novita": 33,
-    "phala": 34,
-    "gmi": 35,
-    "parasail": 36,
-    "wafer": 37,
-    "xiaomi": 38,
+    "google-vertex": 23,
+    "google-ai-studio": 24,
+    "together": 25,
+    "zai": 26,
+    "anthropic": 27,
+    "tinfoil": 28,
+    "venice": 29,
+    "grok": 30,
+    "lightning": 31,
+    "nebius": 32,
+    "friendli": 33,
+    "novita": 34,
+    "phala": 35,
+    "gmi": 36,
+    "parasail": 37,
+    "wafer": 38,
+    "xiaomi": 39,
     "trustedrouter": 99,
 }
 
@@ -379,18 +386,10 @@ def _routing_for_body(
     if "order" in overrides:
         prefs = dataclasses.replace(
             prefs,
-            order=tuple(
-                _provider_slug(provider)
-                for provider in overrides["order"].split(",")
-                if provider.strip()
-            ),
+            order=tuple(_provider_filter_list("order", overrides["order"])),
         )
     if "only" in overrides:
-        override_only = frozenset(
-            _provider_slug(provider)
-            for provider in overrides["only"].split(",")
-            if provider.strip()
-        )
+        override_only = frozenset(_provider_filter_list("only", overrides["only"]))
         effective_only = override_only if not prefs.only else prefs.only & override_only
         prefs = dataclasses.replace(prefs, only=effective_only)
     if "min_privacy" in overrides:
@@ -482,7 +481,9 @@ def _requested_model_ids(
             overrides.update(ovr)
         if stripped == ZDR_MODEL_ID:
             overrides["min_privacy"] = "zdr"
-            overrides["order"] = "anthropic,openai,gemini,tinfoil,venice,phala"
+            overrides["order"] = (
+                "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
+            )
         elif stripped == E2E_MODEL_ID:
             overrides["min_privacy"] = "e2ee"
             overrides["order"] = "tinfoil,venice,phala,gmi"
@@ -668,8 +669,9 @@ def _provider_slug(value: str) -> str:
 def _provider_filter_list(field: str, value: Any) -> list[str]:
     out: list[str] = []
     for item in _string_list(field, value):
-        slug = _provider_slug(item)
-        if slug in _ROUTER_PROVIDER_SLUGS:
+        raw_slug = item.strip().lower().replace("_", "-").replace(" ", "-")
+        slugs = _PROVIDER_GROUP_ALIASES.get(raw_slug, (_provider_slug(item),))
+        if any(slug in _ROUTER_PROVIDER_SLUGS for slug in slugs):
             raise api_error(
                 400,
                 (
@@ -679,13 +681,15 @@ def _provider_filter_list(field: str, value: Any) -> list[str]:
                 ),
                 ErrorType.BAD_REQUEST,
             )
-        if slug not in PROVIDERS:
-            raise api_error(
-                400,
-                f"Unknown provider in provider.{field}: {item}",
-                ErrorType.BAD_REQUEST,
-            )
-        out.append(slug)
+        for slug in slugs:
+            if slug not in PROVIDERS:
+                raise api_error(
+                    400,
+                    f"Unknown provider in provider.{field}: {item}",
+                    ErrorType.BAD_REQUEST,
+                )
+            if slug not in out:
+                out.append(slug)
     return out
 
 

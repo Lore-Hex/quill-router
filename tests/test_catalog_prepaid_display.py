@@ -208,9 +208,11 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
 
 
 def test_gemini_native_supplement_publishes_missing_text_models() -> None:
-    gemini_35 = MODEL_ENDPOINTS["google/gemini-3.5-flash@gemini/prepaid"]
+    gemini_35 = MODEL_ENDPOINTS[
+        "google/gemini-3.5-flash@google-ai-studio/prepaid"
+    ]
     image_preview = MODEL_ENDPOINTS[
-        "google/gemini-3.1-flash-image-preview@gemini/prepaid"
+        "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid"
     ]
 
     assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
@@ -223,6 +225,14 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     assert image_preview.upstream_id == "gemini-3.1-flash-image-preview"
     assert image_preview.prompt_price_microdollars_per_million_tokens == 550_000
     assert image_preview.completion_price_microdollars_per_million_tokens == 66_000_000
+
+
+def test_google_products_have_distinct_capabilities() -> None:
+    model_id = "google/gemini-2.5-flash"
+    assert f"{model_id}@google-vertex/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@google-vertex/byok" not in MODEL_ENDPOINTS
+    assert f"{model_id}@google-ai-studio/prepaid" in MODEL_ENDPOINTS
+    assert f"{model_id}@google-ai-studio/byok" in MODEL_ENDPOINTS
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:

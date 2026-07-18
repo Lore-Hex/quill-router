@@ -109,8 +109,8 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     for model_id, provider in [
         ("anthropic/claude-sonnet-4.6", "anthropic"),
         ("openai/gpt-4.1-mini", "openai"),
-        ("google/gemini-2.5-flash", "gemini"),
-        ("google/gemini-3.5-flash", "gemini"),
+        ("google/gemini-2.5-flash", "google-ai-studio"),
+        ("google/gemini-3.5-flash", "google-ai-studio"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
@@ -165,7 +165,8 @@ def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None
     assert {
         "anthropic",
         "openai",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "deepseek",
         "mistral",
         "kimi",
@@ -240,7 +241,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             ],
         ),
         (
-            "gemini",
+            "google-ai-studio",
             5,
             [
                 "google/gemini-3.5-flash",
@@ -504,13 +505,12 @@ def test_uncontracted_closed_providers_are_not_marked_zdr() -> None:
         "anthropic",
         "aws",
         "bedrock",
-        "gemini",
-        "google",
-        "vertex",
+        "google-ai-studio",
+        "google-vertex",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
 
-    assert {"anthropic", "gemini"} <= configured
+    assert {"anthropic", "google-ai-studio", "google-vertex"} <= configured
     for provider in sorted(configured):
         assert PROVIDERS[provider].provider_zero_data_retention is not True
         assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
@@ -528,7 +528,8 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ("xiaomi", "xiaomi/mimo-v2-flash"),
         ("xiaomi", "xiaomi/mimo-v2-pro"),
         ("friendli", "meta-llama/llama-3.3-70b-instruct"),
-        ("gemini", "google/gemini-3.1-flash-lite-preview"),
+        ("google-ai-studio", "google/gemini-3.1-flash-lite-preview"),
+        ("google-vertex", "google/gemini-3.1-flash-lite-preview"),
         ("novita", "baidu/ernie-4.5-vl-28b-a3b"),
         ("novita", "meta-llama/llama-3-70b-instruct"),
         ("makora", "amd/llama-3.3-70b-instruct-fp8-kv"),
@@ -1237,7 +1238,12 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert e2e_endpoints
     assert e2e_endpoints[0][1].provider == "tinfoil"
     assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
-    assert "gemini" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
+    assert "google-ai-studio" not in {
+        endpoint.provider for _model, endpoint in zdr_endpoints
+    }
+    assert "google-vertex" not in {
+        endpoint.provider for _model, endpoint in zdr_endpoints
+    }
     assert "openai" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
@@ -1267,7 +1273,7 @@ def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers() -> None
         Settings(environment="test"),
     )
     assert narrowed
-    assert {endpoint.provider for _model, endpoint in narrowed} == {"gemini"}
+    assert {endpoint.provider for _model, endpoint in narrowed} == {"google-vertex"}
 
 
 def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
@@ -1307,7 +1313,7 @@ def test_route_candidates_honor_models_provider_order_sort_and_dedupe() -> None:
         ("mistralai/mistral-small-2603", "mistral"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
-        ("google/gemini-2.5-flash", "gemini"),
+        ("google/gemini-2.5-flash", "google-ai-studio"),
         ("anthropic/claude-sonnet-4.6", "anthropic"),
     ],
 )

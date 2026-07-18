@@ -292,7 +292,7 @@ async def gemini_embeddings(
             json=body,
         )
     if resp.status_code >= 400:
-        raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
+        raise ProviderError("google-ai-studio", resp.status_code, safe_error_message(resp))
     data = resp.json()
     vectors = [row.get("values") or [] for row in (data.get("embeddings") or [])]
     # Gemini's embed API does not report token usage; estimate from input.
@@ -474,7 +474,7 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
             json=gemini_payload(request),
         )
     if resp.status_code >= 400:
-        raise ProviderError("gemini", resp.status_code, safe_error_message(resp))
+        raise ProviderError("google-ai-studio", resp.status_code, safe_error_message(resp))
     data = resp.json()
     candidate = (data.get("candidates") or [{}])[0]
     parts = (candidate.get("content") or {}).get("parts") or []
@@ -494,7 +494,7 @@ async def gemini_chat(model: Model, request: dict[str, Any], *, api_key: str) ->
         ),
         output_tokens=output_tokens,
         finish_reason=gemini_finish_reason(str(candidate.get("finishReason") or "stop")),
-        provider_name="Gemini",
+        provider_name="Google AI Studio",
         request_id=f"req-{uuid.uuid4()}",
         usage_estimated=not bool(usage),
         elapsed_seconds=max(time.monotonic() - started, 0.001),
@@ -552,7 +552,7 @@ async def gemini_chat_stream(
         ) as resp:
             if resp.status_code >= 400:
                 raise ProviderError(
-                    "gemini", resp.status_code, await safe_stream_error_message(resp)
+                    "google-ai-studio", resp.status_code, await safe_stream_error_message(resp)
                 )
             async for line in resp.aiter_lines():
                 if not line:

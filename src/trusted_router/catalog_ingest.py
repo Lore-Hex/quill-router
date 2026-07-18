@@ -84,7 +84,11 @@ _PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
 _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
-    "google": "gemini",
+    # The local/test provider client uses the native Gemini API adapter, while
+    # production routing remains endpoint-based and can still prefer Vertex.
+    # Keep the model-level default on AI Studio so live local calls never fall
+    # through to a synthetic response merely because Vertex is the publisher.
+    "google": "google-ai-studio",
     "cerebras": "cerebras",
     "deepseek": "deepseek",
     "mistral": "mistral",
@@ -201,7 +205,13 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     # Google retired the Gemini 3.1 Flash Lite preview id on 2026-07-09; the
     # direct Gemini preview route has shown 100% probe failure since then. GA
     # flash-lite routes on reseller providers are unaffected.
-    "gemini": frozenset(
+    "google-ai-studio": frozenset(
+        {
+            "google/gemini-3.1-flash-lite-preview",
+            "gemini-3.1-flash-lite-preview",
+        }
+    ),
+    "google-vertex": frozenset(
         {
             "google/gemini-3.1-flash-lite-preview",
             "gemini-3.1-flash-lite-preview",
@@ -424,7 +434,10 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             supports_chat=True,
             supports_messages=supports_messages,
             prepaid_available=prepaid_available,
-            byok_available=PROVIDERS[publisher].supports_byok,
+            byok_available=any(
+                PROVIDERS[slug].supports_byok
+                for _p, _c, _t, slug, _ep in per_endpoint_prices
+            ),
             prompt_price_microdollars_per_million_tokens=cheapest_prompt,
             completion_price_microdollars_per_million_tokens=cheapest_completion,
             published_prompt_price_microdollars_per_million_tokens=cheapest_prompt,
@@ -479,7 +492,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
     call and bill. Most are provider-direct; Meta Muse is explicitly labelled
     as Meta via OpenRouter.
 
-    Novita, Nebius, MiniMax, Crusoe, Cerebras, Gemini, Fireworks, DeepInfra,
+    Novita, Nebius, MiniMax, Crusoe, Cerebras, Google, Fireworks, DeepInfra,
     Moonshot/Kimi, and Z.AI currently use this path because their
     live `/models` feeds expose working provider-direct routes before
     OpenRouter's public endpoint catalog catches up. Anthropic uses it for
@@ -495,7 +508,8 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "minimax",
         "anthropic",
         "cerebras",
-        "gemini",
+        "google-ai-studio",
+        "google-vertex",
         "fireworks",
         "deepinfra",
         "grok",

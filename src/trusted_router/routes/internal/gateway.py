@@ -38,6 +38,7 @@ from trusted_router.config import Settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
 from trusted_router.pricing import resolve_request_rates
+from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_types import estimate_tokens_from_text
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.request_attribution import (
@@ -233,7 +234,7 @@ def _authorize_gateway_sync(
         existing_model, existing_endpoint = existing_candidates[0]
         existing_usage_type = UsageType.for_endpoint(existing_endpoint)
         byok_config = (
-            STORE.get_byok_provider(workspace.id, existing_endpoint.provider)
+            _get_byok_provider(workspace.id, existing_endpoint.provider)
             if existing_usage_type.is_byok()
             else None
         )
@@ -428,7 +429,7 @@ def _authorize_gateway_sync(
             custom_model_revision=custom_model.revision if custom_model else None,
         )
     byok_config = (
-        STORE.get_byok_provider(workspace.id, endpoint.provider)
+        _get_byok_provider(workspace.id, endpoint.provider)
         if model_usage_type.is_byok()
         else None
     )
@@ -687,7 +688,7 @@ def _authorization_endpoint_candidates(
     if not endpoint_ids and authorization.endpoint_id:
         endpoint_ids = [authorization.endpoint_id]
     for endpoint_id in endpoint_ids:
-        endpoint = endpoint_for_id(endpoint_id)
+        endpoint = _endpoint_for_id_compat(endpoint_id)
         if endpoint is None:
             continue
         model = MODELS.get(endpoint.model_id)
@@ -732,7 +733,7 @@ def _gateway_authorize_response(
             "limit_usage_type": limit_usage_type.value,
             **money_pair("estimated_cost", estimate),
             "credit_reservation_id": credit_reservation_id,
-            **_gateway_byok_payload(byok_config, workspace_id, endpoint.provider),
+            **_gateway_byok_payload(byok_config, workspace_id),
             "content_storage_enabled": False,
             "region": region,
             "regions": region_payload(settings),
@@ -1131,7 +1132,7 @@ def _gateway_candidate_payload(
 ) -> dict[str, Any]:
     usage_type = UsageType.for_endpoint(endpoint)
     byok_config = (
-        STORE.get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
+        _get_byok_provider(workspace_id, endpoint.provider) if usage_type.is_byok() else None
     )
     return {
         "endpoint_id": endpoint.id,
@@ -1140,13 +1141,13 @@ def _gateway_candidate_payload(
         "provider": endpoint.provider,
         "provider_name": PROVIDERS[endpoint.provider].name,
         "usage_type": usage_type.value,
-        **_gateway_byok_payload(byok_config, workspace_id, endpoint.provider),
+        **_gateway_byok_payload(byok_config, workspace_id),
         "region": region,
     }
 
 
 def _gateway_byok_payload(
-    byok_config: Any | None, workspace_id: str, provider: str
+    byok_config: Any | None, workspace_id: str
 ) -> dict[str, Any]:
     if byok_config is None:
         return {
@@ -1154,16 +1155,19 @@ def _gateway_byok_payload(
             "byok_encrypted_secret": None,
             "byok_cache_key": None,
             "byok_key_hint": None,
+            "byok_provider": None,
         }
+    envelope_provider = str(byok_config.provider)
     return {
         "byok_secret_ref": byok_config.secret_ref,
         "byok_encrypted_secret": encrypted_secret_payload(byok_config.encrypted_secret),
         "byok_cache_key": byok_cache_key(
             byok_config.encrypted_secret,
             workspace_id=workspace_id,
-            provider=provider,
+            provider=envelope_provider,
         ),
         "byok_key_hint": byok_config.key_hint,
+        "byok_provider": envelope_provider,
     }
 
 
@@ -1176,11 +1180,19 @@ def _eligible_gateway_endpoint_candidates(
         usage_type = UsageType.for_endpoint(endpoint)
         if (
             usage_type.is_byok()
-            and STORE.get_byok_provider(workspace_id, endpoint.provider) is None
+            and _get_byok_provider(workspace_id, endpoint.provider) is None
         ):
             continue
         out.append((model, endpoint))
     return out
+
+
+def _get_byok_provider(workspace_id: str, provider: str) -> Any | None:
+    for storage_slug in byok_storage_provider_candidates(provider):
+        config = STORE.get_byok_provider(workspace_id, storage_slug)
+        if config is not None:
+            return config
+    return None
 
 
 def _select_authorized_endpoint(
@@ -1193,14 +1205,14 @@ def _select_authorized_endpoint(
     if selected_endpoint_id is not None:
         if selected_endpoint_id not in authorized_endpoint_ids:
             return None
-        return endpoint_for_id(selected_endpoint_id)
+        return _endpoint_for_id_compat(selected_endpoint_id)
 
     selected_model_id = body.selected_model_id or authorization.model_id
     if selected_model_id == authorization.model_id and authorization.endpoint_id:
-        return endpoint_for_id(authorization.endpoint_id)
+        return _endpoint_for_id_compat(authorization.endpoint_id)
 
     for endpoint_id in authorized_endpoint_ids:
-        endpoint = endpoint_for_id(endpoint_id)
+        endpoint = _endpoint_for_id_compat(endpoint_id)
         if endpoint is not None and endpoint.model_id == selected_model_id:
             return endpoint
 
@@ -1209,6 +1221,29 @@ def _select_authorized_endpoint(
         return None
     model = MODELS.get(selected_model_id)
     return default_endpoint_for_model(model) if model is not None else None
+
+
+def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
+    endpoint = endpoint_for_id(endpoint_id)
+    if endpoint is not None:
+        return endpoint
+
+    model_id, separator, usage_suffix = endpoint_id.partition("@gemini/")
+    if not separator or usage_suffix not in {"prepaid", "byok"}:
+        return None
+    model = MODELS.get(model_id)
+    if model is None:
+        return None
+
+    # Before the split, prepaid chat used Vertex while Gemini embeddings and
+    # BYOK used AI Studio. Preserve that exact route when an authorization
+    # created by the old control plane settles or replays after deployment.
+    provider = (
+        "google-ai-studio"
+        if usage_suffix == "byok" or model.supports_embeddings
+        else "google-vertex"
+    )
+    return endpoint_for_id(f"{model_id}@{provider}/{usage_suffix}")
 
 
 def _endpoint_cost_microdollars(
