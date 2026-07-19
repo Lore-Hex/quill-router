@@ -593,6 +593,45 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://www.makora.com/privacy-policy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "chutes": Provider(
+        slug="chutes",
+        name="Chutes",
+        supports_prepaid=True,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_confidential_compute=True,
+        provider_e2ee=False,
+        provider_policy=(
+            "Chutes documents no prompt/output storage or training and serves "
+            "these routes in confidential-compute TEEs. Standard API calls are "
+            "not marked provider end-to-end encrypted."
+        ),
+        provider_policy_url="https://chutes.ai/docs/core-concepts/security-architecture",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "digitalocean": Provider(
+        slug="digitalocean",
+        name="DigitalOcean Gradient AI",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. DigitalOcean's Gradient AI "
+            "model and pricing documentation is linked for data-handling review."
+        ),
+        provider_policy_url="https://docs.digitalocean.com/products/inference/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "cloudflare-workers-ai": Provider(
+        slug="cloudflare-workers-ai",
+        name="Cloudflare Workers AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR claim is tracked here. Cloudflare's Workers AI "
+            "documentation is linked for model and data-handling review."
+        ),
+        provider_policy_url="https://developers.cloudflare.com/workers-ai/",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -777,6 +816,9 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "wafer",
         "crusoe",
         "makora",
+        "chutes",
+        "digitalocean",
+        "cloudflare-workers-ai",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).

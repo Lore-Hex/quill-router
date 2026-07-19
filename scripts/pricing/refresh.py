@@ -104,6 +104,9 @@ PROVIDER_SLUGS = [
     "xiaomi",
     "alibaba",
     "makora",
+    "chutes",
+    "digitalocean",
+    "cloudflare_workers_ai",
     # First-party embedding providers. Their parsers feed committed provider
     # manifests that the runtime embedding catalog reads directly.
     "cohere",
@@ -116,6 +119,7 @@ PROVIDER_SLUGS = [
 # only at catalog-refresh time; runtime routing never collapses the providers.
 _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "gemini": ("google-ai-studio", "google-vertex"),
+    "cloudflare_workers_ai": ("cloudflare-workers-ai",),
 }
 
 # A shared official price feed does not prove shared model availability.
