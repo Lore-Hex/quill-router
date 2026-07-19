@@ -973,6 +973,11 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
         or "/gpt-5" in model_l
     ):
         return 512
+    if "gemini-2.5" in model_l or "gemini-3" in model_l:
+        # Gemini thinks before visible content; hidden thinking consumes the
+        # budget but is absent from usage, so 16 yields empty_stream. Live
+        # verification on 2026-07-19 showed 2048 works; keep generous headroom.
+        return 2048
     if (
         "gpt-oss" in model_l
         or "glm-4.6" in model_l
