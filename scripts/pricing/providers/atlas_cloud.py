@@ -56,6 +56,13 @@ UPSTREAM_ID_MAP = {
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
+def _supports_chat_completions(row: dict[str, Any]) -> bool:
+    """Exclude Atlas image generators that its feed mislabels as text output."""
+
+    model_id = row.get("id")
+    return isinstance(model_id, str) and "image" not in model_id.casefold()
+
+
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
@@ -85,6 +92,7 @@ def fetch() -> ProviderPricingResult:
         source_rows,
         explicit_map=_NATIVE_TO_MODEL_ID,
         upstream_id_map=UPSTREAM_ID_MAP,
+        include=_supports_chat_completions,
     )
     _DISCOVERED_MANIFEST_ROWS = discovered
     errors = validate(prices, EXPECTED_MODELS)

@@ -1029,7 +1029,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 2500000,
-      "cached_input_token_price_per_m": 300000
+      "cached_input_token_price_per_m": 300000,
+      "missing_since": "2026-07-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 2.5 Flash Lite",
@@ -1117,7 +1120,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 12000000,
-      "cached_input_token_price_per_m": 2000000
+      "cached_input_token_price_per_m": 2000000,
+      "missing_since": "2026-07-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 3.1 Flash Image",
@@ -1139,7 +1145,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-07-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 3.1 Flash Image Preview",
@@ -1161,7 +1170,10 @@
       "max_output_tokens": 131072,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 3000000,
-      "cached_input_token_price_per_m": 500000
+      "cached_input_token_price_per_m": 500000,
+      "missing_since": "2026-07-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Gemini 3.1 Flash Lite",
@@ -2240,7 +2252,10 @@
       "max_output_tokens": 32768,
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 0,
-      "cached_input_token_price_per_m": 1250000
+      "cached_input_token_price_per_m": 1250000,
+      "missing_since": "2026-07-19",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "GPT o1",
@@ -3209,6 +3224,6 @@
       "cached_input_token_price_per_m": 240000
     }
   ],
-  "generated_at": "2026-07-19T03:00:45Z",
+  "generated_at": "2026-07-19T03:45:21Z",
   "model_count": 118
 }

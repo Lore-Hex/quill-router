@@ -105,6 +105,17 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
     assert len(manifests["inceptron"]["models"]) == 4
     assert len(manifests["morph"]["models"]) == 8
     assert len(manifests["atlas-cloud"]["models"]) >= 100
+    atlas_image_rows = [
+        row
+        for row in manifests["atlas-cloud"]["models"]
+        if "image" in row["upstream_id"].casefold()
+    ]
+    assert atlas_image_rows
+    assert all(
+        row.get("routable") is False
+        and row.get("routable_reason") == "delisted-upstream"
+        for row in atlas_image_rows
+    )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
     assert all(
         row.get("routable") is False
