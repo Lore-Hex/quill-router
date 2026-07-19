@@ -78,6 +78,13 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("CLOUDFLARE_WORKERS_AI_API_TOKEN",),
         "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
     ),
+    "inceptron": (("INCEPTRON_API_KEY",), "https://api.inceptron.io/v1"),
+    "morph": (("MORPH_API_KEY",), "https://api.morphllm.com/v1"),
+    "atlas-cloud": (("ATLAS_CLOUD_API_KEY",), "https://api.atlascloud.ai/v1"),
+    "streamlake": (
+        ("STREAMLAKE_API_KEY",),
+        "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+    ),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),

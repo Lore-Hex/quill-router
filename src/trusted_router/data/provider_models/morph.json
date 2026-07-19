@@ -1,0 +1,170 @@
+{
+  "provider": "morph",
+  "source": "https://api.morphllm.com/v1/models",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "morph-dsv4flash",
+      "title": "morph-dsv4flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "morph-dsv4flash",
+      "context_length": 1048576,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000
+    },
+    {
+      "display_name": "morph-minimax27-230b",
+      "title": "morph-minimax27-230b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "morph-minimax27-230b",
+      "context_length": 196608,
+      "input_token_price_per_m": 280000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "morph-minimax3-428b",
+      "title": "morph-minimax3-428b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "morph-minimax3-428b",
+      "context_length": 262144,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2400000
+    },
+    {
+      "display_name": "morph-v3-fast",
+      "title": "morph-v3-fast",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "morph/morph-v3-fast",
+      "upstream_id": "morph-v3-fast",
+      "context_length": 262144,
+      "input_token_price_per_m": 800000,
+      "output_token_price_per_m": 1200000
+    },
+    {
+      "display_name": "morph-v3-large",
+      "title": "morph-v3-large",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "morph/morph-v3-large",
+      "upstream_id": "morph-v3-large",
+      "context_length": 262144,
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 1900000
+    },
+    {
+      "display_name": "morph-qwen35-397b",
+      "title": "morph-qwen35-397b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "morph-qwen35-397b",
+      "context_length": 262144,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "morph-qwen36-27b",
+      "title": "morph-qwen36-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-27b",
+      "upstream_id": "morph-qwen36-27b",
+      "context_length": 131072,
+      "input_token_price_per_m": 290000,
+      "output_token_price_per_m": 2400000
+    },
+    {
+      "display_name": "morph-glm52-744b",
+      "title": "morph-glm52-744b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "morph-glm52-744b",
+      "context_length": 1048576,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4100000
+    }
+  ],
+  "generated_at": "2026-07-19T03:03:41Z",
+  "model_count": 8
+}

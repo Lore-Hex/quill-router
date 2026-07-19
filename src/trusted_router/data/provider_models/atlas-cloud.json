@@ -1,0 +1,3214 @@
+{
+  "provider": "atlas-cloud",
+  "source": "https://api.atlascloud.ai/v1/models",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "Claude Haiku 4.5 20251001",
+      "title": "anthropic/claude-haiku-4.5-20251001",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4.5-20251001",
+      "upstream_id": "anthropic/claude-haiku-4.5-20251001",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Claude Haiku 4.5 20251001 Coding",
+      "title": "anthropic/claude-haiku-4.5-20251001-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-haiku-4.5-20251001-coding",
+      "upstream_id": "anthropic/claude-haiku-4.5-20251001-coding",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 5000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Claude Opus 4 20250514",
+      "title": "anthropic/claude-opus-4-20250514",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-20250514",
+      "upstream_id": "anthropic/claude-opus-4-20250514",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 75000000,
+      "cached_input_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Claude Opus 4 20250514 Coding",
+      "title": "anthropic/claude-opus-4-20250514-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4-20250514-coding",
+      "upstream_id": "anthropic/claude-opus-4-20250514-coding",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 75000000,
+      "cached_input_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Claude Opus 4.1 20250805",
+      "title": "anthropic/claude-opus-4.1-20250805",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.1-20250805",
+      "upstream_id": "anthropic/claude-opus-4.1-20250805",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 75000000,
+      "cached_input_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Claude Opus 4.1 20250805 Coding",
+      "title": "anthropic/claude-opus-4.1-20250805-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.1-20250805-coding",
+      "upstream_id": "anthropic/claude-opus-4.1-20250805-coding",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 75000000,
+      "cached_input_token_price_per_m": 1500000
+    },
+    {
+      "display_name": "Claude Opus 4.5 20251101",
+      "title": "anthropic/claude-opus-4.5-20251101",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.5-20251101",
+      "upstream_id": "anthropic/claude-opus-4.5-20251101",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.5 20251101 Coding",
+      "title": "anthropic/claude-opus-4.5-20251101-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.5-20251101-coding",
+      "upstream_id": "anthropic/claude-opus-4.5-20251101-coding",
+      "context_length": 200000,
+      "max_output_tokens": 32000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.6",
+      "title": "anthropic/claude-opus-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.6",
+      "upstream_id": "anthropic/claude-opus-4.6",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.6 Coding",
+      "title": "anthropic/claude-opus-4.6-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.6-coding",
+      "upstream_id": "anthropic/claude-opus-4.6-coding",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.7",
+      "title": "anthropic/claude-opus-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.7",
+      "upstream_id": "anthropic/claude-opus-4.7",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.7 Coding",
+      "title": "anthropic/claude-opus-4.7-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.7-coding",
+      "upstream_id": "anthropic/claude-opus-4.7-coding",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.8",
+      "title": "anthropic/claude-opus-4.8",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8",
+      "upstream_id": "anthropic/claude-opus-4.8",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Opus 4.8 Coding",
+      "title": "anthropic/claude-opus-4.8-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8-coding",
+      "upstream_id": "anthropic/claude-opus-4.8-coding",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 4 20250514",
+      "title": "anthropic/claude-sonnet-4-20250514",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4-20250514",
+      "upstream_id": "anthropic/claude-sonnet-4-20250514",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4 20250514 Coding",
+      "title": "anthropic/claude-sonnet-4-20250514-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4-20250514-coding",
+      "upstream_id": "anthropic/claude-sonnet-4-20250514-coding",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4.5 20250929",
+      "title": "anthropic/claude-sonnet-4.5-20250929",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.5-20250929",
+      "upstream_id": "anthropic/claude-sonnet-4.5-20250929",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4.5 20250929 Coding",
+      "title": "anthropic/claude-sonnet-4.5-20250929-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.5-20250929-coding",
+      "upstream_id": "anthropic/claude-sonnet-4.5-20250929-coding",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4.6",
+      "title": "anthropic/claude-sonnet-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.6",
+      "upstream_id": "anthropic/claude-sonnet-4.6",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Sonnet 4.6 Coding",
+      "title": "anthropic/claude-sonnet-4.6-coding",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-4.6-coding",
+      "upstream_id": "anthropic/claude-sonnet-4.6-coding",
+      "context_length": 200000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Doubao Seed 1.6",
+      "title": "bytedance/doubao-seed-1.6-251015",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-1.6-251015",
+      "upstream_id": "bytedance/doubao-seed-1.6-251015",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Doubao Seed 1.6 Flash",
+      "title": "bytedance/doubao-seed-1.6-flash-250828",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-1.6-flash-250828",
+      "upstream_id": "bytedance/doubao-seed-1.6-flash-250828",
+      "context_length": 262144,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 75000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 15000
+    },
+    {
+      "display_name": "Doubao Seed 1.8",
+      "title": "bytedance/doubao-seed-1.8-251228",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-1.8-251228",
+      "upstream_id": "bytedance/doubao-seed-1.8-251228",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Doubao Seed 2.0 Code Preview",
+      "title": "bytedance/doubao-seed-2.0-code-preview-260215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.0-code-preview-260215",
+      "upstream_id": "bytedance/doubao-seed-2.0-code-preview-260215",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Doubao Seed 2.0 Lite",
+      "title": "bytedance/doubao-seed-2.0-lite-260428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.0-lite-260428",
+      "upstream_id": "bytedance/doubao-seed-2.0-lite-260428",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Doubao Seed 2.0 Mini",
+      "title": "bytedance/doubao-seed-2.0-mini-260428",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.0-mini-260428",
+      "upstream_id": "bytedance/doubao-seed-2.0-mini-260428",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "Doubao Seed 2.0 Pro",
+      "title": "bytedance/doubao-seed-2.0-pro-260215",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.0-pro-260215",
+      "upstream_id": "bytedance/doubao-seed-2.0-pro-260215",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Doubao Seed 2.1 Pro",
+      "title": "bytedance/doubao-seed-2.1-pro-260628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.1-pro-260628",
+      "upstream_id": "bytedance/doubao-seed-2.1-pro-260628",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "Doubao Seed 2.1 Turbo",
+      "title": "bytedance/doubao-seed-2.1-turbo-260628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-2.1-turbo-260628",
+      "upstream_id": "bytedance/doubao-seed-2.1-turbo-260628",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 2250000,
+      "cached_input_token_price_per_m": 90000
+    },
+    {
+      "display_name": "Doubao Seed Evolving",
+      "title": "bytedance/doubao-seed-evolving",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-evolving",
+      "upstream_id": "bytedance/doubao-seed-evolving",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 180000
+    },
+    {
+      "display_name": "DeepSeek OCR",
+      "title": "deepseek-ai/deepseek-ocr",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-ocr",
+      "upstream_id": "deepseek-ai/deepseek-ocr",
+      "context_length": 8192,
+      "max_output_tokens": 8192,
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 40000,
+      "output_token_price_per_m": 80000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "DeepSeek-V3.1",
+      "title": "deepseek-ai/DeepSeek-V3.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.1",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 950000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "DeepSeek V3.1 Terminus",
+      "title": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.1-terminus",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.1-Terminus",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 950000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "DeepSeek V3.2",
+      "title": "deepseek-ai/deepseek-v3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-ai/deepseek-v3.2",
+      "context_length": 163840,
+      "max_output_tokens": 163840,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 260000,
+      "output_token_price_per_m": 380000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "DeepSeek V3.2 Exp",
+      "title": "deepseek-ai/DeepSeek-V3.2-Exp",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2-exp",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.2-Exp",
+      "context_length": 163840,
+      "max_output_tokens": 163840,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 270000,
+      "output_token_price_per_m": 410000,
+      "cached_input_token_price_per_m": 270000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash",
+      "title": "deepseek-ai/deepseek-v4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-ai/deepseek-v4-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro",
+      "title": "deepseek-ai/deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-ai/deepseek-v4-pro",
+      "context_length": 1048576,
+      "max_output_tokens": 393216,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1680000,
+      "output_token_price_per_m": 3380000,
+      "cached_input_token_price_per_m": 130000
+    },
+    {
+      "display_name": "Gemini 2.0 Flash",
+      "title": "google/gemini-2.0-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.0-flash",
+      "upstream_id": "google/gemini-2.0-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "Gemini 2.0 Flash Lite",
+      "title": "google/gemini-2.0-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.0-flash-lite",
+      "upstream_id": "google/gemini-2.0-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 75000,
+      "output_token_price_per_m": 300000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash",
+      "title": "google/gemini-2.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash",
+      "upstream_id": "google/gemini-2.5-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash Image",
+      "title": "google/gemini-2.5-flash-image",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-image",
+      "upstream_id": "google/gemini-2.5-flash-image",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Gemini 2.5 Flash Lite",
+      "title": "google/gemini-2.5-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-flash-lite",
+      "upstream_id": "google/gemini-2.5-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000
+    },
+    {
+      "display_name": "Gemini 2.5 Pro",
+      "title": "google/gemini-2.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-2.5-pro",
+      "upstream_id": "google/gemini-2.5-pro",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "Gemini 3 Flash Preview",
+      "title": "google/gemini-3-flash-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3-flash-preview",
+      "upstream_id": "google/gemini-3-flash-preview",
+      "context_length": 200000,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Gemini 3 Pro Image Preview",
+      "title": "google/gemini-3-pro-image-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3-pro-image-preview",
+      "upstream_id": "google/gemini-3-pro-image-preview",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 2000000
+    },
+    {
+      "display_name": "Gemini 3.1 Flash Image",
+      "title": "google/gemini-3.1-flash-image",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-image",
+      "upstream_id": "google/gemini-3.1-flash-image",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Gemini 3.1 Flash Image Preview",
+      "title": "google/gemini-3.1-flash-image-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-image-preview",
+      "upstream_id": "google/gemini-3.1-flash-image-preview",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Gemini 3.1 Flash Lite",
+      "title": "google/gemini-3.1-flash-lite",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-flash-lite",
+      "upstream_id": "google/gemini-3.1-flash-lite",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "Gemini 3.1 Pro Preview",
+      "title": "google/gemini-3.1-pro-preview",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.1-pro-preview",
+      "upstream_id": "google/gemini-3.1-pro-preview",
+      "context_length": 1000000,
+      "max_output_tokens": 64000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 12000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Gemini 3.5 Flash",
+      "title": "google/gemini-3.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemini-3.5-flash",
+      "upstream_id": "google/gemini-3.5-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 9000000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "KAT Coder Air V2.5",
+      "title": "kwaipilot/kat-coder-air-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-air-v2.5",
+      "upstream_id": "kwaipilot/kat-coder-air-v2.5",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 30000
+    },
+    {
+      "display_name": "KAT Coder Pro V2",
+      "title": "kwaipilot/kat-coder-pro-v2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-pro-v2",
+      "upstream_id": "kwaipilot/kat-coder-pro-v2",
+      "context_length": 262144,
+      "max_output_tokens": 144000,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "KAT Coder Pro V2.5",
+      "title": "kwaipilot/kat-coder-pro-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-pro-v2.5",
+      "upstream_id": "kwaipilot/kat-coder-pro-v2.5",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 740000,
+      "output_token_price_per_m": 2960000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "LongCat 2.0",
+      "title": "meituan-longcat/longcat-2.0",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meituan-longcat/longcat-2.0",
+      "upstream_id": "meituan-longcat/longcat-2.0",
+      "context_length": 1048756,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias",
+        "stop"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1180000,
+      "cached_input_token_price_per_m": 6000
+    },
+    {
+      "display_name": "MiniMax M2.5",
+      "title": "minimaxai/minimax-m2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "minimaxai/minimax-m2.5",
+      "context_length": 196608,
+      "max_output_tokens": 196608,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 295000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "MiniMax M2.7",
+      "title": "minimaxai/minimax-m2.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.7",
+      "upstream_id": "minimaxai/minimax-m2.7",
+      "context_length": 196608,
+      "max_output_tokens": 196608,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "stop",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "MiniMax M3",
+      "title": "minimaxai/minimax-m3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m3",
+      "upstream_id": "minimaxai/minimax-m3",
+      "context_length": 524300,
+      "max_output_tokens": 524288,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Kimi K2.5",
+      "title": "moonshotai/kimi-k2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "moonshotai/kimi-k2.5",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 490000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Kimi K2.6",
+      "title": "moonshotai/kimi-k2.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "moonshotai/kimi-k2.6",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "Kimi K2.7 Code",
+      "title": "moonshotai/kimi-k2.7-code",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "moonshotai/kimi-k2.7-code",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "GPT 4.1",
+      "title": "openai/gpt-4.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1",
+      "upstream_id": "openai/gpt-4.1",
+      "context_length": 1047576,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "GPT 4.1 mini",
+      "title": "openai/gpt-4.1-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1-mini",
+      "upstream_id": "openai/gpt-4.1-mini",
+      "context_length": 1047576,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "GPT 4.1 nano",
+      "title": "openai/gpt-4.1-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4.1-nano",
+      "upstream_id": "openai/gpt-4.1-nano",
+      "context_length": 1047576,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "GPT 4o",
+      "title": "openai/gpt-4o",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4o",
+      "upstream_id": "openai/gpt-4o",
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 1250000
+    },
+    {
+      "display_name": "GPT 4o mini",
+      "title": "openai/gpt-4o-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-4o-mini",
+      "upstream_id": "openai/gpt-4o-mini",
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "GPT 5",
+      "title": "openai/gpt-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5",
+      "upstream_id": "openai/gpt-5",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5 Chat",
+      "title": "openai/gpt-5-chat",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-chat",
+      "upstream_id": "openai/gpt-5-chat",
+      "context_length": 128000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5 Codex",
+      "title": "openai/gpt-5-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-codex",
+      "upstream_id": "openai/gpt-5-codex",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5 mini",
+      "title": "openai/gpt-5-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-mini",
+      "upstream_id": "openai/gpt-5-mini",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "GPT 5 nano",
+      "title": "openai/gpt-5-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-nano",
+      "upstream_id": "openai/gpt-5-nano",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 50000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 5000
+    },
+    {
+      "display_name": "GPT 5 pro",
+      "title": "openai/gpt-5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5-pro",
+      "upstream_id": "openai/gpt-5-pro",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 120000000,
+      "cached_input_token_price_per_m": 15000000
+    },
+    {
+      "display_name": "GPT 5.1",
+      "title": "openai/gpt-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1",
+      "upstream_id": "openai/gpt-5.1",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5.1 Chat",
+      "title": "openai/gpt-5.1-chat",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1-chat",
+      "upstream_id": "openai/gpt-5.1-chat",
+      "context_length": 128000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5.1 Codex",
+      "title": "openai/gpt-5.1-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1-codex",
+      "upstream_id": "openai/gpt-5.1-codex",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5.1 Codex max",
+      "title": "openai/gpt-5.1-codex-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1-codex-max",
+      "upstream_id": "openai/gpt-5.1-codex-max",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 125000
+    },
+    {
+      "display_name": "GPT 5.1 Codex mini",
+      "title": "openai/gpt-5.1-codex-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.1-codex-mini",
+      "upstream_id": "openai/gpt-5.1-codex-mini",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 25000
+    },
+    {
+      "display_name": "GPT 5.2",
+      "title": "openai/gpt-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2",
+      "upstream_id": "openai/gpt-5.2",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "GPT 5.2 Chat",
+      "title": "openai/gpt-5.2-chat",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2-chat",
+      "upstream_id": "openai/gpt-5.2-chat",
+      "context_length": 128000,
+      "max_output_tokens": 16400,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "GPT 5.2 Codex",
+      "title": "openai/gpt-5.2-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.2-codex",
+      "upstream_id": "openai/gpt-5.2-codex",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "GPT 5.3 Codex",
+      "title": "openai/gpt-5.3-codex",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.3-codex",
+      "upstream_id": "openai/gpt-5.3-codex",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 1750000,
+      "output_token_price_per_m": 14000000,
+      "cached_input_token_price_per_m": 175000
+    },
+    {
+      "display_name": "GPT 5.4",
+      "title": "openai/gpt-5.4",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4",
+      "upstream_id": "openai/gpt-5.4",
+      "context_length": 400000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "GPT 5.4 mini",
+      "title": "openai/gpt-5.4-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-mini",
+      "upstream_id": "openai/gpt-5.4-mini",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 4500000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "GPT 5.4 nano",
+      "title": "openai/gpt-5.4-nano",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.4-nano",
+      "upstream_id": "openai/gpt-5.4-nano",
+      "context_length": 400000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 1250000,
+      "cached_input_token_price_per_m": 20000
+    },
+    {
+      "display_name": "GPT 5.5",
+      "title": "openai/gpt-5.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.5",
+      "upstream_id": "openai/gpt-5.5",
+      "context_length": 1050000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "GPT 5.6 Luna",
+      "title": "openai/gpt-5.6-luna",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-luna",
+      "upstream_id": "openai/gpt-5.6-luna",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "GPT 5.6 Sol",
+      "title": "openai/gpt-5.6-sol",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-sol",
+      "upstream_id": "openai/gpt-5.6-sol",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 30000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "GPT 5.6 Terra",
+      "title": "openai/gpt-5.6-terra",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-5.6-terra",
+      "upstream_id": "openai/gpt-5.6-terra",
+      "context_length": 1050000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 250000
+    },
+    {
+      "display_name": "GPT Image 2",
+      "title": "openai/gpt-image-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/gpt-image-2",
+      "upstream_id": "openai/gpt-image-2",
+      "context_length": 1047576,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 1250000
+    },
+    {
+      "display_name": "GPT o1",
+      "title": "openai/o1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o1",
+      "upstream_id": "openai/o1",
+      "context_length": 200000,
+      "max_output_tokens": 100000,
+      "input_token_price_per_m": 15000000,
+      "output_token_price_per_m": 60000000,
+      "cached_input_token_price_per_m": 7500000
+    },
+    {
+      "display_name": "GPT o3",
+      "title": "openai/o3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3",
+      "upstream_id": "openai/o3",
+      "context_length": 200000,
+      "max_output_tokens": 100000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 8000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "GPT o3 mini",
+      "title": "openai/o3-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3-mini",
+      "upstream_id": "openai/o3-mini",
+      "context_length": 200000,
+      "max_output_tokens": 100000,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 550000
+    },
+    {
+      "display_name": "GPT o3 pro",
+      "title": "openai/o3-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o3-pro",
+      "upstream_id": "openai/o3-pro",
+      "context_length": 200000,
+      "max_output_tokens": 100000,
+      "input_token_price_per_m": 20000000,
+      "output_token_price_per_m": 80000000,
+      "cached_input_token_price_per_m": 20000000
+    },
+    {
+      "display_name": "GPT o4 mini",
+      "title": "openai/o4-mini",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "openai/o4-mini",
+      "upstream_id": "openai/o4-mini",
+      "context_length": 200000,
+      "max_output_tokens": 100000,
+      "input_token_price_per_m": 1100000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 550000
+    },
+    {
+      "display_name": "Qwen3-235B-A22B-Instruct-2507",
+      "title": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-2507",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "context_length": 131072,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 880000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Qwen3 VL 235B A22B Thinking",
+      "title": "qwen/qwen3-vl-235b-a22b-thinking",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-vl-235b-a22b-thinking",
+      "upstream_id": "qwen/qwen3-vl-235b-a22b-thinking",
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Qwen3.5 122B A10B",
+      "title": "qwen/qwen3.5-122b-a10b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-122b-a10b",
+      "upstream_id": "qwen/qwen3.5-122b-a10b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Qwen3.5 27B",
+      "title": "qwen/qwen3.5-27b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-27b",
+      "upstream_id": "qwen/qwen3.5-27b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 270000,
+      "output_token_price_per_m": 2160000,
+      "cached_input_token_price_per_m": 270000
+    },
+    {
+      "display_name": "Qwen3.5 35B A3B",
+      "title": "qwen/qwen3.5-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-35b-a3b",
+      "upstream_id": "qwen/qwen3.5-35b-a3b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 225000,
+      "output_token_price_per_m": 1800000,
+      "cached_input_token_price_per_m": 225000
+    },
+    {
+      "display_name": "Qwen3.5 397BA17B",
+      "title": "qwen/qwen3.5-397b-a17b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen/qwen3.5-397b-a17b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 550000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 550000
+    },
+    {
+      "display_name": "Qwen3.5 Flash",
+      "title": "qwen/qwen3.5-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-flash",
+      "upstream_id": "qwen/qwen3.5-flash",
+      "context_length": 1000000,
+      "max_output_tokens": 67072,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 100000
+    },
+    {
+      "display_name": "Qwen3.5 Plus",
+      "title": "qwen/qwen3.5-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-plus",
+      "upstream_id": "qwen/qwen3.5-plus",
+      "context_length": 1000000,
+      "max_output_tokens": 67072,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "display_name": "Qwen3.6 35B A3B",
+      "title": "qwen/qwen3.6-35b-a3b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-35b-a3b",
+      "upstream_id": "qwen/qwen3.6-35b-a3b",
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 186000,
+      "output_token_price_per_m": 1113750,
+      "cached_input_token_price_per_m": 186000
+    },
+    {
+      "display_name": "Qwen3.6 Plus",
+      "title": "qwen/qwen3.6-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-plus",
+      "upstream_id": "qwen/qwen3.6-plus",
+      "context_length": 1000000,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 325000,
+      "output_token_price_per_m": 1950000,
+      "cached_input_token_price_per_m": 32500
+    },
+    {
+      "display_name": "Qwen3.7 Max",
+      "title": "qwen/qwen3.7-max",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.7-max",
+      "upstream_id": "qwen/qwen3.7-max",
+      "context_length": 1000000,
+      "max_output_tokens": 67072,
+      "input_token_price_per_m": 2500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Qwen3.7 Plus",
+      "title": "qwen/qwen3.7-plus",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.7-plus",
+      "upstream_id": "qwen/qwen3.7-plus",
+      "context_length": 1000000,
+      "max_output_tokens": 67072,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 1600000,
+      "cached_input_token_price_per_m": 80000
+    },
+    {
+      "display_name": "Hunyuan 3",
+      "title": "tencent/hy3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "tencent/hy3",
+      "upstream_id": "tencent/hy3",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 50000
+    },
+    {
+      "display_name": "Grok 4.3",
+      "title": "xai/grok-4.3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.3",
+      "upstream_id": "xai/grok-4.3",
+      "context_length": 1000000,
+      "max_output_tokens": 1000000,
+      "input_token_price_per_m": 1250000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Grok 4.5",
+      "title": "xai/grok-4.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-4.5",
+      "upstream_id": "xai/grok-4.5",
+      "context_length": 500000,
+      "max_output_tokens": 500000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 6000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Grok Build 0.1",
+      "title": "xai/grok-build-0.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "x-ai/grok-build-0.1",
+      "upstream_id": "xai/grok-build-0.1",
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "MiMo V2.5",
+      "title": "xiaomi/mimo-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5",
+      "upstream_id": "xiaomi/mimo-v2.5",
+      "context_length": 1024000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 140000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 2800
+    },
+    {
+      "display_name": "MiMo V2.5 Pro",
+      "title": "xiaomi/mimo-v2.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5-pro",
+      "upstream_id": "xiaomi/mimo-v2.5-pro",
+      "context_length": 1024000,
+      "max_output_tokens": 131072,
+      "input_token_price_per_m": 435000,
+      "output_token_price_per_m": 870000,
+      "cached_input_token_price_per_m": 3600
+    },
+    {
+      "display_name": "GLM 4.6",
+      "title": "zai-org/GLM-4.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.6",
+      "upstream_id": "zai-org/GLM-4.6",
+      "context_length": 202752,
+      "max_output_tokens": 202752,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 2200000,
+      "cached_input_token_price_per_m": 110000
+    },
+    {
+      "display_name": "GLM 4.7",
+      "title": "zai-org/glm-4.7",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-4.7",
+      "upstream_id": "zai-org/glm-4.7",
+      "context_length": 202752,
+      "max_output_tokens": 202752,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 520000,
+      "output_token_price_per_m": 1850000,
+      "cached_input_token_price_per_m": 120000
+    },
+    {
+      "display_name": "GLM 5",
+      "title": "zai-org/glm-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "zai-org/glm-5",
+      "context_length": 202752,
+      "max_output_tokens": 202752,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 3150000,
+      "cached_input_token_price_per_m": 190000
+    },
+    {
+      "display_name": "GLM 5 Turbo",
+      "title": "zai-org/glm-5-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5-turbo",
+      "upstream_id": "zai-org/glm-5-turbo",
+      "context_length": 262144,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "reasoning",
+        "tools"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 240000
+    },
+    {
+      "display_name": "GLM 5.1",
+      "title": "zai-org/glm-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "zai-org/glm-5.1",
+      "context_length": 202752,
+      "max_output_tokens": 202752,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1260000,
+      "output_token_price_per_m": 3960000,
+      "cached_input_token_price_per_m": 234000
+    },
+    {
+      "display_name": "GLM 5.2",
+      "title": "zai-org/glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/glm-5.2",
+      "context_length": 1048576,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "GLM 5v Turbo",
+      "title": "zai-org/glm-5v-turbo",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5v-turbo",
+      "upstream_id": "zai-org/glm-5v-turbo",
+      "context_length": 202752,
+      "max_output_tokens": 131072,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 1200000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 240000
+    }
+  ],
+  "generated_at": "2026-07-19T03:00:45Z",
+  "model_count": 118
+}
