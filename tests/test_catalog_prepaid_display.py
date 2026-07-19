@@ -91,6 +91,27 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
     assert len(gmi_byok) > len(gmi_credits)
 
 
+def test_anthropic_models_credits_route_first_party_only() -> None:
+    # Policy: Anthropic-authored (anthropic/*) models route via Anthropic
+    # directly for Credits, never resellers (which list Claude ids they mostly
+    # don't serve). BYOK is untouched — a customer's own reseller key is theirs.
+    credits_providers = {
+        e.provider
+        for e in MODEL_ENDPOINTS.values()
+        if e.model_id.startswith("anthropic/") and e.usage_type == "Credits"
+    }
+    assert credits_providers <= {"anthropic"}
+    # Anthropic-direct Credits lineup stays fully routable.
+    assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
+    # A reseller that lists Claude keeps its BYOK route but loses Credits.
+    byok_providers = {
+        e.provider
+        for e in MODEL_ENDPOINTS.values()
+        if e.model_id.startswith("anthropic/") and e.usage_type != "Credits"
+    }
+    assert byok_providers - {"anthropic"}, "expected reseller Claude BYOK routes to remain"
+
+
 def test_cerebras_native_routes_use_verified_upstream_ids() -> None:
     assert MODEL_ENDPOINTS["openai/gpt-oss-120b@cerebras/prepaid"].upstream_id == (
         "gpt-oss-120b"

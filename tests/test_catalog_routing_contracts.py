@@ -558,7 +558,10 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ], f"{provider}/{model_id} should be quarantined"
 
     assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
-    assert "anthropic/claude-fable-5@lightning/prepaid" in MODEL_ENDPOINTS
+    # Policy (2026-07-18): Anthropic-authored models route via Anthropic only
+    # for Credits — the reseller prepaid route is gone, its BYOK route stays.
+    assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
+    assert "anthropic/claude-fable-5@lightning/byok" in MODEL_ENDPOINTS
 
 
 def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:
