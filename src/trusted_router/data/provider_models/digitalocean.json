@@ -1,0 +1,506 @@
+{
+  "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
+  "provider": "digitalocean",
+  "source": "https://inference.do-ai.run/v1/models",
+  "generated_at": "2026-07-19T00:34:04Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 23,
+  "models": [
+    {
+      "display_name": "DeepSeek R1 Distill Llama 70B",
+      "title": "deepseek-r1-distill-llama-70b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-r1-distill-llama-70b",
+      "upstream_id": "deepseek-r1-distill-llama-70b",
+      "context_length": 32678,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 990000,
+      "output_token_price_per_m": 990000
+    },
+    {
+      "display_name": "DeepSeek V3.2",
+      "title": "deepseek-3.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-3.2",
+      "context_length": 163840,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 425000,
+      "output_token_price_per_m": 1360000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "DeepSeek V4 Flash",
+      "title": "deepseek-4-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-flash",
+      "upstream_id": "deepseek-4-flash",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 112000,
+      "output_token_price_per_m": 224000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "DeepSeek V4 Pro",
+      "title": "deepseek-v4-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v4-pro",
+      "upstream_id": "deepseek-v4-pro",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 1392000,
+      "output_token_price_per_m": 2784000,
+      "cached_input_token_price_per_m": 348000
+    },
+    {
+      "display_name": "Gemma 4",
+      "title": "gemma-4-31B-it",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-it",
+      "upstream_id": "gemma-4-31B-it",
+      "context_length": 256000,
+      "max_output_tokens": 8192,
+      "input_token_price_per_m": 180000,
+      "output_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Llama 3.3 Instruct-70B",
+      "title": "llama3.3-70b-instruct",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-3.3-70b-instruct",
+      "upstream_id": "llama3.3-70b-instruct",
+      "context_length": 128000,
+      "max_output_tokens": 4096,
+      "input_token_price_per_m": 650000,
+      "output_token_price_per_m": 650000
+    },
+    {
+      "display_name": "Llama 4 Maverick 17B 128E Instruct",
+      "title": "llama-4-maverick",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "meta-llama/llama-4-maverick",
+      "upstream_id": "llama-4-maverick",
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 870000
+    },
+    {
+      "display_name": "MiniMax M2.5",
+      "title": "minimax-m2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "minimax-m2.5",
+      "context_length": 65536,
+      "max_output_tokens": 13107,
+      "input_token_price_per_m": 225000,
+      "output_token_price_per_m": 900000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Ministral 3 14B Instruct",
+      "title": "mistral-3-14B",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/ministral-3-14b-instruct",
+      "upstream_id": "mistral-3-14B",
+      "context_length": 262144,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Kimi K2.5",
+      "title": "kimi-k2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "kimi-k2.5",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 375000,
+      "output_token_price_per_m": 2025000,
+      "cached_input_token_price_per_m": 203000
+    },
+    {
+      "display_name": "Kimi K2.6",
+      "title": "kimi-k2.6",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "kimi-k2.6",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 760000,
+      "output_token_price_per_m": 3200000,
+      "cached_input_token_price_per_m": 190000
+    },
+    {
+      "display_name": "Nemotron Nano 3 Omni",
+      "title": "nemotron-3-nano-omni",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-nano-omni",
+      "upstream_id": "nemotron-3-nano-omni",
+      "context_length": 65536,
+      "max_output_tokens": 13107,
+      "input_token_price_per_m": 500000,
+      "output_token_price_per_m": 900000
+    },
+    {
+      "display_name": "Nemotron-3-Super-120B",
+      "title": "nvidia-nemotron-3-super-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-super-120b",
+      "upstream_id": "nvidia-nemotron-3-super-120b",
+      "context_length": 1000000,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 210000,
+      "output_token_price_per_m": 455000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "Nemotron 3 Ultra",
+      "title": "nemotron-3-ultra-550b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-3-ultra-550b",
+      "upstream_id": "nemotron-3-ultra-550b",
+      "context_length": 131072,
+      "max_output_tokens": 26214,
+      "input_token_price_per_m": 900000,
+      "output_token_price_per_m": 1700000
+    },
+    {
+      "display_name": "Nemotron Nano 12B v2 VL",
+      "title": "nemotron-nano-12b-v2-vl",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "nvidia/nemotron-nano-12b-v2-vl",
+      "upstream_id": "nemotron-nano-12b-v2-vl",
+      "context_length": 128000,
+      "max_output_tokens": 16384,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 600000
+    },
+    {
+      "display_name": "Qwen3-32B",
+      "title": "alibaba-qwen3-32b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-32b",
+      "upstream_id": "alibaba-qwen3-32b",
+      "context_length": 32768,
+      "max_output_tokens": 6554,
+      "input_token_price_per_m": 250000,
+      "output_token_price_per_m": 550000
+    },
+    {
+      "display_name": "Qwen3 Coder Flash",
+      "title": "qwen3-coder-flash",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-coder-flash",
+      "upstream_id": "qwen3-coder-flash",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 1700000,
+      "cached_input_token_price_per_m": 90000
+    },
+    {
+      "display_name": "Qwen 3.5 397B A17B",
+      "title": "qwen3.5-397b-a17b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "qwen3.5-397b-a17b",
+      "context_length": 131072,
+      "max_output_tokens": 26214,
+      "input_token_price_per_m": 385000,
+      "output_token_price_per_m": 2450000,
+      "cached_input_token_price_per_m": 111000
+    },
+    {
+      "display_name": "MiMo-V2.5",
+      "title": "mimo-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5",
+      "upstream_id": "mimo-v2.5",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 105000,
+      "output_token_price_per_m": 280000,
+      "cached_input_token_price_per_m": 28000
+    },
+    {
+      "display_name": "MiMo V2.5 Pro",
+      "title": "mimo-v2.5-pro",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "xiaomi/mimo-v2.5-pro",
+      "upstream_id": "mimo-v2.5-pro",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 600000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 160000
+    },
+    {
+      "display_name": "GLM 5",
+      "title": "glm-5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "glm-5",
+      "context_length": 64000,
+      "max_output_tokens": 12800,
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 2400000,
+      "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "GLM-5.1",
+      "title": "glm-5.1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "glm-5.1",
+      "context_length": 163840,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 975000,
+      "output_token_price_per_m": 4300000,
+      "cached_input_token_price_per_m": 260000
+    },
+    {
+      "display_name": "GLM-5.2",
+      "title": "glm-5.2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "glm-5.2",
+      "context_length": 262144,
+      "max_output_tokens": 52429,
+      "input_token_price_per_m": 1050000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 210000
+    }
+  ]
+}

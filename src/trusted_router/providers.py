@@ -72,6 +72,12 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     # Makora Inference — OpenAI-compatible chat completions. Their tooling
     # documents MAKORA_OPTIMIZE_TOKEN, so accept both names locally.
     "makora": (("MAKORA_API_KEY", "MAKORA_OPTIMIZE_TOKEN"), "https://inference.makora.com/v1"),
+    "chutes": (("CHUTES_API_KEY",), "https://llm.chutes.ai/v1"),
+    "digitalocean": (("DIGITAL_OCEAN_API_KEY",), "https://inference.do-ai.run/v1"),
+    "cloudflare-workers-ai": (
+        ("CLOUDFLARE_WORKERS_AI_API_TOKEN",),
+        "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+    ),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
@@ -460,6 +466,11 @@ class ProviderClient:
     def _provider_base_url(self, provider: str, default: str) -> str:
         if provider == "kimi":
             return self._secret("KIMI_BASE_URL") or self._secret("MOONSHOT_BASE_URL") or default
+        if provider == "cloudflare-workers-ai":
+            account_id = self._secret("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID")
+            if not account_id:
+                raise RuntimeError("CLOUDFLARE_WORKERS_AI_ACCOUNT_ID is required")
+            return default.format(account_id=account_id)
         return self._secret(f"{provider.upper()}_BASE_URL") or default
 
     def _vertex_auth_and_base_url(self) -> tuple[str, str]:

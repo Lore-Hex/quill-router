@@ -1,0 +1,387 @@
+{
+  "_about": "Provider-native Chutes TEE model catalog. Refreshed hourly from the authenticated Chutes OpenAI-compatible models API.",
+  "provider": "chutes",
+  "source": "https://llm.chutes.ai/v1/models",
+  "generated_at": "2026-07-19T00:33:16Z",
+  "price_scale": "microdollars_per_million",
+  "model_count": 13,
+  "models": [
+    {
+      "display_name": "deepseek-ai/DeepSeek-V3.2",
+      "title": "deepseek-ai/DeepSeek-V3.2-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "deepseek/deepseek-v3.2",
+      "upstream_id": "deepseek-ai/DeepSeek-V3.2-TEE",
+      "confidential_compute": true,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "reasoning",
+        "structured_outputs"
+      ],
+      "input_token_price_per_m": 1000000,
+      "output_token_price_per_m": 1000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "google/gemma-4-31B-turbo",
+      "title": "google/gemma-4-31B-turbo-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "google/gemma-4-31b-turbo",
+      "upstream_id": "google/gemma-4-31B-turbo-TEE",
+      "confidential_compute": true,
+      "context_length": 131072,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 120000,
+      "output_token_price_per_m": 370000,
+      "cached_input_token_price_per_m": 60000
+    },
+    {
+      "display_name": "MiniMaxAI/MiniMax-M2.5",
+      "title": "MiniMaxAI/MiniMax-M2.5-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "minimax/minimax-m2.5",
+      "upstream_id": "MiniMaxAI/MiniMax-M2.5-TEE",
+      "confidential_compute": true,
+      "context_length": 196608,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 75000
+    },
+    {
+      "display_name": "unsloth/Mistral-Nemo-Instruct-2407",
+      "title": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "mistralai/mistral-nemo",
+      "upstream_id": "unsloth/Mistral-Nemo-Instruct-2407-TEE",
+      "confidential_compute": true,
+      "context_length": 131072,
+      "input_token_price_per_m": 24500,
+      "output_token_price_per_m": 97800,
+      "cached_input_token_price_per_m": 12250
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2.5",
+      "title": "moonshotai/Kimi-K2.5-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.5",
+      "upstream_id": "moonshotai/Kimi-K2.5-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 220000
+    },
+    {
+      "display_name": "moonshotai/Kimi-K2.6",
+      "title": "moonshotai/Kimi-K2.6-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k2.6",
+      "upstream_id": "moonshotai/Kimi-K2.6-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 660000,
+      "output_token_price_per_m": 3500000,
+      "cached_input_token_price_per_m": 330000
+    },
+    {
+      "display_name": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "title": "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-235b-a22b-thinking-2507",
+      "upstream_id": "Qwen/Qwen3-235B-A22B-Thinking-2507-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 262144,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 298900,
+      "output_token_price_per_m": 1195700,
+      "cached_input_token_price_per_m": 149450
+    },
+    {
+      "display_name": "Qwen/Qwen3-32B",
+      "title": "Qwen/Qwen3-32B-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3-32b",
+      "upstream_id": "Qwen/Qwen3-32B-TEE",
+      "confidential_compute": true,
+      "context_length": 40960,
+      "max_output_tokens": 40960,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 104000,
+      "output_token_price_per_m": 416000,
+      "cached_input_token_price_per_m": 52000
+    },
+    {
+      "display_name": "Qwen/Qwen3.5-397B-A17B",
+      "title": "Qwen/Qwen3.5-397B-A17B-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "Qwen/Qwen3.5-397B-A17B-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 450000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 225000
+    },
+    {
+      "display_name": "Qwen/Qwen3.6-27B",
+      "title": "Qwen/Qwen3.6-27B-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "qwen/qwen3.6-27b",
+      "upstream_id": "Qwen/Qwen3.6-27B-TEE",
+      "confidential_compute": true,
+      "context_length": 262144,
+      "max_output_tokens": 65536,
+      "supported_features": [
+        "json_mode",
+        "tools",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2000000,
+      "cached_input_token_price_per_m": 150000
+    },
+    {
+      "display_name": "zai-org/GLM-5",
+      "title": "zai-org/GLM-5-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5",
+      "upstream_id": "zai-org/GLM-5-TEE",
+      "confidential_compute": true,
+      "context_length": 202752,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 950000,
+      "output_token_price_per_m": 2550000,
+      "cached_input_token_price_per_m": 475000
+    },
+    {
+      "display_name": "zai-org/GLM-5.1",
+      "title": "zai-org/GLM-5.1-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.1",
+      "upstream_id": "zai-org/GLM-5.1-TEE",
+      "confidential_compute": true,
+      "context_length": 202752,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 980000,
+      "output_token_price_per_m": 3080000,
+      "cached_input_token_price_per_m": 490000
+    },
+    {
+      "display_name": "zai-org/GLM-5.2",
+      "title": "zai-org/GLM-5.2-TEE",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2-TEE",
+      "confidential_compute": true,
+      "context_length": 1048576,
+      "max_output_tokens": 65535,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "input_token_price_per_m": 1400000,
+      "output_token_price_per_m": 4400000,
+      "cached_input_token_price_per_m": 700000
+    }
+  ]
+}
