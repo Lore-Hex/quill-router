@@ -20,7 +20,7 @@ dependencies = [
   "python-multipart>=0.0.20",
   "sentry-sdk[fastapi]>=2.20.0",
   "stripe>=11.0.0",
-  "uvicorn[standard]>=0.32.0",
+  "uvicorn[standard]>=0.51.0",
 ]
 
 [build-system]
