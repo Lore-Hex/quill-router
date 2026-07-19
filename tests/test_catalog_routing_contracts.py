@@ -548,6 +548,11 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ("deepinfra", "anthropic/claude-sonnet-5"),
         ("phala", "anthropic/claude-sonnet-5"),
         ("phala", "anthropic/claude-opus-4.1"),
+        ("together", "z-ai/glm-5"),
+        ("deepseek", "deepseek/deepseek-r1-0528"),
+        ("kimi", "moonshotai/kimi-k2-thinking"),
+        ("mistral", "mistralai/mixtral-8x22b-instruct"),
+        ("lightning", "openai/gpt-5-mini"),
     ]
 
     for provider, model_id in quarantined_routes:
@@ -562,6 +567,9 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     # for Credits — the reseller prepaid route is gone, its BYOK route stays.
     assert "anthropic/claude-fable-5@lightning/prepaid" not in MODEL_ENDPOINTS
     assert "anthropic/claude-fable-5@lightning/byok" in MODEL_ENDPOINTS
+    # Residue quarantine is provider-scoped: healthy siblings survive.
+    assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
+    assert "deepseek/deepseek-v4-pro@deepseek/prepaid" in MODEL_ENDPOINTS
 
 
 def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:

@@ -8,6 +8,34 @@ from trusted_router.synthetic.probes import rotation_candidates
 
 _SAMPLES_PER_ROUTE_LIMIT = 48
 
+# A route-health alert means "this route is structurally broken — quarantine
+# it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
+# dropped connections) are NOT actionable that way: the model may recover, and
+# quarantining it would stop us ever re-probing it. They still count toward the
+# public leaderboard's uptime display (a separate path); they just don't page.
+# Structural failures — 4xx model-not-found / bad-request / auth (except 429) —
+# do page.
+_TRANSIENT_ERROR_TYPES = frozenset(
+    {
+        "ReadTimeout",
+        "ConnectTimeout",
+        "WriteTimeout",
+        "PoolTimeout",
+        "ConnectError",
+        "ReadError",
+        "WriteError",
+        "RemoteProtocolError",
+    }
+)
+_TRANSIENT_ERROR_STATUSES = frozenset({429, 500, 502, 503, 504, 529})
+
+
+def _is_transient_failure(sample: object) -> bool:
+    status = getattr(sample, "error_status", None)
+    if status in _TRANSIENT_ERROR_STATUSES:
+        return True
+    return getattr(sample, "error_type", None) in _TRANSIENT_ERROR_TYPES
+
 
 @dataclass(frozen=True)
 class RouteHealthFlag:
@@ -55,6 +83,10 @@ def evaluate_route_health(
             if created_at is None or created_at < cutoff or sample.status == "unsupported":
                 continue
             if sample.status not in {"error", "success"}:
+                continue
+            # Transient/capacity failures don't page (and don't dilute the
+            # denominator) — they aren't a "quarantine me" signal.
+            if sample.status == "error" and _is_transient_failure(sample):
                 continue
 
             sample_count += 1

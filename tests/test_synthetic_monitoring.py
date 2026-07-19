@@ -2424,6 +2424,7 @@ def _route_health_sample(
     status: str,
     age_hours: int = 0,
     error_type: str | None = None,
+    error_status: int | None = None,
     error_message: str | None = None,
     source: str = "synthetic",
 ) -> ProviderBenchmarkSample:
@@ -2437,10 +2438,55 @@ def _route_health_sample(
         usage_type="Credits",
         streamed=True,
         error_type=error_type,
+        error_status=error_status,
         error_message=error_message,
         source=source,
         created_at=created_at,
     )
+
+
+def test_evaluate_route_health_ignores_transient_failures() -> None:
+    # A route that is 100% failing on transient/capacity errors (rate limit,
+    # gateway/no-upstream, timeout) is NOT alert-worthy — it may recover and
+    # quarantining would stop us re-probing it. It must not flag.
+    transient = []
+    transient.extend(
+        _route_health_sample(
+            f"rl-{i}", provider="busy", model="m", status="error",
+            error_type="provider_error", error_status=429,
+        )
+        for i in range(4)
+    )
+    transient.extend(
+        _route_health_sample(
+            f"to-{i}", provider="busy", model="m", status="error",
+            error_type="ReadTimeout",
+        )
+        for i in range(4)
+    )
+    transient.extend(
+        _route_health_sample(
+            f"gw-{i}", provider="busy", model="m", status="error",
+            error_type="provider_error", error_status=502,
+        )
+        for i in range(4)
+    )
+    assert evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(transient), routes=[("busy", "m")]
+    ) == []
+
+    # A structurally-dead route (404 model-not-found) still flags.
+    structural = [
+        _route_health_sample(
+            f"nf-{i}", provider="dead", model="m", status="error",
+            error_type="provider_error", error_status=404,
+        )
+        for i in range(6)
+    ]
+    flags = evaluate_route_health(  # type: ignore[arg-type]
+        _RouteHealthStore(structural), routes=[("dead", "m")]
+    )
+    assert len(flags) == 1 and flags[0].failure_rate == 1.0
 
 
 def test_evaluate_route_health_flags_dead_route_but_not_healthy_or_thin_routes() -> None:

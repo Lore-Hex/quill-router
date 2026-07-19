@@ -186,6 +186,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "meta-llama/llama-3-70b-instruct",
             # route-health first sweep 2026-07-18, 100% failure.
             "zai-org/glm-4.5",
+            # route-health 2026-07-18, 100% failure, upstream 404.
+            "elephant",
         }
     ),
     # Friendli notified customers that GLM-5 serverless Model APIs stop being
@@ -209,6 +211,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         {
             "google/gemini-3.1-flash-lite-preview",
             "gemini-3.1-flash-lite-preview",
+            # route-health 2026-07-18, 100% failure, upstream 404.
+            "google/gemma-3n-e4b-it",
         }
     ),
     "google-vertex": frozenset(
@@ -254,6 +258,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "z-ai/glm-5.1",
             "moonshotai/kimi-k2.7-code",
             "qwen/qwen3-32b",
+            # route-health 2026-07-18, 100% failure, upstream 404.
+            "nousresearch/hermes-3-llama-3.1-70b",
         }
     ),
     "phala": frozenset(
@@ -276,6 +282,16 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "mistralai/mistral-small-24b-instruct-2501",
             "moonshotai/kimi-k2.7-code",
             "minimax/minimax-m3",
+            # route-health 2026-07-18, 100% failure, upstream 404/400.
+            "z-ai/glm-4.6",
+            "z-ai/glm-4.7",
+            "z-ai/glm-5",
+            "z-ai/glm-5.1",
+            "qwen/qwen3.5-397b-a17b",
+            "qwen/qwen3-next-80b-a3b-instruct",
+            "meta-llama/llama-3.2-3b-instruct",
+            "deepseek/deepseek-r1-0528",
+            "openai/gpt-oss-20b",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure.
@@ -284,6 +300,12 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "openai/gpt-5.6-sol",
             "openai/gpt-5.6-luna",
             "openai/gpt-4-turbo-preview",
+            # route-health 2026-07-18, 100% failure, upstream provider_error
+            # before Lightning attempted an upstream request.
+            "openai/gpt-5",
+            "openai/gpt-5-mini",
+            "openai/o3",
+            "openai/o3-mini",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure. These ids may be
@@ -292,6 +314,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
         {
             "moonshotai/kimi-k2",
             "moonshotai/kimi-k2-0905",
+            # route-health 2026-07-18, 100% failure, upstream 404.
+            "moonshotai/kimi-k2-thinking",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure.
@@ -305,6 +329,8 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     "mistral": frozenset(
         {
             "mistralai/mistral-small-24b-instruct-2501",
+            # route-health 2026-07-18, 100% failure, upstream 404.
+            "mistralai/mixtral-8x22b-instruct",
         }
     ),
     # route-health first sweep 2026-07-18, 100% failure.
@@ -317,6 +343,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     "deepseek": frozenset(
         {
             "deepseek/deepseek-v3.1-terminus",
+            # route-health 2026-07-18, 100% failure, upstream 400.
+            "deepseek/deepseek-v3.2-exp",
+            "deepseek/deepseek-chat-v3-0324",
+            "deepseek/deepseek-r1-distill-llama-70b",
+            "deepseek/deepseek-r1-0528",
         }
     ),
 }
@@ -716,7 +747,12 @@ def _embedding_manifest_cost(spec: _EmbeddingSpec) -> int | None:
 # Credits. Anthropic-direct only today; add "vertex"/"bedrock" here if/when
 # first-party Claude routing through those surfaces is enabled. Resellers that
 # merely list Claude ids are intentionally excluded (see _keep policy below).
-_ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+_ANTHROPIC_FIRST_PARTY_PROVIDERS: frozenset[str] = frozenset(
+    # First-party Anthropic surfaces are OK for Claude Credits routing; resellers
+    # are not. Vertex + Bedrock included per product decision (2026-07-18) so
+    # Claude-on-Vertex/Bedrock Credits routes are permitted when they exist.
+    {"anthropic", "google-vertex", "bedrock", "aws-bedrock"}
+)
 
 
 def _filter_unserved_provider_endpoints(
