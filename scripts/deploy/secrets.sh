@@ -137,6 +137,10 @@ ensure_secret_from_env_file "ALIBABA_API_KEY" "trustedrouter-alibaba-api-key" "D
 ensure_secret_from_env_file "CHUTES_API_KEY" "trustedrouter-chutes-api-key"
 ensure_secret_from_env_file "DIGITAL_OCEAN_API_KEY" "trustedrouter-digitalocean-api-key"
 ensure_secret_from_env_file "CLOUDFLARE_WORKERS_AI_API_TOKEN" "trustedrouter-cloudflare-workers-ai-api-token"
+ensure_secret_from_env_file "INCEPTRON_API_KEY" "trustedrouter-inceptron-api-key"
+ensure_secret_from_env_file "MORPH_API_KEY" "trustedrouter-morph-api-key"
+ensure_secret_from_env_file "ATLAS_CLOUD_API_KEY" "trustedrouter-atlas-cloud-api-key"
+ensure_secret_from_env_file "STREAMLAKE_API_KEY" "trustedrouter-streamlake-api-key"
 
 SYNTH_PROMPTS_FILE="${TR_SYNTH_PROMPTS_FILE:-${HOME}/.trustedrouter_synth_prompts_v1.md}"
 SYNTH_CODE_PROMPTS_FILE="${TR_SYNTH_CODE_PROMPTS_FILE:-/Users/jperla/claude/fusion-code-prompts-v1.md}"
@@ -174,6 +178,10 @@ grant_tr_deploy_secret_access() {
 
 grant_tr_deploy_secret_access "trustedrouter-tr-api-key-for-self-heal"
 grant_tr_deploy_secret_access "trustedrouter-kimi-api-key"
+grant_tr_deploy_secret_access "trustedrouter-inceptron-api-key"
+grant_tr_deploy_secret_access "trustedrouter-morph-api-key"
+grant_tr_deploy_secret_access "trustedrouter-atlas-cloud-api-key"
+grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
 
 # Axiom logging — ship structured logs to a dedicated dataset for
 # slice-and-dice analysis (request_id correlation, rate-limit hits,

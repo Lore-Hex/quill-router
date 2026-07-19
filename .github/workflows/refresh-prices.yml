@@ -147,7 +147,11 @@ jobs:
                       MAKORA_API_KEY:trustedrouter-makora-api-key \
                       CHUTES_API_KEY:trustedrouter-chutes-api-key \
                       DIGITAL_OCEAN_API_KEY:trustedrouter-digitalocean-api-key \
-                      CLOUDFLARE_WORKERS_AI_API_TOKEN:trustedrouter-cloudflare-workers-ai-api-token; do
+                      CLOUDFLARE_WORKERS_AI_API_TOKEN:trustedrouter-cloudflare-workers-ai-api-token \
+                      INCEPTRON_API_KEY:trustedrouter-inceptron-api-key \
+                      MORPH_API_KEY:trustedrouter-morph-api-key \
+                      ATLAS_CLOUD_API_KEY:trustedrouter-atlas-cloud-api-key \
+                      STREAMLAKE_API_KEY:trustedrouter-streamlake-api-key; do
             env="${pair%%:*}"
             secret="${pair#*:}"
             KEY=$(gcloud secrets versions access latest --secret="${secret}" --project=quill-cloud-proxy)

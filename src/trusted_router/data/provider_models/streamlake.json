@@ -1,0 +1,78 @@
+{
+  "provider": "streamlake",
+  "source": "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
+  "price_scale": "microdollars_per_million",
+  "models": [
+    {
+      "display_name": "kat-coder-air-v2.5",
+      "title": "kat-coder-air-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-air-v2.5",
+      "upstream_id": "kat-coder-air-v2.5",
+      "context_length": 262144,
+      "input_token_price_per_m": 150000,
+      "output_token_price_per_m": 600000,
+      "cached_input_token_price_per_m": 30000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
+    },
+    {
+      "display_name": "kat-coder-pro-v2",
+      "title": "kat-coder-pro-v2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-pro-v2",
+      "upstream_id": "kat-coder-pro-v2",
+      "context_length": 262144,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 1200000,
+      "cached_input_token_price_per_m": 60000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
+    },
+    {
+      "display_name": "kat-coder-pro-v2.5",
+      "title": "kat-coder-pro-v2.5",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "kwaipilot/kat-coder-pro-v2.5",
+      "upstream_id": "kat-coder-pro-v2.5",
+      "context_length": 262144,
+      "input_token_price_per_m": 740000,
+      "output_token_price_per_m": 2960000,
+      "cached_input_token_price_per_m": 150000,
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
+    }
+  ],
+  "generated_at": "2026-07-19T03:03:01Z",
+  "model_count": 3
+}

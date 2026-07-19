@@ -181,3 +181,37 @@ def write_discovered_chat_manifest(
         f"{result.slug}: refreshed provider_models/{manifest_path.name} "
         f"({len(updated)} priced rows{suffix})"
     ]
+
+
+def set_manifest_canary_state(
+    manifest_path: Path,
+    *,
+    healthy: bool,
+    failure_reason: str = "provider-canary-failed",
+) -> None:
+    """Fail routes closed while preserving unrelated operator holds."""
+
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"{manifest_path.name} has no models list")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if healthy:
+            if row.get("routable_reason") == failure_reason:
+                row.pop("routable", None)
+                row.pop("routable_reason", None)
+        else:
+            existing_reason = row.get("routable_reason")
+            if row.get("routable") is False and existing_reason not in {
+                None,
+                failure_reason,
+            }:
+                continue
+            row["routable"] = False
+            row["routable_reason"] = failure_reason
+    manifest_path.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )

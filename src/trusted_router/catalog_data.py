@@ -632,6 +632,60 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://developers.cloudflare.com/workers-ai/",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    "inceptron": Provider(
+        slug="inceptron",
+        name="Inceptron",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=True,
+        provider_policy=(
+            "Inceptron documents zero retention by default: API prompts and "
+            "outputs are processed transiently and discarded after processing."
+        ),
+        provider_policy_url="https://www.inceptron.io/privacy",
+        provider_headquarters_country="SE",
+    ),
+    "morph": Provider(
+        slug="morph",
+        name="Morph",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Morph's public paid tier documents up to 30 days of content "
+            "retention. Zero retention is reserved for enterprise contracts."
+        ),
+        provider_policy_url="https://www.morphllm.com/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "atlas-cloud": Provider(
+        slug="atlas-cloud",
+        name="Atlas Cloud",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "Atlas Cloud publishes a platform zero-retention policy, while its "
+            "aggregated model routes can involve downstream providers. "
+            "TrustedRouter keeps the public route tier conservative pending "
+            "downstream-path contractual verification."
+        ),
+        provider_policy_url="https://www.atlascloud.ai/zero-data-retention",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
+    "streamlake": Provider(
+        slug="streamlake",
+        name="StreamLake",
+        supports_prepaid=True,
+        supports_byok=False,
+        provider_policy=(
+            "No provider-ZDR claim is tracked. StreamLake's public privacy "
+            "policy is linked for API data-handling review."
+        ),
+        provider_policy_url=(
+            "https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54"
+        ),
+        provider_headquarters_country="SG",
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -819,6 +873,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "chutes",
         "digitalocean",
         "cloudflare-workers-ai",
+        "inceptron",
+        "morph",
+        "atlas-cloud",
+        "streamlake",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
