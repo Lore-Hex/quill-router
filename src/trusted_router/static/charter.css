@@ -82,7 +82,7 @@
   --ivory-dim: #d6d9cc;
   --gray-2: #acb5a4;
   --gray-3: #838f80;
-  --gray-4: #59614f;
+  --gray-4: #7d8879;
   --sage: #a9cdb9;
   --sage-bright: #c6e2d3;
   --sage-dim: #56685c;
@@ -182,7 +182,7 @@
   --text-display: #171c16;
   --text-body: #454d42;
   --text-muted: #6d7566;
-  --text-faint: #99a090;
+  --text-faint: #626b5d;
   --text-accent: #46705c;
   --text-inverse: var(--ivory);
   --border-hairline: #dfdccf;
@@ -216,7 +216,7 @@ body {
   background: var(--surface-page);
   color: var(--text-body);
   font-family: var(--font-ui);
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizelegibility;
@@ -257,6 +257,11 @@ h4 {
   font-family: var(--font-display);
   font-weight: 400;
   letter-spacing: 0;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
 }
 
 h1 {
@@ -350,7 +355,7 @@ textarea {
 }
 
 .brand-word {
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: 0;
 }
 
@@ -358,7 +363,7 @@ textarea {
   margin-left: auto;
   gap: 18px;
   flex-wrap: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   text-transform: uppercase;
 }
@@ -397,7 +402,7 @@ textarea {
   border-radius: var(--r-control);
   color: var(--text-display);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   list-style: none;
   padding: 7px 10px;
@@ -436,13 +441,13 @@ textarea {
 
 .btn,
 .signin-btn {
-  min-height: 36px;
+  min-height: 40px;
   padding: 8px 13px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-control);
   background: transparent;
   color: var(--ivory-dim);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -498,9 +503,9 @@ textarea {
 }
 
 .theme-toggle {
-  width: 36px;
-  min-width: 36px;
-  min-height: 36px;
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
   padding: 0;
   font-family: var(--font-mono);
 }
@@ -518,7 +523,7 @@ textarea {
   border-radius: 0;
   background: transparent;
   color: var(--text-accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -630,7 +635,7 @@ textarea {
 .card-label,
 .hero-badge {
   border-radius: var(--r-control);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -675,13 +680,13 @@ textarea:hover {
 }
 
 table {
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 th {
   background: var(--surface-raised);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
 }
@@ -763,7 +768,7 @@ tbody tr:hover {
   margin: 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .public-proof-strip {
@@ -939,6 +944,10 @@ pre {
   font-weight: 300;
 }
 
+.charter-home-hero h1 .hero-line {
+  display: block;
+}
+
 .charter-home-hero .lead {
   max-width: 590px;
   margin: 0;
@@ -958,7 +967,7 @@ pre {
 }
 
 .charter-home-hero .hero-links a {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .hero-badges {
@@ -989,7 +998,7 @@ pre {
 
 .attestation-record-head strong {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   text-transform: uppercase;
 }
@@ -1000,7 +1009,7 @@ pre {
   gap: 6px;
   color: var(--sage);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -1020,7 +1029,7 @@ pre {
   padding: 8px 0;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .evidence-row::after {
@@ -1050,7 +1059,7 @@ pre {
   padding: 12px 16px;
   border-top: 1px solid var(--border-hairline);
   color: var(--text-faint);
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 
@@ -1090,7 +1099,7 @@ pre {
   display: block;
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -1130,7 +1139,7 @@ pre {
 .section-lead p,
 .section-sub {
   color: var(--text-body);
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.65;
 }
 
@@ -1156,7 +1165,7 @@ pre {
 .charter-pillar-number {
   color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .charter-pillar h3 {
@@ -1167,7 +1176,17 @@ pre {
 .charter-pillar p {
   margin: 0;
   color: var(--text-body);
-  font-size: 13px;
+  font-size: 14px;
+}
+
+.charter-pillar p a,
+.section-lead p a,
+.section-sub a,
+.marketing-card p a,
+.panel-body p a,
+.faq-a a {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
 }
 
 .charter-code-grid,
@@ -1197,7 +1216,7 @@ pre {
   padding: 11px 0;
   border-bottom: 1px solid var(--border-hairline);
   color: var(--text-body);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .check-list li::before {
@@ -1245,14 +1264,14 @@ pre {
   margin-top: 3px;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .trust-path-arrow {
   padding: 7px 18px;
   color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -1283,7 +1302,7 @@ pre {
 .region-dot text {
   fill: var(--ivory-dim);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   stroke: var(--green-black-0);
 }
@@ -1410,14 +1429,14 @@ pre {
   margin: 0 0 12px;
   color: var(--text-faint);
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   text-transform: uppercase;
 }
 
 .footer-col a {
   color: var(--text-body);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .footer-col a:hover {
@@ -1433,7 +1452,7 @@ pre {
   border-top: 1px solid var(--border-hairline);
   color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .signin-modal {
@@ -1460,8 +1479,8 @@ pre {
 .signin-close {
   top: 16px;
   right: 16px;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   border: 1px solid transparent;
   border-radius: var(--r-control);
   background: transparent;
@@ -1483,7 +1502,7 @@ pre {
   width: 25px;
   color: var(--text-accent);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -1499,7 +1518,7 @@ body.console {
 
 .console-topnav {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .console-topnav a {
@@ -1527,7 +1546,7 @@ body.console {
   border-left: 2px solid transparent;
   border-radius: var(--r-control);
   color: var(--text-body);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .sidebar-link:hover,
@@ -1624,7 +1643,7 @@ body.auth.auth-shell {
 
 .auth-card .eyebrow {
   color: var(--text-accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
 }
@@ -1843,7 +1862,7 @@ body.auth.auth-shell {
 
 @media (max-width: 520px) {
   .brand-word {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .charter-home-hero h1 {
