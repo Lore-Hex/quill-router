@@ -2,17 +2,17 @@
 <style>
   .hiring-banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
     max-width: 720px; margin: 0 auto 24px; padding: 13px 18px;
-    border: 1px solid var(--line); border-radius: 12px; background: var(--code-bg);
+    border: 1px solid var(--line); border-radius: var(--r-panel); background: var(--surface-card);
     text-decoration: none; transition: border-color .15s ease; }
   .hiring-banner:hover { border-color: var(--blue); }
-  .hiring-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
-    text-transform: uppercase; color: #fff; background: var(--blue);
-    padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .hiring-tag { font-family: var(--font-mono); font-size: 10px; font-weight: 500; letter-spacing: 0;
+    text-transform: uppercase; color: var(--sage); background: var(--sage-tint);
+    padding: 3px 7px; border: 1px solid var(--sage-dim); border-radius: var(--r-control); white-space: nowrap; }
   .hiring-msg { flex: 1 1 300px; color: var(--ink); font-size: 15px; line-height: 1.5;
-    font-family: Inter, system-ui, sans-serif; }
+    font-family: var(--font-ui); }
   .hiring-msg strong { color: var(--inkstrong); font-weight: 650; }
   .hiring-cta { color: var(--blue); font-size: 14.5px; font-weight: 600;
-    white-space: nowrap; font-family: Inter, system-ui, sans-serif; }
+    white-space: nowrap; font-family: var(--font-ui); }
   @media (max-width: 700px) { .hiring-banner { gap: 10px; padding: 12px 14px; } }
 </style>
 <a class="hiring-banner" href="mailto:careers@trustedrouter.com?subject=PhD%20researcher%20%E2%80%94%20TrustedRouter">

@@ -52,8 +52,10 @@ function currentTheme() {
 function updateThemeToggleGlyph() {
   const dark = currentTheme() === "dark";
   document.querySelectorAll('[data-action="toggle-theme"]').forEach((el) => {
-    el.textContent = dark ? "☾" : "☀";
+    el.textContent = "◐";
     el.setAttribute("aria-pressed", String(!dark));
+    el.setAttribute("aria-label", dark ? "Switch to paper theme" : "Switch to dark theme");
+    el.setAttribute("title", dark ? "Switch to paper theme" : "Switch to dark theme");
   });
 }
 

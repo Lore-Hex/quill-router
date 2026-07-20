@@ -17,14 +17,6 @@
 {% endblock %}
 
 {% block body %}
-{# Inter is OpenRouter's body font and the most-recognizable element of
-   their visual identity. Loaded from Google Fonts CDN with display=swap
-   so the page renders immediately with system fallback and re-paints
-   when Inter arrives (avoids FOIT). Chunk 5 may vendor + preload for
-   first-paint perf. #}
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/chat.css?v={{ static_version|default('local') }}">
 
 <section class="chat-shell" data-chat-shell>
@@ -124,7 +116,7 @@
           data-action="attach-file"
           title="Attach image"
           aria-label="Attach image"
-        >📎</button>
+        >Add</button>
         <button
           type="button"
           class="chat-input-btn"
@@ -132,7 +124,7 @@
           data-action="voice-input"
           title="Voice input"
           aria-label="Voice input"
-        >🎙</button>
+        >Voice</button>
         <input
           type="file"
           accept="image/*"
