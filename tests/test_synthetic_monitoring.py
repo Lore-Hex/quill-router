@@ -2009,6 +2009,12 @@ def test_sse_line_finish_reason_detects_length_stop() -> None:
 
 
 def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
+    assert _rotation_max_tokens("google-ai-studio", "google/gemini-2.5-flash") == 2048
+    assert _rotation_max_tokens("google-vertex", "google/gemini-3.5-flash") == 2048
+    assert (
+        _rotation_max_tokens("google-ai-studio", "google/gemini-3-flash-preview")
+        == 2048
+    )
     assert _rotation_max_tokens("cerebras", "cerebras/gpt-oss-120b") == 512
     assert _rotation_max_tokens("cerebras", "z-ai/glm-4.7") == 512
     assert _rotation_max_tokens("zai", "z-ai/glm-4.6") == 512
@@ -2021,6 +2027,9 @@ def test_rotation_probe_uses_reasoning_safe_request_budget() -> None:
     assert _rotation_max_tokens("anthropic", "anthropic/claude-sonnet-5") == 512
     # Non-thinking Claude models keep the small budget.
     assert _rotation_max_tokens("anthropic", "anthropic/claude-haiku-4.5") == 16
+    assert (
+        _rotation_max_tokens("together", "meta-llama/llama-3.1-8b-instruct") == 16
+    )
     assert _rotation_omits_temperature("openai", "openai/o3")
     assert _rotation_omits_temperature("openai", "openai/gpt-5.5")
     # Canary contract: probes mirror customer payloads. The enclave strips
