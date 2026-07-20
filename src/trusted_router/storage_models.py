@@ -322,6 +322,7 @@ class GatewayAuthorization:
     idempotency_fingerprint: str | None = None
     custom_model_id: str | None = None
     custom_model_revision: int | None = None
+    additional_cost_reservation_microdollars: int = 0
 
     def __post_init__(self) -> None:
         # JSON round-trip stores usage_type as a string; coerce so the field

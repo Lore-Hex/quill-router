@@ -119,6 +119,10 @@ def _authorize_gateway_sync(
         raise api_error(403, "Workspace is unavailable", ErrorType.FORBIDDEN)
     assert_workspace_billing_active(workspace)
     body_dict = body.model_dump(exclude_none=True)
+    # Preserve pre-web-search idempotency fingerprints byte-for-byte for every
+    # ordinary request. A nonzero hosted-tool reservation remains fingerprinted.
+    if not body.additional_cost_reservation_microdollars:
+        body_dict.pop("additional_cost_reservation_microdollars", None)
     try:
         request_tags = validate_tags(body.tags)
         effective_tags = merge_tags(api_key.tags, body.tags)
@@ -163,6 +167,18 @@ def _authorize_gateway_sync(
     # resolver so the attested enclave can authorize + bill an
     # embeddings call exactly like a chat one.
     route_model_id = str(body_dict.get("model") or body.model)
+    if (
+        body.additional_cost_reservation_microdollars
+        and (
+            _is_web_search_restricted_model(route_model_id)
+            or _is_web_search_restricted_provider(body_dict.get("provider"))
+        )
+    ):
+        raise api_error(
+            400,
+            "web_search is not available for this privacy tier",
+            ErrorType.BAD_REQUEST,
+        )
     requested_model = MODELS.get(route_model_id) if route_model_id else None
     is_embeddings_request = (
         requested_model is not None
@@ -184,6 +200,21 @@ def _authorize_gateway_sync(
     endpoint_candidates = _eligible_gateway_endpoint_candidates(
         endpoint_candidates, workspace.id
     )
+    additional_cost_reservation = body.additional_cost_reservation_microdollars
+    if additional_cost_reservation:
+        if body.route_type != "responses.web_search.planner":
+            raise api_error(
+                400,
+                "additional cost reservations are only available for Responses web search",
+                ErrorType.BAD_REQUEST,
+            )
+        # The hosted search service is operator-funded, so its cost must settle
+        # against Credits even when this workspace also has BYOK routes.
+        endpoint_candidates = [
+            (candidate_model, candidate_endpoint)
+            for candidate_model, candidate_endpoint in endpoint_candidates
+            if UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
+        ]
     if not endpoint_candidates:
         raise api_error(
             400,
@@ -197,10 +228,11 @@ def _authorize_gateway_sync(
     if custom_model is not None and custom_model.hidden_prompt.strip():
         input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     output_tokens = body.output_estimate
-    estimate = max(
+    model_estimate = max(
         _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
+    estimate = model_estimate + additional_cost_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
     has_credit_candidate = any(
         UsageType.for_endpoint(candidate_endpoint) == UsageType.CREDITS
@@ -331,6 +363,7 @@ def _authorize_gateway_sync(
             key_usage_shards=key_usage_shard_count(api_key),
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
+            additional_cost_reservation_microdollars=additional_cost_reservation,
             expires_at=expires_at,
             window_limits=window_limits or None,
         )
@@ -427,6 +460,7 @@ def _authorize_gateway_sync(
             idempotency_fingerprint=request_fingerprint,
             custom_model_id=custom_model.id if custom_model else None,
             custom_model_revision=custom_model.revision if custom_model else None,
+            additional_cost_reservation_microdollars=additional_cost_reservation,
         )
     byok_config = (
         _get_byok_provider(workspace.id, endpoint.provider)
@@ -739,6 +773,9 @@ def _gateway_authorize_response(
             "regions": region_payload(settings),
             "broadcast_destinations": broadcast_destinations,
             "idempotent_replay": idempotent_replay,
+            "additional_cost_reservation_microdollars": (
+                authorization.additional_cost_reservation_microdollars
+            ),
             "request_metadata_version": REQUEST_METADATA_VERSION,
             "tags": dict(authorization.tags),
             "custom_model": None
@@ -815,6 +852,29 @@ def _force_custom_model_credit_routes(body: dict[str, Any]) -> None:
         body["provider"] = {"usage": "credits"}
 
 
+def _is_web_search_restricted_model(model_id: str) -> bool:
+    model = model_id.strip().lower()
+    return any(
+        model == prefix
+        or model.startswith(f"{prefix}-")
+        or model.startswith(f"{prefix}/")
+        for prefix in (
+            "trustedrouter/zdr",
+            "trustedrouter/e2e",
+            "trustedrouter/confidential",
+            "trustedrouter/eu",
+        )
+    )
+
+
+def _is_web_search_restricted_provider(provider: Any) -> bool:
+    if not isinstance(provider, dict):
+        return False
+    return str(provider.get("data_collection") or "").strip().lower() == "deny" or (
+        str(provider.get("jurisdiction") or "").strip().lower() == "eu"
+    )
+
+
 def _settle_gateway_authorization(
     body: GatewaySettleRequest,
     *,
@@ -882,6 +942,27 @@ def _settle_gateway_authorization(
         cache_creation_tokens=cache_creation,
         effective_at=authorization.created_at,
     )
+    additional_cost = body.additional_cost_microdollars
+    if additional_cost:
+        if body.route_type != "responses.web_search.planner":
+            raise api_error(
+                400,
+                "additional cost settlement is only available for Responses web search",
+                ErrorType.BAD_REQUEST,
+            )
+        if additional_cost > authorization.additional_cost_reservation_microdollars:
+            raise api_error(
+                400,
+                "additional cost exceeds the authorized reservation",
+                ErrorType.BAD_REQUEST,
+            )
+        if UsageType.for_endpoint(selected_endpoint) != UsageType.CREDITS:
+            raise api_error(
+                400,
+                "additional cost settlement requires a Credits route",
+                ErrorType.BAD_REQUEST,
+            )
+        actual_cost += additional_cost
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
 

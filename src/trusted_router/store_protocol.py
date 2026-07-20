@@ -362,6 +362,7 @@ class Store(Protocol):
         idempotency_fingerprint: str | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        additional_cost_reservation_microdollars: int = ...,
     ) -> GatewayAuthorization: ...
     def get_gateway_authorization(
         self, authorization_id: str
@@ -516,6 +517,7 @@ class TypedBillingStore(Protocol):
         tags: dict[str, str] | None = ...,
         custom_model_id: str | None = ...,
         custom_model_revision: int | None = ...,
+        additional_cost_reservation_microdollars: int = ...,
         expires_at: Any = ...,
         window_limits: dict[str, int] | None = ...,
     ) -> tuple[str, GatewayAuthorization | None]: ...

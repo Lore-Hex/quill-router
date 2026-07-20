@@ -199,6 +199,12 @@ class GatewayAuthorizeRequest(_Lenient):
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
     route_type: str | None = None
+    # Attested hosted tools may reserve a bounded non-token cost on the same
+    # atomic hold as their planner model call. This is internal-only and is
+    # currently accepted solely for the Responses web-search planner.
+    additional_cost_reservation_microdollars: int = Field(
+        default=0, ge=0, le=1_000_000
+    )
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
@@ -289,6 +295,7 @@ class GatewaySettleRequest(_Lenient):
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
     route_type: str | None = None
+    additional_cost_microdollars: int = Field(default=0, ge=0, le=1_000_000)
 
     @property
     def input_count(self) -> int:

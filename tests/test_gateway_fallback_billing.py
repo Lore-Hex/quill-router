@@ -69,6 +69,73 @@ def test_gateway_authorize_fake_spanner_uses_typed_without_allowlist_settings() 
     assert ("reservation", data["credit_reservation_id"]) not in db.rows
 
 
+def test_gateway_web_search_cost_uses_typed_reservation_and_finalize() -> None:
+    store, db, _ = make_fake_store()
+    ws = "ws_gcp_web_search_cost"
+    store._write_entity("workspace", ws, Workspace(id=ws, name="GCP", owner_user_id="u"))
+    store._write_entity("credit", ws, CreditAccount(workspace_id=ws))
+    db.typed.setdefault(CREDIT_BALANCE_TABLE, {})[(ws, 0)] = {
+        "workspace_id": ws,
+        "shard": 0,
+        "total_credits": 10_000_000,
+        "total_usage": 0,
+        "reserved": 0,
+        "source_updated_at": None,
+        "updated_at": None,
+    }
+    _raw, api_key = store.create_api_key(
+        workspace_id=ws,
+        name="typed web search",
+        creator_user_id="u",
+    )
+    configure_store(store)
+    client = TestClient(
+        create_app(
+            Settings(environment="test"),
+            configure_store_arg=False,
+            init_observability=False,
+        )
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": api_key.hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 300_000,
+            "idempotency_key": "typed-web-search",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    authorization = store.get_gateway_authorization(auth_data["authorization_id"])
+    assert authorization is not None
+    assert authorization.additional_cost_reservation_microdollars == 300_000
+    reservation = db.reservations[auth_data["credit_reservation_id"]]
+    assert reservation["credit_reserved_micro"] == authorization.estimated_microdollars
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": 7_000,
+            "elapsed_seconds": 0.2,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    settled_cost = settle.json()["data"]["cost_microdollars"]
+    balance = db.typed[CREDIT_BALANCE_TABLE][(ws, 0)]
+    assert balance["reserved"] == 0
+    assert balance["total_usage"] == settled_cost
+    assert settled_cost >= 7_000
+
+
 def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> None:
     client, key = _client_and_key()
 

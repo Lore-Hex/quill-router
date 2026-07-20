@@ -394,6 +394,7 @@ class InMemoryApiKeys:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        additional_cost_reservation_microdollars: int = 0,
     ) -> GatewayAuthorization:
         with self._lock:
             if idempotency_key is not None:
@@ -423,6 +424,7 @@ class InMemoryApiKeys:
                 idempotency_fingerprint=idempotency_fingerprint,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
+                additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             )
             self.gateway_authorizations[authorization.id] = authorization
             if idempotency_key is not None:
