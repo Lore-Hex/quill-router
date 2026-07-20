@@ -4,9 +4,9 @@ from pathlib import Path
 
 from trusted_router.config import Settings
 
-OG_TITLE = "TrustedRouter | End-to-End Encrypted Router for AI"
+OG_TITLE = "TrustedRouter | Every model. Provable privacy."
 OG_DESCRIPTION = (
-    "A verifiable AI gateway for hundreds of models. Route through attested "
+    "One OpenAI-compatible API for hundreds of models, routed through attested "
     "infrastructure with ZDR options, provider failover, BYOK, and no prompt "
     "or output logs by default."
 )

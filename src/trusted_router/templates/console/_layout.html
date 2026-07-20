@@ -21,13 +21,16 @@
   </script>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
   <link rel="stylesheet" href="/static/console.css?v={{ static_version|default('local') }}">
+  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   {% block head_extra %}{% endblock %}
   <script defer src="/static/console.js?v={{ static_version|default('local') }}"></script>
   {% block scripts %}{% endblock %}
 </head>
 <body class="console">
   <header class="console-topbar">
-    <a class="brand" href="/console/api-keys"><span class="mark">TR</span><span>TrustedRouter</span></a>
+    <a class="brand" href="/console/api-keys">{% include "_brand.html" %}</a>
     <nav class="console-topnav">
       <a href="/models">Models</a>
       <a href="https://trust.trustedrouter.com">Trust</a>
@@ -53,7 +56,7 @@
       <span class="console-user-email">{{ user_email or 'no email' }}</span>
       {# Same theme toggle as the marketing chrome; console.js handles
          the click and keeps the glyph in sync. #}
-      <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
+      <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">◐</button>
       <form class="inline-form" method="post" action="/auth/logout">
         <button class="btn" type="submit">Sign out</button>
       </form>

@@ -3,18 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {# Apply the saved theme BEFORE dashboard.css loads so the landing page
-     doesn't flash light. Dark is the unconditional default (no
-     data-theme attribute); only a stored "light" preference adds it. We
-     do NOT consult prefers-color-scheme — dark-by-default holds
-     regardless of OS. See static/dashboard.js (applyStoredTheme/toggle). #}
   <script>
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
           document.documentElement.dataset.theme = "light";
         }
-      } catch (e) { /* localStorage blocked — dark default */ }
+      } catch (e) { /* Dark remains the default when storage is unavailable. */ }
     })();
   </script>
   <title>{{ og_title }}</title>
@@ -38,411 +33,279 @@
   <meta name="twitter:image:alt" content="TrustedRouter, end-to-end encrypted AI routing">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
+  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
+  <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
   <script>window.__TR__ = {{ tr_config | safe }};</script>
-  <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
+  <script src="/static/dashboard.js?v={{ static_version|default('local') }}" defer></script>
 </head>
 <body>
-  <header class="top">
-    <nav class="nav">
-      <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links">
-        <a href="/choose">Choose</a>
-        <a href="/models">Models</a>
-        <a href="/providers">Providers</a>
-        <a href="/eu">EU</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/docs">Docs</a>
-        <a href="/docs/mcp">MCP</a>
-        <a href="/security">Security</a>
-        <a href="/status">Status</a>
-        <span class="nav-sep" aria-hidden="true"></span>
-        <a href="https://trust.trustedrouter.com">Trust</a>
-        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-        {# Theme toggle: flips data-theme between unset (dark default) and
-           "light", persisted to localStorage by dashboard.js. Distinct
-           aria-label so it never collides with "Sign in" in tests. #}
-        <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
-        <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
-      </div>
-    </nav>
-  </header>
+  {% include "public/_nav.html" %}
 
   <main class="home">
-    {# 1. Hero #}
-    <section class="home-hero">
+    <section class="charter-home-hero">
       <div class="home-hero-copy">
-        <span class="hero-badge">End-to-End Encrypted AI gateway</span>
-        <h1>Own your alpha.</h1>
-        <p class="lead">Route the open-weight leaders — <strong>Qwen, GLM, DeepSeek, Gemma, Kimi, MiniMax</strong> — plus every frontier model, through one OpenAI-compatible API. TrustedRouter keeps prompt traffic on an attested gateway, avoids prompt/output logs, and gives teams a verifiable trust path instead of another black-box router.</p>
+        <div class="kicker">Own your alpha</div>
+        <h1>Every model. <em>Provable privacy.</em></h1>
+        <p class="lead">One OpenAI-compatible API for hundreds of open-weight and frontier models. Requests cross an attested gateway that does not log prompt or output content. Even our engineers cannot read your requests.</p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">🛡 Verify trust</a>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify trust <span aria-hidden="true">→</span></a>
         </div>
         <div class="mini-links hero-links">
           <a href="/docs/migrate-from-openrouter">Migrate from OpenRouter</a>
           <a href="/openai-compatible-llm-api">OpenAI-compatible API</a>
           <a href="/llm-provider-latency-benchmarks">Latency benchmarks</a>
         </div>
-      </div>
-
-      <div class="hero-proof-row">
-        <span>✓ OpenAI-compatible API</span>
-        <span>✓ No prompt/output logs</span>
-        <span>✓ Attested gateway</span>
-        <span>✓ Provider failover</span>
-        <span>✓ EU regional routing</span>
-        <span>✓ BYOK + prepaid credits</span>
-        <span>✓ Open source</span>
-      </div>
-
-      <div class="region-map-card" aria-label="TrustedRouter regional footprint">
-        <div class="region-map-visual">
-          <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
-          <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
-            {% for region in map_regions %}
-            <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
-              <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
-              <text x="12" y="-8">{{ region.city }}</text>
-            </g>
-            {% endfor %}
-          </svg>
-        </div>
-        <div class="region-map-copy">
-          <strong>{{ map_regions|length }} region footprint</strong>
-          <span>{{ api_region_count }} live regions, edge capacity warming, one OpenAI-compatible router.</span>
+        <div class="hero-badges" aria-label="Routing capabilities">
+          <span class="pill good">End-to-End Encrypted AI gateway</span>
+          <span class="pill">ZDR routing</span>
+          <span class="pill">EU routing</span>
+          <span class="pill">100% open source</span>
         </div>
       </div>
 
-      {# Routing diagram (replaces the orbital scene) #}
-      <div class="routing-diagram" aria-label="App to attested gateway to providers">
-        <div class="rd-cp-label">Control plane (metadata only)</div>
-        <div class="rd-cols">
-          <div class="rd-col rd-left">
-            <div class="rd-node">
-              <div class="rd-node-title">◈ User app / AI product</div>
-              <div class="rd-node-sub">Making inference calls</div>
-            </div>
+      <aside aria-label="Gateway attestation evidence">
+        <div class="attestation-record">
+          <div class="attestation-record-head">
+            <strong>ATTESTED GATEWAY</strong>
+            <a class="attestation-status" href="https://trust.trustedrouter.com">Verify live</a>
           </div>
-          <div class="rd-flow rd-flow-1" aria-hidden="true"><span></span></div>
-          <div class="rd-col rd-mid">
-            <div class="rd-gateway">
-              <div class="rd-gateway-badge">ATTESTED GATEWAY</div>
-              <div class="rd-gateway-title">🛡 TrustedRouter</div>
-              <ul>
-                <li>🔒 No prompt logs</li>
-                <li>▤ Metadata-only control plane</li>
-                <li>◈ Failover logic</li>
-              </ul>
-            </div>
+          <div class="evidence-list">
+            <div class="evidence-row"><span>prompt path</span><span>Confidential Space</span></div>
+            <div class="evidence-row"><span>source</span><span class="verified">public commit</span></div>
+            <div class="evidence-row"><span>prompt logs</span><span class="verified">none by design</span></div>
+            <div class="evidence-row"><span>on failure</span><span>fails closed</span></div>
           </div>
-          <div class="rd-flow rd-flow-2" aria-hidden="true"><span></span></div>
-          <div class="rd-col rd-right">
-            {% for prov in ["Qwen","GLM","DeepSeek","Gemma","Kimi","DeepInfra"] %}
-            <div class="rd-provider">{{ prov }}</div>
-            {% endfor %}
-          </div>
+          <div class="attestation-record-foot">Evidence is published for the running gateway, not a policy document.</div>
         </div>
-      </div>
+      </aside>
     </section>
 
-    {# 2. Problem #}
-    <section class="home-section band-dim">
+    <section class="charter-stat-band" aria-label="TrustedRouter facts">
+      <div class="charter-stat"><strong>{{ api_region_count }}</strong><span>Live regions</span></div>
+      <div class="charter-stat"><strong>Hundreds</strong><span>Models through one API</span></div>
+      <div class="charter-stat"><strong class="accent">Never</strong><span>Prompt logs</span></div>
+      <div class="charter-stat"><strong>Public</strong><span>Source and status</span></div>
+    </section>
+
+    <section class="home-section">
       <div class="home-wrap">
         <div class="section-lead">
-          <h2>Production AI now needs an inference control layer.</h2>
-          <p>Most AI products start by calling one model provider directly. That works until you need fallback, model choice, cost control, regional routing, privacy controls, provider-specific policies, customer trust, or proof that sensitive prompts are not being logged by another intermediary.</p>
-        </div>
-        <div class="marketing-grid three problem-grid">
-          {% for text in ["Providers fail or rate-limit","Model quality changes","Costs move by workload","Sensitive prompts create trust risk","Closed routers create another vendor to trust","Customers increasingly ask where their data goes"] %}
-          <div class="marketing-card"><strong>{{ text }}</strong></div>
-          {% endfor %}
-        </div>
-        <div class="callout">
-          <strong>TrustedRouter</strong> gives you one API, multiple providers, private routing, and a trust record your customers can inspect.
-        </div>
-      </div>
-    </section>
-
-    {# 3. One gateway, three jobs #}
-    <section class="home-section">
-      <div class="home-wrap">
-        <h2 class="section-center">One gateway. Three jobs.</h2>
-        <div class="marketing-grid three">
-          <div class="marketing-card">
-            <span class="card-icon">🔎</span>
-            <h3>Route</h3>
-            <p>Send requests to many models through one OpenAI-compatible API. Use explicit models or <code>trustedrouter/auto</code> for provider fallback.</p>
-          </div>
-          <div class="marketing-card">
-            <span class="card-icon">🛡</span>
-            <h3>Protect</h3>
-            <p>Keep prompt traffic on an attested gateway. The control plane stores metadata for billing and operations, not prompt or output bodies.</p>
-          </div>
-          <div class="marketing-card">
-            <span class="card-icon">📄</span>
-            <h3>Prove</h3>
-            <p>Publish the source commit, image reference, image digest, and attestation path so technical customers can verify what is running.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    {# LLM SEO: explicit, plain-language positioning for search snippets and AI answers. #}
-    <section class="home-section band-dim">
-      <div class="home-wrap">
-        <div class="section-lead center">
-          <h2>Why developers choose TrustedRouter.</h2>
+          <div class="kicker">Why developers choose TrustedRouter.</div>
+          <h2>The trust model is the product.</h2>
           <p>TrustedRouter is an OpenRouter alternative for teams that need verifiable privacy, lower-cost model choices, provider fallback, and one API across hundreds of models.</p>
         </div>
-        <div class="marketing-grid four">
-          <div class="marketing-card">
+        <div class="charter-pillars">
+          <article class="charter-pillar">
+            <span class="charter-pillar-number">01</span>
             <h3>Better trust</h3>
-            <p>The hosted API publishes attestation evidence, source commit, and image digest so customers can verify the router code path instead of accepting a black-box promise.</p>
-          </div>
-          <div class="marketing-card">
+            <p>Match the hosted gateway to a public source commit and image digest before production traffic moves.</p>
+          </article>
+          <article class="charter-pillar">
+            <span class="charter-pillar-number">02</span>
             <h3>Cheaper routes</h3>
-            <p>Use low-cost open-weight models such as GLM, DeepSeek, Gemma, Kimi, MiniMax, and Qwen through the same API as frontier models.</p>
-          </div>
-          <div class="marketing-card">
+            <p>Use Qwen, GLM, DeepSeek, Google Gemma, Kimi, MiniMax, and other open models beside every frontier model.</p>
+          </article>
+          <article class="charter-pillar">
+            <span class="charter-pillar-number">03</span>
             <h3>Faster migration</h3>
-            <p>Keep the OpenAI SDK and change one <code>base_url</code>. Agents can read <a href="/llms.txt">llms.txt</a>, use the <a href="/docs/mcp">MCP server</a>, or load the <a href="/docs/agent-setup#codex-skill">trustedrouter-model-advisor playbook</a> to migrate quickly.</p>
-          </div>
-          <div class="marketing-card">
+            <p>Keep the OpenAI SDK and change one base URL. Agents can read <a href="/llms.txt">llms.txt</a> or use the MCP server.</p>
+          </article>
+          <article class="charter-pillar">
+            <span class="charter-pillar-number">04</span>
             <h3>More reliable inference</h3>
-            <p>Use provider fallback, regional routing, public status, and measured provider health instead of depending on one upstream API.</p>
-          </div>
+            <p>Provider failover and regional routing keep one upstream outage from becoming your product outage.</p>
+          </article>
         </div>
       </div>
     </section>
 
-    {# 4. Migration #}
     <section class="home-section band-dim">
-      <div class="home-wrap marketing-split">
-        <div class="marketing-copy">
-          <h2>Move over with one base_url change.</h2>
+      <div class="home-wrap charter-code-grid">
+        <div>
+          <div class="kicker">One compatible endpoint</div>
+          <h2>Move over with one <span class="mono">base_url</span> change.</h2>
+          <p class="section-sub">Keep your existing OpenAI-shaped calls. Add privacy and routing constraints only when you need them.</p>
           <ul class="check-list">
-            <li>✓ Use <code>trustedrouter/auto</code> for fallback</li>
-            <li>✓ Use <code>trustedrouter/eu</code> with the EU regional API for Europe-focused routing</li>
-            <li>✓ Use <code>provider.data_collection = "deny"</code> for zero-retention provider preference</li>
-            <li>✓ Use BYOK where needed</li>
-            <li>✓ Keep existing OpenAI-shaped calls working</li>
+            <li>Use <code>trustedrouter/auto</code> for healthy-provider rollover</li>
+            <li>Use <code>trustedrouter/zdr</code> for zero-retention routing</li>
+            <li>Use <code>trustedrouter/e2e</code> for confidential provider routes</li>
+            <li>Use <a href="/eu"><code>trustedrouter/eu</code></a> for Europe-focused routing</li>
+            <li>Bring your own provider keys where needed</li>
           </ul>
-          <a class="btn" href="/docs/migrate-from-openrouter">View migration guide →</a>
+          <a class="btn" href="/docs/migrate-from-openrouter">Read the migration guide <span aria-hidden="true">→</span></a>
         </div>
         <div class="copy-terminal">
-          <div class="code-head"><span>Drop-in, OpenAI-compatible</span><span>TypeScript</span></div>
-          <pre><code>const client = new OpenAI({
-  apiKey: process.env.TRUSTEDROUTER_API_KEY,
-  baseURL: "{{ api_base_url }}"
-})
+          <div class="code-head"><span>OpenAI SDK</span><span>Python</span></div>
+          <pre><code>from openai import OpenAI
 
-const response = await client.chat.completions.create({
-  model: "trustedrouter/auto",
-  messages: [{ role: "user", content: "Hello" }],
-  provider: { data_collection: "deny" }
-})</code></pre>
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Hello"}],
+    extra_body={
+        "provider": {"data_collection": "deny"}
+    },
+)</code></pre>
         </div>
       </div>
     </section>
 
-    {# 5. Trust boundary #}
     <section class="home-section">
       <div class="home-wrap">
-        <div class="section-lead center">
-          <h2>Your prompt path should be inspectable.</h2>
-          <p>TrustedRouter separates production inference from the normal dashboard/control-plane surface. Prompt and output bodies should not pass through the control plane. Metadata is used for billing, routing, latency, status, and cost tracking.</p>
+        <div class="section-lead">
+          <div class="kicker">One API · hundreds of models</div>
+          <h2>Choose a model, or choose a routing promise.</h2>
+          <p>Named aliases make privacy, geography, cost, and failover explicit. Direct model IDs remain available when exact model selection matters.</p>
         </div>
-        <div class="marketing-split align-start">
-          <div class="arch-card">
-            <div class="arch-tag">Architecture</div>
-            <div class="arch-row arch-row-prod">
-              <div class="arch-row-label">Production prompt path</div>
-              <div class="arch-row-flow">App → <span class="arch-hl">Attested Gateway</span> → Provider</div>
-            </div>
-            <div class="arch-row arch-row-cp">
-              <div class="arch-row-label">Control plane path</div>
-              <div class="arch-row-flow">Dashboard → Metadata / Billing / API Keys</div>
-            </div>
-          </div>
-          <div class="marketing-grid two">
-            {% for t in ["No prompt/output logs","Metadata-only billing records","Attested gateway","Fail-closed if attestation fails","Open-source backend & config","Public trust page with commit & digest"] %}
-            <div class="check-card">🛡 <span>{{ t }}</span></div>
-            {% endfor %}
-          </div>
-        </div>
-        <div class="section-center" style="margin-top:28px"><a class="btn" href="https://trust.trustedrouter.com">Open trust page</a></div>
-      </div>
-    </section>
-
-    {# 6. Reliability #}
-    <section class="home-section band-dark">
-      <div class="home-wrap marketing-split">
-        <div class="marketing-copy plain">
-          <h2>Fallback when providers fail.</h2>
-          <p>Production AI should not break because one provider returns 429s, 5xx errors, degraded latency, or temporary capacity issues. TrustedRouter routes across healthy providers and exposes route health so teams can build more resilient AI products.</p>
-          <a class="btn primary" href="/status">View status</a>
-        </div>
-        <div class="stat-grid">
-          <div class="stat-card"><span class="stat-label">Router availability</span><span class="stat-value accent">99.99%</span></div>
-          <div class="stat-card"><span class="stat-label">Live regions</span><span class="stat-value">{{ api_region_count }}</span></div>
-          <div class="stat-card"><span class="stat-label">Provider health</span><span class="stat-value accent"><span class="dot-live"></span> Healthy</span></div>
-          <div class="stat-card"><span class="stat-label">Median routing overhead</span><span class="stat-value">8ms</span></div>
-        </div>
-      </div>
-    </section>
-
-    {# 7. Privacy comparison #}
-    <section class="home-section">
-      <div class="home-wrap">
-        <div class="section-lead center">
-          <h2>Privacy is not a setting buried in a dashboard.</h2>
-          <p>For sensitive AI products, the question is not only which model you use. It is who can see the prompts, what gets logged, which providers retain data, and whether the router itself can be inspected.</p>
-        </div>
-        <div class="compare-matrix home-matrix">
-          <div class="matrix-row matrix-head">
-            <span>Feature</span><span>Direct Provider API</span><span>Closed Router</span><strong class="matrix-tr">TrustedRouter</strong>
-          </div>
-          {% for row in [
-            ["One API across providers","No","Yes","Yes"],
-            ["Provider fallback","No","Yes","Yes"],
-            ["BYOK support","Sometimes","Sometimes","Yes"],
-            ["Zero-retention preference","Varies","Unknown","Yes"],
-            ["Prompt/output logs","Yes (API dependent)","Yes (usually)","Never"],
-            ["Open-source router","N/A","No","Yes"],
-            ["Public attestation","N/A","No","Yes"],
-            ["Customer-facing trust record","N/A","No","Yes"]
-          ] %}
-          <div class="matrix-row">
-            <span>{{ row[0] }}</span><span>{{ row[1] }}</span><span>{{ row[2] }}</span><span class="matrix-tr">{{ row[3] }}</span>
-          </div>
-          {% endfor %}
-        </div>
-        <div class="section-center" style="margin-top:28px"><a class="btn" href="/compare/openrouter">Compare with OpenRouter</a></div>
-      </div>
-    </section>
-
-    {# 8. Use cases #}
-    <section class="home-section band-dim">
-      <div class="home-wrap">
-        <h2 class="section-center">Built for teams where prompts matter.</h2>
-        <div class="marketing-grid three">
-          {% for uc in [
-            {"t":"Legal AI","p":"Cannot risk exposing client privilege to intermediaries.","f":"Route sensitive client work with a verifiable prompt path to zero-retention providers."},
-            {"t":"Finance & PE","p":"Evaluating private data with models creates non-disclosure risks.","f":"Evaluate companies, documents, and private data without another opaque intermediary."},
-            {"t":"Production AI apps","p":"Provider downtime breaks core product reliability.","f":"Keep production inference reliable across providers using fallback routing."},
-            {"t":"AI agencies","p":"Need an easy API, but clients demand data privacy.","f":"Route customer workloads with clearer trust boundaries and verifiable answers."},
-            {"t":"Crypto & Web3","p":"SaaS centralization is antithetical to the builder ethos.","f":"Use an open-source, inspectable router with wallet-friendly Web3 sign-in."},
-            {"t":"Dev tools","p":"Supporting every new API integration is a distraction.","f":"Support many models explicitly without maintaining every provider SDK."}
-          ] %}
-          <div class="marketing-card usecase">
-            <h3>{{ uc.t }}</h3>
-            <p class="uc-pain"><span>Pain:</span> {{ uc.p }}</p>
-            <p class="uc-fit"><span>Solution:</span> {{ uc.f }}</p>
-            <a class="card-link" href="/security">Read security details →</a>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-    </section>
-
-    {# 9. Models preview #}
-    <section class="home-section">
-      <div class="home-wrap">
-        <h2>Open-weight leaders, at a fraction of frontier cost.</h2>
-        <p class="section-sub">Qwen, GLM, DeepSeek, Gemma, Kimi and MiniMax — the models most teams actually run — each routed across multiple hosts for price and availability. Frontier models too.</p>
-        <div class="table-wrap">
-          <table class="home-table">
-            <thead><tr><th>Model</th><th>Maker</th><th>Context</th><th>Prompt price</th><th>Class</th></tr></thead>
+        <div class="route-table">
+          <table>
+            <thead><tr><th>Model</th><th>Designed for</th><th>Routing policy</th></tr></thead>
             <tbody>
-              {% for m in [
-                {"model":"qwen/qwen3-235b-a22b-2507","provider":"Alibaba","ctx":"262k","price":"$0.11 / 1M","priv":"Open weights"},
-                {"model":"z-ai/glm-5","provider":"Zhipu AI","ctx":"205k","price":"$0.66 / 1M","priv":"Open weights"},
-                {"model":"deepseek/deepseek-v4-flash","provider":"DeepSeek","ctx":"1M","price":"$0.14 / 1M","priv":"Open weights"},
-                {"model":"google/gemma-4-31b-it","provider":"Google","ctx":"262k","price":"$0.14 / 1M","priv":"Open weights"},
-                {"model":"moonshotai/kimi-k2-thinking","provider":"Moonshot","ctx":"262k","price":"$0.66 / 1M","priv":"Open weights"},
-                {"model":"trustedrouter/eu","provider":"EU-focused","ctx":"Varies","price":"Varies","priv":"Regional"},
-                {"model":"trustedrouter/auto","provider":"Multiple (failover)","ctx":"Varies","price":"Varies","priv":"Attested + ZDR"},
-                {"model":"anthropic/claude-sonnet-4.5","provider":"Anthropic","ctx":"200k","price":"$3.00 / 1M","priv":"Frontier"}
-              ] %}
-              <tr><td class="mono">{{ m.model }}</td><td>{{ m.provider }}</td><td>{{ m.ctx }}</td><td>{{ m.price }}</td><td><span class="pill">{{ m.priv }}</span></td></tr>
-              {% endfor %}
+              <tr><td><a href="/models"><code>trustedrouter/auto</code></a></td><td>General production traffic</td><td>Healthy provider rollover</td></tr>
+              <tr><td><a href="/models?filter=zdr"><code>trustedrouter/zdr</code></a></td><td>Legal and sensitive work</td><td>Zero-retention providers</td></tr>
+              <tr><td><a href="/models?filter=e2e"><code>trustedrouter/e2e</code></a></td><td>Confidential workloads</td><td>Confidential provider compute</td></tr>
+              <tr><td><a href="/eu"><code>trustedrouter/eu</code></a></td><td>European workloads</td><td>EU-focused routes</td></tr>
+              <tr><td><a href="/synth"><code>trustedrouter/synth</code></a></td><td>Combination models</td><td>Multiple models, one answer</td></tr>
             </tbody>
           </table>
         </div>
-        <div class="section-center" style="margin-top:24px"><a class="btn" href="/models">View all models</a></div>
-      </div>
-    </section>
-
-    {# 10. Open source #}
-    <section class="home-section">
-      <div class="home-wrap center-block">
-        <h2>A router you can inspect, fork, or run yourself.</h2>
-        <p class="section-sub">For sensitive infrastructure, "trust us" is not enough. TrustedRouter makes its routing layer inspectable, giving technical teams a path to self-host or verify the hosted workload.</p>
-        <div class="repo-grid">
-          {% for repo in [
-            {"n":"quill-router","u":"https://github.com/Lore-Hex/quill-router"},
-            {"n":"trusted-router-py","u":"https://github.com/Lore-Hex/trusted-router-py"},
-            {"n":"trusted-router-js","u":"https://github.com/Lore-Hex/trusted-router-js"},
-            {"n":"trusted-router-swift","u":"https://github.com/jperla/trusted-router-swift"}
-          ] %}
-          <a class="repo-card" href="{{ repo.u }}"><span class="mono">{{ repo.n }}</span><span class="repo-sub">Source code repository</span></a>
-          {% endfor %}
+        <div class="hero-actions">
+          <a class="btn primary" href="/models">Browse all models</a>
+          <a class="btn" href="/providers">Compare providers</a>
         </div>
       </div>
     </section>
 
-    {# 11. Quill Feather — sponsored hardware ad (image is an important draw) #}
+    <section class="home-section charter-trust-band">
+      <div class="home-wrap charter-trust-grid">
+        <div>
+          <div class="kicker">Verify trust</div>
+          <h2>Do not take our word for any of this.</h2>
+          <p class="section-sub">The production prompt path is separate from the dashboard and billing control plane. Every trust claim reduces to evidence you can inspect.</p>
+          <div class="trust-path" aria-label="TrustedRouter prompt path">
+            <div class="trust-path-node"><strong>Your application</strong><span>OpenAI-compatible request</span></div>
+            <div class="trust-path-arrow">Encrypted transport ↓</div>
+            <div class="trust-path-node"><strong>Attested TrustedRouter gateway</strong><span>Prompt path · no content logs</span></div>
+            <div class="trust-path-arrow">Selected route ↓</div>
+            <div class="trust-path-node"><strong>Model provider</strong><span>Provider policy published separately</span></div>
+          </div>
+        </div>
+        <div class="attestation-record">
+          <div class="attestation-record-head">
+            <strong>Verification path</strong>
+            <span class="pill good">Public</span>
+          </div>
+          <div class="evidence-list">
+            <div class="evidence-row"><span>01</span><span>read the source</span></div>
+            <div class="evidence-row"><span>02</span><span>check attestation</span></div>
+            <div class="evidence-row"><span>03</span><span>match digest to commit</span></div>
+            <div class="evidence-row"><span>04</span><span class="verified">verify fail closed</span></div>
+          </div>
+          <div class="attestation-record-foot"><a href="https://trust.trustedrouter.com">Open live trust evidence →</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <div class="home-wrap charter-map-grid">
+        <div>
+          <div class="kicker">Regional reliability</div>
+          <h2>Routing that does not depend on one provider or one region.</h2>
+          <p class="section-sub">Regional gateways, provider health measurements, and explicit fallback keep failures visible and contained. The public status page separates router-core health from upstream model health.</p>
+          <ul class="check-list">
+            <li>{{ api_region_count }} live API regions</li>
+            <li>Provider and model health measured continuously</li>
+            <li>Public latency and availability history</li>
+            <li>No silent fallback to a non-attested prompt path</li>
+          </ul>
+          <a class="btn" href="/status">View public status</a>
+        </div>
+        <div class="region-map-card" aria-label="TrustedRouter regional footprint">
+          <div class="region-map-visual">
+            <img src="/static/world-map.svg?v={{ static_version }}" alt="" loading="lazy">
+            <svg viewBox="0 0 1000 500" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+              {% for region in map_regions %}
+              <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
+                <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
+                <text x="12" y="-8">{{ region.city }}</text>
+              </g>
+              {% endfor %}
+            </svg>
+          </div>
+          <div class="region-map-copy">
+            <strong>{{ map_regions|length }} region footprint</strong>
+            <span>{{ api_region_count }} live regions with additional capacity staged.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="home-section band-dim">
+      <div class="home-wrap charter-open-grid">
+        <div>
+          <div class="kicker">100% hosted open source</div>
+          <h2>A router you can inspect, fork, or run yourself.</h2>
+          <p class="section-sub">Frontend, backend, gateway, infrastructure, SDKs, and deployment configuration are public. Hosted attestation connects that source to the code serving requests.</p>
+          <div class="repo-grid">
+            <a class="repo-card" href="https://github.com/Lore-Hex/quill-router"><span class="mono">quill-router</span><span class="repo-sub">Control plane and website</span></a>
+            <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-py"><span class="mono">trusted-router-py</span><span class="repo-sub">Python SDK</span></a>
+            <a class="repo-card" href="https://github.com/Lore-Hex/trusted-router-js"><span class="mono">trusted-router-js</span><span class="repo-sub">TypeScript SDK</span></a>
+            <a class="repo-card" href="https://github.com/Lore-Hex/quill-cloud-infra"><span class="mono">quill-cloud-infra</span><span class="repo-sub">Deployment infrastructure</span></a>
+          </div>
+        </div>
+        <div>
+          <div class="kicker">No subscription required</div>
+          <h2>Pay for what you route.</h2>
+          <p class="section-sub">Use prepaid credits, BYOK, Stripe, PayPal, or stablecoin. Provider prices and routing costs remain visible before you call.</p>
+          <ul class="check-list">
+            <li>Pay as you go</li>
+            <li>Bring your own provider key</li>
+            <li>Automatic refill with a saved card</li>
+            <li>Migration credits by approval</li>
+          </ul>
+          <a class="btn" href="/pricing">Review pricing</a>
+        </div>
+      </div>
+    </section>
+
     <section class="home-section">
       <div class="home-wrap">
         <aside class="quill-ad" aria-label="Sponsored: Quill Feather">
           <div class="quill-ad-inner">
             <a class="quill-ad-mark" href="https://quill.lorehex.co" aria-label="Open Quill Feather">
-              <img src="/static/quill-feather.png" alt="Quill Feather device with a leaf etch" loading="lazy" decoding="async" width="320" height="291">
+              <img src="/static/quill-feather.png" alt="Quill Feather private AI device" loading="lazy" decoding="async" width="320" height="291">
             </a>
             <div>
               <span class="quill-ad-eyebrow">Sponsored · Quill Feather</span>
               <h2 class="quill-ad-title">A private agent that fits in your hand.</h2>
-              <p class="quill-ad-lead">Quill is a personal LLM device for local and private AI workflows — an adjacent proof of our privacy philosophy. Run the <strong>OpenClaw</strong> or <strong>Hermes</strong> agent around the clock. First customer evaluation kits are shipping now.</p>
+              <p class="quill-ad-lead">A personal LLM device for local and private AI workflows. Run an agent around the clock on hardware you control.</p>
             </div>
-            <div class="quill-ad-cta">
-              <a class="btn primary" href="https://quill.lorehex.co">Buy a Quill Feather</a>
-            </div>
+            <div class="quill-ad-cta"><a class="btn primary" href="https://quill.lorehex.co">Buy Quill Feather</a></div>
           </div>
         </aside>
       </div>
     </section>
 
-    {# 12. Pricing #}
-    <section class="home-section">
-      <div class="home-wrap">
-        <div class="section-lead center">
-          <h2>Usage-based routing. No subscription required.</h2>
-          <p>Start with prepaid credits, BYOK, or usage-based billing. Teams already spending on LLMs can request migration credits.</p>
-        </div>
-        <div class="marketing-grid three">
-          <div class="marketing-card"><h3>⚡ Pay as you go</h3><p>Wallet accounts can start at $0 credits. Add a card for prepaid credits.</p></div>
-          <div class="marketing-card"><h3>🔑 Bring your own key</h3><p>BYOK supported for providers where you already have volume discounts.</p></div>
-          <div class="marketing-card"><h3>→ Migration credits</h3><p>Migration credits by approval for teams spending more than $100/month on LLMs.</p></div>
-        </div>
-        <div class="section-center" style="margin-top:28px"><a class="btn" href="/pricing">See pricing</a></div>
-      </div>
-    </section>
-
-    {# 13. FAQ #}
     <section class="home-section band-dim">
       <div class="home-wrap narrow">
-        <h2 class="section-center">Frequently asked questions</h2>
+        <div class="kicker centered">Questions</div>
+        <h2 class="section-center">What developers ask before routing.</h2>
         <div class="faq">
           {% for f in [
-            {"q":"What is TrustedRouter?","a":"A privacy-first AI gateway that routes LLM requests across multiple providers (OpenAI, Anthropic, Google, and more) through a single OpenAI-compatible API, without logging prompts or outputs."},
-            {"q":"Is this an OpenRouter alternative?","a":"Yes, but with different design constraints. We prioritize production infrastructure, privacy, and verifiable trust. See our OpenRouter comparison for details."},
-            {"q":"Do you log prompts or outputs?","a":"No. Never. The prompt payload passes through an attested gateway and is intentionally excluded from our control plane and metadata systems."},
-            {"q":"What does \"attested gateway\" mean?","a":"Our routing layer runs inside a Trusted Execution Environment. We publish cryptographic attestations that the running code exactly matches the open-source repository — so even our own engineers cannot read your requests."},
-            {"q":"What metadata do you store?","a":"Only what billing and routing need: request timestamp, routing duration, target model, HTTP status, API key reference, and token counts. No prompt text or message arrays are evaluated by the control plane."},
-            {"q":"Can I bring my own provider keys (BYOK)?","a":"Yes. BYOK lets you use existing committed spend or enterprise rate limits while gaining the latency and privacy benefits of the TrustedRouter architecture."},
-            {"q":"What happens if attestation fails?","a":"The gateway fails closed. It refuses to serve traffic rather than fall back to an unverified routing state."},
-            {"q":"How do I migrate from OpenRouter?","a":"It is a one-line change. Swap your base_url and keep your API calls the same. See the migration guide."}
+            {"q":"What is TrustedRouter?","a":"A privacy-first AI gateway that routes requests across many providers through one OpenAI-compatible API without logging prompt or output content."},
+            {"q":"Is this an OpenRouter alternative?","a":"Yes, with an attested prompt path, public source, explicit privacy aliases, and fail-closed behavior as core design constraints."},
+            {"q":"Do you log prompts or outputs?","a":"No. Prompt and output content are intentionally excluded from the control plane and metadata systems. Optional content export requires explicit destination-level configuration."},
+            {"q":"What does attested gateway mean?","a":"The gateway runs in a Trusted Execution Environment and publishes evidence that connects the running image to public source. You can verify that evidence on the trust page."},
+            {"q":"Can I bring my own provider keys?","a":"Yes. BYOK lets you retain provider commitments or enterprise rate limits while using the TrustedRouter routing and trust boundary."},
+            {"q":"What happens if attestation fails?","a":"The gateway fails closed. It does not silently route prompts through an unverified fallback."},
+            {"q":"How do I migrate?","a":"Keep the OpenAI SDK, change the base URL, and use the same chat or Responses calls. The migration guide includes tested examples."}
           ] %}
           <details class="faq-item">
             <summary>{{ f.q }}</summary>
@@ -453,90 +316,20 @@ const response = await client.chat.completions.create({
       </div>
     </section>
 
-    {# Final CTA #}
     <section class="home-section final-cta">
       <div class="home-wrap center-block">
-        <h2>Give your AI product a verifiable prompt path.</h2>
+        <div class="kicker centered">Start with evidence</div>
+        <h2>Every model. One verifiable prompt path.</h2>
         <div class="hero-actions center">
           <button class="btn primary" type="button" data-action="open-signin">Get API key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">🛡 Verify trust</a>
-          <a class="btn" href="/docs/migrate-from-openrouter">Migrate</a>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify trust</a>
+          <a class="btn ghost" href="/docs/migrate-from-openrouter">Migrate</a>
         </div>
       </div>
     </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="site-footer-cols">
-      <div class="footer-brand">
-        <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
-        <p>Privacy-first AI gateway for production inference. One API for every model, with an inspectable prompt path.</p>
-      </div>
-      <div class="footer-col">
-        <h3>Product</h3>
-        <a href="/models">Models</a>
-        <a href="/providers">Providers</a>
-        <a href="/eu">EU routing</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/leaderboard">Leaderboard</a>
-        <a href="/chat">Chat playground</a>
-        <a href="/compare/openrouter">vs OpenRouter</a>
-        <a href="https://quill.lorehex.co">Quill hardware</a>
-      </div>
-      <div class="footer-col">
-        <h3>Trust</h3>
-        <a href="/security">Security</a>
-        <a href="/status">Status</a>
-        <a href="https://trust.trustedrouter.com">Attestation</a>
-        <a href="/legal">Privacy &amp; terms</a>
-        <a href="/legal/dpa">DPA</a>
-        <a href="/legal/baa">BAA</a>
-      </div>
-      <div class="footer-col">
-        <h3>Developers</h3>
-        <a href="/docs">Docs</a>
-        <a href="/sign-in-with-trustedrouter">Sign-in API</a>
-        <a href="/docs/migrate-from-openrouter">Migrate</a>
-        <a href="/docs/agent-setup">Agent setup</a>
-        <a href="/docs/agent-setup#codex-skill">Agent skill</a>
-        <a href="/docs/mcp">MCP server</a>
-        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-        <a href="/docs/llms.txt">llms.txt</a>
-      </div>
-      <div class="footer-col">
-        <h3>Company</h3>
-        <a href="https://jperla.com/blog">Blog</a>
-        <a href="https://jperla.com/blog/attestation-is-all-you-need">Attestation is All You Need</a>
-        <a href="https://jperla.com/blog/why-not-openrouter-litellm-or-vercel-ai-gateway">Why not OpenRouter / LiteLLM?</a>
-        <a href="https://jperla.com/blog/trustedrouter-founding-engineer">About</a>
-      </div>
-    </div>
-    <div class="site-footer-base">© 2026 TrustedRouter · <a href="/legal">Legal</a> · <a href="/legal">Privacy</a></div>
-  </footer>
-
-  <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
-    <form method="dialog">
-      <button class="signin-close" type="submit" aria-label="Close">×</button>
-    </form>
-    <h2 id="signinTitle">Sign in</h2>
-    <p class="signin-sub">Choose a sign in method. Wallet sign in requires only a signature and starts with $0 credits.</p>
-    <div class="signin-providers">
-      {% if google_enabled %}
-      <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">
-        <span aria-hidden="true">G</span> Continue with Google
-      </a>
-      {% endif %}
-      {% if github_enabled %}
-      <a class="signin-btn signin-github" href="/auth/github/login" data-provider="github">
-        <span aria-hidden="true">≡</span> Continue with GitHub
-      </a>
-      {% endif %}
-      <button class="signin-btn signin-metamask" type="button" data-action="metamask-signin">
-        <span aria-hidden="true">Ⓜ</span> Continue with MetaMask
-      </button>
-      <div id="signinError" class="signup-error" hidden></div>
-    </div>
-    <p class="signin-foot">By signing in you agree to our terms of service and privacy policy.</p>
-  </dialog>
+  {% include "public/_footer.html" %}
+  {% include "public/_signin.html" %}
 </body>
 </html>

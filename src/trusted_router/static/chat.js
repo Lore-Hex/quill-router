@@ -1245,14 +1245,14 @@
     // different suggestions; pure client-side hash of the day-of-year
     // for stable-within-a-day suggestion ordering.
     const SUGGESTED_PROMPTS = [
-        { emoji: "💡", title: "Explain a concept", body: "Explain how transformers work, like I'm a curious engineer." },
-        { emoji: "🧠", title: "Brainstorm ideas", body: "Brainstorm 10 startup ideas that combine LLMs and accessibility." },
-        { emoji: "💻", title: "Write code", body: "Write a Python function that returns the n-th Fibonacci number using memoization." },
-        { emoji: "⚖️", title: "Compare two things", body: "Compare Anthropic's Claude and OpenAI's GPT for coding tasks, in a table." },
-        { emoji: "📝", title: "Draft an email", body: "Draft a polite email asking my landlord to fix the heating before winter." },
-        { emoji: "🎨", title: "Be creative", body: "Write a haiku about a rainy commute." },
-        { emoji: "🧪", title: "Plan an experiment", body: "Design an A/B test plan for evaluating a new onboarding flow." },
-        { emoji: "🗺️", title: "Travel planner", body: "Plan a 3-day food-focused trip to Tokyo for someone allergic to shellfish." },
+        { glyph: "01", title: "Explain a concept", body: "Explain how transformers work, like I'm a curious engineer." },
+        { glyph: "02", title: "Brainstorm ideas", body: "Brainstorm 10 startup ideas that combine LLMs and accessibility." },
+        { glyph: "03", title: "Write code", body: "Write a Python function that returns the n-th Fibonacci number using memoization." },
+        { glyph: "04", title: "Compare two things", body: "Compare Anthropic's Claude and OpenAI's GPT for coding tasks, in a table." },
+        { glyph: "05", title: "Draft an email", body: "Draft a polite email asking my landlord to fix the heating before winter." },
+        { glyph: "06", title: "Be creative", body: "Write a haiku about a rainy commute." },
+        { glyph: "07", title: "Plan an experiment", body: "Design an A/B test plan for evaluating a new onboarding flow." },
+        { glyph: "08", title: "Travel planner", body: "Plan a 3-day food-focused trip to Tokyo for someone allergic to shellfish." },
     ];
 
     function pickedSuggestions() {
@@ -1280,8 +1280,8 @@
                 (p) =>
                     '<button type="button" class="chat-suggest" data-prompt="' +
                     escapeHtml(p.body) +
-                    '"><span class="chat-suggest-emoji">' +
-                    p.emoji +
+                    '"><span class="chat-suggest-index">' +
+                    p.glyph +
                     '</span><span class="chat-suggest-title">' +
                     escapeHtml(p.title) +
                     '</span><span class="chat-suggest-body">' +
@@ -1540,7 +1540,7 @@
                 if (!resp.content) reas.open = true;
                 const summary = document.createElement("summary");
                 summary.innerHTML =
-                    '<span class="chat-msg-reasoning-icon">🧠</span> Thinking';
+                    '<span class="chat-msg-reasoning-icon" aria-hidden="true">∴</span> Thinking';
                 reas.appendChild(summary);
                 const body = document.createElement("div");
                 body.className = "chat-msg-reasoning-body";
@@ -2406,8 +2406,8 @@
                 ${m.open_weights ? '<span class="chat-tag chat-tag-open">Open weights</span>' : ""}
                 ${m.us_provider_available ? '<span class="chat-tag chat-tag-region">US</span>' : ""}
                 ${m.eu_focused_provider_available ? '<span class="chat-tag chat-tag-region">EU</span>' : ""}
-                ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">👁 Vision</span>' : ""}
-                ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">⚒ Tools</span>' : ""}
+                ${(m.capabilities || []).includes("vision") ? '<span class="chat-tag chat-tag-vision">Vision</span>' : ""}
+                ${(m.capabilities || []).includes("tools") || (m.capabilities || []).includes("tool_use") ? '<span class="chat-tag chat-tag-tools">Tools</span>' : ""}
                 ${activeIds && activeIds.has(m.id) ? '<span class="chat-tag chat-tag-active">In use</span>' : ""}
             </div>
         `;

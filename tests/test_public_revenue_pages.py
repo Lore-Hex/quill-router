@@ -375,12 +375,15 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     # Redesigned homepage (2026-06): a static routing-diagram hero replaces the
     # animated orbital scene, on the friend-provided modern layout. Assert the
     # new conversion surface rather than the old orbital-scene markup.
-    assert "Own your alpha." in response.text  # homepage tagline
-    assert "ATTESTED GATEWAY" in response.text  # routing diagram
+    assert "Every model." in response.text  # homepage tagline
+    assert "Provable privacy." in response.text
+    assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row
     assert "data_collection" in response.text  # privacy-level routing pref
     assert 'href="/eu"' in response.text
+    assert '/static/charter.css?v=' in response.text
+    assert 'class="brand-mark"' in response.text
 
 
 def test_eu_host_renders_eu_landing_page(client: TestClient) -> None:

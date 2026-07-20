@@ -618,6 +618,8 @@ def test_console_pages_render_with_session(
     assert resp.status_code == 200
     assert marker in resp.text
     assert "Sign out" in resp.text
+    assert '/static/charter.css?v=' in resp.text
+    assert 'class="brand-mark"' in resp.text
 
 
 @pytest.mark.parametrize(

@@ -1,13 +1,7 @@
 /* TrustedRouter chat playground styles.
  *
- * Visual tokens mirror OpenRouter's chat playground UX so the page
- * feels familiar to anyone arriving from openrouter.ai/chat:
- *   * Inter typography
- *   * Purple-blue (#6467f2) accent for primary action + user bubbles
- *   * Flat 1px borders (#e4e4e7), no shadows except dropdowns/picker
- *   * Consistent 6px radius across buttons, inputs, pills
- *   * User bubble: rounded except top-right (8px 0 8px 8px)
- *   * Generous whitespace; minimal chrome
+ * The interaction model remains optimized for chat, while its tokens use the
+ * same Charter type, surface, border, and sage system as the rest of the site.
  *
  * DARK by default (matches the dev-facing product); a `[data-theme="light"]`
  * opt-in (driven by the marketing chrome's theme toggle, since /chat extends
@@ -28,61 +22,43 @@
  * but lifted so it reads on the dark bg). Status/error use the dark-mode
  * red tint. The light values live under [data-theme="light"] below. */
 :root {
-    --chat-primary: #7d80f7;
-    --chat-primary-hover: #9396f9;
-    --chat-bg: #0d1117;
-    --chat-text: #e6edf3;
-    --chat-muted: #8b949e;
-    --chat-border: #30363d;
-    --chat-hover: #1c2230;
-    --chat-sidebar-bg: #010409;
-    --chat-assistant-bg: #161b22;
-    --chat-error: #f85149;
-    --chat-error-bg: rgba(248, 81, 73, 0.12);
-    --chat-radius: 6px;
-    --chat-radius-lg: 10px;
-    --chat-shadow-popup: 0 4px 12px rgba(1, 4, 9, 0.5),
-        0 16px 48px rgba(1, 4, 9, 0.7);
-    --chat-tag-free-bg: rgba(63, 185, 80, 0.18);
-    --chat-tag-free-ink: #56d364;
-    --chat-tag-vision-bg: rgba(165, 124, 255, 0.2);
-    --chat-tag-vision-ink: #c0a3ff;
-    --chat-tag-tools-bg: rgba(210, 153, 34, 0.2);
-    --chat-tag-tools-ink: #e3b341;
-    --chat-tag-open-bg: rgba(45, 212, 191, 0.18);
-    --chat-tag-open-ink: #5eead4;
-    --chat-font:
-        "Inter", "Inter Fallback", ui-sans-serif, system-ui, -apple-system,
-        "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
-    --chat-mono:
-        "JetBrains Mono", "Menlo", "Consolas", monospace;
+    --chat-primary: var(--sage);
+    --chat-primary-hover: var(--sage-bright);
+    --chat-bg: var(--surface-page);
+    --chat-text: var(--text-display);
+    --chat-muted: var(--text-muted);
+    --chat-border: var(--border-default);
+    --chat-hover: var(--surface-hover);
+    --chat-sidebar-bg: var(--surface-card);
+    --chat-assistant-bg: var(--surface-page);
+    --chat-error: var(--clay);
+    --chat-error-bg: var(--clay-tint);
+    --chat-radius: var(--r-control);
+    --chat-radius-lg: var(--r-panel);
+    --chat-shadow-popup: 0 18px 50px rgb(0 0 0 / 32%);
+    --chat-tag-free-bg: var(--sage-tint);
+    --chat-tag-free-ink: var(--sage);
+    --chat-tag-vision-bg: var(--sage-tint);
+    --chat-tag-vision-ink: var(--sage-bright);
+    --chat-tag-tools-bg: var(--gold-tint);
+    --chat-tag-tools-ink: var(--gold);
+    --chat-tag-open-bg: var(--sage-tint);
+    --chat-tag-open-ink: var(--sage);
+    --chat-font: var(--font-ui);
+    --chat-mono: var(--font-mono);
 }
 
 :root[data-theme="light"] {
-    --chat-primary: #6467f2;
-    --chat-primary-hover: #5558dd;
-    --chat-bg: #ffffff;
-    --chat-text: #090911;
-    --chat-muted: #717179;
-    --chat-border: #e4e4e7;
-    --chat-hover: #f4f4f5;
-    --chat-sidebar-bg: #fafafa;
-    --chat-assistant-bg: #ffffff;
-    --chat-error: #b91c1c;
-    --chat-error-bg: #fef2f2;
-    --chat-shadow-popup: 0 4px 12px rgba(9, 9, 17, 0.08),
-        0 16px 48px rgba(9, 9, 17, 0.16);
-    --chat-tag-free-bg: #d1fae5;
-    --chat-tag-free-ink: #065f46;
-    --chat-tag-vision-bg: #ede9fe;
-    --chat-tag-vision-ink: #5b21b6;
-    --chat-tag-tools-bg: #fef3c7;
-    --chat-tag-tools-ink: #92400e;
-    --chat-tag-open-bg: #ccfbf1;
-    --chat-tag-open-ink: #115e59;
+    --chat-shadow-popup: 0 18px 50px rgb(23 28 22 / 18%);
 }
 
 /* ── Shell + layout ────────────────────────────────────────────── */
+
+.public-wrap {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+}
 
 .chat-shell {
     display: grid;
@@ -445,8 +421,11 @@
     border-color: color-mix(in srgb, var(--chat-primary) 50%, var(--chat-border));
 }
 
-.chat-suggest-emoji {
-    font-size: 18px;
+.chat-suggest-index {
+    color: var(--chat-primary);
+    font-family: var(--chat-mono);
+    font-size: 10px;
+    font-weight: 500;
     line-height: 1;
 }
 
@@ -500,11 +479,15 @@
     background: var(--chat-bg);
     border: 1px solid var(--chat-border);
     color: var(--chat-muted);
-    width: 36px;
+    width: auto;
+    min-width: 42px;
     height: 36px;
+    padding: 0 8px;
     border-radius: var(--chat-radius);
     cursor: pointer;
-    font-size: 16px;
+    font-family: var(--chat-mono);
+    font-size: 10px;
+    font-weight: 500;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -2213,19 +2196,13 @@
     width: 140px;
     height: 140px;
     border-radius: 50%;
-    background: radial-gradient(
-        circle at 35% 35%,
-        rgba(255, 255, 255, 0.18),
-        rgba(100, 103, 242, 0.55) 60%,
-        rgba(100, 103, 242, 0.85) 100%
-    );
+    background: var(--sage-deep);
+    border: 1px solid var(--sage);
     display: flex;
     align-items: center;
     justify-content: center;
     color: #fff;
-    box-shadow:
-        0 0 80px rgba(100, 103, 242, 0.45),
-        inset 0 0 40px rgba(255, 255, 255, 0.15);
+    box-shadow: none;
 }
 
 .chat-voice-orb-pulse {
@@ -2245,15 +2222,8 @@
 
 /* Per-state colour shifts */
 .chat-voice-panel[data-state="listening"] .chat-voice-orb {
-    background: radial-gradient(
-        circle at 35% 35%,
-        rgba(255, 255, 255, 0.22),
-        rgba(16, 163, 127, 0.55) 60%,
-        rgba(16, 163, 127, 0.85) 100%
-    );
-    box-shadow:
-        0 0 80px rgba(16, 163, 127, 0.45),
-        inset 0 0 40px rgba(255, 255, 255, 0.15);
+    background: var(--sage-dim);
+    box-shadow: none;
 }
 
 .chat-voice-panel[data-state="listening"] .chat-voice-orb-pulse {
@@ -2265,12 +2235,8 @@
 }
 
 .chat-voice-panel[data-state="speaking"] .chat-voice-orb {
-    background: radial-gradient(
-        circle at 35% 35%,
-        rgba(255, 255, 255, 0.22),
-        rgba(100, 103, 242, 0.65) 60%,
-        rgba(100, 103, 242, 0.95) 100%
-    );
+    background: var(--sage);
+    color: var(--text-inverse);
 }
 
 .chat-voice-panel[data-state="speaking"] .chat-voice-orb-pulse {

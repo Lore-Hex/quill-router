@@ -1,0 +1,25 @@
+<dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
+  <form method="dialog">
+    <button class="signin-close" type="submit" aria-label="Close">✕</button>
+  </form>
+  <div class="dialog-kicker">Workspace access</div>
+  <h2 id="signinTitle">Sign in</h2>
+  <p class="signin-sub">Choose a sign in method. Wallet accounts start with $0 credits.</p>
+  <div class="signin-providers">
+    {% if google_enabled %}
+    <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">
+      <span aria-hidden="true">G</span> Continue with Google
+    </a>
+    {% endif %}
+    {% if github_enabled %}
+    <a class="signin-btn signin-github" href="/auth/github/login" data-provider="github">
+      <span aria-hidden="true">GH</span> Continue with GitHub
+    </a>
+    {% endif %}
+    <button class="signin-btn signin-metamask" type="button" data-action="metamask-signin">
+      <span aria-hidden="true">M</span> Continue with MetaMask
+    </button>
+    <div id="signinError" class="signup-error" hidden></div>
+  </div>
+  <p class="signin-foot">By signing in you agree to the terms of service and privacy policy.</p>
+</dialog>

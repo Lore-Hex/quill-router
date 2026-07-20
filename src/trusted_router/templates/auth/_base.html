@@ -18,11 +18,15 @@
       } catch (e) { /* localStorage blocked — dark default */ }
     })();
   </script>
+  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/auth.css">
+  <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
 </head>
-<body class="auth">
+<body class="auth auth-shell">
   <main class="auth-card">
-    <p class="eyebrow">TrustedRouter</p>
+    <a class="brand" href="/">{% include "_brand.html" %}</a>
+    <p class="eyebrow">Secure account access</p>
     {% block body %}{% endblock %}
   </main>
 </body>

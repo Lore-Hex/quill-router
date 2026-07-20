@@ -3,34 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {# Apply the saved theme BEFORE any stylesheet loads so there's no
-     flash-of-light. Dark is the unconditional default (no data-theme
-     attribute); only a stored "light" preference adds the attribute.
-     We intentionally do NOT consult prefers-color-scheme — "dark by
-     default" must hold regardless of OS. Mirrored in static/dashboard.js
-     (applyStoredTheme) which the toggle calls at runtime. #}
   <script>
     (function () {
       try {
         if (localStorage.getItem("tr-theme") === "light") {
           document.documentElement.dataset.theme = "light";
         }
-      } catch (e) { /* localStorage blocked — fall through to dark default */ }
+      } catch (e) { /* Dark remains the default when storage is unavailable. */ }
     })();
   </script>
   <title>{{ title }}</title>
   <meta name="description" content="{{ description }}">
   {% include "_favicon.html" %}
-  {% if robots_meta %}
-  <meta name="robots" content="{{ robots_meta }}">
-  {% endif %}
+  {% if robots_meta %}<meta name="robots" content="{{ robots_meta }}">{% endif %}
   <link rel="canonical" href="{{ site_url }}">
-  {# Open Graph + Twitter card so every public/SEO page unfurls with its
-     own title + description and the branded card image, instead of a
-     blank link preview on X / LinkedIn / Slack / iMessage. Uses the
-     per-page `title`/`description`/`site_url` already passed to every
-     template; `og_image` is threaded from public_page_html and falls
-     back to the prod card. #}
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="TrustedRouter">
   <meta property="og:title" content="{{ title }}">
@@ -49,61 +35,31 @@
   <meta name="twitter:image:alt" content="{{ og_image_alt|default('TrustedRouter, end-to-end encrypted AI routing') }}">
   <link rel="alternate" type="text/plain" href="/docs/llms.txt" title="TrustedRouter LLM docs">
   <link rel="alternate" type="text/plain" href="/docs/llms-full.txt" title="TrustedRouter full LLM context">
+  <link rel="preload" href="/static/fonts/archivo-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/spectral-300-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/static/dashboard.css?v={{ static_version|default('local') }}">
-  {% if json_ld_blob %}
-  {# Page-specific structured data (e.g. Service/Offer schema on the
-     per-model detail pages). Rendered as already-serialized JSON to
-     keep escaping simple; the producer in dashboard.py is the source
-     of truth for the schema. #}
-  <script type="application/ld+json">{{ json_ld_blob|safe }}</script>
-  {% endif %}
+  <link rel="stylesheet" href="/static/charter.css?v={{ static_version|default('local') }}">
+  {% block head_extra %}{% endblock %}
+  {% if json_ld_blob %}<script type="application/ld+json">{{ json_ld_blob|safe }}</script>{% endif %}
 </head>
 <body>
-  <header class="top">
-    <nav class="nav">
-      <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links">
-        <a href="/choose">Choose</a>
-        <a href="/synth">Synth</a>
-        <a href="/models">Models</a>
-        <a href="/providers">Providers</a>
-        <a href="/eu">EU</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/docs">Docs</a>
-        <a href="/docs/mcp">MCP</a>
-        <a href="/blog">Blog</a>
-        <a href="/security">Security</a>
-        <a href="/status">Status</a>
-        <span class="nav-sep" aria-hidden="true"></span>
-        <a href="https://trust.trustedrouter.com">Trust</a>
-        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-        {# Theme toggle: flips document.documentElement.dataset.theme
-           between unset (dark, the default) and "light", persisting the
-           choice to localStorage. The glyph is set by dashboard.js to
-           reflect the current theme (☾ when dark, ☀ when light).
-           Distinct aria-label so it never collides with the "Sign in"
-           button's accessible name in the browser tests. #}
-        <button class="btn theme-toggle" type="button" data-action="toggle-theme" aria-label="Switch theme" title="Switch theme">☾</button>
-        <button class="btn primary" type="button" data-action="open-signin">Sign in</button>
-      </div>
-    </nav>
-  </header>
+  {% include "public/_nav.html" %}
   <main class="wrap public-wrap">
     {% block hero %}
     <section class="public-hero marketing-hero">
       <div>
-        <span class="eyebrow">OpenAI compatible API. Attested gateway. Public status.</span>
+        <div class="kicker">OpenAI compatible API · Attested · Public status</div>
         <h1>{{ heading }}</h1>
         <p class="lead">{{ description }}</p>
         <div class="hero-actions">
           <button class="btn primary" type="button" data-action="open-signin">Create key</button>
-          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway</a>
+          <a class="btn" href="https://trust.trustedrouter.com">Verify gateway <span aria-hidden="true">→</span></a>
         </div>
       </div>
       <div class="public-hero-metrics" aria-label="TrustedRouter quick facts">
-        <div><strong>1 URL</strong><span>base_url migration</span></div>
-        <div><strong>100s</strong><span>models and routes</span></div>
-        <div><strong>0</strong><span>prompt logs by default</span></div>
+        <div><strong>One</strong><span>base URL to migrate</span></div>
+        <div><strong>100s</strong><span>of models and routes</span></div>
+        <div><strong>None</strong><span>prompt logs by default</span></div>
       </div>
     </section>
     {% endblock %}
@@ -122,87 +78,10 @@
     </section>
     {% endif %}
   </main>
-  <footer class="site-footer" aria-label="TrustedRouter">
-    <div class="site-footer-cols">
-      <div class="footer-brand">
-        <a class="brand" href="/"><span class="mark">TR</span><span>TrustedRouter</span></a>
-        <p>Privacy-first AI gateway for production inference. One API for every model, with an inspectable prompt path.</p>
-      </div>
-      <div class="footer-col">
-        <h3>Product</h3>
-        <a href="/models">Models</a>
-        <a href="/providers">Providers</a>
-        <a href="/eu">EU routing</a>
-        <a href="/trustedos">TrustedOS for AI clouds</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/leaderboard">Leaderboard</a>
-        <a href="/chat">Chat playground</a>
-        <a href="/synth">Synth playground</a>
-        <a href="/compare/openrouter">vs OpenRouter</a>
-        <a href="https://quill.lorehex.co">Quill hardware</a>
-      </div>
-      <div class="footer-col">
-        <h3>Trust</h3>
-        <a href="/security">Security</a>
-        <a href="/status">Status</a>
-        <a href="https://trust.trustedrouter.com">Attestation</a>
-        <a href="/privacy">Privacy</a>
-        <a href="/terms">Terms</a>
-        <a href="/support">Support</a>
-        <a href="/legal/dpa">DPA</a>
-        <a href="/legal/baa">BAA</a>
-      </div>
-      <div class="footer-col">
-        <h3>Developers</h3>
-        <a href="/docs">Docs</a>
-        <a href="/sign-in-with-trustedrouter">Sign-in API</a>
-        <a href="/openai-compatible-llm-api">OpenAI-compatible API</a>
-        <a href="/llm-provider-latency-benchmarks">Latency benchmarks</a>
-        <a href="/docs/migrate-from-openrouter">Migrate</a>
-        <a href="/docs/agent-setup">Agent setup</a>
-        <a href="/docs/mcp">MCP server</a>
-        <a href="/docs/synth">Synth guide</a>
-        <a href="/blog">Blog</a>
-        <a href="https://github.com/Lore-Hex/quill-router">GitHub</a>
-        <a href="https://github.com/Lore-Hex/trusted-router-py">Python SDK</a>
-        <a href="https://github.com/Lore-Hex/trusted-router-js">TypeScript SDK</a>
-        <a href="https://pypi.org/project/trusted-router-py/">PyPI</a>
-        <a href="https://www.npmjs.com/package/@lore-hex%2Ftrusted-router">npm</a>
-        <a href="/docs/llms.txt">llms.txt</a>
-      </div>
-      <div class="footer-col">
-        <h3>Company</h3>
-        <a href="/blog">Blog</a>
-        <a href="https://jperla.com/blog/attestation-is-all-you-need">Attestation is All You Need</a>
-        <a href="https://jperla.com/blog/why-not-openrouter-litellm-or-vercel-ai-gateway">Why not OpenRouter / LiteLLM?</a>
-        <a href="https://jperla.com/blog/trustedrouter-founding-engineer">About</a>
-      </div>
-    </div>
-    <div class="site-footer-base">© 2026 TrustedRouter · <a href="/legal">Legal</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></div>
-  </footer>
-  <dialog id="signinModal" class="signin-modal" aria-labelledby="signinTitle">
-    <form method="dialog">
-      <button class="signin-close" type="submit" aria-label="Close">x</button>
-    </form>
-    <h2 id="signinTitle">Sign in</h2>
-    <p class="signin-sub">Choose a sign in method.</p>
-    <div class="signin-providers">
-      {% if google_enabled %}
-      <a class="signin-btn signin-google" href="/auth/google/login" data-provider="google">
-        <span aria-hidden="true">G</span> Continue with Google
-      </a>
-      {% endif %}
-      {% if github_enabled %}
-      <a class="signin-btn signin-github" href="/auth/github/login" data-provider="github">
-        <span aria-hidden="true">=</span> Continue with GitHub
-      </a>
-      {% endif %}
-      <button class="signin-btn signin-metamask" type="button" data-action="metamask-signin">
-        <span aria-hidden="true">M</span> Continue with MetaMask
-      </button>
-    </div>
-  </dialog>
+  {% include "public/_footer.html" %}
+  {% include "public/_signin.html" %}
   <script>window.__TR__ = {"apiBaseUrl": "{{ api_base_url }}"};</script>
   <script src="/static/dashboard.js?v={{ static_version|default('local') }}"></script>
+  {% block body_scripts %}{% endblock %}
 </body>
 </html>

@@ -3,9 +3,9 @@ const { expect, test } = require("@playwright/test");
 test("homepage opens sign-in modal and handles missing MetaMask", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Own your alpha." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Every model. Provable privacy." })).toBeVisible();
   await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
-  await expect(page.locator(".home-hero .hero-links")).toHaveCSS("justify-content", "center");
+  await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
 
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.locator("#signinModal")).toBeVisible();
@@ -96,9 +96,30 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Own your alpha." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Every model. Provable privacy." })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
+});
+
+test("Charter design remains shared and responsive across public surfaces", async ({ page }) => {
+  for (const path of ["/", "/models", "/security", "/status", "/blog"]) {
+    await page.goto(path);
+    await expect(page.locator(".brand-mark").first()).toBeVisible();
+    const theme = await page.evaluate(() => {
+      const body = getComputedStyle(document.body);
+      const heading = document.querySelector("h1");
+      return {
+        bodyFont: body.fontFamily,
+        background: body.backgroundColor,
+        headingFont: heading ? getComputedStyle(heading).fontFamily : "",
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    expect(theme.bodyFont).toContain("Archivo");
+    expect(theme.headingFont).toContain("Spectral");
+    expect(theme.background).toBe("rgb(10, 14, 11)");
+    expect(theme.overflow).toBeLessThanOrEqual(2);
+  }
 });
 
 test("homepage exposes privacy, no-subscription, and open-source claims", async ({ page }) => {
