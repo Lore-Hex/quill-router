@@ -4,6 +4,36 @@ test("homepage opens sign-in modal and handles missing MetaMask", async ({ page 
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Every model. Provable privacy." })).toBeVisible();
+  const headlineLines = page.locator(".charter-home-hero h1 .hero-line");
+  await expect(headlineLines).toHaveCount(2);
+  await expect(headlineLines.first()).toHaveCSS("display", "block");
+  await expect(headlineLines.last()).toHaveCSS("display", "block");
+  await expect(page.locator("body")).toHaveCSS("font-size", "15.5px");
+  await expect(page.locator(".charter-pillar p a").first()).toHaveCSS("text-decoration-line", "underline");
+
+  const faintTextContrast = await page.evaluate(() => {
+    const luminance = (color) => {
+      const [red, green, blue] = color.match(/[\d.]+/g).slice(0, 3).map(Number).map((channel) => {
+        const value = channel / 255;
+        return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    };
+    const ratio = (foreground, background) => {
+      const lighter = Math.max(luminance(foreground), luminance(background));
+      const darker = Math.min(luminance(foreground), luminance(background));
+      return (lighter + 0.05) / (darker + 0.05);
+    };
+    const measure = () => ratio(
+      getComputedStyle(document.querySelector(".charter-pillar-number")).color,
+      getComputedStyle(document.body).backgroundColor,
+    );
+    const dark = measure();
+    document.documentElement.dataset.theme = "light";
+    return { dark, light: measure() };
+  });
+  expect(faintTextContrast.dark).toBeGreaterThanOrEqual(4.5);
+  expect(faintTextContrast.light).toBeGreaterThanOrEqual(4.5);
   await expect(page.getByText("ATTESTED GATEWAY", { exact: true })).toBeVisible();
   await expect(page.locator(".charter-home-hero .hero-links")).toHaveCSS("justify-content", "flex-start");
 
