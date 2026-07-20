@@ -12,8 +12,8 @@
     "build:world-map": "node scripts/build-world-svg.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
-    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@playwright/test": "^1.61.1",
+    "@typescript-eslint/eslint-plugin": "^8.64.0",
     "@typescript-eslint/parser": "^8.18.0",
     "alpinejs": "^3.14.1",
     "eslint": "^9.17.0",
