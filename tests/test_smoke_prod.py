@@ -263,7 +263,7 @@ def test_marketing_page_advertises_production_not_alpha(client: httpx.Client) ->
     assert response.status_code == 200
     body = response.text
     assert "Public Alpha" not in body
-    assert "Production" in body
+    assert "Live regions" in body
     assert "regional routing" in body or "multi-region" in body
     assert "world-map.svg" in body or "<svg" in body  # map renders
 
