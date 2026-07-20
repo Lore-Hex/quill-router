@@ -553,6 +553,12 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ("kimi", "moonshotai/kimi-k2-thinking"),
         ("mistral", "mistralai/mixtral-8x22b-instruct"),
         ("lightning", "openai/gpt-5-mini"),
+        # atlas-cloud (#244) advertises these openai/* models but its router
+        # returns 400 "router not found"; provider-scoped quarantine.
+        ("atlas-cloud", "openai/gpt-4.1"),
+        ("atlas-cloud", "openai/gpt-4o"),
+        ("atlas-cloud", "openai/gpt-5.1-codex"),
+        ("atlas-cloud", "openai/o3-pro"),
     ]
 
     for provider, model_id in quarantined_routes:
@@ -561,6 +567,16 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
             for endpoint in MODEL_ENDPOINTS.values()
             if endpoint.provider == provider and endpoint.model_id == model_id
         ], f"{provider}/{model_id} should be quarantined"
+
+    # atlas-cloud's healthy openai routes must stay live — only the
+    # router-not-found phantoms are quarantined, not the whole openai namespace.
+    for kept_model in ("openai/gpt-4.1-mini", "openai/gpt-5.5", "openai/gpt-5.6-sol"):
+        assert [
+            endpoint
+            for endpoint in MODEL_ENDPOINTS.values()
+            if endpoint.provider == "atlas-cloud"
+            and endpoint.model_id == kept_model
+        ], f"atlas-cloud/{kept_model} should remain routable"
 
     assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
     # Policy (2026-07-18): Anthropic-authored models route via Anthropic only

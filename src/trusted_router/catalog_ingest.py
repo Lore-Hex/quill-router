@@ -115,6 +115,63 @@ _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
 }
 
 _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
+    # atlas-cloud (onboarded #244) advertises these openai/* models but its
+    # router returns HTTP 400 "router not found" — 100% synthetic failure / 0
+    # success as of 2026-07-20. Provider-scoped: the same model ids on
+    # first-party OpenAI and other providers are unaffected, and atlas-cloud's
+    # open-weight catalog plus the six openai models it actually serves
+    # (gpt-4.1-mini, gpt-5.4-mini, gpt-5.5, gpt-5.6-luna, gpt-5.6-sol,
+    # gpt-5.6-terra) remain routable.
+    "atlas-cloud": frozenset(
+        {
+            "openai/gpt-4.1",
+            "gpt-4.1",
+            "openai/gpt-4.1-nano",
+            "gpt-4.1-nano",
+            "openai/gpt-4o",
+            "gpt-4o",
+            "openai/gpt-4o-mini",
+            "gpt-4o-mini",
+            "openai/gpt-5",
+            "gpt-5",
+            "openai/gpt-5-chat",
+            "gpt-5-chat",
+            "openai/gpt-5-codex",
+            "gpt-5-codex",
+            "openai/gpt-5-mini",
+            "gpt-5-mini",
+            "openai/gpt-5-nano",
+            "gpt-5-nano",
+            "openai/gpt-5-pro",
+            "gpt-5-pro",
+            "openai/gpt-5.1",
+            "gpt-5.1",
+            "openai/gpt-5.1-chat",
+            "gpt-5.1-chat",
+            "openai/gpt-5.1-codex",
+            "gpt-5.1-codex",
+            "openai/gpt-5.1-codex-mini",
+            "gpt-5.1-codex-mini",
+            "openai/gpt-5.2",
+            "gpt-5.2",
+            "openai/gpt-5.2-chat",
+            "gpt-5.2-chat",
+            "openai/gpt-5.2-codex",
+            "gpt-5.2-codex",
+            "openai/gpt-5.3-codex",
+            "gpt-5.3-codex",
+            "openai/o1",
+            "o1",
+            "openai/o3",
+            "o3",
+            "openai/o3-mini",
+            "o3-mini",
+            "openai/o3-pro",
+            "o3-pro",
+            "openai/o4-mini",
+            "o4-mini",
+        }
+    ),
     # Xiaomi retired the MiMo V2 family upstream on 2026-06-29; these manifest
     # rows are historical fallback metadata and have shown 100% probe failure
     # since 2026-06-29. Keep provider-scoped: V2.5 Xiaomi routes remain alive.
