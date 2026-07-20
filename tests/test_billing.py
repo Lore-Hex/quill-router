@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -439,6 +440,153 @@ def test_internal_gateway_authorize_and_settle_records_metadata(
     )
     assert repeat.status_code == 200
     assert repeat.json()["data"]["already_settled"] is True
+
+
+def test_web_search_additional_cost_is_reserved_and_settled_exactly_once(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "web search"}).json()
+    key_hash = created["data"]["hash"]
+    workspace_id = created["data"]["workspace_id"]
+    reserve_microdollars = 300_000
+    actual_search_microdollars = 7_000
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": reserve_microdollars,
+            "idempotency_key": "web-search-cost-once",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    authorization = STORE.get_gateway_authorization(auth_data["authorization_id"])
+    assert authorization is not None
+    assert authorization.additional_cost_reservation_microdollars == reserve_microdollars
+    assert auth_data["additional_cost_reservation_microdollars"] == reserve_microdollars
+    assert auth_data["estimated_cost_microdollars"] == authorization.estimated_microdollars
+    assert STORE.credit_money[workspace_id].reserved_microdollars == authorization.estimated_microdollars
+    assert all(route["usage_type"] == "Credits" for route in auth_data["route_candidates"])
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "request_id": "web-search-cost-once",
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": actual_search_microdollars,
+            "elapsed_seconds": 0.5,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    settled_cost = settle.json()["data"]["cost_microdollars"]
+    generation = STORE.generation_store.generations[settle.json()["data"]["generation_id"]]
+    assert settled_cost == generation.total_cost_microdollars
+    assert settled_cost >= actual_search_microdollars
+    assert STORE.credit_money[workspace_id].reserved_microdollars == 0
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == settled_cost
+
+    replay = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": actual_search_microdollars,
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert STORE.credit_money[workspace_id].total_usage_microdollars == settled_cost
+
+
+def test_web_search_additional_cost_fails_closed_outside_authorized_bound(
+    user_headers: dict[str, str],
+    client,
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "bounded search"}).json()
+    key_hash = created["data"]["hash"]
+
+    wrong_route = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "chat.completions",
+            "additional_cost_reservation_microdollars": 10_000,
+        },
+    )
+    assert wrong_route.status_code == 400, wrong_route.text
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key_hash,
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 10_000,
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_id = authorize.json()["data"]["authorization_id"]
+    over_settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_id,
+            "actual_input_tokens": 20,
+            "actual_output_tokens": 2,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_microdollars": 10_001,
+        },
+    )
+    assert over_settle.status_code == 400, over_settle.text
+    authorization = STORE.get_gateway_authorization(auth_id)
+    assert authorization is not None and authorization.settled is False
+    assert not STORE.generation_store.generations
+
+
+@pytest.mark.parametrize(
+    "provider",
+    (
+        {"data_collection": "deny"},
+        {"jurisdiction": "eu"},
+    ),
+)
+def test_web_search_additional_cost_rejects_private_provider_filters(
+    user_headers: dict[str, str],
+    client,
+    provider: dict[str, str],
+) -> None:
+    created = client.post("/v1/keys", headers=user_headers, json={"name": "private search"}).json()
+    response = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": created["data"]["hash"],
+            "model": "anthropic/claude-opus-4.7",
+            "estimated_input_tokens": 20,
+            "max_output_tokens": 4,
+            "route_type": "responses.web_search.planner",
+            "additional_cost_reservation_microdollars": 100_000,
+            "provider": provider,
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["message"] == (
+        "web_search is not available for this privacy tier"
+    )
 
 
 def test_internal_gateway_authorize_replays_same_idempotency_key_once(

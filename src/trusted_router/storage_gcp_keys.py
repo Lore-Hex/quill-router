@@ -308,6 +308,7 @@ class SpannerApiKeys:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        additional_cost_reservation_microdollars: int = 0,
     ) -> GatewayAuthorization:
         existing = (
             self.get_gateway_authorization_by_idempotency_key(
@@ -337,6 +338,7 @@ class SpannerApiKeys:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
         )
         if idempotency_key is None:
             self._io.write_entity("gateway_authorization", auth.id, auth)

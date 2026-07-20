@@ -1008,6 +1008,7 @@ class SpannerBigtableStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        additional_cost_reservation_microdollars: int = 0,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -1027,6 +1028,7 @@ class SpannerBigtableStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
         )
 
     def get_gateway_authorization(
@@ -1160,6 +1162,7 @@ class SpannerBigtableStore:
         tags: dict[str, str] | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        additional_cost_reservation_microdollars: int = 0,
         expires_at: Any = None,
         window_limits: dict[str, int] | None = None,
     ) -> tuple[str, GatewayAuthorization | None]:
@@ -1205,6 +1208,7 @@ class SpannerBigtableStore:
                 idempotency_fingerprint=idempotency_fingerprint,
                 custom_model_id=custom_model_id,
                 custom_model_revision=custom_model_revision,
+                additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             )
             return _json_body(auth)
 

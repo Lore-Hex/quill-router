@@ -1,0 +1,96 @@
+{% extends "public/_base.html" %}
+{% block body %}
+
+<section class="marketing-split" aria-label="Responses web search quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">Attested hosted tool</span>
+    <h2>Search the live web through the Responses API.</h2>
+    <p>Add an OpenAI-compatible <code>web_search</code> tool. TrustedRouter asks the selected model for bounded search queries, calls Exa from inside the attested gateway, and returns cited source material without sending the original request body through the control plane.</p>
+    <ul class="check-list">
+      <li><code>web_search</code> and <code>web_search_preview</code></li>
+      <li>Non-streaming and Responses SSE lifecycle events</li>
+      <li>URL citation annotations and optional full source lists</li>
+      <li>At most three search calls per response</li>
+    </ul>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>OpenAI Python SDK</span><span>Responses</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk-tr-v1-...",
+    base_url="{{ api_base_url }}"
+)
+
+response = client.responses.create(
+    model="anthropic/claude-sonnet-5",
+    input="What changed in Python this week? Cite sources.",
+    tools=[{
+        "type": "web_search",
+        "search_context_size": "medium"
+    }],
+    tool_choice="required",
+    include=["web_search_call.action.sources"],
+    store=False
+)
+
+print(response.output_text)</code></pre>
+  </div>
+</section>
+
+<section style="margin-top:48px">
+  <h2 class="section-center">Search controls</h2>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Context</span>
+      <h3>Bound the evidence.</h3>
+      <p>Set <code>search_context_size</code> to <code>low</code>, <code>medium</code>, or <code>high</code>. Larger contexts return more source material and can increase latency and model input cost.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Domains</span>
+      <h3>Constrain sources.</h3>
+      <p>Use <code>filters.allowed_domains</code> or <code>filters.blocked_domains</code>. A request may use one list, not both.</p>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Location</span>
+      <h3>Localize results.</h3>
+      <p>Pass <code>user_location</code> with a two-letter country code. Precise city, region, and timezone controls are rejected until implemented.</p>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" style="margin-top:48px">
+  <div class="marketing-copy">
+    <span class="eyebrow">Streaming</span>
+    <h2>Observe the search lifecycle.</h2>
+    <p>Streaming responses emit <code>response.web_search_call.in_progress</code>, <code>response.web_search_call.searching</code>, and <code>response.web_search_call.completed</code> before normal output text events and <code>response.completed</code>.</p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Source filter</span><span>JSON</span></div>
+    <pre><code>{
+  "type": "web_search",
+  "search_context_size": "low",
+  "filters": {
+    "allowed_domains": ["python.org", "github.com"]
+  },
+  "user_location": {
+    "type": "approximate",
+    "country": "US"
+  }
+}</code></pre>
+  </div>
+</section>
+
+<section class="quote-feature" style="margin-top:48px">
+  <div>
+    <span class="eyebrow">Privacy boundary</span>
+    <h2>Search is an explicit external disclosure.</h2>
+  </div>
+  <div>
+    <p>The model can derive search queries from your prompt. Exa receives those queries plus configured filters and returns results to the enclave. Exa does not receive the original request body directly, but generated queries can contain prompt-derived information.</p>
+    <p>TrustedRouter therefore rejects hosted web search on <code>trustedrouter/zdr</code>, <code>trustedrouter/e2e</code>, <code>trustedrouter/confidential</code>, and <code>trustedrouter/eu</code> routes until Exa has an approved compatible posture. Do not attach <code>web_search</code> to sensitive requests unless this disclosure is acceptable.</p>
+    <p><a class="btn" href="/legal/subprocessors">Review subprocessors</a> <a class="btn ghost" href="https://trust.trustedrouter.com">Verify the gateway</a></p>
+  </div>
+</section>
+
+{% endblock %}

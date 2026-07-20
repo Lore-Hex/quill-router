@@ -739,6 +739,7 @@ class InMemoryStore:
         idempotency_fingerprint: str | None = None,
         custom_model_id: str | None = None,
         custom_model_revision: int | None = None,
+        additional_cost_reservation_microdollars: int = 0,
     ) -> GatewayAuthorization:
         return self.api_keys.create_gateway_authorization(
             workspace_id=workspace_id,
@@ -758,6 +759,7 @@ class InMemoryStore:
             idempotency_fingerprint=idempotency_fingerprint,
             custom_model_id=custom_model_id,
             custom_model_revision=custom_model_revision,
+            additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
         )
 
     def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:

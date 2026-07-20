@@ -244,7 +244,6 @@ def test_gateway_authorizes_custom_model_against_base_model_and_revision(
         "hidden_prompt": "hidden billing prompt",
         "revision": 1,
     }
-
     authorization = STORE.get_gateway_authorization(data["authorization_id"])
     assert authorization is not None
     assert authorization.custom_model_id == custom["id"]
@@ -287,6 +286,41 @@ def test_gateway_authorizes_custom_model_against_base_model_and_revision(
         },
     )
     assert replay.status_code == 409
+
+
+def test_web_search_rejects_custom_models_with_private_routing_bases(
+    client: TestClient,
+) -> None:
+    key = _create_key(client)
+    for index, base_model_id in enumerate(
+        (
+            "trustedrouter/zdr",
+            "trustedrouter/e2e",
+            "trustedrouter/confidential",
+            "trustedrouter/eu",
+        )
+    ):
+        custom = _create_custom_model(
+            client,
+            name=f"private search {index}",
+            base_model_id=base_model_id,
+            hidden_prompt="private instructions",
+        )
+        authorize = client.post(
+            "/v1/internal/gateway/authorize",
+            json={
+                "api_key_hash": key["hash"],
+                "model": custom["id"],
+                "estimated_input_tokens": 20,
+                "max_output_tokens": 4,
+                "route_type": "responses.web_search.planner",
+                "additional_cost_reservation_microdollars": 100_000,
+            },
+        )
+        assert authorize.status_code == 400, (base_model_id, authorize.text)
+        assert authorize.json()["error"]["message"] == (
+            "web_search is not available for this privacy tier"
+        )
 
 
 def test_gateway_custom_models_are_credits_only_even_when_base_supports_byok(

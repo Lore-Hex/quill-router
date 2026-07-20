@@ -338,6 +338,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def tagging_docs() -> str:
         return public_page_html(settings, "docs/tagging")
 
+    @public_html_route("/docs/web-search")
+    async def web_search_docs() -> str:
+        return public_page_html(settings, "docs/web-search")
+
     @public_html_route("/docs/mcp")
     async def mcp_docs() -> str:
         return public_page_html(settings, "docs/mcp")

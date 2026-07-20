@@ -130,6 +130,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
+    "/docs/web-search",
     "/llms.txt",
     "/docs/llms.txt",
     "/docs/llms-full.txt",
@@ -342,6 +343,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Attach AWS style tags and OpenRouter attribution metadata to LLM requests "
             "without adding them to model prompts or provider payloads."
+        ),
+    ),
+    "docs/web-search": PublicPage(
+        template="public/web_search.html",
+        title="Responses API Web Search",
+        description=(
+            "Use OpenAI-compatible web_search tools inside the attested TrustedRouter "
+            "gateway with citations, source controls, streaming events, and explicit privacy limits."
         ),
     ),
     "docs/agent-setup": PublicPage(
@@ -1883,6 +1892,7 @@ def llms_txt(settings: Settings) -> str:
         f"- MCP server: https://{domain}/docs/mcp",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
+        f"- Responses web search: https://{domain}/docs/web-search",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -1966,6 +1976,7 @@ def docs_llms_txt(settings: Settings) -> str:
             "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Synth guide: https://{domain}/docs/synth",
+            f"- Responses web search: https://{domain}/docs/web-search",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
             f"- Private LLM API: https://{domain}/private-llm-api",
             f"- Zero data retention LLM API: https://{domain}/llm-zero-data-retention",
@@ -1982,7 +1993,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
             f"- Provider transparency: https://{domain}/providers",
             f"- EU routing: https://{domain}/eu",
-        f"- TrustedOS for AI clouds: https://{domain}/trustedos",
+            f"- TrustedOS for AI clouds: https://{domain}/trustedos",
             "- Public status: https://status.trustedrouter.com/",
             "- Trust evidence: https://trust.trustedrouter.com/",
             "",
@@ -2072,6 +2083,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         "- Raw agent playbook: https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md",
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
+        f"- Responses web search: https://{domain}/docs/web-search",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",
