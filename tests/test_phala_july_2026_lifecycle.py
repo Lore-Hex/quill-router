@@ -66,10 +66,10 @@ def test_phala_qwen_price_switches_exactly_at_cutoff() -> None:
     before = effective_endpoint(endpoint, at=_CUTOFF - timedelta(microseconds=1))
     after = effective_endpoint(endpoint, at=_CUTOFF)
 
-    assert before.prompt_price_microdollars_per_million_tokens == 44_000
-    assert before.completion_price_microdollars_per_million_tokens == 110_000
-    assert after.prompt_price_microdollars_per_million_tokens == 110_000
-    assert after.completion_price_microdollars_per_million_tokens == 220_000
+    assert before.prompt_price_microdollars_per_million_tokens == 42_000
+    assert before.completion_price_microdollars_per_million_tokens == 105_000
+    assert after.prompt_price_microdollars_per_million_tokens == 105_000
+    assert after.completion_price_microdollars_per_million_tokens == 210_000
 
     assert (
         _endpoint_cost_microdollars(
@@ -78,7 +78,7 @@ def test_phala_qwen_price_switches_exactly_at_cutoff() -> None:
             1_000_000,
             effective_at=_CUTOFF - timedelta(microseconds=1),
         )
-        == 154_000
+        == 147_000
     )
     assert (
         _endpoint_cost_microdollars(
@@ -87,7 +87,7 @@ def test_phala_qwen_price_switches_exactly_at_cutoff() -> None:
             1_000_000,
             effective_at=_CUTOFF,
         )
-        == 330_000
+        == 315_000
     )
 
 
@@ -99,10 +99,10 @@ def test_public_catalog_uses_effective_price_and_active_routes(
     qwen_price = model_to_openrouter_shape(MODELS["qwen/qwen-2.5-7b-instruct"])
     assert qwen_price["trustedrouter"][
         "prompt_price_microdollars_per_million_tokens"
-    ] == 110_000
+    ] == 105_000
     assert qwen_price["trustedrouter"][
         "completion_price_microdollars_per_million_tokens"
-    ] == 220_000
+    ] == 210_000
 
     retired_qwen = model_to_openrouter_shape(
         MODELS["qwen/qwen3-30b-a3b-instruct-2507"]
@@ -182,4 +182,4 @@ def test_settlement_keeps_authorization_time_price(
     )
 
     assert settle.status_code == 200, settle.text
-    assert settle.json()["data"]["cost_microdollars"] == 154
+    assert settle.json()["data"]["cost_microdollars"] == 147

@@ -120,7 +120,7 @@ class ModelPricingKwargs(TypedDict):
     published_prompt_price_microdollars_per_million_tokens: int
     published_completion_price_microdollars_per_million_tokens: int
 
-_PRICE_MARKUP_RATIO = Decimal("1.10")
+_PRICE_MARKUP_RATIO = Decimal("1.05")
 
 _PRICE_FLOOR_MICRODOLLARS_PER_M = 10_000  # $0.01 per million tokens.
 

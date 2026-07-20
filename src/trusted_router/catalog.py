@@ -194,7 +194,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
     zdr_candidate_models,
 )
 
-# Uniform pricing: customer pays cost + 10%, floor $0.01/M tokens. Same
+# Uniform pricing: customer pays cost + 5%, floor $0.01/M tokens. Same
 # value goes into both `prompt_price_*` and `published_*` — TR no longer
 # runs the 1¢/M "discount theater". The floor catches free upstream tiers
 # so the catalog never advertises $0/M to end users; $0.01/M is ~10×
@@ -208,7 +208,7 @@ from trusted_router.routing_candidates import (  # noqa: F401 - re-exported for 
 # The attested gateway reports cache_read_input_tokens /
 # cache_creation_input_tokens at settle. Cached tokens are billed as a
 # multiple of the endpoint's (already marked-up) prompt price, so the
-# uniform x1.10 margin structure is preserved: provider charges
+# uniform x1.05 margin structure is preserved: provider charges
 # cost x multiplier, we bill customer_price x multiplier.
 #
 # Multipliers mirror published provider pricing as of 2026-06:

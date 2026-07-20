@@ -437,7 +437,7 @@ def _author_provider(model_id: str, endpoints: list[dict[str, Any]]) -> str | No
 def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelEndpoint]]:
     """Read the OpenRouter snapshot and return (models, endpoints) dicts.
     Pricing is run through `_customer_price_from_dollars_per_token` so the
-    catalog uniformly applies the cost+10% / $0.01/M-floor formula."""
+    catalog uniformly applies the cost+5% / $0.01/M-floor formula."""
     if not _INGEST_PATH.exists():
         return {}, {}
     snapshot = json.loads(_INGEST_PATH.read_text(encoding="utf-8"))

@@ -1,5 +1,5 @@
 {
-  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. The attested gateway maps the dotted catalog id -> Anthropic's dashed id algorithmically (internal/llm/anthropic.go mapModelID: strip 'anthropic/' prefix, then ReplaceAll('.', '-')), so adding a Claude model here usually needs no enclave change. Pricing fields are PROVIDER COST in microdollars/M; the loader applies x1.10 to get the customer price. Claude Sonnet 5 is listed at Anthropic's introductory price through 2026-08-31. Claude Fable 5 is listed but has a catalog-level privacy override because it is not tracked as ZDR.",
+  "_about": "Provider-native supplement for Anthropic-direct models released after the OpenRouter snapshot. The attested gateway maps the dotted catalog id -> Anthropic's dashed id algorithmically (internal/llm/anthropic.go mapModelID: strip 'anthropic/' prefix, then ReplaceAll('.', '-')), so adding a Claude model here usually needs no enclave change. Pricing fields are PROVIDER COST in microdollars/M; the loader applies x1.05 to get the customer price. Claude Sonnet 5 is listed at Anthropic's introductory price through 2026-08-31. Claude Fable 5 is listed but has a catalog-level privacy override because it is not tracked as ZDR.",
   "models": [
     {
       "id": "anthropic/claude-sonnet-5",

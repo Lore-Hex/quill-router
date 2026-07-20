@@ -99,9 +99,9 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k3@gmi/byok" in MODEL_ENDPOINTS
     kimi_k3 = MODELS["moonshotai/kimi-k3"]
     assert kimi_k3.context_length == 1_048_576
-    assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_300_000
-    assert kimi_k3.completion_price_microdollars_per_million_tokens == 16_500_000
-    assert kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 330_000
+    assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_150_000
+    assert kimi_k3.completion_price_microdollars_per_million_tokens == 15_750_000
+    assert kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 315_000
     assert MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"].upstream_id == "kimi-k3"
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
@@ -317,9 +317,9 @@ def test_grok_45_uses_xai_native_model_id_and_pricing() -> None:
     assert model.context_length == 500_000
     assert prepaid.upstream_id == "grok-4.5"
     assert byok.upstream_id == "grok-4.5"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 2_200_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 6_600_000
-    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 550_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 2_100_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 6_300_000
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 525_000
 
 
 def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
@@ -395,16 +395,16 @@ def test_minimax_m3_uses_provider_native_context_tiers() -> None:
     assert [tier.max_prompt_tokens for tier in prepaid.price_tiers] == [512_000, None]
 
     low, high = prepaid.price_tiers
-    assert low.prompt_price_microdollars_per_million_tokens == 330_000
-    assert low.completion_price_microdollars_per_million_tokens == 1_320_000
-    assert low.prompt_cached_price_microdollars_per_million_tokens == 66_000
-    assert high.prompt_price_microdollars_per_million_tokens == 660_000
-    assert high.completion_price_microdollars_per_million_tokens == 2_640_000
-    assert high.prompt_cached_price_microdollars_per_million_tokens == 132_000
+    assert low.prompt_price_microdollars_per_million_tokens == 315_000
+    assert low.completion_price_microdollars_per_million_tokens == 1_260_000
+    assert low.prompt_cached_price_microdollars_per_million_tokens == 63_000
+    assert high.prompt_price_microdollars_per_million_tokens == 630_000
+    assert high.completion_price_microdollars_per_million_tokens == 2_520_000
+    assert high.prompt_cached_price_microdollars_per_million_tokens == 126_000
 
 
 def test_prompt_price_equals_published_under_uniform_markup() -> None:
-    """Under the uniform pricing formula (cost+10%, $0.01/M floor), TR no
+    """Under the uniform pricing formula (cost+5%, $0.01/M floor), TR no
     longer carries a separate 1¢/M discount. `prompt_price_*` and
     `published_*` are the same number — the customer pays the headline
     price. Any model where they differ is either pre-formula leftover
@@ -1425,16 +1425,16 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
 
     pro = MODELS["xiaomi/mimo-v2.5-pro"]
     assert pro.context_length == 1_048_576
-    assert pro.prompt_price_microdollars_per_million_tokens == 478_500
-    assert pro.completion_price_microdollars_per_million_tokens == 957_000
+    assert pro.prompt_price_microdollars_per_million_tokens == 456_750
+    assert pro.completion_price_microdollars_per_million_tokens == 913_500
 
     # UltraSpeed is the 1T-param speed-serving tier with its own ¥9/¥18
-    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.10,
+    # ($1.305/$2.61) cost, marked up by the manifest loader (cost x 1.05,
     # $0.01/M floor). Guard the exact prices so a regen can't silently
     # collapse them onto the regular v2.5-pro numbers.
     ultraspeed = MODELS["xiaomi/mimo-v2.5-pro-ultraspeed"]
-    assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_435_500
-    assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_871_000
+    assert ultraspeed.prompt_price_microdollars_per_million_tokens == 1_370_250
+    assert ultraspeed.completion_price_microdollars_per_million_tokens == 2_740_500
     # ...and that it is genuinely a distinct row from regular v2.5-pro.
     assert (
         ultraspeed.completion_price_microdollars_per_million_tokens
@@ -1526,16 +1526,16 @@ def test_makora_provider_prices_follow_published_lineup() -> None:
     """Makora publishes per-token model prices on its homepage lineup.
 
     The provider manifest stores raw upstream cost in microdollars/M; the
-    catalog applies the standard 10% customer markup at load time.
+    catalog applies the standard 5% customer markup at load time.
     """
 
     expected_prices = {
-        "deepseek/deepseek-v4-flash": (124_740, 307_010, 93_610),
-        "deepseek/deepseek-v4-pro": (1_449_800, 2_899_710, 1_087_350),
-        "z-ai/glm-5.2": (1_485_000, 4_389_000, 264_000),
-        "moonshotai/kimi-k2.7-code": (836_000, 4_152_390, 633_270),
-        "meta-llama/llama-3.3-70b-instruct": (198_000, 440_000, 165_000),
-        "qwen/qwen3.6-35b-a3b": (189_200, 1_320_220, 141_900),
+        "deepseek/deepseek-v4-flash": (119_070, 293_055, 89_355),
+        "deepseek/deepseek-v4-pro": (1_383_900, 2_767_905, 1_037_925),
+        "z-ai/glm-5.2": (1_417_500, 4_189_500, 252_000),
+        "moonshotai/kimi-k2.7-code": (798_000, 3_963_645, 604_485),
+        "meta-llama/llama-3.3-70b-instruct": (189_000, 420_000, 157_500),
+        "qwen/qwen3.6-35b-a3b": (180_600, 1_260_210, 135_450),
     }
 
     for model_id, (prompt, completion, cached_prompt) in expected_prices.items():
@@ -1664,22 +1664,22 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
     assert crusoe.upstream_id == "zai/GLM-5.2"
-    assert gmi.prompt_price_microdollars_per_million_tokens == 1_078_000
-    assert gmi.completion_price_microdollars_per_million_tokens == 3_388_000
-    assert deepinfra.prompt_price_microdollars_per_million_tokens == 1_320_000
-    assert deepinfra.completion_price_microdollars_per_million_tokens == 4_620_000
-    assert fireworks.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert fireworks.completion_price_microdollars_per_million_tokens == 4_840_000
-    assert novita.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert novita.completion_price_microdollars_per_million_tokens == 4_840_000
-    assert friendli.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert friendli.completion_price_microdollars_per_million_tokens == 4_840_000
-    assert baseten.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert baseten.completion_price_microdollars_per_million_tokens == 4_840_000
-    assert wafer.prompt_price_microdollars_per_million_tokens == 1_320_000
-    assert wafer.completion_price_microdollars_per_million_tokens == 4_510_000
-    assert crusoe.prompt_price_microdollars_per_million_tokens == 1_540_000
-    assert crusoe.completion_price_microdollars_per_million_tokens == 4_840_000
+    assert gmi.prompt_price_microdollars_per_million_tokens == 1_029_000
+    assert gmi.completion_price_microdollars_per_million_tokens == 3_234_000
+    assert deepinfra.prompt_price_microdollars_per_million_tokens == 1_260_000
+    assert deepinfra.completion_price_microdollars_per_million_tokens == 4_410_000
+    assert fireworks.prompt_price_microdollars_per_million_tokens == 1_470_000
+    assert fireworks.completion_price_microdollars_per_million_tokens == 4_620_000
+    assert novita.prompt_price_microdollars_per_million_tokens == 1_470_000
+    assert novita.completion_price_microdollars_per_million_tokens == 4_620_000
+    assert friendli.prompt_price_microdollars_per_million_tokens == 1_470_000
+    assert friendli.completion_price_microdollars_per_million_tokens == 4_620_000
+    assert baseten.prompt_price_microdollars_per_million_tokens == 1_470_000
+    assert baseten.completion_price_microdollars_per_million_tokens == 4_620_000
+    assert wafer.prompt_price_microdollars_per_million_tokens == 1_260_000
+    assert wafer.completion_price_microdollars_per_million_tokens == 4_305_000
+    assert crusoe.prompt_price_microdollars_per_million_tokens == 1_470_000
+    assert crusoe.completion_price_microdollars_per_million_tokens == 4_620_000
 
 
 def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
@@ -1689,5 +1689,5 @@ def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
     assert MODELS["qwen/qwen3.5-397b-a17b"].context_length == 262_144
     assert prepaid.upstream_id == "parasail-qwen35-397b-a17b"
     assert byok.upstream_id == "parasail-qwen35-397b-a17b"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 550_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 3_960_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 525_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 3_780_000

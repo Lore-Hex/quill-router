@@ -165,7 +165,7 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     assert glm_52.upstream_id == "glm-5-2"
     assert (
         glm_52.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == 412_500
+        == 393_750
     )
     assert gemma4.upstream_id == "gemma4-31b"
 
@@ -264,14 +264,14 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
 
     assert MODELS["google/gemini-3.5-flash"].context_length == 1_048_576
     assert gemini_35.upstream_id == "gemini-3.5-flash"
-    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_650_000
-    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_900_000
+    assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_575_000
+    assert gemini_35.completion_price_microdollars_per_million_tokens == 9_450_000
     image_model = MODELS["google/gemini-3.1-flash-image-preview"]
     assert image_model.context_length == 65_536
     assert image_model.supports_chat
     assert image_preview.upstream_id == "gemini-3.1-flash-image-preview"
-    assert image_preview.prompt_price_microdollars_per_million_tokens == 550_000
-    assert image_preview.completion_price_microdollars_per_million_tokens == 66_000_000
+    assert image_preview.prompt_price_microdollars_per_million_tokens == 525_000
+    assert image_preview.completion_price_microdollars_per_million_tokens == 63_000_000
 
 
 def test_google_products_have_distinct_capabilities() -> None:
@@ -309,6 +309,6 @@ def test_novita_supplemental_prices_apply_manifest_scale() -> None:
         usage_type="Credits",
     )
 
-    assert endpoint.prompt_price_microdollars_per_million_tokens == 99_000
-    assert endpoint.completion_price_microdollars_per_million_tokens == 638_000
+    assert endpoint.prompt_price_microdollars_per_million_tokens == 94_500
+    assert endpoint.completion_price_microdollars_per_million_tokens == 609_000
     assert endpoint.prompt_price_microdollars_per_million_tokens > 10_000

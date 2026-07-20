@@ -251,6 +251,47 @@ def choose_og_image_svg(_settings: Settings) -> str:
 """
 
 
+def pricing_og_image_svg(_settings: Settings) -> str:
+    """Social card for /pricing with the customer-visible prepaid rate."""
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter pricing">
+  <title>TrustedRouter pricing: 5% markup, no subscription</title>
+  <desc>Provider cost plus 5% for prepaid routes, with no monthly subscription.</desc>
+  <rect width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" fill="#07100a"/>
+  <path d="M80 80 H1120 M80 550 H1120" stroke="#314036" stroke-width="1"/>
+
+  <g transform="translate(80 42)" font-family="Arial, sans-serif">
+    <path d="M0 28 H18 L34 42 M0 52 H10 L26 38 M0 40 H48" fill="none" stroke="#a9c9b1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="66" y="48" font-size="24" font-weight="700" fill="#edf1e9">TrustedRouter</text>
+    <text x="1040" y="48" text-anchor="end" font-size="16" font-weight="700" fill="#9db6a3">OPEN SOURCE  /  ATTESTED</text>
+  </g>
+
+  <g transform="translate(80 145)">
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="2" fill="#91ad98">PRICING</text>
+    <text x="0" y="84" font-family="Georgia, serif" font-size="68" fill="#edf1e9">5% markup.</text>
+    <text x="0" y="162" font-family="Georgia, serif" font-size="68" fill="#edf1e9">No subscription.</text>
+    <text x="0" y="220" font-family="Arial, sans-serif" font-size="25" fill="#a8b4a8">Cheaper. Smarter. More reliable. More secure.</text>
+  </g>
+
+  <g transform="translate(760 156)" font-family="Arial, sans-serif">
+    <rect x="0" y="0" width="360" height="238" fill="#0a140d" stroke="#3a4a3e"/>
+    <text x="28" y="42" font-size="14" font-weight="700" letter-spacing="1.4" fill="#8ca092">PLATFORM CHARGE</text>
+    <path d="M28 62 H332" stroke="#2d3b31"/>
+    <text x="28" y="112" font-size="22" fill="#cbd4cb">TrustedRouter</text>
+    <text x="332" y="112" text-anchor="end" font-family="Georgia, serif" font-size="36" fill="#edf1e9">5%</text>
+    <text x="28" y="150" font-size="15" fill="#8fa092">on prepaid model cost</text>
+    <path d="M28 174 H332" stroke="#2d3b31"/>
+    <text x="28" y="210" font-size="17" fill="#9db0a0">OpenRouter credit fee</text>
+    <text x="332" y="210" text-anchor="end" font-size="20" font-weight="700" fill="#cbd4cb">5.5%*</text>
+  </g>
+
+  <g transform="translate(80 590)" font-family="Arial, sans-serif">
+    <text x="0" y="0" font-size="18" font-weight="700" fill="#edf1e9">trustedrouter.com/pricing</text>
+    <text x="1040" y="0" text-anchor="end" font-size="14" fill="#7f9283">* Published pay as you go fee on credit purchases</text>
+  </g>
+</svg>
+"""
+
+
 def synth_og_image_svg(_settings: Settings) -> str:
     """Social card for /synth: panel inputs flowing through judge and
     synthesizer. Kept as deterministic SVG so preview text stays crisp."""
@@ -411,6 +452,8 @@ if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "default"
     if which == "choose":
         svg = choose_og_image_svg(Settings())
+    elif which == "pricing":
+        svg = pricing_og_image_svg(Settings())
     elif which == "synth":
         svg = synth_og_image_svg(Settings())
     else:
