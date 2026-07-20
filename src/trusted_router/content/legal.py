@@ -56,6 +56,12 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
         "policy_url": "https://axiom.co/privacy",
     },
     {
+        "name": "Exa",
+        "purpose": "Optional hosted web search for Responses API requests that explicitly enable the web_search tool.",
+        "data_access": "A model-generated search query, requested domain and country filters, and search metadata. Search runs only inside the attested gateway. Exa does not receive the original prompt or model output directly, but a generated query can reflect prompt content. Web search is blocked on ZDR, E2E/confidential, and EU privacy routes until a compatible contractual posture is approved.",
+        "policy_url": "https://exa.ai/privacy",
+    },
+    {
         "name": "GitHub",
         "purpose": "Source control, CI, release workflows, and public open-source repositories.",
         "data_access": "Source code, CI metadata, and release artifacts. No production prompt/output content.",
