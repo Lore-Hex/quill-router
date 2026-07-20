@@ -145,6 +145,8 @@ class _CachedStaticFiles(StaticFiles):
         status_code: int = 200,
     ) -> Response:
         response = super().file_response(full_path, stat_result, scope, status_code=status_code)
+        if str(full_path).casefold().endswith(".woff2"):
+            response.headers["content-type"] = "font/woff2"
         response.headers.setdefault("cache-control", f"public, max-age={self._max_age}")
         return response
 

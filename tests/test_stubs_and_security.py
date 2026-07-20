@@ -385,8 +385,28 @@ def test_favicon_assets_are_served(client: TestClient) -> None:
     release = client.get("/trust/gcp-release.json")
     assert release.status_code == 200
     assert release.json()["platform"] == "gcp-confidential-space"
-    assert release.json()["source_repositories"]["control_plane"] == "https://github.com/Lore-Hex/quill-router"
-    assert release.json()["source_repositories"]["attested_gateway"] == "https://github.com/Lore-Hex/quill-cloud-proxy"
+    assert release.json()["source_repositories"]["control_plane"] == (
+        "https://github.com/Lore-Hex/quill-router"
+    )
+    assert release.json()["source_repositories"]["attested_gateway"] == (
+        "https://github.com/Lore-Hex/quill-cloud-proxy"
+    )
+
+
+def test_static_fonts_force_woff2_media_type(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Some minimal Linux images do not register WOFF2 in /etc/mime.types.
+    # Simulate that production environment so the application owns the
+    # browser-facing contract instead of relying on the host image.
+    monkeypatch.setattr(
+        "starlette.responses.guess_type", lambda _path: ("text/plain", None)
+    )
+
+    font = client.get("/static/fonts/archivo-latin.woff2")
+
+    assert font.status_code == 200
+    assert font.headers["content-type"] == "font/woff2"
 
 
 def test_read_only_blocks_writes_but_lets_reads_through() -> None:
