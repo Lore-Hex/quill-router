@@ -5,7 +5,7 @@
   <div class="marketing-card">
     <span class="card-icon">01</span>
     <h3>Pay as you go</h3>
-    <p>Prepaid credits. Add a card and you're charged only for what you route — provider cost plus a small routing margin. Auto-refill keeps prepaid routes flowing. Wallet accounts can start at <strong>$0</strong>.</p>
+    <p>Prepaid credits. Add a card and you're charged only for what you route: provider cost plus 5%. Auto-refill keeps prepaid routes flowing. Wallet accounts can start at <strong>$0</strong>.</p>
   </div>
   <div class="marketing-card">
     <span class="card-icon">02</span>
@@ -21,27 +21,33 @@
 
 <section class="marketing-split" style="margin-top:40px">
   <div class="marketing-copy">
-    <h2>Transparent, usage-based. No subscription.</h2>
+    <h2>Cheaper. Smarter. More reliable. More secure.</h2>
+    <p>Five percent prepaid markup. No subscription. One API with measured routing, provider fallback, and a prompt path you can verify.</p>
     <ul class="check-list">
-      <li>✓ No monthly plan or seat fees — you pay for tokens you route</li>
-      <li>✓ Per-model prices are published on the <a href="/models">models page</a></li>
-      <li>✓ Prepaid credits, BYOK, and usage-based billing all supported</li>
-      <li>✓ Metadata-only billing records — no prompt or output bodies stored</li>
-      <li>✓ Stripe and stablecoin checkout for prepaid credits</li>
+      <li>No monthly plan or seat fees — you pay for tokens you route</li>
+      <li>Prepaid model prices are provider cost + 5%, with a $0.01 per million token floor</li>
+      <li>A lower percentage than OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% pay as you go fee on credit purchases</a></li>
+      <li>Per-model prices are published on the <a href="/models">models page</a></li>
+      <li>Prepaid credits, BYOK, and usage-based billing all supported</li>
+      <li>Metadata-only billing records — no prompt or output bodies stored</li>
+      <li>Stripe and stablecoin checkout for prepaid credits</li>
     </ul>
     <button class="btn primary" type="button" data-action="open-signin">Get an API key</button>
   </div>
   <div class="copy-terminal">
     <div class="code-head"><span>What you pay</span><span>per request</span></div>
     <pre><code># You are billed the provider's price for the
-# tokens you use, plus a small routing margin.
+# tokens you use, plus 5%. A $0.01/M floor
+# applies to free and near-zero-cost routes.
 #
-# Per-model prices (prompt / completion per 1M
-# tokens) are listed on /models — e.g.:
+# Example price per 1M tokens:
 #
-#   anthropic/claude-sonnet-4.5   $3.00 / $15.00
-#   openai/gpt-5.1                $2.50 / $10.00
-#   deepseek/deepseek-v4-flash    $0.27 / $0.27
+#   Provider cost                 $1.00
+#   TrustedRouter markup (5%)     $0.05
+#   Customer price                $1.05
+#
+# Exact prompt and completion prices are listed
+# on /models for every route.
 #
 # trustedrouter/auto picks a healthy route and
 # bills at the selected provider's price.</code></pre>

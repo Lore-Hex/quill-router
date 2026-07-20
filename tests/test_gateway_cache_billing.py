@@ -165,7 +165,7 @@ def test_tinfoil_glm_52_uses_published_cached_input_rate() -> None:
 
     tier = endpoint.price_tiers[0]
     cached_price = tier.prompt_cached_price_microdollars_per_million_tokens
-    assert cached_price == 412_500
+    assert cached_price == 393_750
     expected = (
         token_cost_microdollars(
             100, tier.prompt_price_microdollars_per_million_tokens

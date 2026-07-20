@@ -129,7 +129,7 @@ def test_embedding_catalog_uses_manifest_cost_with_customer_markup(
 
     model = catalog_ingest._embedding_models()["voyage/voyage-3-large"]
 
-    assert model.prompt_price_microdollars_per_million_tokens == 220_000
+    assert model.prompt_price_microdollars_per_million_tokens == 210_000
     assert model.completion_price_microdollars_per_million_tokens == 0
 
 
@@ -142,4 +142,4 @@ def test_checked_in_voyage_fallback_matches_first_party_rate(
 ) -> None:  # noqa: ANN001
     monkeypatch.setattr(catalog_ingest, "_PROVIDER_MODELS_DIR", tmp_path)
     model = catalog_ingest._embedding_models()["voyage/voyage-3-large"]
-    assert model.prompt_price_microdollars_per_million_tokens == 198_000
+    assert model.prompt_price_microdollars_per_million_tokens == 189_000

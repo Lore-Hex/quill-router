@@ -9,7 +9,12 @@ from pydantic import ValidationError
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.og import OG_DESCRIPTION, OG_TITLE, og_image_svg
+from trusted_router.og import (
+    OG_DESCRIPTION,
+    OG_TITLE,
+    og_image_svg,
+    pricing_og_image_svg,
+)
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE
@@ -338,6 +343,16 @@ def test_og_svg_copy_matches_current_positioning() -> None:
     assert "Hundreds of models. One verifiable prompt path." in svg
     assert "base_url=https://api.quillrouter.com/v1" in svg
     assert "api.trustedrouter.com" not in svg
+
+
+def test_pricing_og_svg_matches_five_percent_policy() -> None:
+    svg = pricing_og_image_svg(Settings())
+
+    assert "5% markup" in svg
+    assert "on prepaid model cost" in svg
+    assert "OpenRouter credit fee" in svg
+    assert "5.5%" in svg
+    assert "10%" not in svg
 
 
 def test_og_image_route_serves_png(client: TestClient) -> None:

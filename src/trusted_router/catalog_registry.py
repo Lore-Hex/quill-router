@@ -2,7 +2,7 @@
 
 This is the money-critical construction of TR's catalog: the hand-coded Auto
 seed plus every model/endpoint ingested from data/openrouter_snapshot.json and
-the supplemental provider manifests, priced uniformly (cost x1.10, $0.01/M
+the supplemental provider manifests, priced uniformly (cost x1.05, $0.01/M
 floor). Split out of catalog.py so the ~575-line import-time build lives on its
 own; catalog.py re-exports MODELS/MODEL_ENDPOINTS and layers the privacy /
 routing / serialization query helpers on top. No catalog.py functions are used
@@ -157,7 +157,7 @@ from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
 # Catalog seed — only TR's Auto meta-model is hand-coded. Every other
 # entry comes from `_INGESTED_MODELS` below, which is built from
 # `data/openrouter_snapshot.json`. That guarantees pricing is uniformly
-# `cost × 1.10, $0.01/M floor` (per the formula), and that the catalog
+# `cost × 1.05, $0.01/M floor` (per the formula), and that the catalog
 # lists every model from every provider TR has a key for — no
 # hand-curated subset to drift out of sync with reality.
 MODELS: dict[str, Model] = {
@@ -734,7 +734,7 @@ _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_an
 # The OpenRouter ingest snapshot is the primary catalog. Provider-native
 # supplements add exact routes from providers whose live model API is
 # ahead of OpenRouter's endpoint feed. Pricing across both paths goes
-# through the same `cost × 1.10, $0.01/M floor` formula.
+# through the same `cost × 1.05, $0.01/M floor` formula.
 MODELS.update(_INGESTED_MODELS)
 for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
     MODELS.setdefault(_model_id, _model)

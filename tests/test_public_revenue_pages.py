@@ -82,6 +82,27 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         assert slash_response.status_code == 200
 
 
+def test_public_pricing_matches_five_percent_billing_policy(client: TestClient) -> None:
+    pricing = client.get("/pricing")
+    assert pricing.status_code == 200
+    assert "provider cost + 5%" in pricing.text
+    assert "Cheaper. Smarter. More reliable. More secure." in pricing.text
+    assert "5.5% pay as you go fee on credit purchases" in pricing.text
+    assert 'href="https://openrouter.ai/pricing"' in pricing.text
+    assert "10% markup" not in pricing.text
+
+    comparison = client.get("/compare/openrouter")
+    assert comparison.status_code == 200
+    assert "5% on prepaid model cost" in comparison.text
+    assert "5.5% on credit purchases" in comparison.text
+    assert "Provider cost + 5% markup" in comparison.text
+    assert "10% markup" not in comparison.text
+
+    llms = client.get("/llms.txt")
+    assert llms.status_code == 200
+    assert "Prepaid pricing is provider cost + 5%" in llms.text
+
+
 def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> None:
     for path in ["/", "/docs", "/docs/agent-setup"]:
         response = client.get(path)

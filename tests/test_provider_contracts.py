@@ -639,7 +639,7 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
         "accounts/fireworks/models/gpt-oss-120b"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        165_000
+        157_500
     }
 
 
@@ -652,7 +652,7 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
         "accounts/fireworks/routers/glm-5p2-fast"
     }
     assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
-        3_080_000
+        2_940_000
     }
 
 

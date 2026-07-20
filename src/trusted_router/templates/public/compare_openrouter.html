@@ -74,6 +74,9 @@ resp = client.chat.completions.create(
     <span>Provider fallback</span><span>Yes</span><span>Yes — across 30+ providers</span>
   </div>
   <div class="matrix-row">
+    <span>Platform charge</span><span><a href="https://openrouter.ai/pricing">5.5% on credit purchases</a></span><span>5% on prepaid model cost</span>
+  </div>
+  <div class="matrix-row">
     <span>Status SLOs</span><span>Public status page</span><span>Public 99.99% SLO + 30-day burn rates</span>
   </div>
   <div class="matrix-row">
@@ -120,7 +123,7 @@ curl -s "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE" \
   <div>
     <p><strong>Do my existing keys work?</strong> No — TR keys are a different prefix (<span class="mono">sk-tr-v1-…</span>). Issuance takes 30 seconds after sign-up.</p>
     <p><strong>Same model catalog?</strong> Yes — every OpenRouter model id resolves on TR, plus 30+ providers including DeepSeek, Kimi, MiniMax, GLM, and Together.</p>
-    <p><strong>Pricing?</strong> Provider cost + 10% markup, $0.01/M floor. Published per-model on every catalog page. No hidden margin on inference.</p>
+    <p><strong>Pricing?</strong> Provider cost + 5% markup, with a $0.01/M floor. That is a lower percentage than OpenRouter's published <a href="https://openrouter.ai/pricing">5.5% fee on credit purchases</a>. Exact customer prices are published on every model page.</p>
     <p><strong>BYOK?</strong> Yes — bring your own provider keys for billing isolation. Routing code stays attested.</p>
     <p><strong>Self-host?</strong> The full control plane and gateway are source-available (BUSL-1.1) — read, build, and verify every line; the attestation story works because the image hash you build is the hash the enclave reports. Production self-hosting runs under a commercial license.</p>
     <p><strong>Why build this?</strong> The full argument is in the essay <a href="https://jperla.com/blog/attestation-is-all-you-need">&ldquo;Attestation is All You Need&rdquo;</a>.</p>
