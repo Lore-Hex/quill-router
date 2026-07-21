@@ -1,0 +1,40 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="LLM failover and provider fallback">
+  <div class="marketing-copy">
+    <span class="eyebrow">LLM failover &amp; fallback API</span>
+    <h2>Your uptime should not depend on one provider's status page.</h2>
+    <p>TrustedRouter is an OpenAI-compatible API with automatic LLM failover built in. When a provider goes down, requests roll over to a healthy route. No code change, no config push, no incident channel at 3 a.m. Your users keep getting answers.</p>
+    <p>One key fronts 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, Llama, Mistral, and more. Pin an exact model, or send traffic to <code>trustedrouter/auto</code> and let the gateway pick the best fit per request. Migration is a one-line change: point <code>base_url</code> at <code>{{ api_base_url }}</code> and keep your SDK, your model ids, and your code.</p>
+    <p><a class="btn primary" href="/choose">Browse 220+ routes</a> <a class="btn" href="/llm-provider-latency-benchmarks">See measured latency</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>failover.py</span><span>Python</span></div>
+    <pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+# Provider down? The request rolls over. Same code.</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Redundancy</span><h3>Rollover is automatic</h3><p>Outages are a fact of life on a single provider. The gateway handles fallback for you: when a provider is down, traffic moves to one that is up. There are no retry trees or fallback chains to maintain in your application.</p></div>
+  <div class="marketing-card"><span class="card-label">Migration</span><h3>Change base_url, keep the rest</h3><p>The API is OpenAI-compatible. Swap the base URL and keep your SDK, your model ids, and your existing code.</p></div>
+  <div class="marketing-card"><span class="card-label">Evidence</span><h3>Latency you can look up</h3><p>A failover plan should rest on data. TrustedRouter publishes <a href="/llm-provider-latency-benchmarks">measured latency from real routed requests</a>, per provider, so you can see how the alternate routes perform before an outage forces the question.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verifiable privacy</span><h2>Failover should not mean spraying prompts across the internet.</h2></div>
+  <div>
+    <p>Multi-provider redundancy has a cost: every fallback hop is another party that could see your data. TrustedRouter's prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and the attestation binds to the live TLS session, so you can <a href="/security">check it yourself</a>. TrustedRouter does not store prompt or output content by default. Every route carries a privacy tier: Open, <a href="/llm-zero-data-retention">Zero-Data-Retention</a>, or TEE, where even the serving provider cannot read the prompt. Attestation beats a privacy policy.</p>
+    <p>This holds at production scale. A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Start with prepaid credits, bring your own provider keys, or pay per request with crypto. Per-model rates are at <a href="/pricing">/pricing</a>. Try any route in the <a href="/chat">playground</a> first.</p>
+  </div>
+</section>
+{% endblock %}

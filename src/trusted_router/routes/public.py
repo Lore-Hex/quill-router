@@ -379,6 +379,94 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     # self-contained sales surface (see PUBLIC_PAGES in dashboard.py).
     # Keep these top-level (not under /seo or /landing) — that hurts
     # ranking and looks defensive.
+    @public_html_route("/azure-openai-alternative")
+    async def seo_azure_openai_alternative() -> str:
+        return public_page_html(settings, "azure-openai-alternative")
+
+    @public_html_route("/deepseek-api-privacy")
+    async def seo_deepseek_api_privacy() -> str:
+        return public_page_html(settings, "deepseek-api-privacy")
+
+    @public_html_route("/glm-5-api")
+    async def seo_glm_5_api() -> str:
+        return public_page_html(settings, "glm-5-api")
+
+    @public_html_route("/gdpr-compliant-llm-api")
+    async def seo_gdpr_compliant_llm_api() -> str:
+        return public_page_html(settings, "gdpr-compliant-llm-api")
+
+    @public_html_route("/chinese-ai-models-us-hosted")
+    async def seo_chinese_ai_models_us_hosted() -> str:
+        return public_page_html(settings, "chinese-ai-models-us-hosted")
+
+    @public_html_route("/minimax-m3-api")
+    async def seo_minimax_m3_api() -> str:
+        return public_page_html(settings, "minimax-m3-api")
+
+    @public_html_route("/best-llm-router")
+    async def seo_best_llm_router() -> str:
+        return public_page_html(settings, "best-llm-router")
+
+    @public_html_route("/llm-failover")
+    async def seo_llm_failover() -> str:
+        return public_page_html(settings, "llm-failover")
+
+    @public_html_route("/groq-alternative")
+    async def seo_groq_alternative() -> str:
+        return public_page_html(settings, "groq-alternative")
+
+    @public_html_route("/vertex-ai-alternative")
+    async def seo_vertex_ai_alternative() -> str:
+        return public_page_html(settings, "vertex-ai-alternative")
+
+    @public_html_route("/llm-api-for-financial-services")
+    async def seo_llm_api_for_financial_services() -> str:
+        return public_page_html(settings, "llm-api-for-financial-services")
+
+    @public_html_route("/llm-api-for-law-firms")
+    async def seo_llm_api_for_law_firms() -> str:
+        return public_page_html(settings, "llm-api-for-law-firms")
+
+    @public_html_route("/llm-data-residency")
+    async def seo_llm_data_residency() -> str:
+        return public_page_html(settings, "llm-data-residency")
+
+    @public_html_route("/no-log-llm-api")
+    async def seo_no_log_llm_api() -> str:
+        return public_page_html(settings, "no-log-llm-api")
+
+    @public_html_route("/anonymous-llm-api")
+    async def seo_anonymous_llm_api() -> str:
+        return public_page_html(settings, "anonymous-llm-api")
+
+    @public_html_route("/cline-api-provider")
+    async def seo_cline_api_provider() -> str:
+        return public_page_html(settings, "cline-api-provider")
+
+    @public_html_route("/sillytavern-api")
+    async def seo_sillytavern_api() -> str:
+        return public_page_html(settings, "sillytavern-api")
+
+    @public_html_route("/aws-bedrock-alternative")
+    async def seo_aws_bedrock_alternative() -> str:
+        return public_page_html(settings, "aws-bedrock-alternative")
+
+    @public_html_route("/llm-document-processing")
+    async def seo_llm_document_processing() -> str:
+        return public_page_html(settings, "llm-document-processing")
+
+    @public_html_route("/gpt-oss-120b-api")
+    async def seo_gpt_oss_120b_api() -> str:
+        return public_page_html(settings, "gpt-oss-120b-api")
+
+    @public_html_route("/eu-ai-act-llm-compliance")
+    async def seo_eu_ai_act_llm_compliance() -> str:
+        return public_page_html(settings, "eu-ai-act-llm-compliance")
+
+    @public_html_route("/x402-llm-api")
+    async def seo_x402_llm_api() -> str:
+        return public_page_html(settings, "x402-llm-api")
+
     @public_html_route("/openrouter-alternative")
     async def seo_openrouter_alternative() -> str:
         return public_page_html(settings, "openrouter-alternative")

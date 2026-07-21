@@ -1,0 +1,48 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="MiniMax M3 hosted API">
+  <div class="marketing-copy">
+    <span class="eyebrow">MiniMax M3 API</span>
+    <h2>MiniMax M3 on attested hardware, with prompts that never reach the model vendor.</h2>
+    <p>M3 is the June 2026 open-weights release that agentic-coding and long-context teams adopted fast. It is a 428B multimodal model. Launch coverage benchmarked it near frontier quality at a fraction of frontier prices, and within weeks it was top-5 by token share on OpenRouter. Self-hosting 428B parameters is impractical for most teams, and only a handful of providers host it.</p>
+    <p>TrustedRouter serves <code>minimax/minimax-m3</code> through an OpenAI-compatible API. Point your SDK at a new base_url and keep your code. Routes carry Zero-Data-Retention and TEE privacy tiers, served by non-Chinese hosting providers on attested infrastructure. One licensing note: M3 ships under the MiniMax Community License, open weights but not MIT or Apache.</p>
+    <p><a class="btn primary" href="/chat">Try M3 in the playground</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>minimax_m3.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TRUSTEDROUTER_API_KEY,
+)
+
+resp = client.chat.completions.create(
+    model="minimax/minimax-m3",
+    messages=[{"role": "user",
+               "content": "Plan the refactor of this repo."}],
+)
+print(resp.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>ZDR and TEE routes</h3><p>Pick Zero-Data-Retention routes, where providers contractually keep nothing, or TEE routes, where even the provider cannot read your prompt. TrustedRouter does not store prompt or output content by default. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Providers</span><h3>Fallback across M3 providers</h3><p>Few providers host MiniMax M3. TrustedRouter routes across them and rolls over automatically when one goes down. Latency is measured from real routed requests and published at <a href="/llm-provider-latency-benchmarks">/llm-provider-latency-benchmarks</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Pricing</span><h3>Per-model pricing, thin markup</h3><p>Every M3 route is priced per model at <a href="/pricing">/pricing</a>, a thin markup over provider list prices. Pay with prepaid credits, bring your own key, or pay per request with x402. MetaMask sign-in works without a traditional account.</p></div>
+</section>
+<section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Catalog</span><span>Broad multi-provider catalog; M3 is top-5 there by token share</span><span>220+ routes across 30+ providers, M3 included</span></div>
+  <div class="matrix-row"><span>Privacy model</span><span>Policy-based</span><span>Hardware attestation you can check live against an open-source gateway</span></div>
+  <div class="matrix-row"><span>Privacy tiers</span><span>Set by provider policy</span><span>Open, Zero-Data-Retention, or TEE per route</span></div>
+  <div class="matrix-row"><span>API</span><span>OpenAI-compatible</span><span>OpenAI-compatible; migrate by changing base_url</span></div>
+  <div class="matrix-row"><span>Payments</span><span>Prepaid credits</span><span>Credits, BYOK, x402 pay-per-request, MetaMask sign-in</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Attestation beats a privacy policy.</h2></div>
+  <div>
+    <p>Every M3 prompt runs inside a hardware-attested confidential-compute gateway. The gateway source is open and the image digest is published. Ask it to prove itself: <code>curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"</code> returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. See <a href="/security">/security</a>.</p>
+    <p>Routing path matters for Chinese open weights. In our GLM test, the same weights answered 60 of 60 sensitive questions through the enclave versus 30 of 60 via the vendor-hosted API. The filtering is host-applied, not in the weights. One proof point on scale: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Also on the roster: Kimi K2.7, among 220+ model routes across 30+ providers.</p>
+  </div>
+</section>
+{% endblock %}

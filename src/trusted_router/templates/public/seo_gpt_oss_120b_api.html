@@ -1,0 +1,37 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="gpt-oss-120b API on TrustedRouter">
+  <div class="marketing-copy">
+    <span class="eyebrow">gpt-oss-120b API</span>
+    <h2>gpt-oss-120b, served fast on Cerebras and attested down to the image digest.</h2>
+    <p>gpt-oss-120b is OpenAI's open-weight model, and the list of providers selling API access to it keeps growing. Comparison sites rank every host on price and speed. TrustedRouter competes on both, then adds the axis those tables leave out: proof of where your prompt runs and who can read it.</p>
+    <p>You get two routes. <code>openai/gpt-oss-120b</code> for standard serving, and <code>cerebras/gpt-oss-120b</code>, a fast route for latency-sensitive work. Both sit behind one OpenAI-compatible endpoint: point <code>base_url</code> at the gateway, keep your SDK, your model ids, and your code. Measured latency from real routed requests is published on the <a href="/llm-provider-latency-benchmarks">latency benchmarks page</a>, so the speed claim comes with numbers you can inspect.</p>
+    <p><a class="btn primary" href="/chat">Try gpt-oss-120b in the playground</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Change one line</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="YOUR_TRUSTEDROUTER_KEY",
+)
+
+resp = client.chat.completions.create(
+    model="cerebras/gpt-oss-120b",
+    messages=[{"role": "user",
+               "content": "Summarize this filing."}],
+)
+print(resp.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Speed</span><h3>A fast route with published numbers</h3><p>The <code>cerebras/gpt-oss-120b</code> route exists for one reason: latency. When a provider goes down, automatic fallback rolls your request to another route. The data on the <a href="/llm-provider-latency-benchmarks">latency benchmarks page</a> comes from real routed requests, so what you compare is what you get in production.</p></div>
+  <div class="marketing-card"><span class="card-label">Verifiable privacy</span><h3>Attestation you can check live</h3><p>The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session. TrustedRouter does not store prompt or output content by default. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Compliance</span><h3>HIPAA-ready architecture, stated plainly</h3><p>TrustedRouter publishes <a href="/legal/hipaa-readiness">HIPAA readiness</a> documentation, a <a href="/legal/baa">BAA</a>, a <a href="/legal/dpa">DPA</a>, and a <a href="/legal/subprocessors">subprocessor list</a>, and states plainly that readiness documentation is not an audit report. Your compliance team assesses a verifiable architecture, with Zero-Data-Retention and TEE privacy tiers available on this model.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Pricing and reliability</span><h2>Pick the route. Keep the fallback.</h2></div>
+  <div><p>Pricing is per model and published at <a href="/pricing">/pricing</a>, a thin markup over provider list prices. Pay with prepaid credits, bring your own provider key, or use x402 pay-per-request with MetaMask wallet sign-in. When a provider degrades, requests roll over automatically, so a single host's bad day never becomes your outage.</p><p>The architecture holds up under load: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Weigh gpt-oss-120b against every other route at <a href="/choose">/choose</a>. Privacy you can check beats privacy you're promised.</p></div>
+</section>
+{% endblock %}

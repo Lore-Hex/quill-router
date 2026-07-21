@@ -1,0 +1,46 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="No-log LLM API overview">
+  <div class="marketing-copy">
+    <span class="eyebrow">No-log LLM API</span>
+    <h2>No prompt logs, enforced by code you can read and attestation you can check.</h2>
+    <p>Most no-log claims are a sentence in a privacy policy. TrustedRouter does not store prompt or output content by default. On TEE routes that behavior runs inside a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and a live attestation signed by the CPU vendor's root key is one curl away.</p>
+    <p>The API is OpenAI-compatible. Point base_url at {{ api_base_url }} and keep your SDK, your model ids, and your code. You get 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, and GLM, with automatic rollover when a provider goes down.</p>
+    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/chat">Open the playground</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Verify the gateway first</span><span>bash</span></div>
+    <pre><code>NONCE=$(openssl rand -hex 16)
+curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+# Returns a JWT signed by the CPU vendor's root key.
+# image_digest must match the published open-source build.</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card">
+    <span class="card-label">Default behavior</span>
+    <h3>Content is not stored</h3>
+    <p>TrustedRouter does not store prompt or output content by default. Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. The no-storage claim covers what you send and what the model says back.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Privacy tiers</span>
+    <h3>Three kinds of no-log, labeled per route</h3>
+    <p>Open routes run through the attested gateway to any provider. Zero-Data-Retention routes add providers contractually bound to keep nothing; they rely on the provider honoring that contract. TEE routes run end-to-end in confidential compute, where even the provider cannot read your prompt. Full breakdown at <a href="/llm-zero-data-retention">zero data retention</a>.</p>
+  </div>
+  <div class="marketing-card">
+    <span class="card-label">Access</span>
+    <h3>Anonymous-friendly access</h3>
+    <p>Prepaid credits via Stripe, bring your own provider key, or pay per request with x402. Continue with MetaMask signs you in with a wallet and works without a traditional account. Built to be friendly to pseudonymous use; we do not promise anonymity.</p>
+  </div>
+</section>
+<section class="quote-feature">
+  <div>
+    <span class="eyebrow">The thesis</span>
+    <h2>Attestation beats a privacy policy.</h2>
+  </div>
+  <div>
+    <p>Roleplay chats, character cards, journals, drafts: the text people send to an LLM API is personal. The standard advice for no-log inference is to run models locally, which caps you at whatever your hardware can hold. TrustedRouter's answer is a gateway you can inspect: open source, a published image digest, and attestation bound to the live TLS session so nothing can be replayed at you.</p>
+    <p>The catalog holds up its end. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure with ZDR and TEE tiers, so you get frontier Chinese open-weights without sending your data to the model vendor. Pick a route with the <a href="/choose">model chooser</a>, compare latency measured from real routed requests at the <a href="/llm-provider-latency-benchmarks">latency benchmarks</a>, and see per-model rates at <a href="/pricing">pricing</a>.</p>
+  </div>
+</section>
+{% endblock %}

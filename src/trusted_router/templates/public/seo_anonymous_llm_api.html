@@ -1,0 +1,31 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Anonymous-friendly LLM API with crypto payment">
+  <div class="marketing-copy">
+    <span class="eyebrow">Anonymous LLM API</span>
+    <h2>Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify for yourself that prompts are not stored.</h2>
+    <p>Most model APIs want a card and an identity before the first token. TrustedRouter works without a credit card: pay for the LLM API with crypto per request via x402, or sign in with Continue with MetaMask, which needs no traditional account. Prepaid Stripe credits and BYOK exist too, for the days you want a receipt.</p>
+    <p>Payment is half the problem. The other half is what happens to your prompts. TrustedRouter does not store prompt or output content by default, and you can check that claim rather than take it on faith: the prompt path runs inside a hardware-attested confidential-compute gateway, the source is open, and the attestation is checkable live at <a href="/security">/security</a>.</p>
+    <p><a class="btn primary" href="/pricing">See per-model pricing</a> <a class="btn" href="/chat">Open the playground</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>wallet-funded request</span><span>curl</span></div>
+    <pre><code>curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "trustedrouter/auto",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Payments</span><h3>Wallet in, tokens out</h3><p>x402 pay-per-request for agents and scripts. Continue with MetaMask for interactive use, no traditional account needed. There is no credit card and no KYC step for wallet-funded usage. Pricing is per model, a thin markup over provider list prices, at <a href="/pricing">/pricing</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Verification</span><h3>Attestation beats a privacy policy</h3><p>The gateway runs in a TEE. Its source is open, its image digest is published, and a live attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your TLS session. Privacy you can check beats privacy you're promised. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Models</span><h3>220+ routes, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral and more, plus meta-routes like trustedrouter/auto and trustedrouter/cheap. Every route carries a privacy tier: Open, Zero-Data-Retention, or TEE. Pick a route at <a href="/choose">/choose</a>.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">The fine print, stated plainly</span><h2>Crypto payments are pseudonymous. We say so up front.</h2></div>
+  <div><p>Anonymous-friendly is the accurate phrase. A wallet spares you the card and the KYC form, but blockchain payments are pseudonymous, not untraceable, and we will not promise anonymity we cannot deliver. Plenty of services in this space make the bigger claim and ask you to trust it.</p><p>What we can deliver is verifiable: no prompt or output content stored by default, Zero-Data-Retention tiers where providers contractually keep nothing, TEE tiers where even the serving provider cannot read your prompt, and an attestation you can fetch live and check against the published image digest. If retention is your main concern, start at <a href="/no-log-llm-api">/no-log-llm-api</a>; for wiring x402 payments into an agent, see <a href="/x402-llm-api">/x402-llm-api</a>.</p></div>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="TrustedRouter as a Cline and Roo Code API provider">
+  <div class="marketing-copy">
+    <span class="eyebrow">Cline and Roo Code API provider</span>
+    <h2>Your coding agent streams your entire repo through its API provider, so pick one you can verify.</h2>
+    <p>Cline and Roo Code both speak the OpenAI-compatible protocol, which makes TrustedRouter a three-field setup: base URL, API key, model id. That buys you 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, and Qwen 3.5, with automatic fallback to another provider when one goes down.</p>
+    <p>Privacy matters more for agents than for chat. Every agent turn ships file contents, diffs, and terminal output upstream. TrustedRouter does not store prompt or output content by default, and the prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose attestation you can check live.</p>
+    <p><a class="btn primary" href="/pricing">See per-model pricing</a> <a class="btn" href="/choose">Pick a model route</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Cline &rarr; Settings &rarr; API Provider</span><span>bash</span></div>
+    <pre><code># Choose "OpenAI Compatible" in Cline or Roo Code, then paste:
+#   Base URL:  {{ api_base_url }}
+#   API key:   your TrustedRouter key
+#   Model ID:  trustedrouter/cheap
+
+# Sanity check from a terminal:
+curl {{ api_base_url }}/chat/completions \
+  -H "Authorization: Bearer $TRUSTEDROUTER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"trustedrouter/cheap","messages":[{"role":"user","content":"ping"}]}'</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Cost</span><h3>Agent loops burn tokens</h3><p>An agent reads files, retries edits, and reruns tests, so its token volume dwarfs chat usage. Route to <code>trustedrouter/cheap</code> and it picks the cheapest capable route, inside a TEE. Pricing is a thin markup over provider list prices, listed per model at <a href="/pricing">/pricing</a>. The smart-cheap-fast chooser at <a href="/choose">/choose</a> helps you commit to a fixed route instead.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy</span><h3>Attestation beats a privacy policy</h3><p>The prompt path runs through an open-source, hardware-attested gateway. The image digest is published, the attestation JWT is signed by the CPU vendor's root key, and it binds to your live TLS session, so it cannot be replayed. Routes carry privacy tiers: Open, Zero-Data-Retention, or full TEE, where even the provider cannot read the prompt. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Models</span><h3>Chinese open weights, without the vendor</h3><p>DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure, with ZDR and TEE tiers available. Your codebase does not go to the model vendor. One finding from our own testing: the same GLM weights answered 60/60 sensitive questions through our enclave versus 30/60 via the vendor-hosted API. The filtering is host-applied.</p></div>
+</section>
+<section class="compare-matrix" aria-label="OpenRouter vs TrustedRouter for coding agents">
+  <div class="matrix-row matrix-head"><span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Cline / Roo Code setup</span><span>OpenAI-compatible, paste and go</span><span>The same: base URL, key, model id</span></div>
+  <div class="matrix-row"><span>Catalog</span><span>Very large catalog, wide ecosystem, well documented</span><span>220+ routes across 30+ providers</span></div>
+  <div class="matrix-row"><span>Prompt handling</span><span>Defined by policy and per-provider settings</span><span>No prompt or output storage by default</span></div>
+  <div class="matrix-row"><span>Proof</span><span>You read the policy</span><span>You check a live attestation: signed JWT, published image digest, open-source gateway</span></div>
+  <div class="matrix-row"><span>Privacy tiers</span><span>Varies by provider</span><span>Open / Zero-Data-Retention / TEE, labeled per route</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Check the gateway yourself before your agent sends a single file.</h2></div>
+  <div><p>Run <code>curl</code> against the attestation endpoint with a nonce and you get back a JWT signed by the CPU vendor's root key. The image digest matches the published open-source artifact, and the attestation binds to your live TLS session. Privacy you can check beats privacy you're promised. The full procedure is at <a href="/security">/security</a>.</p><p>The gateway handles agent-scale volume: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Pay with prepaid credits, bring your own provider key, or use x402 pay-per-request with MetaMask sign-in.</p></div>
+</section>
+{% endblock %}

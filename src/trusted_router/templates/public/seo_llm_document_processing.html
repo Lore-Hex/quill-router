@@ -1,0 +1,38 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Private LLM API for document processing">
+  <div class="marketing-copy">
+    <span class="eyebrow">Document processing LLM API</span>
+    <h2>You do not need on-prem inference to keep your documents private.</h2>
+    <p>Teams building pipelines over contracts, medical records, and invoices hit the same wall: the models are capable, but sending regulated documents to an opaque cloud endpoint stalls at security review. TrustedRouter is a document extraction API for LLM workloads with privacy you can check. Every prompt runs through an open-source, hardware-attested confidential-compute gateway, and TrustedRouter does not store prompt or output content by default. Fetch the attestation yourself; the image digest matches the published build.</p>
+    <p>The API is OpenAI-compatible. Change base_url to {{ api_base_url }}, keep your SDK, your model ids, and your extraction prompts. Structured data extraction, classification, and summarization over parsed PDFs run on the same code you have today, across <a href="/choose">220+ model routes</a> from 30+ providers, with automatic fallback when a provider goes down.</p>
+    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/security">Verify the attestation</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>extract_invoice.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(base_url="{{ api_base_url }}",
+                api_key=key)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[
+        {"role": "system",
+         "content": "Extract vendor, date, line_items, total as JSON."},
+        {"role": "user", "content": invoice_text},
+    ],
+)
+print(resp.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Verifiable privacy</span><h3>Attestation you can fetch</h3><p>The prompt path runs inside a TEE. One curl to the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed, with an image digest matching the published open-source gateway. Attestation beats a privacy policy.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Open, ZDR, or TEE per route</h3><p>Choose the tier each pipeline needs: Open routes on attested infrastructure, Zero-Data-Retention routes where providers contractually keep nothing, or TEE routes where even the serving provider cannot read the document. That is a private document AI setup without racking GPUs. See <a href="/llm-zero-data-retention">zero-data-retention routes</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Compliance paperwork</span><h3>What your reviewers will ask for</h3><p>Verifiable architecture plus readiness documentation your compliance team can assess: <a href="/legal/soc2-readiness">SOC 2 readiness</a>, <a href="/legal/hipaa-readiness">HIPAA readiness</a>, a <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, and a current <a href="/legal/subprocessors">subprocessor list</a>. Healthcare document pipelines can start at the <a href="/hipaa-llm-api">HIPAA LLM API</a> page.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">The layer under your parser</span><h2>Bring your parser. Swap the inference underneath.</h2></div>
+  <div><p>TrustedRouter serves inference, and only inference. Keep Unstract, LlamaParse, or your own OCR and chunking stack, and send the parsed text through the API for LLM PDF data extraction. Routing, per-model <a href="/pricing">pricing</a>, and <a href="/llm-provider-latency-benchmarks">latency measured from real routed requests</a> are public, so you can pick routes for a batch job with data rather than guesswork, or let trustedrouter/auto pick per request.</p><p>One anonymized data point: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. No architecture change, no on-prem buildout. Privacy you can check beats privacy you're promised.</p></div>
+</section>
+{% endblock %}

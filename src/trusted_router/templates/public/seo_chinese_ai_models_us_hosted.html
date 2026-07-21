@@ -1,0 +1,46 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="US-hosted Chinese open-weight model APIs">
+  <div class="marketing-copy">
+    <span class="eyebrow">Qwen, GLM, Kimi and DeepSeek without the vendor endpoint</span>
+    <h2>Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure that never forwards a prompt to the model vendor.</h2>
+    <p>Your benchmarks already picked these models. GLM-5.2, Qwen 3.5, Kimi K2.7, and DeepSeek V4 Pro all run as routes here, alongside MiniMax M3. Then legal asks where the API traffic goes. A vendor-hosted endpoint sends every prompt to the model vendor's servers, and self-hosting the weights means running your own GPUs.</p>
+    <p>There is a middle path. TrustedRouter serves the same open weights via non-Chinese hosting providers inside a hardware-attested confidential-compute gateway, with Zero-Data-Retention and TEE tiers per route. TrustedRouter does not store prompt or output content by default. The API is OpenAI-compatible, and <a href="/eu">EU-focused routing</a> is available.</p>
+    <p><a class="btn primary" href="/models">Browse the model routes</a> <a class="btn" href="/security">Verify the attestation</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>glm_us_hosted.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="sk-tr-...",  # your TrustedRouter key
+)
+
+reply = client.chat.completions.create(
+    model="glm-5.2",  # also: qwen-3.5, kimi-k2.7,
+                      # deepseek-v4-pro
+    messages=[{"role": "user",
+               "content": "Refactor this handler."}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Routing</span><h3>Prompts skip the vendor</h3><p>DeepSeek, Kimi, Qwen, GLM, and MiniMax routes run on attested infrastructure operated by non-Chinese hosting providers. On the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. Kimi users can start at the dedicated <a href="/kimi-k2-api">Kimi K2 API page</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Verification</span><h3>Check it live, per session</h3><p>The gateway source is open, the image digest is published, and the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session. Attestation beats a privacy policy. Details and the curl command are on the <a href="/security">security page</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Scope</span><h3>Hosting fixes residency</h3><p>Routing changes where your data goes. The labs that trained these weights stay the same, so judge the models on quality like any other route. Your prompts stay on attested infrastructure you can verify, without renting GPUs to self-host.</p></div>
+</section>
+<section class="compare-matrix" aria-label="Vendor-hosted APIs vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>Vendor-hosted API (z.ai, Moonshot, Alibaba)</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Model access</span><span>Direct from the lab that trained the model</span><span>220+ routes across 30+ providers behind one API</span></div>
+  <div class="matrix-row"><span>Where prompts go</span><span>The vendor's own servers</span><span>Non-Chinese attested hosts; prompts never reach the vendor</span></div>
+  <div class="matrix-row"><span>Retention</span><span>Set by each vendor's policy</span><span>No prompt or output content stored by default; ZDR routes contractually keep nothing</span></div>
+  <div class="matrix-row"><span>Verification</span><span>A privacy policy you read and trust</span><span>Live attestation: a CPU-vendor-signed JWT bound to your TLS session</span></div>
+  <div class="matrix-row"><span>Sensitive questions</span><span>GLM answered 30 of 60 on our test set</span><span>Same weights answered 60 of 60 through the enclave</span></div>
+  <div class="matrix-row"><span>Pricing</span><span>First-party list prices</span><span>Thin markup over provider list prices; see <a href="/pricing">pricing</a></span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Host-applied filtering, measured</span><h2>Same weights, different host, different answers.</h2></div>
+  <div><p>We ran 60 sensitive questions against the same GLM weights through two doors. The vendor-hosted API answered 30 of 60. TrustedRouter's attested enclave answered 60 of 60. That filtering is host-applied: it lives in the serving stack rather than in the weights you benchmarked.</p><p>Where a model is hosted decides what leaves your building and what comes back. Privacy you can check beats privacy you're promised. A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Pick a route in the <a href="/choose">model chooser</a>, or open the <a href="/chat">playground</a> and test your own prompts against a US-hosted GLM, Qwen, Kimi, or DeepSeek route right now.</p></div>
+</section>
+{% endblock %}

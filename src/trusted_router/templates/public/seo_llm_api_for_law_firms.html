@@ -1,0 +1,37 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="LLM API for law firms and legal tech">
+  <div class="marketing-copy">
+    <span class="eyebrow">LLM API for law firms and legal tech</span>
+    <h2>When the gateway operator provably cannot read the prompt, your privilege analysis starts from different facts.</h2>
+    <p>Legaltech products and law-firm AI pilots stall on the same question: can client documents go to a third-party API without breaching confidentiality duties or risking privilege waiver by disclosure? Most vendors answer with a privacy policy. TrustedRouter answers with hardware. The prompt path runs inside a hardware-attested confidential-compute gateway, the gateway source is open, the image digest is published, and the attestation is checkable live, bound to your TLS session so it cannot be replayed.</p>
+    <p>TrustedRouter does not store prompt or output content by default. None of this decides the privilege question; that call belongs to your ethics counsel, and nothing on this page is legal advice. What it gives counsel is a better factual record than a promise: a gateway whose operator provably cannot read the prompt, with evidence your team can re-check on every request. Privacy you can check beats privacy you're promised.</p>
+    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/chat">Try the playground</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>clause_review.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TRUSTEDROUTER_KEY,
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user",
+               "content": "Flag unusual indemnification terms in this clause: ..."}],
+)
+print(resp.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Verify, don't trust</span><h3>Attestation, checkable live</h3><p>A signed attestation ties the running gateway to the published open-source image and to your live TLS session. Anyone on your team can check it before, during, and after a matter. Attestation beats a privacy policy. The exact verification steps are on the <a href="/security">security page</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Open, Zero-Data-Retention, TEE</h3><p>Every route carries a privacy tier. Zero-Data-Retention routes use providers contractually bound to keep nothing. TEE routes run end-to-end confidential compute, where even the serving provider cannot read the prompt. For privileged legal documents, pin your product to <a href="/security">ZDR and TEE routes</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">For your compliance review</span><h3>What your GC will ask for</h3><p>TrustedRouter publishes <a href="/legal/soc2-readiness">SOC 2 readiness</a> and <a href="/legal/hipaa-readiness">HIPAA readiness</a> documentation your compliance team can assess alongside the verifiable architecture. These are readiness documents; they are not audit reports or certifications. A <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, and a <a href="/legal/subprocessors">subprocessor list</a> are available. European teams working under professional-secrecy rules such as §203 StGB can route through the <a href="/eu">EU gateway</a>.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">For legaltech builders</span><h2>Ship document review on an inference layer a firm's ethics counsel can inspect.</h2></div>
+  <div><p>The API is OpenAI-compatible: change base_url, keep your SDK, your model ids, and your code. Behind it sit 220+ model routes across 30+ providers, including Claude, GPT, Gemini, and open-weight models, with automatic provider fallback when a route is down. One anonymized proof point: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding.</p><p>Open-weight routes for DeepSeek, Kimi, Qwen, GLM, and MiniMax are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Pay with prepaid credits, bring your own provider key, or use x402 pay-per-request. Per-model pricing is listed at <a href="/pricing">/pricing</a>, and you can compare routes in the <a href="/choose">model chooser</a>.</p></div>
+</section>
+{% endblock %}
