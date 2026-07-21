@@ -965,7 +965,12 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         assert metadata["open_weights"] is True
 
     inkling = MODELS["thinkingmachines/inkling"]
-    assert inkling.context_length == 1_048_576
+    # Inkling's serverless hosts currently advertise different verified
+    # windows (256K, 512K, and 1M). The canonical row follows the largest live
+    # routed endpoint, so an hourly availability refresh may legitimately move
+    # it within this range. It must still satisfy Liberty 1.0's 256K contract
+    # and must never overstate the largest verified 1M route.
+    assert 262_144 <= inkling.context_length <= 1_048_576
     assert inkling.provider == "together"
     endpoints = endpoints_for_model(inkling.id)
     assert {(endpoint.provider, endpoint.upstream_id) for endpoint in endpoints} == {
@@ -1426,7 +1431,10 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
         assert {endpoint.upstream_id for endpoint in credits} == {upstream}
 
     pro = MODELS["xiaomi/mimo-v2.5-pro"]
-    assert pro.context_length == 1_048_576
+    # Xiaomi documents this as a 1M context window. Live catalogs use both the
+    # binary 1,048,576 value and a rounded 1,050,000 value, so guard the public
+    # capability rather than freezing one representation.
+    assert 1_000_000 <= pro.context_length <= 1_050_000
     assert pro.prompt_price_microdollars_per_million_tokens == 456_750
     assert pro.completion_price_microdollars_per_million_tokens == 913_500
 

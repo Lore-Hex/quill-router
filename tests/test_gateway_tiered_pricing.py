@@ -59,7 +59,14 @@ def _tier_cost(
         output_tokens, tier.completion_price_microdollars_per_million_tokens
     )
     if cache_read_tokens or cache_creation_tokens:
-        read_price, write_price = cache_token_prices_microdollars(endpoint.provider, prompt_price)
+        default_read_price, write_price = cache_token_prices_microdollars(
+            endpoint.provider, prompt_price
+        )
+        read_price = (
+            tier.prompt_cached_price_microdollars_per_million_tokens
+            if tier.prompt_cached_price_microdollars_per_million_tokens is not None
+            else default_read_price
+        )
         cost += token_cost_microdollars(cache_read_tokens, read_price)
         cost += token_cost_microdollars(cache_creation_tokens, write_price)
     return cost
