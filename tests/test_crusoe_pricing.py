@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts.pricing.manifest import set_manifest_canary_state
 from scripts.pricing.providers import crusoe
 
 
@@ -80,3 +86,66 @@ def test_crusoe_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # n
         crusoe.UPSTREAM_ID_MAP["deepseek/deepseek-v4-flash"]
         == "deepseek-ai/Deepseek-V4-Flash"
     )
+
+
+def test_crusoe_auth_failure_darks_routes_until_key_is_repaired(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "crusoe.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "crusoe",
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai/GLM-5.2",
+                        "endpoints": ["chat/completions"],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class AuthFailureResponse:
+        status_code = 403
+
+        def raise_for_status(self) -> None:
+            raise AssertionError("auth failure must be handled before raise_for_status")
+
+        def json(self) -> dict:
+            return {"errors": ["Authentication failed"]}
+
+    class AuthFailureClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> AuthFailureClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> AuthFailureResponse:  # noqa: ANN002, ANN003
+            return AuthFailureResponse()
+
+    monkeypatch.setattr(crusoe, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(crusoe.httpx, "Client", AuthFailureClient)
+
+    result = crusoe.fetch()
+    notes = crusoe.write_provider_manifest(result)
+
+    row = json.loads(manifest_path.read_text(encoding="utf-8"))["models"][0]
+    assert result.source == "api_auth_failed"
+    assert result.prices == {}
+    assert row["routable"] is False
+    assert row["routable_reason"] == "provider-canary-failed"
+    assert "routes remain dark" in notes[0]
+
+    set_manifest_canary_state(manifest_path, healthy=True)
+    restored = json.loads(manifest_path.read_text(encoding="utf-8"))["models"][0]
+    assert "routable" not in restored
+    assert "routable_reason" not in restored

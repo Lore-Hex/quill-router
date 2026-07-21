@@ -1024,6 +1024,10 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     ] == len(open_weight_rows)
     providers = client.get("/v1/providers").json()["data"]
     provider_flags = {provider["id"]: provider for provider in providers}
+    assert all(
+        not provider["provider_zero_data_retention"] or provider["stores_content"] is False
+        for provider in providers
+    )
     assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]
     assert {
         "anthropic",
@@ -1047,6 +1051,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["phala"]["provider_confidential_compute"] is True
     assert provider_flags["anthropic"]["provider_zero_data_retention"] is False
     assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
+    assert provider_flags["cerebras"]["stores_content"] is False
     assert provider_flags["together"]["provider_zero_data_retention"] is True
     assert provider_flags["nebius"]["provider_zero_data_retention"] is True
     assert provider_flags["parasail"]["provider_zero_data_retention"] is True
@@ -1054,8 +1059,9 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     # Venice runs TEE + E2EE inference — it's confidential, not merely no-logs.
     assert provider_flags["venice"]["provider_confidential_compute"] is True
     assert provider_flags["venice"]["provider_e2ee"] is True
-    # DeepInfra is memory-only / no-training — earns ZDR with a citation.
-    assert provider_flags["deepinfra"]["provider_zero_data_retention"] is True
+    # DeepInfra is normally memory-only, but reserves limited content logging
+    # for debugging/security and therefore must not satisfy strict ZDR routing.
+    assert provider_flags["deepinfra"]["provider_zero_data_retention"] is False
     assert provider_flags["openai"]["provider_zero_data_retention"] is False
     assert provider_flags["openai"]["prepaid_zero_data_retention"] is False
     assert provider_flags["openai"]["prepaid_zero_data_retention_effective_on"] == ("2026-07-28")
@@ -1082,6 +1088,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "tinfoil": "https://tinfoil.sh/security-and-privacy-faq",
         "venice": "https://docs.venice.ai/overview/privacy",
         "anthropic": "https://platform.claude.com/docs/en/api/data-retention",
+        "cerebras": "https://inference-docs.cerebras.ai/capabilities/prompt-caching",
         "together": "https://docs.together.ai/docs/privacy-and-security",
         "deepinfra": "https://docs.deepinfra.com/account/data-privacy",
         "nebius": "https://docs.studio.nebius.com/legal/legal-quick-guide",
@@ -1108,7 +1115,6 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert {
         "trustedrouter",
         "cerebras",
-        "deepinfra",
         "nebius",
         "parasail",
         "phala",

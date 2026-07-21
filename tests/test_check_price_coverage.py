@@ -49,6 +49,15 @@ def test_audit_reports_embedding_provider_scrapers_as_covered() -> None:
     assert any("openai" in i for i in info), info
 
 
+def test_shared_gemini_scraper_covers_ai_studio_and_vertex() -> None:
+    now = dt.datetime(2026, 6, 7, tzinfo=dt.UTC)
+    warnings, info = audit(max_age_days=14, now=now, check_model_discovery=False)
+
+    assert not any("google-vertex: NO price source" in warning for warning in warnings)
+    assert "google-ai-studio: live scraper ✓" in info
+    assert "google-vertex: live scraper ✓" in info
+
+
 def test_zai_model_discovery_extracts_glm_ids_from_docs() -> None:
     text = """
     The GLM Coding Plan now supports GLM-5.2.
@@ -85,6 +94,17 @@ def test_kimi_discovery_ignores_unpriced_auto_alias() -> None:
     assert check_price_coverage._kimi_model_id("kimi-k2.7-code") == "moonshotai/kimi-k2.7-code"
 
 
+def test_cerebras_discovery_uses_canonical_ids_and_ignores_unknown_models() -> None:
+    assert check_price_coverage._cerebras_model_id("gpt-oss-120b") == (
+        "openai/gpt-oss-120b"
+    )
+    assert check_price_coverage._cerebras_model_id("zai-glm-4.7") == "z-ai/glm-4.7"
+    assert check_price_coverage._cerebras_model_id("gemma-4-31b") == (
+        "google/gemma-4-31b-it"
+    )
+    assert check_price_coverage._cerebras_model_id("unknown") is None
+
+
 def test_provider_glm_required_gate_targets_current_flagships() -> None:
     assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.2")
     assert check_price_coverage._is_required_provider_glm_model_id("z-ai/glm-5.3")
@@ -104,6 +124,24 @@ def test_model_discovery_warns_when_docs_mention_unpublished_model() -> None:
     assert any(item.startswith("cerebras: model discovery matched catalog") for item in info)
     assert len(warnings) == 1
     assert "z-ai/glm-5.2" in warnings[0]
+
+
+def test_zai_fetch_failure_does_not_skip_other_provider_discovery() -> None:
+    warnings, info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: (_ for _ in ()).throw(OSError("temporary DNS failure")),
+        fetch_json=_known_provider_model_payload,
+        published_model_ids={
+            "moonshotai/kimi-k2.7-code",
+            "openai/gpt-oss-120b",
+            "google/gemini-3.5-flash",
+            "minimax/minimax-m3",
+            "z-ai/glm-5.2",
+        },
+    )
+
+    assert any(warning.startswith("zai: model discovery fetch failed") for warning in warnings)
+    assert any(item.startswith("cerebras: model discovery matched") for item in info)
+    assert any(item.startswith("kimi: model discovery matched") for item in info)
 
 
 def test_model_discovery_reports_match_when_docs_models_are_published() -> None:

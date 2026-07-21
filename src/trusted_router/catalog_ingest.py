@@ -81,6 +81,62 @@ _INGEST_PATH = Path(__file__).parent / "data" / "openrouter_snapshot.json"
 
 _PROVIDER_MODELS_DIR = Path(__file__).parent / "data" / "provider_models"
 
+# These providers publish authoritative model catalogs. Their generated
+# manifests, rather than OpenRouter's provider inventory, determine which
+# generic provider routes exist for both prepaid and BYOK. This prevents dark,
+# dedicated-only, or retired model IDs from reappearing through the shared
+# snapshot, while each hourly refresh can add a new route without a second
+# hand-maintained Python allowlist.
+_AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
+    {
+        "cerebras",
+        "cloudflare-workers-ai",
+        "crusoe",
+        "friendli",
+        "google-ai-studio",
+        "kimi",
+        "novita",
+        "phala",
+        "together",
+        "wafer",
+    }
+)
+
+
+def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
+    """Return fail-closed route model IDs for an authoritative manifest.
+
+    Explicit embedding specs remain eligible because provider manifests are
+    chat-only. A missing or malformed manifest therefore disables dynamic chat
+    routes without accidentally disabling a separately verified embedding.
+    """
+    allowed = {
+        str(spec["id"])
+        for spec in _EMBEDDING_SPECS
+        if spec.get("provider") == provider_slug
+    }
+    path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return frozenset(allowed)
+    raw_models = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(raw_models, list):
+        return frozenset(allowed)
+    for row in raw_models:
+        if not isinstance(row, dict) or row.get("routable") is False:
+            continue
+        if row.get("model_type") not in (None, "chat"):
+            continue
+        if "chat/completions" not in {
+            str(item) for item in (row.get("endpoints") or [])
+        }:
+            continue
+        model_id = row.get("id")
+        if isinstance(model_id, str) and model_id:
+            allowed.add(model_id)
+    return frozenset(allowed)
+
 _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
@@ -330,26 +386,6 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     ),
     # route-health first sweep 2026-07-18, 100% failure. These ids may be
     # remappable to newer upstream ids — revisit with per-provider manifest hooks.
-    "together": frozenset(
-        {
-            "openai/gpt-oss-120b",
-            "deepseek/deepseek-r1-distill-llama-70b",
-            "qwen/qwen3-vl-8b-instruct",
-            "qwen/qwen2.5-vl-72b-instruct",
-            "mistralai/mistral-small-24b-instruct-2501",
-            "moonshotai/kimi-k2.7-code",
-            # route-health 2026-07-18, 100% failure, upstream 404/400.
-            "z-ai/glm-4.6",
-            "z-ai/glm-4.7",
-            "z-ai/glm-5",
-            "z-ai/glm-5.1",
-            "qwen/qwen3.5-397b-a17b",
-            "qwen/qwen3-next-80b-a3b-instruct",
-            "meta-llama/llama-3.2-3b-instruct",
-            "deepseek/deepseek-r1-0528",
-            "openai/gpt-oss-20b",
-        }
-    ),
     # route-health first sweep 2026-07-18, 100% failure.
     "lightning": frozenset(
         {
@@ -829,17 +865,25 @@ def _filter_unserved_provider_endpoints(
     Five complementary filters apply:
       * provider deprecation — drop a disabled upstream route on one provider for
         every usage type (Nebius June 2026 retirements).
-      * allowlist        — keep ONLY the listed Credits models for a provider (Cerebras).
+      * allowlist        — keep only manifest-listed routes for authoritative
+        providers and account-verified Credits models for static allowlists.
       * model denylist    — drop the listed Credits models on EVERY provider (GPT-5.4/pro).
       * provider denylist — drop a Credits model on ONE provider only (gmi closed models).
       * Claude first-party — route Anthropic-authored models via Anthropic only
         for Credits, never resellers (policy; see _ANTHROPIC_FIRST_PARTY_PROVIDERS).
     """
-    allow = _PROVIDER_SERVED_MODEL_ALLOWLIST
+    allow = dict(_PROVIDER_SERVED_MODEL_ALLOWLIST)
+    for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
+        allow[provider_slug] = _authoritative_provider_model_ids(provider_slug)
 
     def _keep(endpoint: ModelEndpoint) -> bool:
         if _is_provider_deprecated_model(
             endpoint.provider, endpoint.model_id, endpoint.upstream_id
+        ):
+            return False
+        if (
+            endpoint.provider in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS
+            and endpoint.model_id not in allow[endpoint.provider]
         ):
             return False
         if endpoint.usage_type != "Credits":

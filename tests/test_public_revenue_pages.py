@@ -257,7 +257,7 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
     assert "Endpoints</th>" in response.text
     assert 'href="https://aiiq.org/models/kimi-k2.6/"' in response.text
     assert "IQ 116" in response.text
-    for provider in ["kimi", "parasail", "phala", "together", "tinfoil", "novita"]:
+    for provider in ["kimi", "parasail", "together", "tinfoil", "novita"]:
         assert f'title="{provider}"' in response.text
 
 

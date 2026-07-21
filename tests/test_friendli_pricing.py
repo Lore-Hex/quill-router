@@ -9,23 +9,23 @@ def test_friendli_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
             {
                 "id": "zai-org/GLM-5.2",
                 "pricing": {
-                    "input": 1.4,
-                    "output": 4.4,
-                    "input_cache_read": 0.26,
+                    "input": "0.0000014",
+                    "output": "0.0000044",
+                    "input_cache_read": "0.00000026",
                 },
             },
             {
                 "id": "zai-org/GLM-5",
                 "pricing": {
-                    "input": 1.0,
-                    "output": 3.2,
+                    "input": "0.0000010",
+                    "output": "0.0000032",
                 },
             },
             {
                 "id": "meta-llama-3.3-70b-instruct",
                 "pricing": {
-                    "input": 0.6,
-                    "output": 0.6,
+                    "input": "0.0000006",
+                    "output": "0.0000006",
                 },
             },
         ]
@@ -67,3 +67,9 @@ def test_friendli_fetch_discovers_glm_52(monkeypatch) -> None:  # noqa: ANN001
         friendli.UPSTREAM_ID_MAP["meta-llama/llama-3.3-70b-instruct"]
         == "meta-llama-3.3-70b-instruct"
     )
+
+
+def test_friendli_money_conversion_uses_exact_per_token_units() -> None:
+    assert friendli._price_to_micro_per_m("0.0000014") == 1_400_000
+    assert friendli._price_to_micro_per_m("0.00000006") == 60_000
+    assert friendli._price_to_micro_per_m("NaN") is None

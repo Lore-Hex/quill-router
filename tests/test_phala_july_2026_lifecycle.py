@@ -10,15 +10,12 @@ from scripts.pricing.providers import phala
 from trusted_router import provider_lifecycle
 from trusted_router.catalog import (
     MODELS,
-    effective_endpoint,
     endpoint_for_id,
     endpoints_for_model,
     model_to_openrouter_shape,
 )
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
-from trusted_router.storage import STORE
 
 _CUTOFF = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 
@@ -59,35 +56,11 @@ def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) ->
     assert not qwen_providers
 
 
-def test_phala_qwen_price_switches_exactly_at_cutoff() -> None:
-    endpoint = endpoint_for_id("qwen/qwen-2.5-7b-instruct@phala/prepaid")
-    assert endpoint is not None
-
-    before = effective_endpoint(endpoint, at=_CUTOFF - timedelta(microseconds=1))
-    after = effective_endpoint(endpoint, at=_CUTOFF)
-
-    assert before.prompt_price_microdollars_per_million_tokens == 42_000
-    assert before.completion_price_microdollars_per_million_tokens == 105_000
-    assert after.prompt_price_microdollars_per_million_tokens == 105_000
-    assert after.completion_price_microdollars_per_million_tokens == 210_000
-
-    assert (
-        _endpoint_cost_microdollars(
-            endpoint,
-            1_000_000,
-            1_000_000,
-            effective_at=_CUTOFF - timedelta(microseconds=1),
-        )
-        == 147_000
-    )
-    assert (
-        _endpoint_cost_microdollars(
-            endpoint,
-            1_000_000,
-            1_000_000,
-            effective_at=_CUTOFF,
-        )
-        == 315_000
+def test_non_confidential_phala_qwen_route_is_not_published() -> None:
+    assert endpoint_for_id("qwen/qwen-2.5-7b-instruct@phala/prepaid") is None
+    assert all(
+        endpoint.provider != "phala"
+        for endpoint in endpoints_for_model("qwen/qwen-2.5-7b-instruct")
     )
 
 
@@ -97,19 +70,23 @@ def test_public_catalog_uses_effective_price_and_active_routes(
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
 
     qwen_price = model_to_openrouter_shape(MODELS["qwen/qwen-2.5-7b-instruct"])
+    qwen_endpoints = endpoints_for_model("qwen/qwen-2.5-7b-instruct")
+    assert qwen_endpoints
+    assert all(endpoint.provider != "phala" for endpoint in qwen_endpoints)
     assert qwen_price["trustedrouter"][
         "prompt_price_microdollars_per_million_tokens"
-    ] == 105_000
-    assert qwen_price["trustedrouter"][
-        "completion_price_microdollars_per_million_tokens"
-    ] == 210_000
+    ] == min(
+        endpoint.prompt_price_microdollars_per_million_tokens
+        for endpoint in qwen_endpoints
+    )
 
     retired_qwen = model_to_openrouter_shape(
         MODELS["qwen/qwen3-30b-a3b-instruct-2507"]
     )
-    assert retired_qwen["trustedrouter"]["prepaid_available"] is False
-    assert retired_qwen["trustedrouter"]["byok_available"] is False
-    assert retired_qwen["trustedrouter"]["endpoints"] == []
+    assert all(
+        endpoint["provider"] != "phala"
+        for endpoint in retired_qwen["trustedrouter"]["endpoints"]
+    )
 
 
 def test_phala_hourly_parser_applies_announced_policy() -> None:
@@ -133,7 +110,55 @@ def test_phala_hourly_parser_applies_announced_policy() -> None:
     assert after["z-ai/glm-5.2"] == prices["z-ai/glm-5.2"]
 
 
-def test_settlement_keeps_authorization_time_price(
+def test_phala_parser_only_publishes_explicit_confidential_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "data": [
+            {
+                "id": "phala/glm-5.2",
+                "pricing": {"prompt": "0.0000003", "completion": "0.000002"},
+            },
+            {
+                "id": "openai/gpt-5.5",
+                "pricing": {"prompt": "0.000005", "completion": "0.00003"},
+            },
+            {
+                "id": "unmapped/ordinary-pass-through",
+                "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+            },
+        ]
+    }
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return payload
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None:
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(phala.httpx, "Client", FakeClient)
+
+    result = phala.fetch()
+
+    assert set(result.prices) == {"z-ai/glm-5.2"}
+    assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "phala/glm-5.2"
+
+
+def test_non_confidential_phala_route_is_rejected_before_authorization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -159,27 +184,5 @@ def test_settlement_keeps_authorization_time_price(
             "max_output_tokens": 1_000,
         },
     )
-    assert authorize.status_code == 200, authorize.text
-    authorization_id = authorize.json()["data"]["authorization_id"]
-    authorization = STORE.get_gateway_authorization(authorization_id)
-    assert authorization is not None
-    authorization.created_at = (_CUTOFF - timedelta(seconds=1)).isoformat()
-
-    monkeypatch.setattr(
-        provider_lifecycle,
-        "_utc_now",
-        lambda: _CUTOFF + timedelta(seconds=1),
-    )
-    settle = client.post(
-        "/v1/internal/gateway/settle",
-        json={
-            "authorization_id": authorization_id,
-            "actual_input_tokens": 1_000,
-            "actual_output_tokens": 1_000,
-            "request_id": "gw-phala-price-cutover",
-            "elapsed_seconds": 1.0,
-        },
-    )
-
-    assert settle.status_code == 200, settle.text
-    assert settle.json()["data"]["cost_microdollars"] == 147
+    assert authorize.status_code == 400, authorize.text
+    assert authorize.json()["error"]["type"] == "model_not_supported"

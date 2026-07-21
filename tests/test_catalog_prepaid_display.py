@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from trusted_router.catalog import (
     _PROVIDER_DEPRECATED_UPSTREAM_MODELS,
     _PROVIDER_SERVED_MODEL_ALLOWLIST,
@@ -7,6 +9,11 @@ from trusted_router.catalog import (
     MODELS,
     ModelEndpoint,
     endpoints_for_model,
+)
+from trusted_router.catalog_ingest import (
+    _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS,
+    _PROVIDER_MODELS_DIR,
+    _authoritative_provider_model_ids,
 )
 from trusted_router.dashboard import _model_detail_view
 
@@ -46,11 +53,10 @@ def test_byok_only_model_stays_not_prepaid() -> None:
 
 
 def test_cerebras_only_credits_serves_allowlisted_models() -> None:
-    # The Cerebras account serves only a small set of models on OUR key;
-    # routing a Credits request for any other model 502s. Credits endpoints
-    # must never include a non-allowlisted model. (BYOK uses the customer's
-    # own key and is intentionally left untouched.)
-    allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["cerebras"]
+    # Cerebras's public account-callable feed is authoritative for Credits.
+    # The generated manifest replaces a stale source allowlist so new models
+    # become routable automatically without admitting unrelated OR inventory.
+    allow = _authoritative_provider_model_ids("cerebras")
     cerebras_credits = {
         e.model_id
         for e in MODEL_ENDPOINTS.values()
@@ -62,7 +68,46 @@ def test_cerebras_only_credits_serves_allowlisted_models() -> None:
         "cerebras/gpt-oss-120b",
         "z-ai/glm-4.7",
         "cerebras/zai-glm-4.7",
+        "google/gemma-4-31b-it",
+        "cerebras/gemma-4-31b",
     } <= cerebras_credits
+
+
+def test_together_credits_follow_started_serverless_manifest() -> None:
+    allow = _authoritative_provider_model_ids("together")
+    together_credits = {
+        e.model_id
+        for e in MODEL_ENDPOINTS.values()
+        if e.provider == "together" and e.usage_type == "Credits"
+    }
+    assert together_credits <= allow
+    assert {
+        "minimax/minimax-m3",
+        "moonshotai/kimi-k2.7-code",
+        "z-ai/glm-5.2",
+        "intfloat/multilingual-e5-large-instruct",
+    } <= together_credits
+    assert "meta-llama/llama-3.1-70b-instruct" not in together_credits
+
+
+def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot() -> None:
+    endpoint_pairs = {(endpoint.provider, endpoint.model_id) for endpoint in MODEL_ENDPOINTS.values()}
+    for provider_slug in _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS:
+        raw = json.loads(
+            (_PROVIDER_MODELS_DIR / f"{provider_slug}.json").read_text(encoding="utf-8")
+        )
+        dark_models = {
+            row["id"]
+            for row in raw.get("models", [])
+            if isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and row.get("routable") is False
+        }
+        assert not {
+            (provider_slug, model_id)
+            for model_id in dark_models
+            if (provider_slug, model_id) in endpoint_pairs
+        }
 
 
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
@@ -176,7 +221,7 @@ def test_tinfoil_june_2026_deprecations_and_replacements_are_routable() -> None:
     # Provider-scoped deprecation: non-Tinfoil routes for these model families
     # remain available when their provider still serves them.
     assert "z-ai/glm-5.1@zai/prepaid" in MODEL_ENDPOINTS
-    assert "qwen/qwen3-vl-30b-a3b-instruct@phala/prepaid" in MODEL_ENDPOINTS
+    assert "qwen/qwen3-vl-30b-a3b-instruct@novita/prepaid" in MODEL_ENDPOINTS
 
 
 def test_novita_july_2026_retirements_and_replacements_are_routable() -> None:
@@ -231,7 +276,6 @@ def test_friendli_july_2026_glm_5_deprecation_does_not_remove_glm_52() -> None:
 
 def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
     flagged_routes = {
-        ("openai/gpt-oss-120b", "together"),
         ("openai/gpt-5.6-sol", "lightning"),
         ("x-ai/grok-4.5", "gmi"),
         ("anthropic/claude-opus-4.8", "phala"),
@@ -245,6 +289,11 @@ def test_route_health_first_sweep_dead_routes_are_not_routable() -> None:
             for endpoint in endpoints_for_model(model_id)
             if endpoint.provider == provider
         ]
+
+    # Together's live serverless endpoint feed now reports GPT OSS 120B as
+    # STARTED. The generated authoritative manifest supersedes the July 18
+    # route-health quarantine, so this repaired route must stay available.
+    assert "openai/gpt-oss-120b@together/prepaid" in MODEL_ENDPOINTS
 
     # Quarantine is provider-scoped: healthy sibling routes survive.
     assert "openai/gpt-oss-120b@cerebras/prepaid" in MODEL_ENDPOINTS

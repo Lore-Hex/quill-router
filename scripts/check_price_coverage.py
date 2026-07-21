@@ -33,6 +33,14 @@ DEFAULT_MAX_AGE_DAYS = 14
 ZAI_MODEL_DISCOVERY_URL = "https://r.jina.ai/https://docs.z.ai/devpack/latest-model"
 _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?:\[1m\])?\b", re.I)
 
+# One parser can own pricing for more than one separately routed provider.
+# Gemini pricing is shared between AI Studio and existing Vertex endpoints;
+# availability remains provider-specific and is never synthesized here.
+_SHARED_LIVE_SCRAPER_OWNERS = {
+    "google-ai-studio": "gemini",
+    "google-vertex": "gemini",
+}
+
 
 def _identity_model_id(native_id: str) -> str | None:
     value = native_id.strip()
@@ -48,9 +56,11 @@ def _minimax_model_id(native_id: str) -> str | None:
 
 def _cerebras_model_id(native_id: str) -> str | None:
     value = native_id.strip()
-    if value in {"gpt-oss-120b", "zai-glm-4.7"}:
-        return f"cerebras/{value}"
-    return value or None
+    return {
+        "gpt-oss-120b": "openai/gpt-oss-120b",
+        "zai-glm-4.7": "z-ai/glm-4.7",
+        "gemma-4-31b": "google/gemma-4-31b-it",
+    }.get(value)
 
 
 def _gemini_model_id(native_id: str) -> str | None:
@@ -215,8 +225,8 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
     ),
     (
         "cerebras",
-        "https://api.cerebras.ai/v1/models",
-        ("CEREBRAS_API_KEY",),
+        "https://api.cerebras.ai/public/v1/models",
+        (),
         _cerebras_model_id,
     ),
     (
@@ -526,19 +536,20 @@ def _model_discovery_audit(
         zai_doc = fetch_text(ZAI_MODEL_DISCOVERY_URL)
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"zai: model discovery fetch failed ({type(exc).__name__}: {exc})")
-        return warnings, info
-
-    discovered = _discover_zai_coding_plan_models(zai_doc)
-    missing = sorted(discovered - published_model_ids)
-    if missing:
-        warnings.append(
-            "zai: Coding Plan docs mention unpublished model(s) "
-            f"{', '.join(missing)} — add/update provider_models/zai.json or the snapshot"
-        )
-    elif discovered:
-        info.append(f"zai: model discovery matched catalog ({len(discovered)} docs model(s)) ✓")
     else:
-        warnings.append("zai: model discovery found no GLM model ids in Coding Plan docs")
+        discovered = _discover_zai_coding_plan_models(zai_doc)
+        missing = sorted(discovered - published_model_ids)
+        if missing:
+            warnings.append(
+                "zai: Coding Plan docs mention unpublished model(s) "
+                f"{', '.join(missing)} — add/update provider_models/zai.json or the snapshot"
+            )
+        elif discovered:
+            info.append(
+                f"zai: model discovery matched catalog ({len(discovered)} docs model(s)) ✓"
+            )
+        else:
+            warnings.append("zai: model discovery found no GLM model ids in Coding Plan docs")
 
     for slug, url, env_names, normalize in _DISCOVERABLE_MANIFEST_PROVIDERS:
         published = published_model_ids | _manifest_provider_model_ids(slug)
@@ -611,7 +622,12 @@ def _run_audit(
     """Return (warnings, info, hard_fail_warnings)."""
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, MODELS
 
-    scrapers = _scraper_slugs()
+    scraper_modules = _scraper_slugs()
+    scrapers = scraper_modules | {
+        provider
+        for provider, owner in _SHARED_LIVE_SCRAPER_OWNERS.items()
+        if owner in scraper_modules
+    }
     warnings: list[str] = []
     info: list[str] = []
     hard_fail_warnings: list[str] = []

@@ -35,6 +35,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
 
 SLUG = "friendli"
 URL = "https://api.friendli.ai/serverless/v1/models"
@@ -102,14 +103,8 @@ def _discovered_manifest_row(
 
 
 def _price_to_micro_per_m(value: object) -> int | None:
-    """Friendli returns dollars per million tokens, not dollars per token."""
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed < 0:
-        return None
-    return int(round(parsed * 1_000_000))
+    """Convert Friendli's USD-per-token strings without binary floats."""
+    return dollars_per_token_to_micro_per_m(value)
 
 
 def fetch() -> ProviderPricingResult:

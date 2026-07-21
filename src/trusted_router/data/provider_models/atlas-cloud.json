@@ -1180,7 +1180,9 @@
       "title": "google/gemini-3.1-flash-lite",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -1202,7 +1204,9 @@
       "title": "google/gemini-3.1-pro-preview",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -1224,7 +1228,9 @@
       "title": "google/gemini-3.5-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -1404,9 +1410,9 @@
         "logit_bias",
         "stop"
       ],
-      "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 1180000,
-      "cached_input_token_price_per_m": 6000
+      "input_token_price_per_m": 750000,
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 15000
     },
     {
       "display_name": "MiniMax M2.5",
@@ -2083,7 +2089,8 @@
       "title": "openai/gpt-5.4",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2149,7 +2156,8 @@
       "title": "openai/gpt-5.5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2171,7 +2179,8 @@
       "title": "openai/gpt-5.6-luna",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2193,7 +2202,8 @@
       "title": "openai/gpt-5.6-sol",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2215,7 +2225,8 @@
       "title": "openai/gpt-5.6-terra",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2623,7 +2634,8 @@
       "title": "qwen/qwen3.5-flash",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2769,7 +2781,8 @@
       "title": "qwen/qwen3.7-plus",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2832,7 +2845,8 @@
       "title": "xai/grok-4.3",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -2854,7 +2868,8 @@
       "title": "xai/grok-4.5",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -3222,8 +3237,50 @@
       "input_token_price_per_m": 1200000,
       "output_token_price_per_m": 4000000,
       "cached_input_token_price_per_m": 240000
+    },
+    {
+      "display_name": "Kimi K3",
+      "title": "moonshotai/kimi-k3",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/kimi-k3",
+      "context_length": 1048576,
+      "max_output_tokens": 1048576,
+      "supported_features": [
+        "json_mode",
+        "structured_outputs",
+        "tools",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "seed",
+        "max_tokens",
+        "logit_bias"
+      ],
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000
     }
   ],
-  "generated_at": "2026-07-19T03:45:21Z",
-  "model_count": 118
+  "generated_at": "2026-07-21T14:09:26Z",
+  "model_count": 119
 }

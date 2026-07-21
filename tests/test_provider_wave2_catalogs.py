@@ -47,6 +47,21 @@ def test_provider_owned_pricing_parsers_use_integer_microdollars() -> None:
     }
 
 
+def test_morph_checkpoint_fallback_is_bounded_to_published_fast_apply_prices() -> None:
+    prices = morph_parser.parse("Vercel Security Checkpoint")
+
+    assert prices == {
+        "morph/morph-v3-fast": {
+            "prompt_micro_per_m": 800_000,
+            "completion_micro_per_m": 1_200_000,
+        },
+        "morph/morph-v3-large": {
+            "prompt_micro_per_m": 900_000,
+            "completion_micro_per_m": 1_900_000,
+        },
+    }
+
+
 def test_openai_catalog_preserves_exact_ids_and_filters_non_text_output() -> None:
     upstream_ids: dict[str, str] = {}
     prices, rows = discover_openai_chat_catalog(

@@ -2,10 +2,10 @@
   "_about": "Provider-native supplement for Wafer serverless API. Refreshed hourly from Wafer's OpenAI-compatible /v1/models feed.",
   "provider": "wafer",
   "source": "https://pass.wafer.ai/v1/models",
-  "generated_at": "2026-07-17T04:09:40Z",
+  "generated_at": "2026-07-21T14:09:26Z",
   "price_scale": "microdollars_per_million",
   "zdr_header": "Wafer-ZDR: required",
-  "model_count": 5,
+  "model_count": 6,
   "models": [
     {
       "id": "minimax/minimax-m3",
@@ -85,6 +85,17 @@
       "zdr_supported": true,
       "context_length": 1048576,
       "cached_input_token_price_per_m": 500000
+    },
+    {
+      "id": "qwen/qwen3.5-397b-a17b",
+      "upstream_id": "Qwen3.5-397B-A17B",
+      "display_name": "Qwen3.5-397B-A17B",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "zdr_supported": false,
+      "routable": false,
+      "routable_reason": "awaiting-price"
     }
   ]
 }

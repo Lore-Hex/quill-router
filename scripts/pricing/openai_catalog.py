@@ -19,7 +19,7 @@ def dollars_per_token_to_micro_per_m(value: object) -> int | None:
         parsed = Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return None
-    if parsed < 0:
+    if not parsed.is_finite() or parsed < 0:
         return None
     return int((parsed * Decimal("1000000000000")).to_integral_value(ROUND_HALF_UP))
 

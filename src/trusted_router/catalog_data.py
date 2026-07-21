@@ -277,10 +277,11 @@ PROVIDERS: dict[str, Provider] = {
         slug="cerebras",
         name="Cerebras",
         supports_prepaid=True,
+        stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Tracked as provider-ZDR. Cerebras documents ZDR-compliant ephemeral "
-            "prompt caching and no persisted prompt cache data."
+            "Tracked as provider-ZDR. Cerebras documents zero-retention inference "
+            "and ZDR-compliant ephemeral prompt caching that is never persisted."
         ),
         provider_policy_url="https://inference-docs.cerebras.ai/capabilities/prompt-caching",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -341,10 +342,9 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_policy=(
-            "Marked ZDR via TrustedRouter's arrangement — Together's ZDR is an "
-            "opt-in account/privacy setting, NOT the public default, and the "
-            "deployed Together account has it enabled. Together does not train "
-            "on content without opt-in."
+            "Tracked as provider ZDR. Together documents that inference inputs "
+            "and outputs are not stored by default; temporary prompt caching may "
+            "be used for performance, and sharing content for training is opt-in."
         ),
         provider_policy_url="https://docs.together.ai/docs/privacy-and-security",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
@@ -695,12 +695,12 @@ PROVIDERS: dict[str, Provider] = {
         name="DeepInfra",
         supports_prepaid=True,
         stores_content=False,
-        provider_zero_data_retention=True,
+        provider_zero_data_retention=False,
         provider_policy=(
-            "Tracked as provider ZDR — DeepInfra documents memory-only handling "
-            "with no storage of API content and no training on submitted API data. "
-            "(Exception: requests to Google/Anthropic-backed models inherit those "
-            "vendors' policies.)"
+            "Tracked as no-store, not strict ZDR. DeepInfra documents memory-only "
+            "handling and no training for ordinary inference, but reserves the "
+            "right to log a small portion of requests for debugging or security. "
+            "Google- and Anthropic-backed routes also inherit those vendors' terms."
         ),
         provider_policy_url="https://docs.deepinfra.com/account/data-privacy",
     ),
@@ -1526,14 +1526,6 @@ _EMBEDDING_SPECS: tuple[_EmbeddingSpec, ...] = (
 )
 
 _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
-    "cerebras": frozenset(
-        {
-            "openai/gpt-oss-120b",
-            "cerebras/gpt-oss-120b",
-            "z-ai/glm-4.7",
-            "cerebras/zai-glm-4.7",
-        }
-    ),
     # 2026-07-18: GMI's /models listing is aspirational — 7d synthetic probes
     # show exactly four models served on our account (590-670 successes each)
     # while the other ~45 listed models have ZERO successes ever (uniform
@@ -1593,16 +1585,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     "deepseek": frozenset({"deepseek/deepseek-chat-v3.1", "deepseek/deepseek-v3.2"}),
     "nebius": frozenset({"google/gemma-2-2b-it", "meta-llama/Meta-Llama-3.1-8B-Instruct"}),
     "zai": frozenset({"z-ai/glm-4-32b", "z-ai/glm-4.7-flash"}),
-    "together": frozenset(
-        {
-            "meta-llama/llama-3.1-8b-instruct",
-            "meta-llama/llama-3.1-70b-instruct",
-            # 2026-07-15: the snapshot route returns 404 when pinned to
-            # Together. Keep the directly verified Baseten route.
-            "nvidia/nemotron-3-ultra-550b-a55b",
-            "qwen/qwen-2.5-72b-instruct",
-        }
-    ),
     "grok": frozenset({"x-ai/grok-4.20-multi-agent"}),
     # parasail — listed in the upstream snapshot, but Parasail's own chat API
     # returns 403 "deployment ... doesn't exist or isn't accessible" for these

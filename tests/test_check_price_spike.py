@@ -21,6 +21,30 @@ def _make_snapshot(prices: dict[str, tuple[str, str]]) -> dict:
     }
 
 
+def _make_endpoint_snapshot(
+    headline: tuple[str, str],
+    endpoints: list[tuple[str, str, str, str]],
+) -> dict:
+    return {
+        "model_count": 1,
+        "models": [
+            {
+                "id": "a/b",
+                "pricing": {"prompt": headline[0], "completion": headline[1]},
+                "endpoints": [
+                    {
+                        "tr_provider_slug": provider,
+                        "model_id": upstream,
+                        "tag": provider,
+                        "pricing": {"prompt": prompt, "completion": completion},
+                    }
+                    for provider, upstream, prompt, completion in endpoints
+                ],
+            }
+        ],
+    }
+
+
 def _write(tmp_path: Path, name: str, snapshot: dict) -> Path:
     path = tmp_path / name
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -122,3 +146,61 @@ def test_summary_surfaces_per_model_deltas(tmp_path: Path, capsys) -> None:
     assert rc == 0  # +25% is under the 2x spike gate
     assert "1 prices changed" in out
     assert "a/b:" in out  # the delta line is surfaced, not just the count
+
+
+def test_route_removal_can_raise_headline_without_blocking_refresh(
+    tmp_path: Path, capsys
+) -> None:
+    """A cheap route disappearing must not freeze every provider refresh."""
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.00000006", "0.00000006"),
+            [
+                ("cheap", "author/model", "0.00000006", "0.00000006"),
+                ("steady", "author/model", "0.0000002", "0.0000006"),
+            ],
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.0000002", "0.0000006"),
+            [("steady", "author/model", "0.0000002", "0.0000006")],
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 0
+    assert "a/b:" in capsys.readouterr().out
+
+
+def test_same_provider_endpoint_spike_blocks_and_is_visible(
+    tmp_path: Path, capsys
+) -> None:
+    from scripts.check_price_spike import main
+
+    before = _write(
+        tmp_path,
+        "before.json",
+        _make_endpoint_snapshot(
+            ("0.0000001", "0.0000002"),
+            [("provider", "Native/Model", "0.0000001", "0.0000002")],
+        ),
+    )
+    after = _write(
+        tmp_path,
+        "after.json",
+        _make_endpoint_snapshot(
+            ("0.0000001", "0.0000004"),
+            [("provider", "Native/Model", "0.0000001", "0.0000004")],
+        ),
+    )
+
+    assert main([str(before), str(after), "--summary"]) == 1
+    out = capsys.readouterr().out
+    assert "PRICE SPIKE FAILURES" in out
+    assert "provider" in out

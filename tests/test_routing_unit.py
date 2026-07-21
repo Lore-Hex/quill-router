@@ -351,9 +351,9 @@ def test_min_privacy_confidential_keeps_confidential_reachable_model() -> None:
         model_max_privacy_tier,
     )
 
-    # no-store via deepseek, confidential via phala — must still route.
+    # GLM 5.2 has a current confidential Phala route and must still route.
     candidates = chat_route_candidates(
-        {"model": "deepseek/deepseek-v3.2", "provider": {"min_privacy": "confidential"}},
+        {"model": "z-ai/glm-5.2", "provider": {"min_privacy": "confidential"}},
         _settings(),
     )
     assert candidates

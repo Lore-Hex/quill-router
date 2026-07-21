@@ -20,9 +20,13 @@ def _microdollars_per_million(text: str) -> int:
 
 def _price_span(cell: Tag, mode: str) -> Tag:
     span = cell.select_one(f".price-{mode}") or cell.select_one(".price-old")
-    if not isinstance(span, Tag):
-        raise ValueError("missing active price span")
-    return span
+    if isinstance(span, Tag):
+        return span
+    # The current server-rendered table puts the active dollar price directly
+    # on ``td.price`` and reserves a nested span only for the cached rate.
+    if "price" in {str(value) for value in (cell.get("class") or [])}:
+        return cell
+    raise ValueError("missing active price span")
 
 
 def parse(html: str) -> dict[str, dict[str, int]]:

@@ -137,12 +137,9 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "venice"),
         ("z-ai/glm-5.2", "parasail"),
         ("z-ai/glm-5.2", "friendli"),
-        ("z-ai/glm-5.2", "crusoe"),
         ("z-ai/glm-5.2", "makora"),
-        ("deepseek/deepseek-v4-flash", "crusoe"),
         ("deepseek/deepseek-v4-flash", "makora"),
         ("moonshotai/kimi-k2.7-code", "makora"),
-        ("moonshotai/kimi-k2.6", "crusoe"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -332,8 +329,9 @@ def test_novita_hy3_uses_live_provider_id_and_price_floor() -> None:
     assert model.context_length == 262_144
     assert prepaid.upstream_id == "tencent/hy3"
     assert byok.upstream_id == "tencent/hy3"
-    assert prepaid.prompt_price_microdollars_per_million_tokens == 10_000
-    assert prepaid.completion_price_microdollars_per_million_tokens == 10_000
+    assert prepaid.prompt_price_microdollars_per_million_tokens == 147_000
+    assert prepaid.completion_price_microdollars_per_million_tokens == 609_000
+    assert prepaid.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 36_750
 
 
 def test_minimax_empty_operator_routes_are_not_prepaid() -> None:
@@ -965,11 +963,13 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         assert metadata["open_weights"] is True
 
     inkling = MODELS["thinkingmachines/inkling"]
-    assert inkling.context_length == 262_144
-    assert inkling.provider == "thinkingmachines"
+    assert inkling.context_length == 1_048_576
+    assert inkling.provider == "together"
     endpoints = endpoints_for_model(inkling.id)
     assert {(endpoint.provider, endpoint.upstream_id) for endpoint in endpoints} == {
-        ("thinkingmachines", "thinkingmachines/Inkling:peft:262144")
+        ("gmi", "thinkingmachines/Inkling"),
+        ("thinkingmachines", "thinkingmachines/Inkling:peft:262144"),
+        ("together", "thinkingmachines/Inkling"),
     }
     assert any(endpoint.usage_type == "Credits" for endpoint in endpoints)
     assert any(endpoint.usage_type == "BYOK" for endpoint in endpoints)
@@ -995,7 +995,7 @@ def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() ->
     }
     assert prepaid["baseten"] == "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B"
     assert prepaid["nebius"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
-    assert "together" not in prepaid
+    assert prepaid["together"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert "gmi" not in prepaid
 
 
@@ -1442,42 +1442,14 @@ def test_xiaomi_mimo_provider_models_present_and_routable() -> None:
     )
 
 
-def test_crusoe_provider_models_present_and_routable() -> None:
-    """Crusoe onboarding: native /v1/models rows load from the manifest,
-    preserve case-sensitive upstream ids, and create prepaid + BYOK endpoints."""
+def test_crusoe_provider_models_fail_closed_after_account_auth_failure() -> None:
+    """A rejected operator credential must darken stale Crusoe inventory."""
 
     assert "crusoe" in PROVIDERS
     assert "crusoe" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    expected = {
-        "z-ai/glm-5.2": "zai/GLM-5.2",
-        "deepseek/deepseek-v4-flash": "deepseek-ai/Deepseek-V4-Flash",
-        "moonshotai/kimi-k2.6": "moonshotai/Kimi-K2.6",
-        "openai/gpt-oss-120b": "openai/gpt-oss-120b",
-        "google/gemma-4-31b-it": "google/gemma-4-31b-it",
-    }
-    crusoe_model_ids = {
-        endpoint.model_id
-        for endpoint in MODEL_ENDPOINTS.values()
-        if endpoint.provider == "crusoe" and str(endpoint.usage_type) == "Credits"
-    }
-    assert len(crusoe_model_ids) >= 15
-    for model_id, upstream in expected.items():
-        model = MODELS.get(model_id)
-        assert model is not None, f"{model_id} missing from catalog"
-        credits = [
-            e
-            for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "Credits" and e.provider == "crusoe"
-        ]
-        byok = [
-            e
-            for e in endpoints_for_model(model_id)
-            if str(e.usage_type) == "BYOK" and e.provider == "crusoe"
-        ]
-        assert credits, f"{model_id} has no crusoe prepaid endpoint"
-        assert byok, f"{model_id} has no crusoe BYOK endpoint"
-        assert credits[0].upstream_id == upstream
-        assert credits[0].prompt_price_microdollars_per_million_tokens > 0
+    assert not [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "crusoe"
+    ]
 
 
 def test_makora_provider_models_present_and_routable() -> None:
@@ -1643,7 +1615,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     friendli = MODEL_ENDPOINTS["z-ai/glm-5.2@friendli/prepaid"]
     baseten = MODEL_ENDPOINTS["z-ai/glm-5.2@baseten/prepaid"]
     wafer = MODEL_ENDPOINTS["z-ai/glm-5.2@wafer/prepaid"]
-    crusoe = MODEL_ENDPOINTS["z-ai/glm-5.2@crusoe/prepaid"]
 
     assert model.provider == "zai"
     assert model.context_length == 1_048_576
@@ -1663,7 +1634,6 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert friendli.upstream_id == "zai-org/GLM-5.2"
     assert baseten.upstream_id == "zai-org/GLM-5.2"
     assert wafer.upstream_id == "GLM-5.2"
-    assert crusoe.upstream_id == "zai/GLM-5.2"
     assert gmi.prompt_price_microdollars_per_million_tokens == 1_029_000
     assert gmi.completion_price_microdollars_per_million_tokens == 3_234_000
     assert deepinfra.prompt_price_microdollars_per_million_tokens == 1_260_000
@@ -1678,8 +1648,7 @@ def test_glm_52_supplements_publish_current_model_across_providers() -> None:
     assert baseten.completion_price_microdollars_per_million_tokens == 4_620_000
     assert wafer.prompt_price_microdollars_per_million_tokens == 1_260_000
     assert wafer.completion_price_microdollars_per_million_tokens == 4_305_000
-    assert crusoe.prompt_price_microdollars_per_million_tokens == 1_470_000
-    assert crusoe.completion_price_microdollars_per_million_tokens == 4_620_000
+    assert "z-ai/glm-5.2@crusoe/prepaid" not in MODEL_ENDPOINTS
 
 
 def test_parasail_qwen_397b_uses_working_native_upstream_id() -> None:
