@@ -132,6 +132,8 @@ jobs:
                       GMI_API_KEY:trustedrouter-gmi-api-key \
                       DEEPINFRA_API_KEY:trustedrouter-deepinfra-api-key \
                       PHALA_CONFIDENTIAL_API_KEY:trustedrouter-phala-confidential-api-key \
+                      SILICON_FLOW_API_KEY:trustedrouter-siliconflow-api-key \
+                      VENICE_API_KEY:trustedrouter-venice-api-key \
                       CEREBRAS_API_KEY:trustedrouter-cerebras-api-key \
                       KIMI_API_KEY:trustedrouter-kimi-api-key \
                       FIREWORKS_API_KEY:trustedrouter-fireworks-api-key \
