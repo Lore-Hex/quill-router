@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-07-21T17:30:23Z",
+  "generated_at": "2026-07-21T19:51:53Z",
   "model_count": 32,
   "models": [
     {
@@ -27,7 +27,8 @@
       "endpoints": [
         "chat/completions"
       ],
-      "status": 1
+      "status": 1,
+      "cached_input_token_price_per_m": 150000
     },
     {
       "id": "google/gemini-3.1-flash-lite-preview",
@@ -121,7 +122,8 @@
       "context_length": 1048576,
       "max_output_tokens": 8192,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 25000
     },
     {
       "display_name": "Gemini 2.0 Flash-Lite",
@@ -209,7 +211,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "input_token_price_per_m": 300000,
-      "output_token_price_per_m": 2500000
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "Nano Banana",
@@ -253,7 +256,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "input_token_price_per_m": 100000,
-      "output_token_price_per_m": 400000
+      "output_token_price_per_m": 400000,
+      "cached_input_token_price_per_m": 10000
     },
     {
       "display_name": "Gemini 2.5 Flash Preview TTS",
@@ -303,13 +307,13 @@
           "max_prompt_tokens": 200000,
           "input_token_price_per_m": 1250000,
           "output_token_price_per_m": 10000000,
-          "cached_input_token_price_per_m": null
+          "cached_input_token_price_per_m": 125000
         },
         {
           "max_prompt_tokens": null,
           "input_token_price_per_m": 2500000,
           "output_token_price_per_m": 15000000,
-          "cached_input_token_price_per_m": null
+          "cached_input_token_price_per_m": 250000
         }
       ]
     },
@@ -355,7 +359,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "input_token_price_per_m": 500000,
-      "output_token_price_per_m": 3000000
+      "output_token_price_per_m": 3000000,
+      "cached_input_token_price_per_m": 50000
     },
     {
       "display_name": "Nano Banana Pro",
@@ -465,7 +470,8 @@
       "context_length": 1048576,
       "max_output_tokens": 65536,
       "input_token_price_per_m": 250000,
-      "output_token_price_per_m": 1500000
+      "output_token_price_per_m": 1500000,
+      "cached_input_token_price_per_m": 25000
     },
     {
       "display_name": "Nano Banana 2 Lite",
@@ -537,13 +543,13 @@
           "max_prompt_tokens": 200000,
           "input_token_price_per_m": 2000000,
           "output_token_price_per_m": 12000000,
-          "cached_input_token_price_per_m": null
+          "cached_input_token_price_per_m": 200000
         },
         {
           "max_prompt_tokens": null,
           "input_token_price_per_m": 4000000,
           "output_token_price_per_m": 18000000,
-          "cached_input_token_price_per_m": null
+          "cached_input_token_price_per_m": 400000
         }
       ]
     },
