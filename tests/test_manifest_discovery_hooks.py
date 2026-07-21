@@ -205,6 +205,56 @@ def test_gemini_tombstones_second_miss_and_empty_discovery_keeps_old_manifest(
     assert manifest_path.read_text(encoding="utf-8") == old_text
 
 
+def test_gemini_refresh_reprices_only_verified_vertex_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ai_studio_path = tmp_path / "google-ai-studio.json"
+    vertex_path = tmp_path / "google-vertex.json"
+    _write_manifest(
+        ai_studio_path,
+        "google-ai-studio",
+        [_manifest_row("google/gemini-3.6-flash", "gemini-3.6-flash")],
+    )
+    _write_manifest(
+        vertex_path,
+        "google-vertex",
+        [_manifest_row("google/gemini-3.6-flash", "gemini-3.6-flash")],
+    )
+    result = ProviderPricingResult(
+        slug="gemini",
+        prices={
+            "google/gemini-3.6-flash": ModelPrice(
+                1_500_000,
+                7_500_000,
+                prompt_cached_micro_per_m=150_000,
+            )
+        },
+        source="api",
+        fetched_url=gemini.URL,
+    )
+    monkeypatch.setattr(gemini, "MANIFEST_PATH", ai_studio_path)
+    monkeypatch.setattr(
+        gemini,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            "google/gemini-3.6-flash": {
+                "id": "google/gemini-3.6-flash",
+                "upstream_id": "gemini-3.6-flash",
+            }
+        },
+    )
+
+    gemini.write_provider_manifest(result)
+
+    vertex = json.loads(vertex_path.read_text(encoding="utf-8"))
+    assert len(vertex["models"]) == 1
+    row = vertex["models"][0]
+    assert row["input_token_price_per_m"] == 1_500_000
+    assert row["output_token_price_per_m"] == 7_500_000
+    assert row["cached_input_token_price_per_m"] == 150_000
+    assert vertex["pricing_source"] == gemini.URL
+
+
 def test_wafer_feed_presence_survives_pricing_schema_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

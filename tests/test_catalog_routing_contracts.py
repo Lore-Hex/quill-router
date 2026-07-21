@@ -119,6 +119,7 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("openai/gpt-4.1-mini", "openai"),
         ("google/gemini-2.5-flash", "google-ai-studio"),
         ("google/gemini-3.5-flash", "google-ai-studio"),
+        ("google/gemini-3.6-flash", "google-ai-studio"),
         ("deepseek/deepseek-v4-flash", "deepseek"),
         ("mistralai/mistral-small-2603", "mistral"),
         ("meta-llama/llama-3.1-8b-instruct", "novita"),
@@ -250,6 +251,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
             5,
             [
                 "google/gemini-3.5-flash",
+                "google/gemini-3.6-flash",
                 "google/gemini-3.1-flash-image-preview",
             ],
         ),

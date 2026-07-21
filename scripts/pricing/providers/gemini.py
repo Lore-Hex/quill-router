@@ -53,6 +53,7 @@ EXPECTED_MODELS = [
     "google/gemini-2.5-flash",
     "google/gemini-2.5-flash-lite",
     "google/gemini-3.5-flash",
+    "google/gemini-3.6-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
@@ -151,6 +152,36 @@ def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id:
         row.pop("cached_input_token_price_per_m", None)
         row.pop("price_tiers", None)
     return True
+
+
+def _refresh_verified_vertex_manifest(result: ProviderPricingResult) -> int:
+    """Refresh prices for Vertex rows whose availability was verified separately."""
+
+    path = MANIFEST_PATH.with_name("google-vertex.json")
+    if not path.exists():
+        return 0
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows = raw.get("models")
+    if not isinstance(rows, list):
+        raise RuntimeError("google-vertex manifest has no models list")
+    updated = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_id = row.get("id")
+        if isinstance(model_id, str) and _refresh_price(row, result, model_id):
+            updated += 1
+    if not updated:
+        return 0
+    raw["pricing_source"] = URL
+    raw["generated_at"] = (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    path.write_text(
+        json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return updated
 
 
 def fetch() -> ProviderPricingResult:
@@ -257,11 +288,14 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    vertex_updated = _refresh_verified_vertex_manifest(result)
     changes: list[str] = []
     if appended:
         changes.append(f"appended {len(appended)}")
     if tombstoned:
         changes.append(f"tombstoned {len(tombstoned)} unavailable")
+    if vertex_updated:
+        changes.append(f"repriced {vertex_updated} verified Vertex rows")
     suffix = f", {', '.join(changes)}" if changes else ""
     return [
         f"gemini: refreshed Google AI Studio manifest "
