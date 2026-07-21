@@ -307,6 +307,12 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     gemini_35 = MODEL_ENDPOINTS[
         "google/gemini-3.5-flash@google-ai-studio/prepaid"
     ]
+    gemini_36_ai_studio = MODEL_ENDPOINTS[
+        "google/gemini-3.6-flash@google-ai-studio/prepaid"
+    ]
+    gemini_36_vertex = MODEL_ENDPOINTS[
+        "google/gemini-3.6-flash@google-vertex/prepaid"
+    ]
     image_preview = MODEL_ENDPOINTS[
         "google/gemini-3.1-flash-image-preview@google-ai-studio/prepaid"
     ]
@@ -315,6 +321,15 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
     assert gemini_35.upstream_id == "gemini-3.5-flash"
     assert gemini_35.prompt_price_microdollars_per_million_tokens == 1_575_000
     assert gemini_35.completion_price_microdollars_per_million_tokens == 9_450_000
+    assert MODELS["google/gemini-3.6-flash"].context_length == 1_048_576
+    for endpoint in (gemini_36_ai_studio, gemini_36_vertex):
+        assert endpoint.upstream_id == "gemini-3.6-flash"
+        assert endpoint.prompt_price_microdollars_per_million_tokens == 1_575_000
+        assert endpoint.completion_price_microdollars_per_million_tokens == 7_875_000
+        assert (
+            endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+            == 157_500
+        )
     image_model = MODELS["google/gemini-3.1-flash-image-preview"]
     assert image_model.context_length == 65_536
     assert image_model.supports_chat
@@ -324,11 +339,11 @@ def test_gemini_native_supplement_publishes_missing_text_models() -> None:
 
 
 def test_google_products_have_distinct_capabilities() -> None:
-    model_id = "google/gemini-2.5-flash"
-    assert f"{model_id}@google-vertex/prepaid" in MODEL_ENDPOINTS
-    assert f"{model_id}@google-vertex/byok" not in MODEL_ENDPOINTS
-    assert f"{model_id}@google-ai-studio/prepaid" in MODEL_ENDPOINTS
-    assert f"{model_id}@google-ai-studio/byok" in MODEL_ENDPOINTS
+    for model_id in ("google/gemini-2.5-flash", "google/gemini-3.6-flash"):
+        assert f"{model_id}@google-vertex/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@google-vertex/byok" not in MODEL_ENDPOINTS
+        assert f"{model_id}@google-ai-studio/prepaid" in MODEL_ENDPOINTS
+        assert f"{model_id}@google-ai-studio/byok" in MODEL_ENDPOINTS
 
 
 def test_llama_33_70b_no_longer_credits_routes_to_cerebras() -> None:

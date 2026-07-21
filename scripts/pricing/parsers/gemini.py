@@ -28,6 +28,7 @@ _NAME_TO_OR_ID = {
     "Gemini 2.0 Flash-Lite": "google/gemini-2.0-flash-lite-001",
     "Gemini 3.1 Pro Preview": "google/gemini-3.1-pro-preview",
     "Gemini 3.5 Flash": "google/gemini-3.5-flash",
+    "Gemini 3.6 Flash": "google/gemini-3.6-flash",
     "Gemini 3.1 Flash-Lite": "google/gemini-3.1-flash-lite",
     "Gemini 3.1 Flash-Lite Preview": "google/gemini-3.1-flash-lite-preview",
     "Gemini 3 Flash Preview": "google/gemini-3-flash-preview",
@@ -121,6 +122,7 @@ def parse(md: str) -> dict:
         # Standard table first under the heading).
         prompt_tiers: list[tuple[int | None, int]] = []
         completion_tiers: list[tuple[int | None, int]] = []
+        cached_tiers: list[tuple[int | None, int]] = []
         for line in body.splitlines():
             if not line.startswith("|"):
                 continue
@@ -135,8 +137,9 @@ def parse(md: str) -> dict:
             elif "output price" in label and not completion_tiers:
                 tiers, _ = _parse_price_cell(paid_cell)
                 completion_tiers = tiers
-            if prompt_tiers and completion_tiers:
-                break
+            elif "context caching price" in label and not cached_tiers:
+                tiers, _ = _parse_price_cell(paid_cell)
+                cached_tiers = tiers
         if not prompt_tiers or not completion_tiers:
             continue
         # Pair up the tiers. They should have matching length + thresholds
@@ -150,13 +153,16 @@ def parse(md: str) -> dict:
             for (threshold, prompt_micro), (_t2, completion_micro) in zip(
                 prompt_tiers, completion_tiers, strict=False
             ):
-                tiers.append(
-                    {
-                        "max_prompt_tokens": threshold,
-                        "prompt_micro_per_m": prompt_micro,
-                        "completion_micro_per_m": completion_micro,
-                    }
-                )
+                tier = {
+                    "max_prompt_tokens": threshold,
+                    "prompt_micro_per_m": prompt_micro,
+                    "completion_micro_per_m": completion_micro,
+                }
+                if len(cached_tiers) == len(prompt_tiers):
+                    cached_threshold, cached_micro = cached_tiers[len(tiers)]
+                    if cached_threshold == threshold:
+                        tier["prompt_cached_micro_per_m"] = cached_micro
+                tiers.append(tier)
             if len(tiers) > 1:
                 out[or_id] = {"tiers": tiers}
             else:
@@ -165,6 +171,10 @@ def parse(md: str) -> dict:
                     "prompt_micro_per_m": t["prompt_micro_per_m"],
                     "completion_micro_per_m": t["completion_micro_per_m"],
                 }
+                if "prompt_cached_micro_per_m" in t:
+                    out[or_id]["prompt_cached_micro_per_m"] = t[
+                        "prompt_cached_micro_per_m"
+                    ]
         else:
             # Tier shape mismatch — fall back to flat (low tier).
             out[or_id] = {

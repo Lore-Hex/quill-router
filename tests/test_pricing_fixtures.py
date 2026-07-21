@@ -55,6 +55,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "pricing"
                 "google/gemini-2.5-flash",
                 "google/gemini-2.5-pro",
                 "google/gemini-3.5-flash",
+                "google/gemini-3.6-flash",
             },
             (0.05, 20.00),
         ),
@@ -244,6 +245,17 @@ Kimi K3\t1,048,576\t$3 /Mt· Cache Read $0.3 /Mt\t$15 /Mt\tMore
         "prompt_micro_per_m": 3_000_000,
         "completion_micro_per_m": 15_000_000,
         "prompt_cached_micro_per_m": 300_000,
+    }
+
+
+def test_gemini_parser_tracks_gemini_36_flash_standard_pricing() -> None:
+    module = importlib.import_module("scripts.pricing.parsers.gemini")
+    result = module.parse((FIXTURE_DIR / "gemini.html").read_text(encoding="utf-8"))
+
+    assert result["google/gemini-3.6-flash"] == {
+        "prompt_micro_per_m": 1_500_000,
+        "completion_micro_per_m": 7_500_000,
+        "prompt_cached_micro_per_m": 150_000,
     }
 
 

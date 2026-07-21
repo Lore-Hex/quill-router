@@ -1,0 +1,36 @@
+{
+  "_about": "Provider-native supplement for Google Vertex AI models whose availability is verified independently from Google AI Studio discovery. Gemini 3.6 Flash was verified with a direct global Vertex streamGenerateContent request in the TrustedRouter GCP project on 2026-07-21.",
+  "provider": "google-vertex",
+  "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-6-flash",
+  "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
+  "generated_at": "2026-07-21T21:00:00Z",
+  "model_count": 1,
+  "models": [
+    {
+      "id": "google/gemini-3.6-flash",
+      "upstream_id": "gemini-3.6-flash",
+      "display_name": "Gemini 3.6 Flash",
+      "title": "google/gemini-3.6-flash",
+      "context_length": 1048576,
+      "max_output_tokens": 65536,
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 150000,
+      "model_type": "chat",
+      "features": [
+        "reasoning"
+      ],
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1
+    }
+  ]
+}

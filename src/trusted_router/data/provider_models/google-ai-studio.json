@@ -727,9 +727,12 @@
       "display_name": "Gemini 3.6 Flash",
       "title": "google/gemini-3.6-flash",
       "model_type": "chat",
-      "features": [],
+      "features": [
+        "reasoning"
+      ],
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
@@ -742,8 +745,9 @@
       "upstream_id": "gemini-3.6-flash",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "input_token_price_per_m": 1500000,
+      "output_token_price_per_m": 7500000,
+      "cached_input_token_price_per_m": 150000
     }
   ],
   "pricing_source": "https://r.jina.ai/https://ai.google.dev/gemini-api/docs/pricing"
