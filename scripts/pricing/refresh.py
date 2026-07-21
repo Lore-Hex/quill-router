@@ -57,6 +57,8 @@ from scripts.pricing.base import (
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ingest_openrouter_catalog import build_snapshot as build_openrouter_snapshot  # noqa: E402
 
+from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
 
@@ -257,12 +259,25 @@ def _index_provider_prices(
     {model_id: {slug: price, slug2: price2, ...}}. A single model can be
     served by multiple keyed providers (e.g. meta-llama/llama-3.1-8b is
     on Cerebras AND Novita; moonshotai/kimi-k2.6 is on Kimi-direct AND
-    Together) — each gets its own provider-direct price for billing."""
+    Together) — each gets its own provider-direct price for billing. Effective-
+    dated provider retirements are filtered here so neither a fresh API result
+    nor a stale snapshot fallback can reintroduce a retired route."""
     out: dict[str, dict[str, ModelPrice]] = {}
+    upstream_id_maps: dict[str, dict[str, str]] = {}
     for slug, result in results.items():
         provider_slugs = _PRICING_RESULT_PROVIDER_ALIASES.get(slug, (slug,))
         for model_id, price in result.prices.items():
             for provider_slug in provider_slugs:
+                upstream_id_map = upstream_id_maps.get(provider_slug)
+                if upstream_id_map is None:
+                    upstream_id_map = _upstream_id_map_for(provider_slug)
+                    upstream_id_maps[provider_slug] = upstream_id_map
+                if provider_model_retired(
+                    provider_slug,
+                    model_id,
+                    upstream_id_map.get(model_id),
+                ):
+                    continue
                 out.setdefault(model_id, {})[provider_slug] = price
     return out
 

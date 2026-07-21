@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
+TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,15 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Together announced that its serverless MiniMax M2.7 route retires on
+    # 2026-07-27 and named MiniMax M3 as the replacement. The announcement did
+    # not include a time zone, so use 00:00 UTC as the conservative cutover.
+    _Retirement(
+        provider="together",
+        model_ids=frozenset({"minimax/minimax-m2.7"}),
+        upstream_ids=frozenset({"MiniMaxAI/MiniMax-M2.7"}),
+        effective_at=TOGETHER_MINIMAX_M27_RETIREMENT_AT,
+    ),
     _Retirement(
         provider="phala",
         model_ids=frozenset(

@@ -338,7 +338,6 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "qwen/qwen2.5-vl-72b-instruct",
             "mistralai/mistral-small-24b-instruct-2501",
             "moonshotai/kimi-k2.7-code",
-            "minimax/minimax-m3",
             # route-health 2026-07-18, 100% failure, upstream 404/400.
             "z-ai/glm-4.6",
             "z-ai/glm-4.7",

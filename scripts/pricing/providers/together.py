@@ -35,6 +35,7 @@ URL = "https://api.together.xyz/v1/models"
 # silently deleting the endpoint from the catalog.
 EXPECTED_MODELS = [
     "meta-llama/llama-3.3-70b-instruct",
+    "minimax/minimax-m3",
     "z-ai/glm-5.2",
 ]
 
@@ -59,6 +60,8 @@ _NATIVE_TO_OR_ID = {
     "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
     "moonshotai/Kimi-K2-Instruct": "moonshotai/kimi-k2-instruct",
     "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
+    "MiniMaxAI/MiniMax-M2.7": "minimax/minimax-m2.7",
+    "MiniMaxAI/MiniMax-M3": "minimax/minimax-m3",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
 }
 
