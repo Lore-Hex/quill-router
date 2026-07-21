@@ -26,6 +26,7 @@ from scripts.pricing.base import (
     fetch_json,
     log,
     parser_path,
+    runtime_required_models,
     validate,
 )
 
@@ -161,11 +162,40 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _known_manifest_model_ids() -> set[str]:
+    if not MANIFEST_PATH.exists():
+        return set()
+    try:
+        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return set()
+    return {
+        model_id
+        for row in rows
+        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
+    }
+
+
+def _new_required_price_ids(live_rows: dict[str, dict[str, Any]]) -> frozenset[str]:
+    known = _known_manifest_model_ids()
+    return frozenset(
+        model_id
+        for model_id in live_rows
+        if model_id not in known and model_id != "moonshotai/moonshot-v1-auto"
+    )
+
+
 def fetch() -> ProviderPricingResult:
     """Fetch first-party prices and intersect them with live account models."""
 
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
     _DISCOVERED_MANIFEST_ROWS = {}
+
+    live_rows = _live_model_rows()
+    required_price_ids = _new_required_price_ids(live_rows) | runtime_required_models(SLUG)
 
     html = _combined_html()
     if not html:
@@ -185,11 +215,14 @@ def fetch() -> ProviderPricingResult:
     if prices is None:
         raise RuntimeError(f"{SLUG}: parser returned None unexpectedly")
 
-    live_rows = _live_model_rows()
     prices = {model_id: price for model_id, price in prices.items() if model_id in live_rows}
     _DISCOVERED_MANIFEST_ROWS = live_rows
 
-    errors = validate(prices, EXPECTED_MODELS)
+    errors = validate(
+        prices,
+        EXPECTED_MODELS,
+        required_models=required_price_ids,
+    )
     if errors:
         raise RuntimeError(f"{SLUG}: validation failed: {errors}")
     return ProviderPricingResult(

@@ -21,8 +21,7 @@ from scripts.pricing.model_ids import remember_upstream_id
 
 SLUG = "morph"
 MODELS_URL = "https://api.morphllm.com/v1/models"
-URL = "https://r.jina.ai/https://www.morphllm.com/pricing"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = "https://www.morphllm.com/pricing"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -65,7 +64,7 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
+        accepted_status_codes=frozenset({429}),
     )
     api_key = os.environ.get("MORPH_API_KEY")
     if not api_key:

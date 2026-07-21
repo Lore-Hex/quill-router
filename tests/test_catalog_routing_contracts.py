@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from trusted_router.catalog import (
@@ -1516,21 +1518,34 @@ def test_makora_provider_models_present_and_routable() -> None:
 
 
 def test_makora_provider_prices_follow_published_lineup() -> None:
-    """Makora publishes per-token model prices on its homepage lineup.
+    """Runtime prices follow Makora's generated authenticated catalog.
 
-    The provider manifest stores raw upstream cost in microdollars/M; the
-    catalog applies the standard 5% customer markup at load time.
+    Provider prices are mutable, so this contract compares the loaded routes
+    to the checked-in provider-native manifest rather than freezing a stale
+    homepage price table into source code.
     """
+    from trusted_router.catalog_ingest import (
+        _PROVIDER_MODELS_DIR,
+        _is_provider_deprecated_model,
+    )
+    from trusted_router.pricing import _customer_price
 
+    raw = json.loads((_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8"))
     expected_prices = {
-        "deepseek/deepseek-v4-flash": (119_070, 293_055, 89_355),
-        "deepseek/deepseek-v4-pro": (1_383_900, 2_767_905, 1_037_925),
-        "z-ai/glm-5.2": (1_417_500, 4_189_500, 252_000),
-        "moonshotai/kimi-k2.7-code": (798_000, 3_963_645, 604_485),
-        "meta-llama/llama-3.3-70b-instruct": (189_000, 420_000, 157_500),
-        "qwen/qwen3.6-35b-a3b": (180_600, 1_260_210, 135_450),
+        row["id"]: (
+            _customer_price(int(row["input_token_price_per_m"])),
+            _customer_price(int(row["output_token_price_per_m"])),
+            _customer_price(int(row["cached_input_token_price_per_m"])),
+        )
+        for row in raw["models"]
+        if row.get("routable") is not False
+        and int(row.get("cached_input_token_price_per_m") or 0) > 0
+        and not _is_provider_deprecated_model(
+            "makora", str(row["id"]), str(row.get("upstream_id") or row["id"])
+        )
     }
 
+    assert expected_prices
     for model_id, (prompt, completion, cached_prompt) in expected_prices.items():
         credits = [
             e

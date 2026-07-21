@@ -24,16 +24,19 @@ def _manifest_row(model_id: str, upstream_id: str, **metadata: object) -> dict[s
 
 
 def _write_manifest(path: Path, provider: str, rows: list[dict[str, object]]) -> str:
-    text = json.dumps(
-        {
-            "_about": f"{provider} test manifest",
-            "provider": provider,
-            "generated_at": "2026-01-01T00:00:00Z",
-            "model_count": len(rows),
-            "models": rows,
-        },
-        indent=2,
-    ) + "\n"
+    text = (
+        json.dumps(
+            {
+                "_about": f"{provider} test manifest",
+                "provider": provider,
+                "generated_at": "2026-01-01T00:00:00Z",
+                "model_count": len(rows),
+                "models": rows,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     path.write_text(text, encoding="utf-8")
     return text
 
@@ -112,9 +115,7 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
     result = friendli.fetch()
     friendli.write_provider_manifest(result)
     tombstoned_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    tombstoned = {row["id"]: row for row in tombstoned_raw["models"]}[
-        "qwen/qwen3-235b-a22b-2507"
-    ]
+    tombstoned = {row["id"]: row for row in tombstoned_raw["models"]}["qwen/qwen3-235b-a22b-2507"]
     assert tombstoned["routable"] is False
     assert tombstoned["routable_reason"] == "delisted-upstream"
     assert tombstoned["missing_since"] == missing["missing_since"]
@@ -128,9 +129,7 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
     result = friendli.fetch()
     friendli.write_provider_manifest(result)
     restored_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    restored = {row["id"]: row for row in restored_raw["models"]}[
-        "qwen/qwen3-235b-a22b-2507"
-    ]
+    restored = {row["id"]: row for row in restored_raw["models"]}["qwen/qwen3-235b-a22b-2507"]
     assert restored["routable"] is True
     assert "routable_reason" not in restored
     assert "missing_since" not in restored
@@ -192,9 +191,7 @@ def test_gemini_tombstones_second_miss_and_empty_discovery_keeps_old_manifest(
     result = gemini.fetch()
     gemini.write_provider_manifest(result)
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-    tombstoned = {row["id"]: row for row in raw["models"]}[
-        "google/gemini-2.5-flash-lite"
-    ]
+    tombstoned = {row["id"]: row for row in raw["models"]}["google/gemini-2.5-flash-lite"]
     assert tombstoned["routable"] is False
     assert tombstoned["routable_reason"] == "delisted-upstream"
 
@@ -252,7 +249,7 @@ def test_gemini_refresh_reprices_only_verified_vertex_rows(
     assert row["input_token_price_per_m"] == 1_500_000
     assert row["output_token_price_per_m"] == 7_500_000
     assert row["cached_input_token_price_per_m"] == 150_000
-    assert vertex["pricing_source"] == gemini.URL
+    assert vertex["pricing_source"] == gemini.VERTEX_PRICING_URL
 
 
 def test_wafer_feed_presence_survives_pricing_schema_drift(
@@ -392,6 +389,29 @@ def test_gemini_paginates_complete_feed_and_rejects_stuck_token(
         gemini._live_model_rows()  # noqa: SLF001
 
 
+def test_gemini_live_discovery_requires_only_new_stable_text_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "google-ai-studio.json"
+    _write_manifest(
+        manifest_path,
+        "google-ai-studio",
+        [_manifest_row("google/gemini-3.6-flash", "gemini-3.6-flash")],
+    )
+    monkeypatch.setattr(gemini, "MANIFEST_PATH", manifest_path)
+    live_rows = {
+        "google/gemini-3.6-flash": {"id": "google/gemini-3.6-flash"},
+        "google/gemini-3.7-flash": {"id": "google/gemini-3.7-flash"},
+        "google/gemini-3.7-flash-image": {"id": "google/gemini-3.7-flash-image"},
+        "google/gemini-flash-latest": {"id": "google/gemini-flash-latest"},
+    }
+
+    assert gemini._new_required_price_ids(live_rows) == frozenset(  # noqa: SLF001
+        {"google/gemini-3.7-flash"}
+    )
+
+
 def test_awaiting_price_auto_promotes_but_curated_false_row_is_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -439,6 +459,7 @@ def test_awaiting_price_auto_promotes_but_curated_false_row_is_untouched(
     awaiting = by_id["meta-llama/llama-3.1-8b-instruct"]
     assert awaiting["routable"] is False
     assert awaiting["routable_reason"] == "awaiting-price"
+    assert awaiting["unresolved_since"]
     assert by_id["metadata/curated"] == curated
 
     second = ProviderPricingResult(
@@ -456,6 +477,7 @@ def test_awaiting_price_auto_promotes_but_curated_false_row_is_untouched(
     promoted = by_id["meta-llama/llama-3.1-8b-instruct"]
     assert promoted["routable"] is True
     assert "routable_reason" not in promoted
+    assert "unresolved_since" not in promoted
     assert promoted["input_token_price_per_m"] == 30
     assert by_id["metadata/curated"] == curated
 

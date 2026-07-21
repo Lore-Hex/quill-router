@@ -10,8 +10,7 @@ from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "xiaomi"
 PUBLIC_PRICING_URL = "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
-URL = f"https://r.jina.ai/{PUBLIC_PRICING_URL}"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = PUBLIC_PRICING_URL
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -32,7 +31,6 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )
 
 

@@ -154,6 +154,18 @@ def test_novita_live_discovery_preserves_existing_ids_and_normalizes_new_ids(
                     "status": 1,
                     "endpoints": ["embeddings"],
                 },
+                {
+                    "id": "ai_infer_test_1",
+                    "status": 1,
+                    "endpoints": ["chat/completions"],
+                    "output_modalities": ["text"],
+                },
+                {
+                    "id": "Kimi-K4",
+                    "status": 1,
+                    "endpoints": ["chat/completions"],
+                    "output_modalities": ["text"],
+                },
             ]
         },
     )
@@ -163,6 +175,8 @@ def test_novita_live_discovery_preserves_existing_ids_and_normalizes_new_ids(
     assert "Sao10K/L3-8B-Stheno-v3.2" in discovered
     assert "example/disabled-chat" not in discovered
     assert "example/embedding-only" not in discovered
+    assert "ai_infer_test_1" not in discovered
+    assert "moonshotai/kimi-k4" in discovered
     kimi = discovered["moonshotai/kimi-k3"]
     assert kimi["upstream_id"] == "MoonshotAI/Kimi-K3"
     assert kimi["context_length"] == 1_048_576

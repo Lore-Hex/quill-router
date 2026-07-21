@@ -1,14 +1,11 @@
 """OpenAI — human-only provider config.
 
-OpenAI's pricing pages are Cloudflare-blocked from script User-Agents
-(every direct fetch returns 403 even with a real Chrome UA). We work
-around this by routing through `r.jina.ai`, a free reader-proxy
-service that uses a headless browser to render the page server-side
-and returns clean markdown. The X-Return-Format header asks Jina for
-markdown specifically (the default truncates to a summary).
+OpenAI's current developer pricing page is server-rendered and fetched
+directly. The shared parser projection converts its tables into stable text,
+so pricing refreshes do not depend on an external reader proxy.
 
-We point at `platform.openai.com/docs/pricing` rather than the marketing
-`/api/pricing/` because the docs page has the comprehensive table —
+We point at the developer API pricing reference rather than the marketing
+pricing page because the docs page has the comprehensive table —
 GPT-5.5 / 5.4 family with full Short / Long context tier breakdowns
 and Standard / Batch / Flex / Priority processing tiers.
 
@@ -27,8 +24,7 @@ from __future__ import annotations
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "openai"
-URL = "https://r.jina.ai/https://platform.openai.com/docs/pricing"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = "https://developers.openai.com/api/docs/pricing"
 
 # Models we expect to see on the page. Strict floor — parser must
 # extract these or validation triggers self-heal. Today the page
@@ -46,5 +42,4 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )

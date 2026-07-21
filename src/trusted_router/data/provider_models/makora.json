@@ -1,23 +1,23 @@
 {
-  "_about": "Provider-native supplement for Makora Inference routes. Makora's /v1/models feed publishes native model ids and context windows but not pricing. Prices are refreshed hourly from Makora's public homepage lineup where listed; Gemma keeps the OpenRouter canonical price fallback because Makora does not currently publish a Gemma price on its homepage/pricing page/API feed.",
+  "_about": "Provider-native supplement for Makora Inference routes. Model IDs, capabilities, context windows, and account-billable prices refresh hourly from Makora's authenticated /v1/models feed.",
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
-  "pricing_source": "https://www.makora.com/; https://openrouter.ai/api/v1/models for Gemma fallback",
-  "generated_at": "2026-07-21T19:51:53Z",
+  "pricing_source": "https://inference.makora.com/v1/models",
+  "generated_at": "2026-07-21T20:47:51Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 10,
+  "model_count": 11,
   "models": [
     {
       "id": "deepseek/deepseek-v4-flash",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Flash",
-      "display_name": "DeepSeek V4 Flash",
+      "display_name": "deepseek-ai/DeepSeek-V4-Flash",
       "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 113400,
-      "output_token_price_per_m": 279100,
-      "cached_input_token_price_per_m": 85100,
+      "input_token_price_per_m": 90000,
+      "output_token_price_per_m": 195000,
+      "cached_input_token_price_per_m": 19600,
       "input_modalities": [
         "text"
       ],
@@ -25,28 +25,41 @@
         "text"
       ],
       "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
         "temperature",
-        "tool_choice",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "stop",
+        "logit_bias",
+        "max_tokens",
+        "repetition_penalty",
+        "presence_penalty",
+        "seed",
+        "min_p"
+      ],
+      "title": "deepseek-ai/DeepSeek-V4-Flash",
+      "model_type": "chat",
+      "status": 1,
+      "max_output_tokens": 384000,
+      "features": [
         "tools",
-        "top_p"
+        "reasoning",
+        "json_mode",
+        "structured_outputs",
+        "logprobs"
       ]
     },
     {
       "id": "deepseek/deepseek-v4-pro",
       "upstream_id": "deepseek-ai/DeepSeek-V4-Pro",
-      "display_name": "DeepSeek V4 Pro",
+      "display_name": "deepseek-ai/DeepSeek-V4-Pro",
       "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1318000,
-      "output_token_price_per_m": 2636100,
-      "cached_input_token_price_per_m": 988500,
+      "input_token_price_per_m": 627000,
+      "output_token_price_per_m": 1344000,
+      "cached_input_token_price_per_m": 68860,
       "input_modalities": [
         "text"
       ],
@@ -54,84 +67,40 @@
         "text"
       ],
       "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
         "temperature",
-        "tool_choice",
+        "min_p",
+        "presence_penalty",
+        "seed",
+        "top_p",
+        "repetition_penalty",
+        "max_tokens",
+        "logit_bias",
+        "stop",
+        "frequency_penalty",
+        "top_k"
+      ],
+      "title": "deepseek-ai/DeepSeek-V4-Pro",
+      "model_type": "chat",
+      "status": 1,
+      "max_output_tokens": 384000,
+      "features": [
         "tools",
-        "top_p"
+        "reasoning",
+        "json_mode",
+        "structured_outputs",
+        "logprobs"
       ]
     },
     {
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "google/gemma-4-26B-A4B",
-      "display_name": "Gemma 4 26B A4B",
+      "display_name": "google/gemma-4-26B-A4B",
       "context_length": 262144,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 60000,
-      "output_token_price_per_m": 330000,
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "response_format",
-        "stream_options",
-        "temperature",
-        "tool_choice",
-        "tools",
-        "top_p"
-      ]
-    },
-    {
-      "id": "z-ai/glm-5.2",
-      "upstream_id": "zai-org/GLM-5.2-FP8",
-      "display_name": "GLM 5.2 FP8",
-      "context_length": 980000,
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_token_price_per_m": 1350000,
-      "output_token_price_per_m": 3990000,
-      "cached_input_token_price_per_m": 240000,
-      "input_modalities": [
-        "text"
-      ],
-      "output_modalities": [
-        "text"
-      ],
-      "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
-        "temperature",
-        "tool_choice",
-        "tools",
-        "top_p"
-      ]
-    },
-    {
-      "id": "moonshotai/kimi-k2.7-code",
-      "upstream_id": "moonshotai/Kimi-K2.7-Code",
-      "display_name": "Kimi K2.7 Code",
-      "context_length": 262144,
-      "endpoints": [
-        "chat/completions"
-      ],
-      "input_token_price_per_m": 760000,
-      "output_token_price_per_m": 3774900,
-      "cached_input_token_price_per_m": 575700,
+      "input_token_price_per_m": 100000,
+      "output_token_price_per_m": 340000,
       "input_modalities": [
         "text",
         "image"
@@ -140,15 +109,110 @@
         "text"
       ],
       "supported_parameters": [
-        "chat_template_kwargs",
-        "max_completion_tokens",
-        "max_tokens",
-        "response_format",
-        "stream_options",
         "temperature",
-        "tool_choice",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "title": "google/gemma-4-26B-A4B",
+      "model_type": "chat",
+      "status": 1,
+      "max_output_tokens": 384000,
+      "features": [
         "tools",
-        "top_p"
+        "logprobs",
+        "structured_outputs",
+        "reasoning",
+        "json_mode"
+      ],
+      "cached_input_token_price_per_m": 34000
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "upstream_id": "zai-org/GLM-5.2-FP8",
+      "display_name": "zai-org/GLM-5.2-FP8",
+      "context_length": 980000,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 440000,
+      "output_token_price_per_m": 1540400,
+      "cached_input_token_price_per_m": 110000,
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens",
+        "logit_bias",
+        "min_p"
+      ],
+      "title": "zai-org/GLM-5.2-FP8",
+      "model_type": "chat",
+      "status": 1,
+      "max_output_tokens": 128000,
+      "features": [
+        "tools",
+        "reasoning",
+        "json_mode",
+        "structured_outputs",
+        "logprobs"
+      ]
+    },
+    {
+      "id": "moonshotai/kimi-k2.7-code",
+      "upstream_id": "moonshotai/Kimi-K2.7-Code",
+      "display_name": "moonshotai/Kimi-K2.7-Code",
+      "context_length": 262144,
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_token_price_per_m": 328000,
+      "output_token_price_per_m": 1353200,
+      "cached_input_token_price_per_m": 64600,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "supported_parameters": [
+        "temperature",
+        "min_p",
+        "presence_penalty",
+        "seed",
+        "top_p",
+        "repetition_penalty",
+        "max_tokens",
+        "stop",
+        "logit_bias",
+        "frequency_penalty",
+        "top_k"
+      ],
+      "title": "moonshotai/Kimi-K2.7-Code",
+      "model_type": "chat",
+      "status": 1,
+      "features": [
+        "tools",
+        "reasoning",
+        "json_mode",
+        "logprobs"
       ]
     },
     {
@@ -177,19 +241,22 @@
         "tool_choice",
         "tools",
         "top_p"
-      ]
+      ],
+      "missing_since": "2026-07-21",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
       "upstream_id": "meta-llama/Llama-3.3-70B-Instruct",
-      "display_name": "Llama 3.3 70B Instruct",
-      "context_length": 131072,
+      "display_name": "meta-llama/Llama-3.3-70B-Instruct",
+      "context_length": 4096,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 180000,
-      "output_token_price_per_m": 400000,
-      "cached_input_token_price_per_m": 150000,
+      "input_token_price_per_m": 119000,
+      "output_token_price_per_m": 382500,
+      "cached_input_token_price_per_m": 80000,
       "input_modalities": [
         "text"
       ],
@@ -205,77 +272,103 @@
         "tool_choice",
         "tools",
         "top_p"
+      ],
+      "title": "meta-llama/Llama-3.3-70B-Instruct",
+      "model_type": "chat",
+      "status": 1,
+      "features": [
+        "tools"
       ]
     },
     {
       "id": "qwen/qwen3.6-27b",
       "upstream_id": "unsloth/Qwen3.6-27B-NVFP4",
-      "display_name": "Qwen 3.6 27B NVFP4",
+      "display_name": "unsloth/Qwen3.6-27B-NVFP4",
       "context_length": 262144,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 467100,
-      "output_token_price_per_m": 3459200,
-      "cached_input_token_price_per_m": 350300,
+      "input_token_price_per_m": 272850,
+      "output_token_price_per_m": 2822850,
+      "cached_input_token_price_per_m": 297700,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
       ],
       "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
+        "top_p",
         "temperature",
-        "tool_choice",
+        "top_k",
+        "frequency_penalty",
+        "top_a",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "max_tokens",
+        "seed"
+      ],
+      "title": "unsloth/Qwen3.6-27B-NVFP4",
+      "model_type": "chat",
+      "status": 1,
+      "features": [
         "tools",
-        "top_p"
+        "reasoning"
       ]
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
       "upstream_id": "unsloth/Qwen3.6-35B-A3B-NVFP4",
-      "display_name": "Qwen 3.6 35B A3B NVFP4",
+      "display_name": "unsloth/Qwen3.6-35B-A3B-NVFP4",
       "context_length": 262144,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 172000,
-      "output_token_price_per_m": 1200200,
-      "cached_input_token_price_per_m": 129000,
+      "input_token_price_per_m": 143565,
+      "output_token_price_per_m": 850000,
+      "cached_input_token_price_per_m": 109600,
       "input_modalities": [
-        "text"
+        "text",
+        "image"
       ],
       "output_modalities": [
         "text"
       ],
       "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
         "temperature",
-        "tool_choice",
+        "min_p",
+        "presence_penalty",
+        "seed",
+        "max_tokens",
+        "repetition_penalty",
+        "top_a",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "stop",
+        "logit_bias"
+      ],
+      "title": "unsloth/Qwen3.6-35B-A3B-NVFP4",
+      "model_type": "chat",
+      "status": 1,
+      "features": [
         "tools",
-        "top_p"
+        "reasoning"
       ]
     },
     {
       "id": "z-ai/glm-5.2-nvfp4",
       "upstream_id": "zai-org/GLM-5.2-NVFP4",
-      "display_name": "GLM 5.2 NVFP4",
+      "display_name": "zai-org/GLM-5.2-NVFP4",
       "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1350000,
-      "output_token_price_per_m": 3990000,
-      "cached_input_token_price_per_m": 240000,
+      "input_token_price_per_m": 1020000,
+      "output_token_price_per_m": 3400000,
+      "cached_input_token_price_per_m": 161500,
       "input_modalities": [
         "text"
       ],
@@ -283,16 +376,50 @@
         "text"
       ],
       "supported_parameters": [
-        "max_completion_tokens",
-        "max_tokens",
-        "reasoning_effort",
-        "response_format",
-        "stream_options",
         "temperature",
-        "tool_choice",
+        "min_p",
+        "presence_penalty",
+        "seed",
+        "max_tokens",
+        "repetition_penalty",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "stop",
+        "logit_bias"
+      ],
+      "title": "zai-org/GLM-5.2-NVFP4",
+      "model_type": "chat",
+      "status": 1,
+      "max_output_tokens": 128000,
+      "features": [
         "tools",
-        "top_p"
+        "reasoning",
+        "structured_outputs",
+        "json_mode",
+        "logprobs"
       ]
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "upstream_id": "openai/gpt-oss-120b",
+      "display_name": "openai/gpt-oss-120b",
+      "title": "openai/gpt-oss-120b",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "context_length": 131072,
+      "input_token_price_per_m": 128600,
+      "output_token_price_per_m": 453300,
+      "cached_input_token_price_per_m": 96475
     }
   ]
 }

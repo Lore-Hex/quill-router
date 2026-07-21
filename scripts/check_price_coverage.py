@@ -26,11 +26,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from scripts.pricing.model_ids import (
+    canonicalize_native_model_id,
+    canonicalize_unqualified_model_id,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 PROVIDERS_DIR = ROOT / "scripts" / "pricing" / "providers"
 MANIFEST_DIR = ROOT / "src" / "trusted_router" / "data" / "provider_models"
 DEFAULT_MAX_AGE_DAYS = 14
-ZAI_MODEL_DISCOVERY_URL = "https://r.jina.ai/https://docs.z.ai/devpack/latest-model"
+ZAI_MODEL_DISCOVERY_URL = "https://docs.z.ai/devpack/latest-model.md"
 _ZAI_MODEL_RE = re.compile(r"\bglm-\d+(?:\.\d+)?(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?(?:\[1m\])?\b", re.I)
 
 # One parser can own pricing for more than one separately routed provider.
@@ -60,7 +65,7 @@ def _cerebras_model_id(native_id: str) -> str | None:
         "gpt-oss-120b": "openai/gpt-oss-120b",
         "zai-glm-4.7": "z-ai/glm-4.7",
         "gemma-4-31b": "google/gemma-4-31b-it",
-    }.get(value)
+    }.get(value) or canonicalize_unqualified_model_id(value)
 
 
 def _gemini_model_id(native_id: str) -> str | None:
@@ -68,6 +73,15 @@ def _gemini_model_id(native_id: str) -> str | None:
     if not value:
         return None
     return f"google/{value.casefold()}"
+
+
+def _novita_model_id(native_id: str) -> str | None:
+    """Match the conservative normalization used by the Novita refresher."""
+
+    value = native_id.strip()
+    if not value:
+        return None
+    return canonicalize_native_model_id(value) or canonicalize_unqualified_model_id(value)
 
 
 _FIREWORKS_MODEL_IDS = {
@@ -86,7 +100,7 @@ def _fireworks_model_id(native_id: str) -> str | None:
     value = native_id.strip()
     if not value:
         return None
-    return _FIREWORKS_MODEL_IDS.get(value, value)
+    return _FIREWORKS_MODEL_IDS.get(value) or canonicalize_unqualified_model_id(value)
 
 
 _BASETEN_MODEL_IDS = {
@@ -257,7 +271,7 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "novita",
         "https://api.novita.ai/openai/v1/models",
         ("NOVITA_API_KEY",),
-        _identity_model_id,
+        _novita_model_id,
     ),
     (
         "friendli",
@@ -436,22 +450,82 @@ def _json_model_rows(payload: Any) -> list[dict[str, Any]]:
 
 
 def _manifest_provider_model_ids(slug: str) -> set[str]:
+    routable, unresolved, classified, _new_unresolved = _manifest_provider_model_state(slug)
+    return routable | unresolved | classified
+
+
+def _manifest_provider_model_state(
+    slug: str,
+) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Return routable, awaiting-price, classified, and new-awaiting IDs."""
+
     path = MANIFEST_DIR / f"{slug}.json"
     if not path.exists():
-        return set()
+        return set(), set(), set(), set()
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return set()
-    ids: set[str] = set()
+        return set(), set(), set(), set()
+    routable: set[str] = set()
+    unresolved: set[str] = set()
+    classified: set[str] = set()
+    new_unresolved: set[str] = set()
     for row in raw.get("models") or []:
         if not isinstance(row, dict):
             continue
+        row_ids: set[str] = set()
         for key in ("id", "upstream_id"):
             value = row.get(key)
             if isinstance(value, str) and value:
-                ids.add(value)
-    return ids
+                row_ids.add(value)
+        if row.get("routable") is not False:
+            routable.update(row_ids)
+        elif row.get("routable_reason") == "awaiting-price":
+            unresolved.update(row_ids)
+            if row.get("unresolved_since"):
+                new_unresolved.update(row_ids)
+        else:
+            classified.update(row_ids)
+    return routable, unresolved, classified, new_unresolved
+
+
+def _active_discovery_row(row: dict[str, Any]) -> bool:
+    status = row.get("status")
+    if isinstance(status, int) and not isinstance(status, bool) and status != 1:
+        return False
+    if isinstance(status, str) and status.casefold() in {
+        "disabled",
+        "inactive",
+        "offline",
+        "retired",
+        "deprecated",
+    }:
+        return False
+    endpoints = row.get("endpoints")
+    if isinstance(endpoints, list) and endpoints:
+        normalized = {str(value).casefold() for value in endpoints}
+        if "chat/completions" not in normalized and "responses" not in normalized:
+            return False
+    output_modalities = row.get("output_modalities")
+    if isinstance(output_modalities, list) and output_modalities:
+        if "text" not in {str(value).casefold() for value in output_modalities}:
+            return False
+    return True
+
+
+_STANDARD_GEMINI_TEXT_ID_RE = re.compile(r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite)$")
+
+
+def _required_discovery_model(slug: str, model_id: str) -> bool:
+    if slug == "google-ai-studio":
+        return _STANDARD_GEMINI_TEXT_ID_RE.fullmatch(model_id) is not None
+    return slug in {
+        "cerebras",
+        "kimi",
+        "makora",
+        "minimax",
+        "novita",
+    }
 
 
 def _discover_zai_coding_plan_models(text: str) -> set[str]:
@@ -545,14 +619,16 @@ def _model_discovery_audit(
                 f"{', '.join(missing)} — add/update provider_models/zai.json or the snapshot"
             )
         elif discovered:
-            info.append(
-                f"zai: model discovery matched catalog ({len(discovered)} docs model(s)) ✓"
-            )
+            info.append(f"zai: model discovery matched catalog ({len(discovered)} docs model(s)) ✓")
         else:
             warnings.append("zai: model discovery found no GLM model ids in Coding Plan docs")
 
     for slug, url, env_names, normalize in _DISCOVERABLE_MANIFEST_PROVIDERS:
-        published = published_model_ids | _manifest_provider_model_ids(slug)
+        routable, unresolved, classified, new_unresolved = _manifest_provider_model_state(slug)
+        # Provider-specific manifests are authoritative for provider route
+        # coverage.  The global catalog can contain the same model through a
+        # different provider and must not hide this provider's unresolved row.
+        published = routable or published_model_ids
         try:
             payload = fetch_json(url, env_names)
         except Exception as exc:  # noqa: BLE001
@@ -560,27 +636,62 @@ def _model_discovery_audit(
             continue
         discovered_ids: set[str] = set()
         for row in _json_model_rows(payload):
+            if not _active_discovery_row(row):
+                continue
             raw_id = row.get("id") or row.get("name")
             if not isinstance(raw_id, str):
+                continue
+            provider_alias = raw_id.removeprefix("models/")
+            # Preserve already-classified provider-native IDs even when they
+            # do not belong to a public model family. New unknown aliases do
+            # not become launch blockers merely because an API leaked them.
+            if provider_alias in published | unresolved | classified:
+                discovered_ids.add(provider_alias)
                 continue
             normalized = normalize(raw_id)
             if normalized:
                 discovered_ids.add(normalized)
-                provider_alias = raw_id.removeprefix("models/")
                 if provider_alias:
                     discovered_ids.add(provider_alias)
-        missing = sorted(discovered_ids - published)
-        if missing:
-            sample = ", ".join(missing[:8])
-            extra = f" (+{len(missing) - 8} more)" if len(missing) > 8 else ""
+        missing = discovered_ids - published - unresolved - classified
+        unresolved_live = discovered_ids & unresolved
+        required_missing = sorted(
+            model_id for model_id in missing if _required_discovery_model(slug, model_id)
+        )
+        optional_missing = sorted(missing - set(required_missing))
+        required_new_unresolved = sorted(
+            model_id
+            for model_id in unresolved_live & new_unresolved
+            if _required_discovery_model(slug, model_id)
+        )
+        older_unresolved = sorted(unresolved_live - set(required_new_unresolved))
+        if required_missing:
+            sample = ", ".join(required_missing[:8])
+            extra = f" (+{len(required_missing) - 8} more)" if len(required_missing) > 8 else ""
             warnings.append(
-                f"{slug}: live model API lists unpublished model(s) {sample}{extra} "
-                f"— refresh provider_models/{slug}.json or add a provider-direct price source"
+                f"{slug}: live model API lists required unpublished model(s) "
+                f"{sample}{extra} — refresh provider_models/{slug}.json or add a "
+                "provider-direct price source"
             )
-        elif discovered_ids:
-            info.append(f"{slug}: model discovery matched catalog ({len(discovered_ids)} id(s)) ✓")
-        else:
+        if required_new_unresolved:
+            warnings.append(
+                f"{slug}: newly discovered required model(s) still await a price: "
+                f"{', '.join(required_new_unresolved[:8])}"
+            )
+        if optional_missing:
+            warnings.append(
+                f"{slug}: live model API lists review-only unpublished model(s) "
+                f"{', '.join(optional_missing[:8])}"
+            )
+        if older_unresolved:
+            warnings.append(
+                f"{slug}: manifest has unresolved live model(s) awaiting price review: "
+                f"{', '.join(older_unresolved[:8])}"
+            )
+        if not discovered_ids:
             warnings.append(f"{slug}: model discovery returned no model ids")
+        elif not (missing or unresolved_live):
+            info.append(f"{slug}: model discovery matched catalog ({len(discovered_ids)} id(s)) ✓")
 
     for slug, url, env_names in _GLM_DISCOVERABLE_PROVIDER_APIS:
         published = published_model_ids | _manifest_provider_model_ids(slug)
@@ -665,6 +776,8 @@ def _run_audit(
             for warning in discovery_warnings
             if warning.startswith("zai:")
             or warning.startswith("kimi:")
+            or "required unpublished model" in warning
+            or "newly discovered required model" in warning
             or "live GLM current model API lists unpublished" in warning
         )
         info.extend(discovery_info)

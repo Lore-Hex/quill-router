@@ -3,7 +3,7 @@
   "source": "https://api.novita.ai/openai/v1/models",
   "price_source": "https://novita.ai/pricing",
   "price_scale_to_microdollars_per_million_tokens": 100,
-  "generated_at": "2026-07-21T19:51:53Z",
+  "generated_at": "2026-07-21T20:47:51Z",
   "model_count": 135,
   "models": [
     {
@@ -2157,8 +2157,8 @@
       "created": 1758695025,
       "context_length": 65536,
       "max_output_tokens": 16384,
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0,
+      "input_token_price_per_m": 2500,
+      "output_token_price_per_m": 9700,
       "model_type": "chat",
       "features": [
         "function-calling",
@@ -2188,8 +2188,8 @@
       "created": 1758695093,
       "context_length": 65536,
       "max_output_tokens": 16384,
-      "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0,
+      "input_token_price_per_m": 2500,
+      "output_token_price_per_m": 9700,
       "model_type": "chat",
       "features": [
         "function-calling",
@@ -3302,8 +3302,10 @@
       "created": 1780282959,
       "context_length": 1000000,
       "max_output_tokens": 131072,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable": true,
+      "input_token_price_per_m": 3000,
+      "output_token_price_per_m": 12000,
+      "cached_input_token_price_per_m": 600
     },
     {
       "id": "moonshotai/kimi-k2.7-code",

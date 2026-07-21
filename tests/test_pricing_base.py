@@ -3,6 +3,7 @@
 The self-heal flow itself is covered in test_pricing_self_heal.py with
 mocked LLM responses. This file focuses on the standalone primitives.
 """
+
 from __future__ import annotations
 
 from scripts.pricing.base import (
@@ -11,9 +12,30 @@ from scripts.pricing.base import (
     _coerce_to_model_prices,
     ast_whitelist_check,
     guard_manifest_prune,
+    normalize_parser_input,
     sandbox_run_parser,
     validate,
 )
+
+
+def test_normalize_parser_input_projects_official_html_without_scripts() -> None:
+    html = r"""
+    <html><body><h2>Pricing</h2>
+    <table><tr><th>Model</th><th>Input</th></tr><tr><td>Model-X</td><td>\$0.20</td></tr></table>
+    <script>secretNoise = 'ignore me'</script></body></html>
+    """
+
+    full = normalize_parser_input(html)
+    compact = normalize_parser_input(html, include_raw_html=False)
+
+    assert "<table>" in full
+    assert "## Pricing" in full
+    assert "| Model-X | $0.20 |" in compact
+    assert "secretNoise" not in compact
+
+
+def test_normalize_parser_input_unescapes_markdown_dollars() -> None:
+    assert normalize_parser_input("| model | \\$0.20 |") == "| model | $0.20 |"
 
 # ----------------------------------------------------------------------
 # validate()
@@ -32,9 +54,7 @@ def test_validate_fails_on_empty_dict() -> None:
     assert any("empty" in e for e in errors)
 
 
-def test_validate_warns_when_expected_model_missing(
-    tmp_path, monkeypatch, capsys
-) -> None:  # noqa: ANN001
+def test_validate_warns_when_expected_model_missing(tmp_path, monkeypatch, capsys) -> None:  # noqa: ANN001
     summary_path = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
     prices = {"foo/bar": ModelPrice(1_000_000, 1_000_000)}
@@ -43,6 +63,18 @@ def test_validate_warns_when_expected_model_missing(
     assert errors == []
     assert "expected/missing" in capsys.readouterr().err
     assert "expected/missing" in summary_path.read_text(encoding="utf-8")
+
+
+def test_validate_fails_when_newly_discovered_required_model_is_missing() -> None:
+    prices = {"foo/bar": ModelPrice(1_000_000, 1_000_000)}
+
+    errors = validate(
+        prices,
+        [],
+        required_models=["provider/new-model"],
+    )
+
+    assert errors == ["newly discovered models missing from parser output: ['provider/new-model']"]
 
 
 def test_validate_fails_on_out_of_range_prompt_price() -> None:
@@ -70,9 +102,7 @@ def test_validate_allows_one_zero_row_when_others_nonzero() -> None:
     assert validate(prices, []) == []
 
 
-def test_guard_manifest_prune_blocks_half_or_more_and_empty(
-    tmp_path, monkeypatch, capsys
-) -> None:  # noqa: ANN001
+def test_guard_manifest_prune_blocks_half_or_more_and_empty(tmp_path, monkeypatch, capsys) -> None:  # noqa: ANN001
     summary_path = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
     old_rows = [{"id": "a"}, {"id": "b"}]
@@ -117,7 +147,9 @@ def test_coerce_rejects_non_dict() -> None:
 
 
 def test_coerce_rejects_non_string_model_id() -> None:
-    out, errors = _coerce_to_model_prices({123: {"prompt_micro_per_m": 1, "completion_micro_per_m": 1}})
+    out, errors = _coerce_to_model_prices(
+        {123: {"prompt_micro_per_m": 1, "completion_micro_per_m": 1}}
+    )
     assert out is None
     assert errors
 

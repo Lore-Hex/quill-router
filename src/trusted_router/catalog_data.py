@@ -578,9 +578,8 @@ PROVIDERS: dict[str, Provider] = {
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Makora Inference — OpenAI-compatible API at inference.makora.com/v1.
-    # The public /v1/models feed exposes model IDs and context windows, but not
-    # prices. TR carries provider-native IDs in data/provider_models/makora.json
-    # and sources prices from Makora's public homepage lineup where published.
+    # Its authenticated /v1/models feed supplies model IDs, context windows,
+    # capabilities, and account-billable prices to the generated manifest.
     "makora": Provider(
         slug="makora",
         name="Makora",

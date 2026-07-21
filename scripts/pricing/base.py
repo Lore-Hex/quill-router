@@ -14,6 +14,7 @@ LLM-rewriteable code never imports this module — it lives in
 `scripts/pricing/parsers/<slug>.py` as pure `parse(html: str) -> dict`.
 Everything in this file is human-maintained.
 """
+
 from __future__ import annotations
 
 import ast
@@ -30,9 +31,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import httpx
+from bs4 import BeautifulSoup
 
 log = logging.getLogger("pricing")
 
@@ -101,6 +104,13 @@ PARSER_NORMALIZE_TIMEOUT_SECONDS = 10.0
 # design — if the rewrite fails, we don't loop; the next hourly run
 # retries from scratch.
 MAX_SELF_HEAL_ATTEMPTS_PER_HOUR = 1
+
+# ``refresh.py`` computes this once from the fresh upstream model catalog
+# before provider fetches start.  The mapping is immutable after publication,
+# so parser workers can read it safely from the thread pool.  Provider-native
+# discovery (Gemini, Novita, and similar adapters) can add stricter per-call
+# requirements through ``fetch_provider(required_models=...)``.
+_RUNTIME_REQUIRED_MODELS: MappingProxyType[str, frozenset[str]] = MappingProxyType({})
 
 # TR's own API for self-heal calls. Eats own dogfood; free for us.
 # Inference API (NOT trustedrouter.com — that's the marketing/control
@@ -191,21 +201,16 @@ class ModelPrice:
                 or completion_micro_per_m is not None
                 or prompt_cached_micro_per_m is not None
             ):
-                raise ValueError(
-                    "ModelPrice: pass either flat rates OR `tiers=`, not both"
-                )
+                raise ValueError("ModelPrice: pass either flat rates OR `tiers=`, not both")
             if not tiers:
                 raise ValueError("ModelPrice: `tiers` cannot be empty")
             if tiers[-1].max_prompt_tokens is not None:
-                raise ValueError(
-                    "ModelPrice: last tier must have max_prompt_tokens=None"
-                )
+                raise ValueError("ModelPrice: last tier must have max_prompt_tokens=None")
             self.tiers = list(tiers)
             return
         if prompt_micro_per_m is None or completion_micro_per_m is None:
             raise ValueError(
-                "ModelPrice: must supply prompt_micro_per_m + "
-                "completion_micro_per_m OR tiers="
+                "ModelPrice: must supply prompt_micro_per_m + completion_micro_per_m OR tiers="
             )
         self.tiers = [
             PriceTier(
@@ -251,6 +256,31 @@ class ProviderPricingResult:
     notes: list[str] = field(default_factory=list)
 
 
+def configure_runtime_required_models(
+    required_by_slug: dict[str, set[str] | frozenset[str]],
+) -> None:
+    """Publish newly discovered model IDs that parsers must price this run.
+
+    Static ``EXPECTED_MODELS`` lists are useful regression floors but cannot
+    anticipate launches.  The hourly refresh compares the new provider/model
+    catalog with the last committed one and places only newly observed text
+    models here.  Missing runtime-required IDs are validation errors, which
+    invokes the normal sandboxed parser self-heal instead of silently leaving
+    the model unpublished.
+    """
+
+    global _RUNTIME_REQUIRED_MODELS  # noqa: PLW0603
+    _RUNTIME_REQUIRED_MODELS = MappingProxyType(
+        {slug: frozenset(model_ids) for slug, model_ids in required_by_slug.items() if model_ids}
+    )
+
+
+def runtime_required_models(slug: str) -> frozenset[str]:
+    """Return the immutable dynamic parser requirements for ``slug``."""
+
+    return _RUNTIME_REQUIRED_MODELS.get(slug, frozenset())
+
+
 # ----------------------------------------------------------------------
 # Network IO — the ONLY place we make outbound HTTP calls. Provider
 # modules pass their hardcoded URL constants in.
@@ -293,27 +323,83 @@ def _get_with_retries(client: httpx.Client, url: str, headers: dict[str, str]) -
     return last_response
 
 
-def fetch_html(url: str, *, extra_headers: dict[str, str] | None = None) -> str:
+def fetch_html(
+    url: str,
+    *,
+    extra_headers: dict[str, str] | None = None,
+    accepted_status_codes: frozenset[int] = frozenset(),
+) -> str:
     """Fetch one provider's pricing page. Network IO lives here, only here.
 
     URL must be passed in by the caller from a hardcoded constant in
     `scripts/pricing/providers/<slug>.py`. The LLM-rewriteable parser
     tier never sees a URL and cannot make network calls.
 
-    `extra_headers` lets a provider config request specific headers —
-    notably `X-Return-Format: markdown` for r.jina.ai-proxied URLs,
-    which we use for providers whose pricing pages are JS-rendered or
-    Cloudflare-blocked (OpenAI, Gemini, Z.AI). Anthropic / Cerebras /
-    Mistral / DeepSeek don't need this; they return server-rendered
-    HTML directly.
+    ``accepted_status_codes`` is intentionally narrow and opt-in. It lets a
+    provider parser consume a known anti-bot checkpoint response and use its
+    checked-in public-price fallback instead of making an external reader
+    proxy a production dependency.
     """
     headers = {"User-Agent": PROVIDER_FETCH_UA}
     if extra_headers:
         headers.update(extra_headers)
     with _provider_client() as client:
         response = _get_with_retries(client, url, headers)
-        response.raise_for_status()
+        if response.status_code not in accepted_status_codes:
+            response.raise_for_status()
         return response.text
+
+
+def normalize_parser_input(source: str, *, include_raw_html: bool = True) -> str:
+    """Project official HTML and Markdown into a stable parser input.
+
+    Provider pages vary between server-rendered tables, documentation
+    Markdown, and visual site-builder cards. Parsers historically depended on
+    a third-party HTML-to-Markdown mirror, so a mirror outage disabled many
+    otherwise healthy sources at once. This projection preserves the raw HTML
+    for DOM-aware parsers and appends deterministic headings, table rows, and
+    visible text for line-oriented parsers.
+
+    ``include_raw_html=False`` returns only the compact projection. The
+    self-heal model receives that form so scripts, styles, and application
+    bundles cannot inflate its context or distract it from pricing evidence.
+    """
+
+    unescaped = source.replace(r"\$", "$")
+    # Documentation Markdown can legitimately embed JSX tables and ``<div>``
+    # examples. Treat only an actual document shell as HTML; parsing mixed
+    # Markdown/JSX through BeautifulSoup would rewrite operators and destroy
+    # the price-row syntax.
+    if not re.search(r"<\s*(?:!doctype|html|body)\b", unescaped, re.I):
+        return unescaped
+
+    soup = BeautifulSoup(unescaped, "html.parser")
+    compact_soup = BeautifulSoup(unescaped, "html.parser")
+    for element in compact_soup(["script", "style", "noscript", "template", "svg"]):
+        element.decompose()
+
+    lines: list[str] = []
+    for heading in compact_soup.find_all(re.compile(r"^h[1-6]$")):
+        title = heading.get_text(" ", strip=True)
+        if title:
+            level = int(heading.name[1])
+            lines.append(f"{'#' * level} {title}")
+
+    for table in compact_soup.find_all("table"):
+        for row in table.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["th", "td"])]
+            if not any(cells):
+                continue
+            lines.append("| " + " | ".join(cells) + " |")
+            lines.append("\t".join(cells))
+
+    visible = compact_soup.get_text("\n", strip=True)
+    projection = "\n".join([*lines, visible]).replace(r"\$", "$")
+    if not include_raw_html:
+        return projection
+    # Keep the original DOM first so BeautifulSoup parsers see exactly what
+    # the provider served. The appended projection is inert text to the DOM.
+    return f"{str(soup)}\n\n<!-- trustedrouter-normalized -->\n{projection}"
 
 
 def fetch_json(url: str, *, extra_headers: dict[str, str] | None = None) -> Any:
@@ -383,10 +469,7 @@ def guard_manifest_prune(
         if isinstance(row, dict)
         and isinstance(row.get("id"), str)
         and row["id"]
-        and (
-            row.get("routable") is not False
-            or row.get("routable_reason") == "delisted-upstream"
-        )
+        and (row.get("routable") is not False or row.get("routable_reason") == "delisted-upstream")
     }
     disabled = old_routable_ids - new_routable_ids
     emptied_manifest = bool(old_rows) and not new_rows
@@ -426,9 +509,7 @@ def reconcile_manifest_tombstones(
     existing_ids = {
         row["id"]
         for row in old_rows
-        if isinstance(row, dict)
-        and isinstance(row.get("id"), str)
-        and row["id"]
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row["id"]
     }
     reconciled: list[Any] = []
 
@@ -443,10 +524,7 @@ def reconcile_manifest_tombstones(
 
         # A false row without a machine-owned reason is curated metadata. Its
         # contents and route state are outside discovery's authority.
-        curated_unroutable = (
-            old_row.get("routable") is False
-            and "routable_reason" not in old_row
-        )
+        curated_unroutable = old_row.get("routable") is False and "routable_reason" not in old_row
         if curated_unroutable:
             reconciled.append(dict(old_row))
             continue
@@ -462,6 +540,7 @@ def reconcile_manifest_tombstones(
                 ):
                     row["routable"] = True
                     row.pop("routable_reason", None)
+                    row.pop("unresolved_since", None)
             reconciled.append(row)
             continue
 
@@ -479,6 +558,7 @@ def reconcile_manifest_tombstones(
         if model_id not in priced_ids:
             row["routable"] = False
             row["routable_reason"] = "awaiting-price"
+            row["unresolved_since"] = today
         reconciled.append(row)
 
     return reconciled
@@ -534,9 +614,7 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
             errors.append(f"{model_id}: prompt_micro_per_m must be int, got {prompt!r}")
             continue
         if not isinstance(completion, int) or isinstance(completion, bool):
-            errors.append(
-                f"{model_id}: completion_micro_per_m must be int, got {completion!r}"
-            )
+            errors.append(f"{model_id}: completion_micro_per_m must be int, got {completion!r}")
             continue
         if cached is not None and (not isinstance(cached, int) or isinstance(cached, bool)):
             errors.append(
@@ -551,9 +629,7 @@ def _coerce_to_model_prices(raw: object) -> tuple[dict[str, ModelPrice] | None, 
     return (out if not errors else None), errors
 
 
-def _coerce_tiers(
-    model_id: str, raw_tiers: object
-) -> tuple[list[PriceTier], list[str]]:
+def _coerce_tiers(model_id: str, raw_tiers: object) -> tuple[list[PriceTier], list[str]]:
     """Coerce a parser-supplied `tiers` array into a list of PriceTier.
     Returns (tiers, errors); on errors, tiers is empty and errors lists
     every problem found."""
@@ -570,27 +646,19 @@ def _coerce_tiers(
         completion = tier.get("completion_micro_per_m")
         cached = tier.get("prompt_cached_micro_per_m")
         if max_prompt is not None and not isinstance(max_prompt, int):
-            errors.append(
-                f"{model_id}: tiers[{idx}].max_prompt_tokens must be int or None"
-            )
+            errors.append(f"{model_id}: tiers[{idx}].max_prompt_tokens must be int or None")
             continue
         if isinstance(max_prompt, bool):  # bool is a subclass of int — guard it
-            errors.append(
-                f"{model_id}: tiers[{idx}].max_prompt_tokens must be int, got bool"
-            )
+            errors.append(f"{model_id}: tiers[{idx}].max_prompt_tokens must be int, got bool")
             continue
         if not isinstance(prompt, int) or isinstance(prompt, bool):
             errors.append(f"{model_id}: tiers[{idx}].prompt_micro_per_m must be int")
             continue
         if not isinstance(completion, int) or isinstance(completion, bool):
-            errors.append(
-                f"{model_id}: tiers[{idx}].completion_micro_per_m must be int"
-            )
+            errors.append(f"{model_id}: tiers[{idx}].completion_micro_per_m must be int")
             continue
         if cached is not None and (not isinstance(cached, int) or isinstance(cached, bool)):
-            errors.append(
-                f"{model_id}: tiers[{idx}].prompt_cached_micro_per_m must be int or None"
-            )
+            errors.append(f"{model_id}: tiers[{idx}].prompt_cached_micro_per_m must be int or None")
             continue
         coerced.append(
             PriceTier(
@@ -605,10 +673,7 @@ def _coerce_tiers(
     if coerced[-1].max_prompt_tokens is not None:
         return (
             [],
-            [
-                f"{model_id}: last tier must have max_prompt_tokens=None "
-                "(uncapped fallback)"
-            ],
+            [f"{model_id}: last tier must have max_prompt_tokens=None (uncapped fallback)"],
         )
     # Verify thresholds are strictly ascending (None always last).
     last_threshold = -1
@@ -626,14 +691,18 @@ def _coerce_tiers(
 
 
 def validate(
-    prices: dict[str, ModelPrice], expected_models: list[str]
+    prices: dict[str, ModelPrice],
+    expected_models: list[str],
+    *,
+    required_models: list[str] | tuple[str, ...] | frozenset[str] = (),
 ) -> list[str]:
     """Return a list of validation errors. Empty list = pass.
 
     Checks:
       - non-empty
       - every tier's prompt/completion in [MIN, MAX]
-      - warn when a model in `expected_models` is absent (drift detector)
+      - warn when a model in `expected_models` is absent (retirement detector)
+      - fail when a newly discovered model in `required_models` is absent
       - units sanity: at least one tier across all models has nonzero
         price (otherwise the parser likely missed the price column)
     """
@@ -666,6 +735,9 @@ def validate(
             f"expected models missing from fresh provider feed: {missing}; "
             "accepting feed so retired models can be pruned"
         )
+    missing_required = sorted(set(required_models) - set(prices))
+    if missing_required:
+        errors.append(f"newly discovered models missing from parser output: {missing_required}")
     has_nonzero = any(
         tier.prompt_micro_per_m > 0 or tier.completion_micro_per_m > 0
         for row in prices.values()
@@ -673,8 +745,7 @@ def validate(
     )
     if not has_nonzero:
         errors.append(
-            "all prices are zero — parser likely missed the price column "
-            "(units mismatch?)"
+            "all prices are zero — parser likely missed the price column (units mismatch?)"
         )
     return errors
 
@@ -728,8 +799,7 @@ def ast_whitelist_check(source: str) -> list[str]:
                     top_level_names.add(target.id)
                 else:
                     errors.append(
-                        f"complex top-level assignment target not allowed: "
-                        f"{ast.dump(target)}"
+                        f"complex top-level assignment target not allowed: {ast.dump(target)}"
                     )
         elif isinstance(node, ast.AnnAssign):
             if isinstance(node.target, ast.Name):
@@ -777,8 +847,7 @@ def ast_whitelist_check(source: str) -> list[str]:
             if isinstance(func, ast.Name) and func.id == "getattr":
                 # Only allow getattr(x, "literal") — no dynamic attrs.
                 if len(sub.args) >= 2 and not (
-                    isinstance(sub.args[1], ast.Constant)
-                    and isinstance(sub.args[1].value, str)
+                    isinstance(sub.args[1], ast.Constant) and isinstance(sub.args[1].value, str)
                 ):
                     errors.append("getattr with non-literal attr name not allowed")
 
@@ -792,7 +861,7 @@ def ast_whitelist_check(source: str) -> list[str]:
 
 
 _SANDBOX_RUNNER_TEMPLATE = textwrap.dedent(
-    '''
+    """
     {parser_source}
 
     import json as _sandbox_json
@@ -802,7 +871,7 @@ _SANDBOX_RUNNER_TEMPLATE = textwrap.dedent(
         html = _sandbox_sys.stdin.read()
         result = parse(html)
         _sandbox_sys.stdout.write(_sandbox_json.dumps(result))
-    '''
+    """
 ).strip()
 
 
@@ -903,9 +972,7 @@ the new HTML and write fresh CSS/regex extraction logic. Prefer BeautifulSoup
 """
 
 
-_FILE_CONTENT_RE = re.compile(
-    r"<file_content>\s*(.*?)\s*</file_content>", re.DOTALL
-)
+_FILE_CONTENT_RE = re.compile(r"<file_content>\s*(.*?)\s*</file_content>", re.DOTALL)
 
 
 def self_heal_parser(
@@ -924,9 +991,7 @@ def self_heal_parser(
     """
     api_key = os.environ.get(TR_API_KEY_ENV)
     if not api_key:
-        raise RuntimeError(
-            f"{TR_API_KEY_ENV} not set; cannot call TR for self-heal"
-        )
+        raise RuntimeError(f"{TR_API_KEY_ENV} not set; cannot call TR for self-heal")
     user_message = (
         f"Provider slug: {slug}\n\n"
         f"Validation errors from the current parser:\n"
@@ -961,14 +1026,10 @@ def self_heal_parser(
     except (KeyError, IndexError, TypeError) as exc:
         raise RuntimeError(f"unexpected TR response shape: {exc}") from exc
     if not isinstance(content, str):
-        raise RuntimeError(
-            f"unexpected TR content type: {type(content).__name__}"
-        )
+        raise RuntimeError(f"unexpected TR content type: {type(content).__name__}")
     match = _FILE_CONTENT_RE.search(content)
     if not match:
-        raise RuntimeError(
-            "TR response missing <file_content>...</file_content> block"
-        )
+        raise RuntimeError("TR response missing <file_content>...</file_content> block")
     new_src = match.group(1).strip()
     if not new_src:
         raise RuntimeError("TR response had empty <file_content> block")
@@ -1042,16 +1103,12 @@ def _normalize_and_lint_parser_source(*, slug: str, source: str) -> str:
                     check=False,
                 )
             except subprocess.TimeoutExpired as exc:
-                raise RuntimeError(
-                    f"{slug}: self-heal Ruff normalization timed out"
-                ) from exc
+                raise RuntimeError(f"{slug}: self-heal Ruff normalization timed out") from exc
             if result.returncode != 0:
                 details = "\n".join(
                     part.strip() for part in (result.stdout, result.stderr) if part.strip()
                 )
-                raise RuntimeError(
-                    f"{slug}: self-heal Ruff normalization failed: {details[:2000]}"
-                )
+                raise RuntimeError(f"{slug}: self-heal Ruff normalization failed: {details[:2000]}")
         return candidate_path.read_text(encoding="utf-8")
 
 
@@ -1060,6 +1117,7 @@ def _assert_fixture_compatibility(
     slug: str,
     current_parse_fn: Any,
     candidate_source: str,
+    allowed_added_models: frozenset[str] = frozenset(),
 ) -> None:
     """Reject a self-heal that breaks a previously understood page shape.
 
@@ -1071,7 +1129,7 @@ def _assert_fixture_compatibility(
     fixture_path = PRICING_FIXTURES_DIR / f"{slug}.html"
     if not fixture_path.exists():
         return
-    fixture_html = fixture_path.read_text(encoding="utf-8")
+    fixture_html = normalize_parser_input(fixture_path.read_text(encoding="utf-8"))
     try:
         current_raw = current_parse_fn(fixture_html)
     except Exception:
@@ -1080,21 +1138,17 @@ def _assert_fixture_compatibility(
     if current_errors or current_prices is None or not current_prices:
         return
 
-    candidate_prices, candidate_errors = sandbox_run_parser(
-        candidate_source, fixture_html
-    )
+    candidate_prices, candidate_errors = sandbox_run_parser(candidate_source, fixture_html)
     if candidate_errors or candidate_prices is None:
-        raise RuntimeError(
-            f"{slug}: self-heal fixture regression: {candidate_errors}"
-        )
-    if candidate_prices != current_prices:
-        removed = sorted(set(current_prices) - set(candidate_prices))
-        changed = sorted(
-            model_id
-            for model_id in set(current_prices) & set(candidate_prices)
-            if current_prices[model_id] != candidate_prices[model_id]
-        )
-        added = sorted(set(candidate_prices) - set(current_prices))
+        raise RuntimeError(f"{slug}: self-heal fixture regression: {candidate_errors}")
+    removed = sorted(set(current_prices) - set(candidate_prices))
+    changed = sorted(
+        model_id
+        for model_id in set(current_prices) & set(candidate_prices)
+        if current_prices[model_id] != candidate_prices[model_id]
+    )
+    added = sorted(set(candidate_prices) - set(current_prices) - allowed_added_models)
+    if removed or changed or added:
         raise RuntimeError(
             f"{slug}: self-heal fixture regression: "
             f"removed={removed}, changed={changed}, added={added}"
@@ -1111,7 +1165,9 @@ def fetch_provider(
     slug: str,
     url: str,
     expected_models: list[str],
+    required_models: list[str] | tuple[str, ...] | frozenset[str] = (),
     extra_headers: dict[str, str] | None = None,
+    accepted_status_codes: frozenset[int] = frozenset(),
 ) -> ProviderPricingResult:
     """Fetch one provider's prices via the deterministic parser, with
     LLM self-heal as fallback.
@@ -1132,8 +1188,22 @@ def fetch_provider(
       9. validate the sandbox output.
       10. only after all pass, write the new source to disk and return.
     """
-    log.info("pricing.fetch slug=%s url=%s", slug, url)
-    html = fetch_html(url, extra_headers=extra_headers)
+    strict_models = frozenset(required_models) | runtime_required_models(slug)
+    log.info(
+        "pricing.fetch slug=%s url=%s required_models=%d",
+        slug,
+        url,
+        len(strict_models),
+    )
+    if accepted_status_codes:
+        raw_html = fetch_html(
+            url,
+            extra_headers=extra_headers,
+            accepted_status_codes=accepted_status_codes,
+        )
+    else:
+        raw_html = fetch_html(url, extra_headers=extra_headers)
+    html = normalize_parser_input(raw_html)
 
     # Exec the parser source in a fresh namespace each call — sidesteps
     # importlib.reload edge cases (the parser file may have been
@@ -1156,7 +1226,11 @@ def fetch_provider(
         prices = None
     errors = schema_errors[:] if schema_errors else []
     if prices is not None:
-        errors = validate(prices, expected_models)
+        errors = validate(
+            prices,
+            expected_models,
+            required_models=strict_models,
+        )
     if not errors:
         return ProviderPricingResult(
             slug=slug,
@@ -1173,7 +1247,7 @@ def fetch_provider(
         new_src = self_heal_parser(
             slug=slug,
             current_src=current_src,
-            html=html,
+            html=normalize_parser_input(raw_html, include_raw_html=False),
             errors=errors,
         )
     except Exception as exc:
@@ -1181,34 +1255,32 @@ def fetch_provider(
 
     ast_errors = ast_whitelist_check(new_src)
     if ast_errors:
-        raise RuntimeError(
-            f"{slug}: self-heal AST whitelist failed: {ast_errors}"
-        )
+        raise RuntimeError(f"{slug}: self-heal AST whitelist failed: {ast_errors}")
 
     new_src = _normalize_and_lint_parser_source(slug=slug, source=new_src)
     normalized_ast_errors = ast_whitelist_check(new_src)
     if normalized_ast_errors:
         raise RuntimeError(
-            f"{slug}: normalized self-heal AST whitelist failed: "
-            f"{normalized_ast_errors}"
+            f"{slug}: normalized self-heal AST whitelist failed: {normalized_ast_errors}"
         )
 
     sandbox_prices, sandbox_errors = sandbox_run_parser(new_src, html)
     if sandbox_errors:
-        raise RuntimeError(
-            f"{slug}: self-heal sandbox failed: {sandbox_errors}"
-        )
+        raise RuntimeError(f"{slug}: self-heal sandbox failed: {sandbox_errors}")
     assert sandbox_prices is not None  # for type checker
-    final_errors = validate(sandbox_prices, expected_models)
+    final_errors = validate(
+        sandbox_prices,
+        expected_models,
+        required_models=strict_models,
+    )
     if final_errors:
-        raise RuntimeError(
-            f"{slug}: self-heal output failed validation: {final_errors}"
-        )
+        raise RuntimeError(f"{slug}: self-heal output failed validation: {final_errors}")
 
     _assert_fixture_compatibility(
         slug=slug,
         current_parse_fn=parse_fn,
         candidate_source=new_src,
+        allowed_added_models=strict_models,
     )
 
     # All gates passed — persist the new parser source.
@@ -1220,7 +1292,5 @@ def fetch_provider(
         source="self_healed",
         heal_diff=diff,
         fetched_url=url,
-        notes=[
-            f"self-healed parser (validation errors: {len(errors)} → 0)"
-        ],
+        notes=[f"self-healed parser (validation errors: {len(errors)} → 0)"],
     )
