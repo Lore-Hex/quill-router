@@ -1,0 +1,29 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="GDPR-compliant LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">GDPR-compliant LLM API</span>
+    <h2>An LLM API built for GDPR workflows: attested inference, a signable DPA, and no prompt storage by default.</h2>
+    <p>Send personal data through an LLM API and your DPO will ask three questions: who can read the prompt, where does it run, and what is retained. Most providers answer with a policy PDF. TrustedRouter answers with hardware: the prompt path runs inside an open-source, hardware-attested confidential-compute gateway, and TrustedRouter does not store prompt or output content by default. Attestation beats a privacy policy.</p>
+    <p>The Article 28 paperwork is ready too: a signable <a href="/legal/dpa">DPA</a>, a published <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2</a> and <a href="/legal/hipaa-readiness">HIPAA</a> readiness documentation your compliance team can assess. An <a href="/eu">EU gateway</a> with EU-focused routing is live. Migration is one line: the API is OpenAI-compatible, so you change the base_url and keep your SDK, model ids, and code.</p>
+    <p><a class="btn primary" href="/security">Verify the attestation</a> <a class="btn" href="/legal/dpa">Read the DPA</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>attestation check</span><span>bash</span></div>
+    <pre><code># Verify the gateway before you send a single prompt
+NONCE=$(openssl rand -hex 16)
+curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+# Returns a JWT signed by the CPU vendor's root key.
+# image_digest matches the published open-source build.</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Data minimization</span><h3>Nothing stored by default</h3><p>TrustedRouter does not store prompt or output content by default. The gateway source is open and the running image digest is published, so your team can check the code that handles the prompt instead of filing another vendor policy. Data minimization becomes a property you verify rather than a paragraph you quote.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Open, ZDR, or TEE per route</h3><p>Every route carries a privacy tier. Open runs on any attested provider. Zero-Data-Retention routes use providers contractually bound to keep nothing. TEE routes run end-to-end confidential compute, where even the serving provider cannot read the prompt. Match the tier to the data in the request.</p></div>
+  <div class="marketing-card"><span class="card-label">Article 28 paperwork</span><h3>DPA, subprocessors, readiness docs</h3><p>A signable <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, a current <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2</a> plus <a href="/legal/hipaa-readiness">HIPAA</a> readiness pages. These are readiness documents rather than audit reports, and we label them that way: verifiable architecture plus documentation your compliance team can assess.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Residency vs. access</span><h2>An EU region answers where your data sits. Attestation answers who can read it.</h2></div>
+  <div><p>The recurring objection in GDPR provider reviews: pinning inference to an EU region does not, by itself, settle who can access the data. TrustedRouter states its EU position plainly. The <a href="/eu">EU gateway</a> gives you EU-focused routing, with no residency guarantees beyond that. The stronger control sits underneath: on TEE routes the prompt is processed inside end-to-end confidential compute, and the attestation proving it binds to your live TLS session, so it cannot be replayed.</p><p>A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. You get 220+ model routes across 30+ providers, automatic fallback when a provider goes down, and transparent per-model <a href="/pricing">pricing</a> at a thin markup over provider list prices. Nothing on this page is legal advice; your DPO makes the call. What TrustedRouter gives them is a data flow they can check. Verify, don't trust.</p></div>
+</section>
+{% endblock %}

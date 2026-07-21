@@ -1,0 +1,30 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="LLM API for financial services">
+  <div class="marketing-copy">
+    <span class="eyebrow">LLM API for financial services</span>
+    <h2>An LLM API a bank risk committee can verify with one curl command.</h2>
+    <p>Your compliance team blocked the public LLM APIs. GLBA, MNPI, and PCI-scope concerns did the work, and a DORA register now wants specifics about where prompts go. The options left on the table look like a stalled project or an on-prem build. There is a third path. TrustedRouter is an LLM API for banks, insurers, and fintechs that runs the prompt path inside a hardware-attested confidential-compute gateway. The gateway source is open, the image digest is published, and attestation is checkable live, signed by the CPU vendor's root key and bound to the TLS session so it cannot be replayed.</p>
+    <p>TrustedRouter does not store prompt or output content by default. Every route carries a privacy tier: Zero-Data-Retention providers contractually keep nothing; TEE routes keep the prompt sealed end to end, so even the serving provider cannot read it. The API is OpenAI-compatible, so migration is a base_url change. Keep your SDK, your model ids, your code. Privacy you can check beats privacy you're promised.</p>
+    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>verify-before-you-send.sh</span><span>bash</span></div>
+    <pre><code>NONCE=$(openssl rand -hex 16)
+curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+# Returns a JWT signed by the CPU vendor's root key.
+# image_digest matches the published open-source build.
+# Satisfied? Point your existing SDK at:
+# {{ api_base_url }}</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Procurement</span><h3>A sub-processor story that survives bank review</h3><p>Fintech vendors selling into banks get the paperwork up front: <a href="/legal/dpa">DPA</a>, <a href="/legal/baa">BAA</a>, public <a href="/legal/subprocessors">sub-processor list</a>, plus <a href="/legal/soc2-readiness">SOC 2 readiness</a> and <a href="/legal/hipaa-readiness">HIPAA readiness</a> documentation. None of it claims a certification. It is a verifiable architecture plus readiness documentation your compliance team can assess.</p></div>
+  <div class="marketing-card"><span class="card-label">DORA</span><h3>Register entries and an exit strategy</h3><p>An ICT third-party register wants named sub-processors, documented data handling, and a credible exit plan. Exit is structural here: OpenAI-compatible means leaving is a base_url change, and 220+ model routes across 30+ providers with automatic fallback answer the concentration question. An <a href="/eu">EU gateway</a> provides EU-focused routing. Informational, not legal advice.</p></div>
+  <div class="marketing-card"><span class="card-label">Banking data</span><h3>Tiers your data policy can map to</h3><p>Choose the tier per route. Open runs on any attested provider. Zero-Data-Retention keeps nothing by contract. TEE seals the prompt end to end. Route MNPI, banking data, and customer records through TEE, and check measured <a href="/llm-provider-latency-benchmarks">latency from real routed requests</a> before you commit.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">The middle path</span><h2>Between a blocked API and a rack of GPUs.</h2></div>
+  <div><p>On-prem gives banks and insurers control, and it costs a platform team: hardware, model ops, patching, capacity planning. A public API is fast and fails the review. Attested confidential inference sits between them: API economics with cryptographic proof of where the prompt runs. Attestation beats a privacy policy.</p><p>It holds up under load. A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Start in the <a href="/chat">playground</a>, pick a route at <a href="/choose">/choose</a>, and see per-model <a href="/pricing">pricing</a>. Verify, don't trust.</p></div>
+</section>
+{% endblock %}

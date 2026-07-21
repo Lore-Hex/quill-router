@@ -1,0 +1,28 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="EU AI Act compliance for teams using LLM APIs">
+  <div class="marketing-copy">
+    <span class="eyebrow">EU AI Act &middot; LLM APIs &middot; August 2, 2026</span>
+    <h2>Your EU AI Act compliance file depends on facts from your LLM API vendor, and attestation makes those facts checkable.</h2>
+    <p>Full applicability of the EU AI Act arrives on August 2, 2026. Companies building on third-party LLM APIs mostly carry deployer obligations, while provider obligations sit upstream with the model makers, and the questions a reviewer asks a deployer start with facts only the API layer can supply: which model served each request, where the traffic ran, and what happened to the prompt afterward.</p>
+    <p>TrustedRouter is a routing layer in front of 220+ model routes across 30+ providers. It does not build the models, and it claims no AI Act certification. What it does is make the vendor-side facts verifiable: the prompt path runs inside a hardware-attested confidential-compute gateway, the source is open, the image digest is published, and the attestation is bound to the live TLS session. Verify, don't trust.</p>
+    <p><a class="btn primary" href="/eu">EU routing details</a> <a class="btn" href="/security">Verify the gateway</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>attestation-check.sh</span><span>bash</span></div>
+    <pre><code>NONCE=$(openssl rand -hex 16)
+curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+# Returns a JWT signed by the CPU vendor's root key.
+# image_digest matches the published build. See /security.</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Catalog transparency</span><h3>Know exactly what you deployed</h3><p>Every route in the model catalog is listed with its provider and privacy tier: Open, Zero-Data-Retention, or TEE. Pin a specific model id per workload so your records show which model handled which task, at a <a href="/pricing">transparent per-model price</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Retention</span><h3>No stored content by default</h3><p>TrustedRouter does not store prompt or output content by default. Privacy you can check beats privacy you're promised: the enforcement point is an attested gateway, and Zero-Data-Retention routes add contractual no-retention from the serving provider.</p></div>
+  <div class="marketing-card"><span class="card-label">EU routing</span><h3>Keep inference in Europe</h3><p>An <a href="/eu">EU gateway with EU-focused routing</a> is available for European workloads. Its scope is stated plainly: EU-focused routing, with no data-residency guarantees beyond that. Reaching it is a base_url change on an OpenAI-compatible API.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Readiness, stated plainly</span><h2>No certification claimed. Documentation you can assess.</h2></div>
+  <div><p>There is no "AI Act certified" status for an API vendor, and TrustedRouter does not claim one. What your compliance team gets is verifiable architecture plus readiness documentation it can assess: a <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, a <a href="/legal/subprocessors">subprocessors list</a>, and <a href="/legal/soc2-readiness">SOC 2</a> and <a href="/legal/hipaa-readiness">HIPAA</a> readiness pages that say clearly what they are and are not. This page is informational, and none of it is legal advice.</p><p>Adopting the gateway is not a rebuild. Change base_url, keep your SDK, model ids, and code. One document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Before the deadline or after it, the work is the same: collect evidence you can check. Start in the <a href="/chat">playground</a> or read the <a href="/security">security model</a>.</p></div>
+</section>
+{% endblock %}

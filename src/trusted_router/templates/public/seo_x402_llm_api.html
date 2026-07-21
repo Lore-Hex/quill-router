@@ -1,0 +1,36 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="x402 pay-per-request LLM API">
+  <div class="marketing-copy">
+    <span class="eyebrow">x402 LLM API for AI agents</span>
+    <h2>Your agent gets a 402, signs a payment, retries the call, and reads the completion.</h2>
+    <p>TrustedRouter is an OpenAI-compatible LLM API that speaks x402 natively. Most of what you find when you search for x402 AI inference is explainer content about the protocol. This page documents an endpoint that implements it. An unpaid request to the chat completions route returns HTTP 402 with payment terms; the agent signs, retries with the payment attached, and receives a standard completion. The whole flow is plain HTTP.</p>
+    <p>That is the missing piece for autonomous systems. An agent can buy a single request machine-to-machine with no stored card, no invoice, and no human topping up a balance. Coinbase-led x402 passed roughly 165 million agent transactions and 69,000 active agents by April 2026, and x402 V2 shipped in December 2025. Demand is compounding; very few inference endpoints accept it. Wallet sign-in with MetaMask works without a traditional account, and prepaid credits or BYOK are available when a team wants conventional billing.</p>
+    <p><a class="btn primary" href="/pricing">See per-model pricing</a> <a class="btn" href="/choose">Browse 220+ model routes</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>x402 pay-per-request</span><span>curl</span></div>
+    <pre><code># 1. Unpaid request. The gateway answers 402 with payment terms.
+curl -i {{ api_base_url }}/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"trustedrouter/auto","messages":[{"role":"user","content":"ping"}]}'
+# HTTP/2 402  ...x402 payment requirements in the body
+
+# 2. Sign the terms, retry with the payment attached.
+curl {{ api_base_url }}/chat/completions \
+  -H "X-PAYMENT: $SIGNED_PAYMENT" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"trustedrouter/auto","messages":[{"role":"user","content":"ping"}]}'
+# HTTP/2 200  ...standard OpenAI-compatible completion</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Agent payments</span><h3>No card on file</h3><p>x402 settles each request as it happens. MetaMask wallet sign-in works without a traditional account. Prepaid Stripe credits and bring-your-own-key cover teams that want a conventional setup. Per-model pricing is transparent and listed at <a href="/pricing">/pricing</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Routing</span><h3>220+ routes, automatic fallback</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3 and more across 30+ providers. When a provider goes down, requests roll over automatically. Agents that should not hardcode a model can call trustedrouter/auto, cheap, fast, or synth.</p></div>
+  <div class="marketing-card"><span class="card-label">Verifiable privacy</span><h3>A gateway you can check</h3><p>The prompt path runs inside a hardware-attested TEE. The source is open, the image digest is published, and the attestation binds to the live TLS session, so it cannot be replayed. TrustedRouter does not store prompt or output content by default. Details at <a href="/security">/security</a>.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Machine payments need machine-checkable privacy.</h2></div>
+  <div><p>An agent cannot weigh a privacy policy. It can check a signature. Fetch the attestation endpoint with a nonce and you get a JWT signed by the CPU vendor's root key, with an image digest that matches the published artifact. Privacy you can check beats privacy you're promised, and that holds whether the caller is a person or a process.</p><p>It holds at volume too: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. If your question is human privacy rather than agent plumbing, start with the <a href="/anonymous-llm-api">anonymous LLM API</a> page. For retention terms per route, see <a href="/security">security</a>; for measured latency from real routed requests, see the <a href="/llm-provider-latency-benchmarks">latency benchmarks</a>.</p></div>
+</section>
+{% endblock %}

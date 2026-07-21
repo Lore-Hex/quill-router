@@ -1,0 +1,43 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Groq alternative overview">
+  <div class="marketing-copy">
+    <span class="eyebrow">Groq alternative</span>
+    <h2>Fast inference only counts when request 41 still goes through.</h2>
+    <p>Groq earned its reputation. LPU hardware delivers excellent single-request tokens per second on the models it serves, and TrustedRouter does not claim to beat that head-to-head. The pain shows up in production: per-minute and per-day request quotas, and a small catalog. Agent loops multiply requests. A ten-step agent run is forty-plus API calls, and a daily quota can end it mid-task.</p>
+    <p>TrustedRouter is an OpenAI-compatible API over 220+ model routes across 30+ providers. The trustedrouter/fast meta-route sends each request to the fastest measured provider for that model, and gpt-oss-120b runs on a Cerebras-served fast route. When a provider goes down, requests roll over automatically. The latency numbers behind those routing decisions come from real routed requests, published for anyone to check. Migration is one line: change base_url, keep your SDK, model ids, and code.</p>
+    <p><a class="btn primary" href="/llm-provider-latency-benchmarks">See measured latency</a> <a class="btn" href="/pricing">Browse 220+ model routes</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Migrate in one line</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="YOUR_TRUSTEDROUTER_KEY",
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/fast",
+    messages=[{"role": "user", "content": "Summarize this diff."}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Speed</span><h3>Fast routes, measured</h3><p>trustedrouter/fast picks the fastest measured route for each model. The gpt-oss-120b route is served on Cerebras hardware. Every number on the <a href="/llm-provider-latency-benchmarks">latency benchmarks</a> page comes from real routed requests.</p></div>
+  <div class="marketing-card"><span class="card-label">Headroom</span><h3>Built for agent loops</h3><p>One agent task can mean dozens of calls. TrustedRouter spreads traffic across 30+ providers and rolls a request over automatically when a provider is down, so the loop keeps running instead of stopping at a quota wall.</p></div>
+  <div class="marketing-card"><span class="card-label">Catalog</span><h3>220+ routes, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5.2, MiniMax M3, Llama, Mistral, Nemotron 3 Ultra. Chinese open-weight models are served by non-Chinese hosts on attested infrastructure, so prompts do not go to the model vendor. Full list with per-model pricing at <a href="/pricing">/pricing</a>.</p></div>
+</section>
+<section class="compare-matrix" aria-label="Groq vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>Groq</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Single-request speed</span><span>Custom LPU hardware; excellent tokens per second on its catalog</span><span>Fast routes to the fastest measured provider per model, published from real traffic</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>Small, curated set of open models tuned for LPUs</span><span>220+ routes across 30+ providers, closed and open weights</span></div>
+  <div class="matrix-row"><span>Rate limits</span><span>Per-minute and per-day request quotas</span><span>Traffic spread across 30+ providers with automatic rollover</span></div>
+  <div class="matrix-row"><span>Failover</span><span>Single provider; an outage stops requests</span><span>Automatic provider fallback on every route</span></div>
+  <div class="matrix-row"><span>Privacy</span><span>Provider privacy policy</span><span>Hardware-attested TEE gateway; attestation checkable live</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verifiable privacy</span><h3>Attestation beats a privacy policy.</h3></div>
+  <div><p>Speed gets you to production. Privacy keeps you there. Every TrustedRouter prompt runs through a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and the attestation is checkable live, bound to your TLS session so it cannot be replayed. TrustedRouter does not store prompt or output content by default.</p><p>Pick a privacy tier per route: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt. Details at <a href="/security">/security</a>. Or skip the reading and try a fast route in the <a href="/chat">playground</a>.</p></div>
+</section>
+{% endblock %}

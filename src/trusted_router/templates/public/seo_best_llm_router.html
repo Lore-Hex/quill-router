@@ -1,0 +1,43 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Best LLM router and AI gateway comparison 2026">
+  <div class="marketing-copy">
+    <span class="eyebrow">Best LLM router · AI gateway comparison · 2026</span>
+    <h2>The best LLM router is the one whose privacy claims you can verify with a curl command.</h2>
+    <p>Every router in this comparison does the basics well: one API, many models, failover when a provider drops. OpenRouter popularized the aggregator approach and has a very large catalog. LiteLLM is an open-source proxy you can self-host. Portkey builds deep observability. Requesty optimizes spend. They differ most on one dimension: what happens to your prompt inside the gateway.</p>
+    <p>TrustedRouter is an OpenAI-compatible AI gateway with 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, and Qwen 3.5. The prompt path runs inside a hardware-attested confidential-compute enclave: the source is open, the image digest is published, and the attestation is checkable live against the running gateway. TrustedRouter does not store prompt or output content by default.</p>
+    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/security">Verify the gateway</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Switch in one line</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TR_KEY,
+)
+
+reply = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Pick the best route for this."}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Routing</span><h3>Meta-routes do the picking</h3><p>Send trustedrouter/auto and the gateway picks the best fit per request. trustedrouter/cheap finds the cheapest capable route and still runs it in a TEE. trustedrouter/synth fuses a panel of open models and beats single frontier models on <a href="/synth">published evals</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Reliability</span><h3>Failover, with numbers</h3><p>Automatic provider fallback keeps requests flowing when a provider goes down. Measured latency comes from real routed requests and is published at the <a href="/llm-provider-latency-benchmarks">latency benchmarks page</a>, so you can check the numbers before you commit.</p></div>
+  <div class="marketing-card"><span class="card-label">Payments</span><h3>Credits, BYOK, or a wallet</h3><p>Prepaid credits through Stripe, bring-your-own provider keys, or x402 pay-per-request with Continue with MetaMask sign-in that works without a traditional account. <a href="/pricing">Per-model pricing</a> is transparent, with a thin markup over provider list prices.</p></div>
+</section>
+<section class="compare-matrix" aria-label="LLM gateway comparison 2026">
+  <div class="matrix-row matrix-head"><span></span><strong>Their strength</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>OpenRouter</span><span>Very large public catalog, big community, quick start.</span><span>220+ model routes across 30+ providers, with an attested prompt path; switching is a base_url change (see the <a href="/openrouter-alternative">OpenRouter comparison</a>).</span></div>
+  <div class="matrix-row"><span>LiteLLM</span><span>Open-source proxy you self-host and fully control.</span><span>Also open source, plus a published image digest that proves what is running in production.</span></div>
+  <div class="matrix-row"><span>Portkey</span><span>Deep observability, logging, and guardrails tooling.</span><span>No stored prompt or output content by default; you verify the runtime rather than log through it.</span></div>
+  <div class="matrix-row"><span>Requesty</span><span>Cost-aware routing and spend controls.</span><span>trustedrouter/cheap picks the cheapest capable route and executes it inside a TEE.</span></div>
+  <div class="matrix-row"><span>All of them</span><span>One API across many model providers.</span><span>The same, plus a privacy tier on every route: Open, Zero-Data-Retention, or TEE.</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">The verification test</span><h2>Attestation beats a privacy policy.</h2></div>
+  <div><p>Any gateway can publish a policy document. TrustedRouter answers a curl with a JWT signed by the CPU vendor's root key, bound to the live TLS session, with an image digest you can match against the published open-source artifact. Your compliance team can run that check before the first prompt flows, and your CI can run it every day after.</p><p>One proof point, anonymized: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Compare smart, cheap, and fast routes at the <a href="/choose">model chooser</a>, read the <a href="/openrouter-alternative">OpenRouter deep-dive</a>, or see how <a href="/security">end-to-end confidential compute</a> works.</p></div>
+</section>
+{% endblock %}

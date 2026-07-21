@@ -1,0 +1,45 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Vertex AI alternative overview">
+  <div class="marketing-copy">
+    <span class="eyebrow">Google Vertex AI alternative</span>
+    <h2>If Vertex AI is only your Gemini endpoint, you are maintaining a cloud platform to make an API call.</h2>
+    <p>Vertex AI's standard path runs through a GCP project, IAM roles, service accounts, and region selection. TrustedRouter asks you to change one line. The API is OpenAI-compatible: point base_url at the gateway, keep your SDK and code, and get 220+ model routes across 30+ providers, Gemini included, with a single key.</p>
+    <p>First, a filter. If you want managed training pipelines, feature stores, and deployment tooling, Vertex is a real MLOps platform and a router will not replace it. If Vertex is the endpoint you call Gemini through, this page is for you.</p>
+    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/pricing">See per-model pricing</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Gemini without the GCP console</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key="YOUR_TRUSTEDROUTER_KEY",
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",  # or any of 220+ routes
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(resp.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">One key</span><h3>Every model behind one endpoint</h3><p>Gemini sits next to Claude, GPT, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5, MiniMax M3, Llama, and Mistral. Use the smart-cheap-fast chooser at <a href="/choose">/choose</a>. Switching models means changing a string.</p></div>
+  <div class="marketing-card"><span class="card-label">Uptime</span><h3>Providers fail. Requests should not.</h3><p>When a provider goes down, TrustedRouter rolls the request over to another automatically. Meta-routes go further: trustedrouter/auto picks the best fit per request, trustedrouter/cheap finds the cheapest capable route in a TEE, and trustedrouter/fast optimizes for speed. Latency numbers come from real routed requests at <a href="/llm-provider-latency-benchmarks">the benchmarks page</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Verify</span><h3>Privacy you can check</h3><p>The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and attestation is checkable live against your own TLS session. TrustedRouter does not store prompt or output content by default. Details at <a href="/security">/security</a>.</p></div>
+</section>
+<section class="compare-matrix" aria-label="Vertex AI vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>Vertex AI</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Onboarding</span><span>GCP project, IAM, service accounts, region selection. Smooth if you already run on Google Cloud.</span><span>One API key. Change base_url in an OpenAI SDK.</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>First-party home for Gemini, plus the Model Garden.</span><span>220+ routes across 30+ providers, Gemini included.</span></div>
+  <div class="matrix-row"><span>Training and MLOps</span><span>Full platform: pipelines, training, deployment. A real strength.</span><span>None. Inference only.</span></div>
+  <div class="matrix-row"><span>Quotas and outages</span><span>Per-region quotas you request and manage.</span><span>Automatic provider fallback and meta-routes.</span></div>
+  <div class="matrix-row"><span>Privacy verification</span><span>Policy and contract, within Google Cloud's terms.</span><span>Hardware-attested TEE gateway, open source, checkable live.</span></div>
+  <div class="matrix-row"><span>Payment</span><span>GCP billing, pay-as-you-go, enterprise agreements.</span><span>Prepaid credits, BYOK, or crypto pay-per-request. Rates at <a href="/pricing">/pricing</a>.</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Attestation beats a privacy policy.</h2></div>
+  <div><p>One curl against the attestation endpoint returns a JWT signed by the CPU vendor's root key, with an image digest matching the published open-source artifact and a binding to your live TLS session, so it cannot be replayed. For compliance review, TrustedRouter provides verifiable architecture plus readiness documentation your compliance team can assess: <a href="/legal/soc2-readiness">SOC 2 readiness</a>, <a href="/legal/hipaa-readiness">HIPAA readiness</a>, <a href="/legal/dpa">DPA</a>, <a href="/legal/baa">BAA</a>, and <a href="/legal/subprocessors">subprocessors</a>. Teams routing in Europe can use the <a href="/eu">EU gateway</a>.</p><p>This runs at production scale. A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Start in the <a href="/chat">playground</a>, or read how <a href="/synth">trustedrouter/synth</a> combines a panel of open models to beat single frontier models on published evals.</p></div>
+</section>
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="Azure OpenAI alternative overview">
+  <div class="marketing-copy">
+    <span class="eyebrow">Azure OpenAI alternative</span>
+    <h2>Azure OpenAI promises privacy in a contract; TrustedRouter proves it with hardware attestation you can check live.</h2>
+    <p>Teams comparing alternatives to Azure OpenAI usually landed there for one reason: the data-handling terms. Then the operational bill arrives. Deployment quotas that take support tickets to raise. Models retired on Microsoft's schedule, with the migration work left to you. A catalog that only ever holds one vendor's models.</p>
+    <p>TrustedRouter keeps the property you were buying. Every prompt runs through a hardware-attested confidential-compute gateway. The gateway source is open, the image digest is published, and one curl returns an attestation signed by the CPU vendor's root key, bound to your live TLS session. TrustedRouter does not store prompt or output content by default. Privacy you can check beats privacy you're promised.</p>
+    <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/choose">Browse 220+ models</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>migrate.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",  # was: your Azure endpoint
+    api_key="tr-your-key",
+)
+
+reply = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user", "content": "Hello"}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Capacity</span><h3>Automatic provider rollover</h3><p>Routes are served across 30+ providers. When a provider goes down, requests roll over to another serving the route automatically. Latency numbers come from real routed requests, published at <a href="/llm-provider-latency-benchmarks">the latency benchmarks</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Catalog</span><h3>220+ models, 30+ providers</h3><p>Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, Qwen 3.5, GLM-5 and more behind one OpenAI-compatible API. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/cheap for the cheapest capable route in a TEE. Compare at <a href="/choose">/choose</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>Set privacy per route</h3><p>Three tiers: Open, Zero-Data-Retention, and TEE, where even the serving provider cannot read the prompt. Chinese open-weight models such as DeepSeek and Kimi are served by non-Chinese hosts on attested infrastructure. Details on the <a href="/security">security page</a>.</p></div>
+</section>
+<section class="compare-matrix" aria-label="Azure OpenAI vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>Azure OpenAI</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Privacy model</span><span>Contractual commitments backed by Microsoft's compliance program</span><span>Hardware attestation bound to the live TLS session; open-source gateway, published image digest</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>OpenAI models, tightly integrated with Azure services</span><span>220+ routes across 30+ providers: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, more</span></div>
+  <div class="matrix-row"><span>Capacity</span><span>Reserved capacity if approved; quotas set per region and deployment</span><span>Automatic provider fallback; requests roll over when a provider goes down</span></div>
+  <div class="matrix-row"><span>Model lifecycle</span><span>Models retire on Microsoft's schedule; migrations are your work</span><span>Multi-provider routes; no single vendor decides what stays available</span></div>
+  <div class="matrix-row"><span>Network and billing</span><span>VNet integration, private endpoints, committed-spend agreements</span><span>Public attested endpoint; prepaid credits, BYOK, or crypto pay-per-request</span></div>
+  <div class="matrix-row"><span>Compliance posture</span><span>Microsoft's audit certifications</span><span>Verifiable architecture plus SOC 2 and HIPAA readiness documentation to assess</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">For your compliance team</span><h2>Verify, don't trust.</h2></div>
+  <div><p>TrustedRouter publishes a <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, a <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2</a> and <a href="/legal/hipaa-readiness">HIPAA</a> readiness documentation. None of these claim a certification. They give your compliance team a verifiable architecture to assess directly, with the live attestation as evidence. An <a href="/eu">EU gateway</a> with EU-focused routing covers European workloads.</p><p>The pattern holds at production scale: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Pricing is a thin markup over provider list prices, per model, at <a href="/pricing">/pricing</a>. Try any route first in the <a href="/chat">playground</a>.</p></div>
+</section>
+{% endblock %}

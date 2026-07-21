@@ -1,0 +1,44 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="DeepSeek V4 API privacy">
+  <div class="marketing-copy">
+    <span class="eyebrow">DeepSeek API privacy</span>
+    <h2>DeepSeek V4 on attested infrastructure: your prompts never reach the model vendor.</h2>
+    <p>The worry behind "is the DeepSeek API safe" is specific. api.deepseek.com runs on the vendor's own infrastructure, several US states have restricted it on government devices, and a January 2025 incident exposed plaintext chat logs. The V4 weights themselves are MIT-licensed. The risk lives in where the endpoint runs.</p>
+    <p>TrustedRouter serves deepseek-v4-pro and deepseek-v4-flash through non-Chinese hosting providers inside a hardware-attested confidential-compute gateway. TrustedRouter does not store prompt or output content by default. Zero-Data-Retention and TEE tiers are available per route. Migration is one line: change base_url, keep your OpenAI SDK.</p>
+    <p><a class="btn primary" href="/pricing">See DeepSeek pricing</a> <a class="btn" href="/security">Check the attestation</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Same SDK, new base_url</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TR_KEY,
+)
+
+r = client.chat.completions.create(
+    model="deepseek-v4-pro",  # or deepseek-v4-flash
+    messages=[{"role": "user", "content": "Summarize this contract."}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Hosting</span><h3>Served outside China</h3><p>DeepSeek V4 routes run on non-Chinese hosting providers on attested infrastructure. Prompts do not go to the model vendor. EU-focused routing is available through the <a href="/eu">EU gateway</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Proof</span><h3>Attestation you can run</h3><p>The gateway source is open and the image digest is published. One curl with a nonce returns a JWT signed by the CPU vendor's root key, bound to the live TLS session. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Retention</span><h3>Nothing stored by default</h3><p>No prompt or output content is stored by default. Zero-Data-Retention routes add contractual guarantees; TEE routes keep prompts sealed even from the hosting provider. See <a href="/llm-zero-data-retention">zero data retention</a>.</p></div>
+</section>
+<section class="compare-matrix" aria-label="api.deepseek.com vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>api.deepseek.com</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Model access</span><span>DeepSeek V4, first-party</span><span>deepseek-v4-pro and deepseek-v4-flash, plus 220+ routes across 30+ providers</span></div>
+  <div class="matrix-row"><span>Pricing</span><span>Vendor list prices, hard to beat</span><span>Thin markup over provider list prices; see <a href="/pricing">/pricing</a></span></div>
+  <div class="matrix-row"><span>Where prompts go</span><span>The vendor's own infrastructure</span><span>Non-Chinese hosting providers inside an attested gateway</span></div>
+  <div class="matrix-row"><span>Retention proof</span><span>Privacy policy and terms</span><span>Hardware attestation, checkable live, bound to the TLS session</span></div>
+  <div class="matrix-row"><span>Outage handling</span><span>Single provider</span><span>Automatic fallback across providers</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Run the attestation check yourself.</h2></div>
+  <div><p>Other US hosts also serve DeepSeek outside China with zero-retention policies, and that is a real improvement over first-party routing. They still ask you to take the policy on faith. TrustedRouter's gateway proves it: run <code>curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"</code> and check the returned JWT against the published image digest. Your compliance team gets evidence, plus the <a href="/legal/dpa">DPA</a>, <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2 readiness</a> documentation to assess it with.</p>
+  <p>Hosting is the control point for Chinese open-weights generally. In our testing, the same GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave versus 30 of 60 via the vendor-hosted API; the filtering is host-applied, not in the weights. One anonymized proof point: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. And on DeepSeek R2: unreleased as of July 2026. V4 is what ships today, and it is live on TrustedRouter now. Try it in the <a href="/chat">playground</a> or compare latency at <a href="/llm-provider-latency-benchmarks">measured benchmarks</a>.</p></div>
+</section>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="AWS Bedrock alternative">
+  <div class="marketing-copy">
+    <span class="eyebrow">AWS Bedrock alternative</span>
+    <h2>Keep the privacy you chose Bedrock for, without the quota wall.</h2>
+    <p>Teams pick Amazon Bedrock for the data story: inference stays inside your AWS account, HIPAA-eligible under an AWS BAA. Then production traffic arrives. Default quotas on popular Claude models can throttle to a few requests per minute, output tokens draw down quota faster than input, and new models land on AWS's schedule. The workload that cleared the compliance review is now waiting on 429s.</p>
+    <p>TrustedRouter is an OpenAI-compatible API in front of <a href="/choose">220+ model routes</a> across 30+ providers: Claude, plus GPT, Gemini, DeepSeek, Kimi, Qwen, and GLM. When a provider is down, the gateway rolls traffic over automatically. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published, so you can verify what code touches your prompts.</p>
+    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/security">Check the attestation</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>migrate.py</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TR_API_KEY,
+)
+
+resp = client.chat.completions.create(
+    model="trustedrouter/auto",
+    messages=[{"role": "user",
+               "content": "Classify this claims document."}],
+)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Throughput</span><h3>Route around the quota wall</h3><p>One key fronts 220+ routes with automatic rollover when a provider is down. Meta-routes decide per request: trustedrouter/auto for best fit, trustedrouter/fast for latency, trustedrouter/cheap for the cheapest capable route in a TEE. A document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Measured latency from real routed requests: <a href="/llm-provider-latency-benchmarks">benchmarks</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Verification</span><h3>Attestation beats a privacy policy</h3><p>Bedrock's privacy case rests on the AWS account boundary. TrustedRouter's rests on hardware: curl the attestation endpoint with a nonce and get back a JWT signed by the CPU vendor's root key, bound to your live TLS session, with an image digest that matches the published artifact. TrustedRouter does not store prompt or output content by default. Details at <a href="/security">security</a> and <a href="/security">confidential computing</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Compliance</span><h3>Documentation your auditors can assess</h3><p>TrustedRouter does not claim SOC 2 or HIPAA certification. It offers verifiable architecture plus readiness documentation your compliance team can assess: <a href="/legal/soc2-readiness">SOC 2 readiness</a>, <a href="/legal/hipaa-readiness">HIPAA readiness</a>, a <a href="/legal/dpa">DPA</a>, a <a href="/legal/baa">BAA</a>, and a <a href="/legal/subprocessors">subprocessor list</a>. Per-route tiers add Zero-Data-Retention or full TEE isolation. Healthcare workloads: <a href="/legal/hipaa-readiness">HIPAA LLM API</a>.</p></div>
+</section>
+<section class="compare-matrix" aria-label="Amazon Bedrock vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>Amazon Bedrock</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Privacy model</span><span>Data stays in your AWS account; trust rests on AWS controls</span><span>Hardware-attested TEE; open-source gateway you verify live, per session</span></div>
+  <div class="matrix-row"><span>Quotas</span><span>Per-model, per-region limits; Provisioned Throughput sells committed capacity</span><span>30+ providers behind one API; automatic rollover when a provider is down</span></div>
+  <div class="matrix-row"><span>Model catalog</span><span>Curated set including Claude, on AWS's release schedule</span><span>220+ routes: Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, MiniMax</span></div>
+  <div class="matrix-row"><span>Network</span><span>VPC endpoints and PrivateLink inside AWS</span><span>No PrivateLink equivalent; public endpoint, attestation bound to each TLS session</span></div>
+  <div class="matrix-row"><span>Procurement</span><span>Spend draws down AWS commitments (EDP)</span><span>Prepaid credits, BYOK, or x402 crypto pay-per-request</span></div>
+  <div class="matrix-row"><span>Pricing</span><span>On-demand and provisioned pricing in your AWS bill</span><span>Per-model pricing, thin markup over provider list prices</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Migration</span><h2>Change the base URL. Keep everything else.</h2></div>
+  <div><p>Point your existing OpenAI SDK at {{ api_base_url }} and keep your code, model ids, and tooling. Per-model pricing is published at <a href="/pricing">pricing</a>: a thin markup over provider list prices. Pay with prepaid credits, bring your own provider keys, or sign in with MetaMask and pay per request with x402. An EU gateway with EU-focused routing is at <a href="/eu">/eu</a>; the smart-cheap-fast chooser is at <a href="/choose">choose</a>.</p>
+  <p>Two things Bedrock does that TrustedRouter does not: private network paths through VPC and PrivateLink, and spend that draws down an AWS EDP commitment. If those anchor your architecture, Bedrock keeps that advantage. If you need high-volume inference with a privacy story your own team can verify from the outside, run the attestation check before you send a single prompt. Privacy you can check beats privacy you're promised.</p></div>
+</section>
+{% endblock %}

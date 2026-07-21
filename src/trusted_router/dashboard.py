@@ -78,6 +78,28 @@ PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
 SEO_CORE_PATHS: tuple[str, ...] = (
+    "/azure-openai-alternative",
+    "/deepseek-api-privacy",
+    "/glm-5-api",
+    "/gdpr-compliant-llm-api",
+    "/chinese-ai-models-us-hosted",
+    "/minimax-m3-api",
+    "/best-llm-router",
+    "/llm-failover",
+    "/groq-alternative",
+    "/vertex-ai-alternative",
+    "/llm-api-for-financial-services",
+    "/llm-api-for-law-firms",
+    "/llm-data-residency",
+    "/no-log-llm-api",
+    "/anonymous-llm-api",
+    "/cline-api-provider",
+    "/sillytavern-api",
+    "/aws-bedrock-alternative",
+    "/llm-document-processing",
+    "/gpt-oss-120b-api",
+    "/eu-ai-act-llm-compliance",
+    "/x402-llm-api",
     "/",
     "/choose",
     "/models",
@@ -276,6 +298,512 @@ class BlogIndexPost:
 
 
 PUBLIC_PAGES: dict[str, PublicPage] = {
+    "azure-openai-alternative": PublicPage(
+        template="public/seo_azure_openai_alternative.html",
+        title="Azure OpenAI Alternative \u2014 Attested Private Inference",
+        description="Keep the privacy that put you on Azure OpenAI. Hardware-attested inference, 220+ models, automatic provider fallback, OpenAI-compatible API. Verify it live.",
+        faq_items=(
+            (
+                "Is TrustedRouter SOC 2 or HIPAA certified?",
+                "No. TrustedRouter publishes SOC 2 readiness and HIPAA readiness documentation, plus a DPA, BAA, and subprocessor list. None of them claim a certification. The offer is verifiable architecture plus readiness documentation your compliance team can assess. The prompt path runs in a hardware-attested, open-source gateway whose attestation you can check live, which is evidence an audit report alone does not give you.",
+            ),
+            (
+                "How do I migrate from Azure OpenAI to TrustedRouter?",
+                "Change the base URL. TrustedRouter exposes an OpenAI-compatible API at https://api.trustedrouter.com/v1, so you keep your SDK, your model ids, and your existing code. After the switch you get 220+ model routes across 30+ providers, automatic provider fallback when one goes down, and meta-routes like trustedrouter/auto that pick the best-fit route per request.",
+            ),
+            (
+                "How do I verify that prompts stay private?",
+                "Request an attestation from the live gateway: call the attestation endpoint with a nonce and you get back a JWT signed by the CPU vendor's root key. The image digest matches the published open-source artifact, and the attestation binds to the live TLS session, so it cannot be replayed. TrustedRouter does not store prompt or output content by default. The full procedure is on the security page.",
+            ),
+            (
+                "How does TrustedRouter handle capacity and quotas?",
+                "Routes are served across multiple providers. When a provider goes down, requests roll over to another provider serving the route automatically. Latency is measured from real routed requests and published on the latency benchmarks page. Payment is prepaid credits through Stripe, bring-your-own provider keys, or crypto pay-per-request through x402.",
+            ),
+        ),
+    ),
+    "deepseek-api-privacy": PublicPage(
+        template="public/seo_deepseek_api_privacy.html",
+        title="DeepSeek V4 API Privacy: Attested, No Data to China",
+        description="Run DeepSeek V4 Pro and V4 Flash on attested, non-Chinese infrastructure. No prompt or output storage by default, provable in hardware. OpenAI-compatible.",
+        faq_items=(
+            (
+                "Is the DeepSeek API safe to use?",
+                "It depends on which endpoint you call. api.deepseek.com is the vendor's own service, and several US states have restricted it on government devices. TrustedRouter serves the same MIT-licensed V4 weights through non-Chinese hosting providers inside a hardware-attested gateway. Prompts do not go to the model vendor, and TrustedRouter does not store prompt or output content by default. You can verify the attestation live at any time instead of relying on a policy.",
+            ),
+            (
+                "Does using DeepSeek through TrustedRouter send data to China?",
+                "No. DeepSeek V4 routes are served by non-Chinese hosting providers on attested infrastructure, so prompts never reach the model vendor. Zero-Data-Retention routes add a contractual guarantee that providers keep nothing, and TEE routes keep the prompt sealed even from the hosting provider. Each route's privacy tier is listed on the models page, and the attestation backing the claim is checkable live.",
+            ),
+            (
+                "When will DeepSeek R2 be released?",
+                "R2 is unreleased as of July 2026, and no release date is confirmed. The current generation is V4, available as deepseek-v4-pro and deepseek-v4-flash, and both are live on TrustedRouter today. Because the API is OpenAI-compatible, pointing existing code at V4 now and at newer DeepSeek routes later is a one-line model-id change.",
+            ),
+            (
+                "How do I migrate off the legacy deepseek-chat alias?",
+                "DeepSeek's legacy deepseek-chat alias is scheduled to retire on July 24, 2026. Moving to TrustedRouter takes two edits: set base_url to https://api.trustedrouter.com/v1 and pick a DeepSeek V4 route from the models page. Your OpenAI SDK and the rest of your code stay the same, and automatic provider fallback keeps requests flowing during provider outages.",
+            ),
+        ),
+    ),
+    "glm-5-api": PublicPage(
+        template="public/seo_glm_5_api.html",
+        title="GLM-5 & GLM-5.2 API \u2014 Private, Attested Inference",
+        description="OpenAI-compatible API for GLM-5 and GLM-5.2 on attested hardware. ZDR and TEE tiers, no z.ai account needed, and privacy you can verify with one curl.",
+        faq_items=(
+            (
+                "Which GLM models can I call on TrustedRouter?",
+                "TrustedRouter serves glm-5, glm-5.2, and glm-5.2-fast, alongside 220+ model routes across 30+ providers. The API is OpenAI-compatible: change base_url, keep your SDK, model ids, and code. If a hosting provider goes down, requests roll over to another automatically. You can try it in the playground at /chat before wiring up a key.",
+            ),
+            (
+                "Do my prompts go to Zhipu or z.ai?",
+                "No. GLM routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read the prompt. TrustedRouter does not store prompt or output content by default.",
+            ),
+            (
+                "Why does GLM answer more questions through TrustedRouter than on the vendor API?",
+                "In our 60-question test, the same GLM weights answered 60 of 60 sensitive questions through TrustedRouter's attested enclave versus 30 of 60 through the vendor-hosted API. That points to host-applied filtering: the restriction lives in the serving stack, not in the open weights. TrustedRouter's GLM routes are served on attested infrastructure without that serving-layer filter, so you see the model's own behavior.",
+            ),
+            (
+                "How does GLM-5.2 API pricing work?",
+                "Per-model rates for glm-5, glm-5.2, and glm-5.2-fast are published at /pricing as a thin markup over provider list prices. You can pay with prepaid credits through Stripe, bring your own provider key, or pay per request with x402 crypto payments. Continue with MetaMask lets you sign in with a wallet, with no traditional account required.",
+            ),
+        ),
+    ),
+    "gdpr-compliant-llm-api": PublicPage(
+        template="public/seo_gdpr_compliant_llm_api.html",
+        title="GDPR-Compliant LLM API: Attested EU Inference | TrustedRouter",
+        description="An OpenAI-compatible LLM API built for GDPR workflows: attested confidential compute, no prompt storage by default, a signable DPA, and an EU gateway.",
+        faq_items=(
+            (
+                "Is TrustedRouter certified GDPR compliant?",
+                "TrustedRouter does not claim a GDPR certification. What it provides is verifiable architecture plus readiness documentation your compliance team can assess: a signable DPA, a published subprocessor list, SOC 2 and HIPAA readiness pages, an EU gateway, and a live attestation endpoint proving the prompt path runs inside the published open-source confidential-compute image. Your DPO makes the compliance determination; TrustedRouter gives them evidence they can check rather than promises to take on trust.",
+            ),
+            (
+                "Does TrustedRouter store my prompts or outputs?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source code is open and whose image digest is published. You can verify this live: call the attestation endpoint with a fresh nonce and you get back a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. Details are on the security page.",
+            ),
+            (
+                "Can I keep inference in the EU?",
+                "TrustedRouter operates an EU gateway with EU-focused routing, and makes no data-residency guarantees beyond that. For personal data, the stronger control is the privacy tier: Zero-Data-Retention routes use providers contractually bound to keep nothing, and TEE routes run end-to-end confidential compute where even the serving provider cannot read the prompt.",
+            ),
+            (
+                "How hard is it to migrate from OpenAI?",
+                "Change the base_url to TrustedRouter's endpoint and keep your existing SDK, model ids, and code. The API is OpenAI-compatible, with 220+ model routes across 30+ providers including Claude, GPT, Gemini, DeepSeek, and Mistral, plus automatic provider fallback when a provider is down. Pricing is a thin markup over provider list prices, published per model on the pricing page.",
+            ),
+        ),
+    ),
+    "chinese-ai-models-us-hosted": PublicPage(
+        template="public/seo_chinese_ai_models_us_hosted.html",
+        title="Qwen, GLM, Kimi & DeepSeek APIs Hosted on US Infrastructure",
+        description="Use Qwen, GLM, Kimi, and DeepSeek through US-hosted attested infrastructure. Prompts never reach the model vendor, and you can verify that live.",
+        faq_items=(
+            (
+                "Do my prompts go to China when I use Qwen, GLM, or Kimi through TrustedRouter?",
+                "No. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served via non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available per route; on the TEE tier, end-to-end confidential compute means even the hosting provider cannot read your prompt. You can verify the gateway live through the attestation endpoint described on the security page.",
+            ),
+            (
+                "Is the GLM served through TrustedRouter the same model as the vendor-hosted API?",
+                "Same open weights, different serving stack. We measured one difference: the same GLM weights answered 60 of 60 sensitive test questions through TrustedRouter's enclave versus 30 of 60 through the vendor-hosted API. That filtering is host-applied rather than baked into the weights. Try your own prompts against the route in the playground and compare the answers for yourself.",
+            ),
+            (
+                "Do I need to change my code to switch from a vendor-hosted endpoint?",
+                "The API is OpenAI-compatible. Change the base URL, keep your SDK, model ids, and code, and pick a route from the model catalog. Automatic provider fallback rolls requests over when a provider is down. You can pay with prepaid credits, bring your own provider key, or use x402 pay-per-request with MetaMask wallet sign-in.",
+            ),
+            (
+                "Can my compliance team use this for regulated data?",
+                "TrustedRouter publishes SOC 2 readiness and HIPAA readiness documentation, plus a DPA, a BAA, and a subprocessor list. These are readiness materials, not audit reports or certifications: verifiable architecture plus documentation your compliance team can assess. The open-source gateway, published image digest, and live attestation give reviewers something to check directly rather than a questionnaire answer to file.",
+            ),
+        ),
+    ),
+    "minimax-m3-api": PublicPage(
+        template="public/seo_minimax_m3_api.html",
+        title="MiniMax M3 API \u2014 Hosted, Private, Long-Context Inference",
+        description="Call MiniMax M3 through an OpenAI-compatible API on attested, verifiable infrastructure. ZDR and TEE tiers, automatic fallback, per-model pricing.",
+        faq_items=(
+            (
+                "Is MiniMax M3 open source?",
+                "M3 is an open-weights release under the MiniMax Community License. That license is not MIT or Apache, so review its terms before building on the weights directly. Most teams do not self-host a 428B-parameter multimodal model anyway. Through TrustedRouter you call hosted M3 routes over an OpenAI-compatible API, with Zero-Data-Retention and TEE privacy tiers available per route.",
+            ),
+            (
+                "What does the MiniMax M3 API cost through TrustedRouter?",
+                "Pricing is per model and published on the pricing page, with a thin markup over provider list prices. Prices drift, so we do not quote numbers on marketing pages. You can pay with prepaid credits via Stripe, bring your own provider key, or pay per request with x402. MetaMask wallet sign-in works without a traditional account.",
+            ),
+            (
+                "Do my prompts go to MiniMax when I use this API?",
+                "No. MiniMax M3 routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, and prompts do not go to the model vendor. Zero-Data-Retention and TEE tiers are available, and TrustedRouter does not store prompt or output content by default. You can verify the gateway yourself: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session.",
+            ),
+            (
+                "How do I switch from OpenRouter to TrustedRouter for MiniMax M3?",
+                "Change your base_url to the TrustedRouter endpoint and keep your SDK, your code, and the minimax/minimax-m3 model id. The API is OpenAI-compatible. Automatic provider fallback rolls requests over when a provider is down, and measured latency from real routed requests is published on the latency benchmarks page.",
+            ),
+        ),
+    ),
+    "best-llm-router": PublicPage(
+        template="public/seo_best_llm_router.html",
+        title="Best LLM Router 2026: AI Gateways & Model Routers Compared",
+        description="Compare the best LLM routers and AI gateways of 2026. OpenRouter, LiteLLM, Portkey, Requesty, and the one gateway whose privacy you can verify live.",
+        faq_items=(
+            (
+                "What is the best LLM router in 2026?",
+                "It depends on what you optimize for. OpenRouter, LiteLLM, Portkey, and Requesty all route one API across many providers, and each has real strengths. TrustedRouter differs on the prompt path: it runs inside a hardware-attested confidential-compute gateway with open source, a published image digest, and a live attestation check. TrustedRouter does not store prompt or output content by default, and it serves 220+ model routes across 30+ providers.",
+            ),
+            (
+                "What is the difference between an LLM router and an AI gateway?",
+                "An LLM router picks which model serves each request. An AI gateway is the layer between your app and providers that handles authentication, fallback, and billing. TrustedRouter is both: meta-routes like trustedrouter/auto, trustedrouter/cheap, and trustedrouter/fast pick the model, while the gateway handles automatic provider fallback, prepaid credits, BYOK, and a privacy tier on every route: Open, Zero-Data-Retention, or TEE.",
+            ),
+            (
+                "Do I have to rewrite my code to switch LLM routers?",
+                "No. TrustedRouter is OpenAI-compatible: change base_url to https://api.trustedrouter.com/v1 and keep your SDK, your model ids, and your code. If you are moving from OpenRouter, the migration is that base_url swap, and the playground at /chat lets you test routes before you move production traffic.",
+            ),
+            (
+                "Can an AI gateway be private enough for regulated data?",
+                "TrustedRouter's TEE tier runs prompts end-to-end inside confidential compute, so even the serving provider cannot read them, and the attestation is checkable live and bound to the TLS session. TrustedRouter does not store prompt or output content by default. For compliance review there is a verifiable architecture plus SOC 2 and HIPAA readiness documentation, a DPA, and a BAA; these are readiness documents rather than certifications, so your team can assess them directly.",
+            ),
+        ),
+    ),
+    "llm-failover": PublicPage(
+        template="public/seo_llm_failover.html",
+        title="LLM Failover & Fallback API: Automatic Provider Redundancy",
+        description="Automatic LLM failover across 220+ routes and 30+ providers. OpenAI-compatible: change base_url, keep your code. Requests roll over when a provider is down.",
+        faq_items=(
+            (
+                "What is LLM failover and how does TrustedRouter handle it?",
+                "LLM failover means rerouting a request to another provider when the one serving your model goes down. TrustedRouter builds this into the gateway: automatic provider fallback rolls traffic over to a healthy route, drawing on 220+ model routes across 30+ providers. You can pin an exact model, or use the trustedrouter/auto meta-route and let the gateway pick the best fit per request.",
+            ),
+            (
+                "Do I need to rewrite my code to get automatic provider fallback?",
+                "No. The API is OpenAI-compatible, so migration is a one-line change: point base_url at https://api.trustedrouter.com/v1 and keep your SDK, your model ids, and your existing code. Rollover happens inside the gateway, so there are no retry trees or fallback chains to maintain in your application.",
+            ),
+            (
+                "Does routing through a failover gateway expose my prompts to more parties?",
+                "The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and the attestation binds to the live TLS session, so you can check it rather than take it on faith. TrustedRouter does not store prompt or output content by default, and each route carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
+            ),
+            (
+                "How do I know the fallback routes are fast enough for production?",
+                "TrustedRouter publishes measured latency data from real routed requests at /llm-provider-latency-benchmarks, so you can compare providers before an outage forces a switch. On scale: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding.",
+            ),
+        ),
+    ),
+    "groq-alternative": PublicPage(
+        template="public/seo_groq_alternative.html",
+        title="Groq Alternative \u2014 Fast LLM API Without the Rate Limits",
+        description="Hitting Groq rate limits? TrustedRouter is an OpenAI-compatible API with 220+ model routes, 30+ providers, measured fast routes, and automatic failover.",
+        faq_items=(
+            (
+                "Is TrustedRouter as fast as Groq?",
+                "For a single request on a model Groq serves, Groq's LPU hardware is very fast. TrustedRouter's claim is about production: the trustedrouter/fast meta-route sends each request to the fastest measured provider for that model, gpt-oss-120b runs on a Cerebras-served fast route, and the latency numbers are published from real routed requests. When a provider goes down, requests roll over automatically.",
+            ),
+            (
+                "How do I migrate from Groq to TrustedRouter?",
+                "Change the base URL. TrustedRouter exposes an OpenAI-compatible API, so you keep your SDK, your model ids, and your code. Point your client at the TrustedRouter endpoint, create a key, and send the same requests. Pricing is a thin markup over provider list prices, with per-model rates listed on the pricing page. You can pay with prepaid credits, bring your own provider key, or pay per request with crypto.",
+            ),
+            (
+                "What happens when a provider hits a rate limit or goes down?",
+                "TrustedRouter routes across more than 30 providers and rolls a request over to another provider automatically when one is down. That matters most for agentic workloads: a ten-step agent run is forty or more API calls, so a single provider's quota can end the run mid-task. Spreading those calls across a large provider pool, with automatic fallback, is how the loop keeps running.",
+            ),
+            (
+                "Which models does TrustedRouter serve?",
+                "TrustedRouter has 220+ model routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4 Pro and Flash, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, Mistral, and Nemotron 3 Ultra, plus meta-routes that pick the best, cheapest, or fastest route per request. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so your prompts do not go to the model vendor.",
+            ),
+        ),
+    ),
+    "vertex-ai-alternative": PublicPage(
+        template="public/seo_vertex_ai_alternative.html",
+        title="Vertex AI Alternative \u2014 One API, 220+ Routes, No GCP Lock-In",
+        description="Use Vertex AI just for Gemini? TrustedRouter is an OpenAI-compatible API: 220+ model routes, Gemini included, one key, automatic fallback, verifiable privacy.",
+        faq_items=(
+            (
+                "Does TrustedRouter serve Gemini?",
+                "Yes. Gemini routes are part of a catalog of 220+ model routes across 30+ providers, alongside Claude, GPT, DeepSeek, Kimi, Qwen, GLM, and others. The API is OpenAI-compatible, so you change base_url, keep your SDK and code, and switch models by changing the model id. Meta-routes like trustedrouter/auto pick the best fit per request, and measured latency data from real routed requests is published on the site.",
+            ),
+            (
+                "Can TrustedRouter replace Vertex AI's training and MLOps features?",
+                "No. TrustedRouter is an inference API, and it does not offer training pipelines, feature stores, or model deployment tooling. If your team uses Vertex as a full MLOps platform, keep it for that work. If Vertex is only the endpoint you call Gemini through, TrustedRouter covers that with one key, automatic provider fallback, and a catalog of 220+ routes across 30+ providers, Gemini included.",
+            ),
+            (
+                "How does TrustedRouter handle prompt privacy?",
+                "The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and anyone can fetch an attestation JWT signed by the CPU vendor's root key, bound to the live TLS session. TrustedRouter does not store prompt or output content by default, and routes carry privacy tiers: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt.",
+            ),
+            (
+                "Is TrustedRouter SOC 2 or HIPAA certified?",
+                "No certification claims are made. TrustedRouter publishes SOC 2 readiness and HIPAA readiness documentation, a DPA, a BAA, and a subprocessor list: verifiable architecture plus readiness documentation your compliance team can assess. The underlying architecture can be checked live through attestation rather than taken on trust.",
+            ),
+        ),
+    ),
+    "llm-api-for-financial-services": PublicPage(
+        template="public/seo_llm_api_for_financial_services.html",
+        title="LLM API for Financial Services and Banks | TrustedRouter",
+        description="An OpenAI-compatible LLM API banks and fintechs can get approved: hardware-attested confidential compute, zero-data-retention tiers, and docs for DORA reviews.",
+        faq_items=(
+            (
+                "Is TrustedRouter SOC 2 certified or HIPAA compliant?",
+                "No. TrustedRouter publishes SOC 2 readiness and HIPAA readiness documentation, and those are readiness documents rather than audit reports or certifications. The offer is a verifiable architecture plus readiness documentation your compliance team can assess, alongside a DPA, a BAA, and a public sub-processor list your procurement process can reference.",
+            ),
+            (
+                "How does TrustedRouter fit a DORA third-party risk review?",
+                "TrustedRouter provides the material an ICT register asks for: a public sub-processor list, a DPA, an open-source gateway with a published image digest, and live attestation you can check yourself. The exit strategy is structural, since the OpenAI-compatible API makes migration a base_url change. An EU gateway offers EU-focused routing. This is informational, not legal advice.",
+            ),
+            (
+                "Does TrustedRouter store our prompts or outputs?",
+                "TrustedRouter does not store prompt or output content by default. Each route carries a privacy tier: Open runs on any attested provider, Zero-Data-Retention providers contractually keep nothing, and TEE keeps the prompt sealed so even the serving provider cannot read it. The prompt path runs inside a hardware-attested confidential-compute gateway you can verify live.",
+            ),
+            (
+                "Do banks have to run LLMs on-prem to protect customer data?",
+                "On-prem is one answer, and it costs hardware, a platform team, and ongoing model ops. Attested confidential inference is the middle path: prompts run inside a hardware-attested TEE, the gateway source is open, the image digest is published, and attestation binds to the live TLS session so it cannot be replayed. You can check all of this with a curl command before sending real data.",
+            ),
+        ),
+    ),
+    "llm-api-for-law-firms": PublicPage(
+        template="public/seo_llm_api_for_law_firms.html",
+        title="LLM API for Law Firms and Legal Tech | TrustedRouter",
+        description="An LLM API for law firms and legal tech: hardware-attested confidential compute, no prompt storage by default, and attestation your team can verify live.",
+        faq_items=(
+            (
+                "Does TrustedRouter store our prompts or client documents?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. Your team can verify the running code at any time: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed.",
+            ),
+            (
+                "Does using an LLM API waive attorney-client privilege?",
+                "That is a legal determination only your counsel can make, and TrustedRouter does not give legal advice. What the platform changes is the factual record the analysis rests on: on TEE routes the operator provably cannot read the prompt, content is not stored by default, and the attestation is checkable rather than promised. That supports a privilege analysis; it does not decide one.",
+            ),
+            (
+                "Is TrustedRouter SOC 2 or HIPAA certified?",
+                "No. TrustedRouter publishes SOC 2 readiness and HIPAA readiness documentation, which are readiness documents, not audit reports or certifications. The position is verifiable architecture plus readiness documentation your compliance team can assess. A DPA, a BAA, and a current subprocessor list are available for review, and an EU gateway with EU-focused routing exists for European teams.",
+            ),
+            (
+                "Can we use open-weight models like DeepSeek or Qwen without sending data to the model vendor?",
+                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available, so prompts do not go to the model vendor. For legal work that means access to frontier open-weight models without adding the model vendor to your disclosure chain.",
+            ),
+        ),
+    ),
+    "llm-data-residency": PublicPage(
+        template="public/seo_llm_data_residency.html",
+        title="LLM Data Residency: EU and Regional Routing | TrustedRouter",
+        description="What LLM data residency covers and what it cannot: EU gateway routing, zero-retention tiers, and an attested gateway you can verify with one command.",
+        faq_items=(
+            (
+                "Does an EU gateway make my LLM API GDPR compliant?",
+                "No. Residency is one input to compliance. Transfer analysis, a DPA, and subprocessor review still do the legal work, and nothing on this page is legal advice. TrustedRouter provides the architecture side: an EU gateway with EU-focused routing, a DPA, a published subprocessor list, and SOC 2 and HIPAA readiness documentation your compliance team can assess against its own requirements.",
+            ),
+            (
+                "Can every TrustedRouter model be pinned to the EU?",
+                "No. TrustedRouter offers an EU gateway and EU-focused routing, and claims no data-residency guarantees beyond that. Several upstream model providers are US entities. If your real concern is who can access the prompt rather than which country it transits, the TEE privacy tier runs end-to-end confidential compute, where even the serving provider cannot read the prompt, regardless of geography.",
+            ),
+            (
+                "What is the difference between residency, retention, and access?",
+                "Residency is where inference runs; TrustedRouter's answer is the EU gateway. Retention is what is stored afterward; TrustedRouter does not store prompt or output content by default, and Zero-Data-Retention routes use providers that contractually keep nothing. Access is who can read traffic while it is processed; the attested TEE gateway answers that with a live, checkable proof instead of a policy. Most residency clauses are really about all three.",
+            ),
+            (
+                "How do I verify the gateway instead of taking TrustedRouter's word?",
+                "Request an attestation with a fresh nonce. The gateway returns a JWT signed by the CPU vendor's root key, and the image digest in it matches the published open-source artifact. The attestation binds to your live TLS session, so it cannot be replayed from another machine. The whole check is one curl command, documented at /security.",
+            ),
+        ),
+    ),
+    "no-log-llm-api": PublicPage(
+        template="public/seo_no_log_llm_api.html",
+        title="No-Log LLM API: Inference Without Prompt Storage, Verified",
+        description="A no-log LLM API you can verify: no prompt or output storage by default, attested TEE routes, 220+ model routes behind one OpenAI-compatible endpoint.",
+        faq_items=(
+            (
+                "Does TrustedRouter log my prompts?",
+                "TrustedRouter does not store prompt or output content by default. Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. On TEE routes, the request path runs inside a hardware-attested confidential-compute gateway with open source and a published image digest, so you can check the no-storage claim yourself. Privacy you can check beats privacy you're promised.",
+            ),
+            (
+                "How do I verify the no-log claim myself?",
+                "Request a live attestation: curl the /attestation endpoint with a fresh nonce and you get back a JWT signed by the CPU vendor's root key. Confirm the image_digest matches the published open-source artifact. The attestation binds to the live TLS session, so an old response cannot be replayed at you. The full procedure is documented on the security page.",
+            ),
+            (
+                "Do all routes have the same privacy level?",
+                "No. Every route carries a tier. Open routes run through the attested gateway to any provider. Zero-Data-Retention routes use providers contractually bound to keep nothing, so they rely on the provider honoring that contract. TEE routes run end-to-end in confidential compute, where even the provider cannot read your prompt.",
+            ),
+            (
+                "Can I use TrustedRouter without a traditional account?",
+                "Yes. Continue with MetaMask signs you in with a wallet and works without a traditional account, and x402 supports pay-per-request crypto payments. Prepaid credits via Stripe and bring-your-own-key access are also available. This is anonymous-friendly access built for pseudonymous use; TrustedRouter does not promise anonymity guarantees.",
+            ),
+        ),
+    ),
+    "anonymous-llm-api": PublicPage(
+        template="public/seo_anonymous_llm_api.html",
+        title="Anonymous LLM API: Pay with Crypto, No KYC, No Prompt Storage",
+        description="Pay for 220+ LLM routes with crypto: x402 pay-per-request or MetaMask sign-in, no card, no KYC, and attested no-prompt-storage you can verify live.",
+        faq_items=(
+            (
+                "Can I use an AI API without a credit card?",
+                "Yes. TrustedRouter accepts x402 pay-per-request payments in crypto, and Continue with MetaMask lets you sign in with a wallet instead of a traditional account. No card and no KYC step are required for wallet-funded usage. Prepaid credits through Stripe and bring-your-own-key access exist as well, if you would rather fund an account the conventional way.",
+            ),
+            (
+                "Is TrustedRouter fully anonymous?",
+                "No, and we will not claim it is. Wallet funding means no card and no KYC, but blockchain payments are pseudonymous rather than untraceable. The claim we can back is different in kind: TrustedRouter does not store prompt or output content by default, the gateway is open source, and a live hardware attestation lets you check that yourself.",
+            ),
+            (
+                "Does TrustedRouter store my prompts?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can fetch a live attestation, signed by the CPU vendor's root key and bound to your TLS session, and compare the digest against the published artifact.",
+            ),
+            (
+                "Which models can I pay for with crypto?",
+                "Crypto funding works against the catalog of 220+ routes across 30+ providers: Claude, GPT, Gemini, DeepSeek V4, Kimi, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral, plus meta-routes such as trustedrouter/auto and trustedrouter/cheap. Each route lists a privacy tier, so you can hold wallet-funded work to Zero-Data-Retention or TEE routes.",
+            ),
+        ),
+    ),
+    "cline-api-provider": PublicPage(
+        template="public/seo_cline_api_provider.html",
+        title="Use TrustedRouter with Cline & Roo Code: Cheap, Private Models",
+        description="Point Cline or Roo Code at TrustedRouter's OpenAI-compatible API: 220+ model routes, automatic fallback, and no prompt storage by default in an attested TEE.",
+        faq_items=(
+            (
+                "How do I set TrustedRouter as the API provider in Cline?",
+                "In Cline's settings, choose the OpenAI Compatible provider type, then paste three fields: the base URL https://api.trustedrouter.com/v1, your TrustedRouter API key, and a model id such as trustedrouter/cheap or any of the 220+ routes; the model chooser at trustedrouter.com/choose helps you pick one. No SDK or code changes are needed because the API is OpenAI-compatible. The same three fields work in Roo Code's OpenAI Compatible provider settings.",
+            ),
+            (
+                "Which model routes are cheapest for coding agents?",
+                "trustedrouter/cheap automatically selects the cheapest capable route and runs it in a TEE, which suits high-volume agent loops. trustedrouter/fast optimizes for speed instead. Fixed routes for open models such as GLM glm-5.2-fast, DeepSeek V4 Flash, and Kimi K2.7 are listed with transparent per-model pricing, a thin markup over provider list prices, at trustedrouter.com/pricing.",
+            ),
+            (
+                "Is my code private when an agent routes through TrustedRouter?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open source, and you can verify the attestation live against a published image digest. Each route also carries a privacy tier: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read your prompt.",
+            ),
+            (
+                "Can I use DeepSeek, Kimi, or GLM in Cline without sending code to the model vendor?",
+                "Yes. DeepSeek, Kimi, Qwen, GLM, and MiniMax routes on TrustedRouter are served by non-Chinese hosting providers on attested infrastructure, with Zero-Data-Retention and TEE tiers available. Prompts do not go to the model vendor. You get the capability of the open weights while your codebase stays inside infrastructure you can verify.",
+            ),
+        ),
+    ),
+    "sillytavern-api": PublicPage(
+        template="public/seo_sillytavern_api.html",
+        title="Private SillyTavern API Backend: Verifiable Privacy, Crypto Pay",
+        description="Use TrustedRouter as your SillyTavern API backend: OpenAI-compatible, no prompt storage by default, hardware-attested, with crypto pay-per-request.",
+        faq_items=(
+            (
+                "How do I connect SillyTavern to TrustedRouter?",
+                "Use SillyTavern's Chat Completion API with a Custom OpenAI-compatible source: set the endpoint to https://api.trustedrouter.com/v1, add your key, and pick any of 220+ model routes, or trustedrouter/auto to let the router choose per request. If a provider goes down, requests roll over to another automatically. Coming from OpenRouter, the only required change is the base URL; your model ids and code carry over.",
+            ),
+            (
+                "Does TrustedRouter log my roleplay chats?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published. You can request a live attestation, a JWT signed by the CPU vendor's root key and bound to your TLS session, and verify it yourself instead of relying on a policy page. Details are on the security page.",
+            ),
+            (
+                "Can I pay without creating a traditional account?",
+                "Yes. Besides prepaid Stripe credits and bringing your own provider key, TrustedRouter supports x402 pay-per-request and Continue with MetaMask wallet sign-in, which works without a traditional account. That suits users who prefer not to attach an identity to their chats, though it is a payment option, not an anonymity guarantee. Per-model pricing is listed on the pricing page.",
+            ),
+            (
+                "Will models refuse less through TrustedRouter?",
+                "Model behavior belongs to the model: upstream refusal behavior applies on every route, and acceptable-use terms apply to all traffic. One published finding of ours: the same GLM weights answered 60 of 60 sensitive questions through TrustedRouter's enclave versus 30 of 60 via the vendor-hosted API, because that filtering is host-applied rather than in the weights. TrustedRouter changes who can read and store your prompts, not what a model chooses to say.",
+            ),
+        ),
+    ),
+    "aws-bedrock-alternative": PublicPage(
+        template="public/seo_aws_bedrock_alternative.html",
+        title="AWS Bedrock Alternative \u2014 Attested Confidential LLM API",
+        description="Hitting Bedrock throttling and quota limits? TrustedRouter routes Claude and 220+ models through a hardware-attested TEE gateway you can verify live.",
+        faq_items=(
+            (
+                "Does TrustedRouter run the same Claude models as AWS Bedrock?",
+                "Yes. TrustedRouter routes Claude alongside GPT, Gemini, DeepSeek, Kimi, Qwen, GLM, MiniMax, Llama, Mistral, and more: 220+ model routes across 30+ providers behind one OpenAI-compatible API. When a provider is down, traffic rolls over automatically, and meta-routes such as trustedrouter/auto select the best-fit route for each request.",
+            ),
+            (
+                "Is TrustedRouter HIPAA compliant like Bedrock's HIPAA-eligible services?",
+                "TrustedRouter does not claim HIPAA or SOC 2 certification. It provides a verifiable architecture plus readiness documentation your compliance team can assess: HIPAA and SOC 2 readiness pages, a DPA, a BAA, and a subprocessor list. The prompt path runs in a hardware-attested confidential-compute gateway, and TrustedRouter does not store prompt or output content by default. Regulated teams should review the readiness documentation with their own counsel.",
+            ),
+            (
+                "How do I verify TrustedRouter's privacy claims before migrating from Bedrock?",
+                "Fetch a live attestation: call the attestation endpoint with a nonce and you get a JWT signed by the CPU vendor's root key. The image digest in the token matches the published open-source gateway artifact, and the attestation binds to your live TLS session, so it cannot be replayed. Bedrock asks you to trust the AWS account boundary; TrustedRouter gives you a check you can run yourself.",
+            ),
+            (
+                "What does TrustedRouter cost compared to Bedrock?",
+                "TrustedRouter publishes transparent per-model pricing with a thin markup over provider list prices; check the pricing page for current numbers. You can pay with prepaid credits via Stripe, bring your own provider keys, or pay per request with x402 crypto and a MetaMask wallet sign-in. Note that TrustedRouter spend does not draw down an AWS EDP commitment, unlike Bedrock usage.",
+            ),
+        ),
+    ),
+    "llm-document-processing": PublicPage(
+        template="public/seo_llm_document_processing.html",
+        title="Private LLM API for Document Processing &amp; Extraction",
+        description="Run contracts, medical records, and invoices through an OpenAI-compatible LLM API with attested TEE privacy, ZDR routes, and no prompt storage by default.",
+        faq_items=(
+            (
+                "Can I use TrustedRouter for HIPAA-regulated documents?",
+                "TrustedRouter does not claim a HIPAA certification, and its regulatory pages are informational rather than legal advice. What it offers is verifiable architecture plus readiness documentation your compliance team can assess: a HIPAA readiness page, a BAA, a DPA, and a subprocessor list. The prompt path runs in a hardware-attested TEE, the attestation is checkable live, and TrustedRouter does not store prompt or output content by default.",
+            ),
+            (
+                "Does TrustedRouter parse PDFs or run OCR?",
+                "No. TrustedRouter serves inference only. Keep your existing OCR or PDF parsing stack, whether that is Unstract, LlamaParse, or your own pipeline, and send the extracted text through the API for structured data extraction. The API is OpenAI-compatible, so most document pipelines migrate by changing base_url while keeping the same SDK, model ids, and prompts.",
+            ),
+            (
+                "How do I verify that my documents stay private?",
+                "Fetch a live attestation. A curl to the attestation endpoint with a nonce returns a JWT signed by the CPU vendor's root key, and the image digest in it matches the published open-source gateway build. The attestation binds to the live TLS session, so it cannot be replayed. Beyond that, TrustedRouter does not store prompt or output content by default, and Zero-Data-Retention and TEE tiers are available per route.",
+            ),
+            (
+                "Which models can I use for document extraction?",
+                "There are 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, GLM, Qwen, Llama, and Mistral. Chinese open-weight models are served by non-Chinese hosting providers on attested infrastructure, so prompts do not go to the model vendor. Meta-routes help batch pipelines: trustedrouter/auto picks a best-fit route per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and automatic fallback covers provider outages.",
+            ),
+        ),
+    ),
+    "gpt-oss-120b-api": PublicPage(
+        template="public/seo_gpt_oss_120b_api.html",
+        title="gpt-oss-120b API \u2014 Fast, Private, Attested Inference",
+        description="Run gpt-oss-120b through an OpenAI-compatible API: a Cerebras-served fast route, TEE-attested privacy tiers, and measured latency from real requests.",
+        faq_items=(
+            (
+                "What is the fastest way to run gpt-oss-120b through an API?",
+                "TrustedRouter serves cerebras/gpt-oss-120b, a fast route on Cerebras hardware, alongside the standard openai/gpt-oss-120b route. Rather than quoting a single headline number, TrustedRouter publishes measured latency from real routed requests on its provider latency benchmarks page, so you can compare routes on data before committing. Automatic provider fallback keeps requests flowing when a provider degrades.",
+            ),
+            (
+                "How much does the gpt-oss-120b API cost on TrustedRouter?",
+                "Pricing is per model and published on the pricing page, with a thin markup over provider list prices. Prices drift, so check the live page rather than a cached table. You can pay with prepaid credits through Stripe, bring your own provider key, or use x402 pay-per-request crypto with MetaMask wallet sign-in, which works without a traditional account.",
+            ),
+            (
+                "Can I use gpt-oss-120b for HIPAA-sensitive workloads?",
+                "TrustedRouter does not claim HIPAA certification. It offers a verifiable architecture plus readiness documentation your compliance team can assess: a hardware-attested TEE prompt path, no storage of prompt or output content by default, and HIPAA readiness, BAA, DPA, and subprocessor pages your reviewers can read directly before making their own determination.",
+            ),
+            (
+                "Do I have to change my code to use TrustedRouter's gpt-oss-120b API?",
+                "No. The API is OpenAI-compatible. Change the base_url in your existing SDK to TrustedRouter's endpoint and keep your model ids and code; requests then route through the attested gateway. You can try gpt-oss-120b in the browser playground first, or use the model chooser to weigh it against other routes on the smart, cheap, and fast axes.",
+            ),
+        ),
+    ),
+    "eu-ai-act-llm-compliance": PublicPage(
+        template="public/seo_eu_ai_act_llm_compliance.html",
+        title="EU AI Act Compliance for Teams Using LLM APIs | TrustedRouter",
+        description="The EU AI Act reaches full applicability August 2, 2026. What deployers building on LLM APIs need from their vendor: attestation, retention proof, EU routing.",
+        faq_items=(
+            (
+                "Is TrustedRouter a provider or a deployer under the EU AI Act?",
+                "TrustedRouter is a routing layer in front of 220+ model routes across 30+ providers; it does not build the underlying models. How obligations split between model providers and your company as deployer depends on your use case, and this page is informational rather than legal advice. What TrustedRouter contributes is documentation: which route served each request, its privacy tier, live attestation of the gateway, a DPA, and a subprocessors list.",
+            ),
+            (
+                "What evidence can I get from TrustedRouter for an AI Act compliance file?",
+                "Four things you can check rather than take on faith: an open-source gateway with a published image digest; live hardware attestation bound to the TLS session, returned as a JWT signed by the CPU vendor's root key; per-route privacy tiers (Open, Zero-Data-Retention, TEE) in the model catalog; and legal documentation including a DPA, subprocessors list, and SOC 2 and HIPAA readiness pages your compliance team can assess.",
+            ),
+            (
+                "Does TrustedRouter store my prompts or outputs?",
+                "TrustedRouter does not store prompt or output content by default. The prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose image digest is published, so you can verify the running code instead of trusting a policy page. Zero-Data-Retention routes add contractual no-retention from the serving provider, and TEE routes keep prompts unreadable even to the provider.",
+            ),
+            (
+                "Can I keep LLM traffic in the EU?",
+                "TrustedRouter operates an EU gateway with EU-focused routing, described at /eu. Its scope is stated plainly: EU-focused routing exists, and there are no data-residency guarantees beyond that. Migration is a base_url change on an OpenAI-compatible API, so pointing a workload at the EU gateway does not require new SDKs or code rewrites.",
+            ),
+        ),
+    ),
+    "x402-llm-api": PublicPage(
+        template="public/seo_x402_llm_api.html",
+        title="x402 LLM API: Pay-Per-Request for AI Agents",
+        description="An OpenAI-compatible LLM API that accepts x402 pay-per-request. Your agent gets a 402, signs a payment, and retries. 220+ models, no card on file.",
+        faq_items=(
+            (
+                "What is an x402 LLM API?",
+                "x402 is an HTTP payment flow led by Coinbase: a server answers an unpaid request with 402 Payment Required plus payment terms, the client signs a payment, and retries. An x402 LLM API applies that flow to inference. TrustedRouter's OpenAI-compatible endpoint returns a 402 with terms, accepts the signed payment on retry, and serves the completion, so an agent can pay per request without a stored card or a traditional account.",
+            ),
+            (
+                "Can an AI agent use the API without an account or credit card?",
+                "Yes. x402 pay-per-request settles each call machine-to-machine, and Continue with MetaMask wallet sign-in works without a traditional account. Teams that prefer conventional billing can use prepaid credits through Stripe or bring their own provider keys. We do not promise anonymity; what we publish is a verifiable gateway whose attestation you can check on every session.",
+            ),
+            (
+                "Which models can an agent pay for with x402?",
+                "The same catalog as every other payment method: 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, Qwen 3.5, MiniMax M3, Llama, and Mistral. Meta-routes help agents that should not hardcode a model: trustedrouter/auto picks the best fit per request, trustedrouter/cheap picks the cheapest capable route in a TEE, and trustedrouter/fast optimizes for latency. Per-model pricing is listed at /pricing.",
+            ),
+            (
+                "Is my agent's prompt private when it pays per request?",
+                "The prompt path runs inside a hardware-attested confidential-compute gateway, and TrustedRouter does not store prompt or output content by default. You can verify this rather than take it on trust: the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to the live TLS session, with an image digest matching the published open-source build. Routes also carry privacy tiers: Open, Zero-Data-Retention, or end-to-end TEE.",
+            ),
+        ),
+    ),
     "choose": PublicPage(
         template="public/choose.html",
         og_card="choose.png",

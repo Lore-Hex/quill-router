@@ -1,0 +1,44 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="GLM-5 and GLM-5.2 API">
+  <div class="marketing-copy">
+    <span class="eyebrow">GLM-5 &amp; GLM-5.2 API</span>
+    <h2>Run GLM-5 and GLM-5.2 on attested hardware without sending your prompts to the model vendor.</h2>
+    <p>TrustedRouter serves glm-5, glm-5.2, and glm-5.2-fast through an OpenAI-compatible API. Change one line, the base URL, and keep your SDK, your model ids, and your code. You do not need a z.ai account.</p>
+    <p>Every GLM route here is served by non-Chinese hosting providers on attested infrastructure. Zero-Data-Retention and TEE tiers are available, and on TEE routes even the hosting provider cannot read your prompt. TrustedRouter does not store prompt or output content by default. Pay with prepaid credits, bring your own key, or pay per request with x402. Continue with MetaMask works without a traditional account.</p>
+    <p><a class="btn primary" href="/chat">Open the playground</a> <a class="btn" href="/pricing">See GLM pricing</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>glm-5.2 via the OpenAI SDK</span><span>Python</span></div>
+    <pre><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="{{ api_base_url }}",
+    api_key=TR_KEY,
+)
+r = client.chat.completions.create(
+    model="z-ai/glm-5.2",
+    messages=[{"role": "user", "content": "Refactor this function."}],
+)
+print(r.choices[0].message.content)</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Model routes</span><h3>Three GLM routes, one API</h3><p>glm-5, glm-5.2, and glm-5.2-fast are all live, alongside 220+ model routes across 30+ providers. When a hosting provider fails, requests roll over automatically. Kimi, DeepSeek, and Qwen run the same way; see <a href="/chinese-ai-models-us-hosted">Chinese open models served without the vendor</a> and <a href="/llm-provider-latency-benchmarks">measured latency data</a> from real routed requests.</p></div>
+  <div class="marketing-card"><span class="card-label">Privacy tiers</span><h3>ZDR and TEE on the prompt path</h3><p>Pick Zero-Data-Retention routes, where providers contractually keep nothing, or TEE routes, where end-to-end confidential compute means even the provider cannot read the prompt. Details at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Measured behavior</span><h3>Host-applied filtering, measured</h3><p>We ran 60 sensitive questions against the same GLM weights twice. The vendor-hosted API answered 30. The attested TrustedRouter route answered all 60. The filtering is applied by the serving host.</p></div>
+</section>
+<section class="compare-matrix" aria-label="z.ai vs TrustedRouter">
+  <div class="matrix-row matrix-head"><span></span><strong>z.ai</strong><strong>TrustedRouter</strong></div>
+  <div class="matrix-row"><span>Model access</span><span>Direct, first-party endpoint from the team that builds GLM</span><span>glm-5, glm-5.2, and glm-5.2-fast among 220+ routes</span></div>
+  <div class="matrix-row"><span>Privacy verification</span><span>A privacy policy you take on trust</span><span>Live hardware attestation, open-source gateway, published image digest</span></div>
+  <div class="matrix-row"><span>Prompt path</span><span>Prompts are processed on the model vendor's servers</span><span>Prompts do not go to the model vendor; ZDR and TEE tiers</span></div>
+  <div class="matrix-row"><span>Sensitive questions, our 60-question test</span><span>30 of 60 answered</span><span>60 of 60 answered, same weights</span></div>
+  <div class="matrix-row"><span>Account and payment</span><span>Vendor account sign-up</span><span>Prepaid credits, BYOK, or x402 crypto with MetaMask sign-in</span></div>
+  <div class="matrix-row"><span>Outages</span><span>Single provider</span><span>Automatic rollover across providers</span></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Verify, don't trust</span><h2>Same weights, different host, different answers.</h2></div>
+  <div><p>The test was simple. Sixty sensitive questions, the same GLM weights, two routes. Through the vendor-hosted API, 30 of 60 came back answered. Through TrustedRouter's enclave, 60 of 60. The gap comes from filtering applied by the serving host, so choosing where the weights run decides what you get back.</p><p>You do not have to take the enclave on faith. The prompt path runs inside a hardware-attested confidential-compute gateway. The source is open, the image digest is published, and a curl to the attestation endpoint returns a JWT signed by the CPU vendor's root key, bound to your live TLS session so it cannot be replayed. Attestation beats a privacy policy. It also holds up under load: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding. Check the attestation yourself at <a href="/security">/security</a>, or start with GLM-5.2 in the <a href="/chat">playground</a>.</p></div>
+</section>
+{% endblock %}

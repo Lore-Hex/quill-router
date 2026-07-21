@@ -1,0 +1,28 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="marketing-split" aria-label="LLM data residency overview">
+  <div class="marketing-copy">
+    <span class="eyebrow">LLM data residency</span>
+    <h2>Residency pins where inference runs; attestation proves who can read the prompt.</h2>
+    <p>A residency clause lands in a customer DPA. A GDPR transfer analysis flags US processing. Sector rules name a region. However it arrives, AI data residency requirements eventually stop being a policy question and become a routing question: which routes can serve LLM inference from EU hosting, and what happens to the prompt once it arrives?</p>
+    <p>TrustedRouter's answer is an EU gateway with EU-focused routing on the same OpenAI-compatible API you already use. We are specific about what EU data residency means on an LLM API here: gateway location and routing preference across 220+ model routes, nothing beyond that. Several upstream model providers are US entities, and we say so. A serious residency review asks three separate questions: where, how long, and who. This page takes them in order.</p>
+    <p><a class="btn primary" href="/eu">See the EU gateway</a> <a class="btn" href="/security">Read the security model</a></p>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Verify before you route</span><span>bash</span></div>
+    <pre><code>NONCE=$(openssl rand -hex 16)
+curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
+# returns a JWT signed by the CPU vendor's root key;
+# its image_digest matches the published artifact</code></pre>
+  </div>
+</section>
+<section class="marketing-grid three">
+  <div class="marketing-card"><span class="card-label">Where</span><h3>Residency: an EU gateway</h3><p>EU-focused routing through an EU gateway, on the same OpenAI-compatible API. The claim covers gateway location and routing preference. It is not a blanket residency guarantee for every route, and we do not dress it up as one. Details at <a href="/eu">/eu</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">How long</span><h3>Retention: nothing stored by default</h3><p>TrustedRouter does not store prompt or output content by default. Every route carries a privacy tier: Open, Zero-Data-Retention, or TEE. Zero-Data-Retention routes use providers that contractually keep nothing. More at <a href="/security">/security</a>.</p></div>
+  <div class="marketing-card"><span class="card-label">Who</span><h3>Access: the question location cannot answer</h3><p>An EU address does not stop an operator from reading traffic in-region. Only hardware settles that objection. The prompt path runs inside a hardware-attested confidential-compute gateway with open source, a published image digest, and a live attestation check bound to your TLS session. Privacy you can check beats privacy you're promised. See <a href="/security">/security</a>.</p></div>
+</section>
+<section class="quote-feature">
+  <div><span class="eyebrow">Compared with OpenRouter</span><h2>EU routing should not require a sales call.</h2></div>
+  <div><p>OpenRouter is a capable aggregator with a deep catalog, and its enterprise tier does offer in-region EU routing. Below that tier, it is gated. TrustedRouter's EU gateway and EU-focused routing are documented at <a href="/eu">/eu</a>, alongside per-route Zero-Data-Retention and TEE tiers, and moving over changes one line: the base URL. See the <a href="/docs/migrate-from-openrouter">migration guide</a>.</p><p>One caution your compliance team will appreciate: residency alone does not make a deployment GDPR-compliant. Transfer analysis, DPAs, and subprocessor review still do the legal work. What TrustedRouter supplies is verifiable architecture plus readiness documentation your compliance team can assess: the <a href="/legal/dpa">DPA</a>, the <a href="/legal/subprocessors">subprocessor list</a>, and <a href="/legal/soc2-readiness">SOC 2 readiness</a>, backed by a gateway whose behavior you can check rather than take on faith. It holds up at volume: a document-processing company scaled from zero to over a billion tokens per week through the attested gateway within three weeks of onboarding.</p></div>
+</section>
+{% endblock %}
