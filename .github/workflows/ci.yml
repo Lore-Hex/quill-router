@@ -24,7 +24,7 @@ jobs:
         run: uv run ruff check .
       - name: Mypy
         run: uv run mypy
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
       - name: Install npm deps
