@@ -2,7 +2,7 @@
   "_about": "Meta Muse Spark served through OpenRouter. This is not a direct Meta, ZDR, confidential-compute, or downstream-attested route.",
   "provider": "meta",
   "source": "https://openrouter.ai/api/v1/models/meta/muse-spark-1.1/endpoints",
-  "generated_at": "2026-07-21T22:10:14Z",
+  "generated_at": "2026-07-21T23:00:35Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [
