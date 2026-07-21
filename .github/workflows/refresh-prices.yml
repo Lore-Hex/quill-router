@@ -201,7 +201,7 @@ jobs:
         if: always()
         run: |
           set -o pipefail
-          uv run python scripts/check_price_coverage.py --strict-model-discovery \
+          uv run python -m scripts.check_price_coverage --strict-model-discovery \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated catalog before commit

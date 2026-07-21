@@ -1,15 +1,15 @@
 {
   "provider": "minimax",
-  "source": "https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise",
-  "generated_at": "2026-07-21T19:51:53Z",
+  "source": "https://api.minimax.io/v1/models",
+  "generated_at": "2026-07-21T20:47:51Z",
   "model_count": 8,
   "models": [
     {
       "id": "minimax/minimax-m3",
       "upstream_id": "MiniMax-M3",
-      "display_name": "MiniMax M3",
+      "display_name": "MiniMax-M3",
       "title": "MiniMax-M3",
-      "created": 1780185600,
+      "created": 1780272000,
       "context_length": 1000000,
       "max_output_tokens": 1000000,
       "input_token_price_per_m": 300000,
@@ -47,7 +47,7 @@
     {
       "id": "minimax/minimax-m2.7",
       "upstream_id": "MiniMax-M2.7",
-      "display_name": "MiniMax M2.7",
+      "display_name": "MiniMax-M2.7",
       "title": "MiniMax-M2.7",
       "created": 1773799200,
       "context_length": 204800,
@@ -74,7 +74,7 @@
     {
       "id": "minimax/minimax-m2.7-highspeed",
       "upstream_id": "MiniMax-M2.7-highspeed",
-      "display_name": "MiniMax M2.7 highspeed",
+      "display_name": "MiniMax-M2.7-highspeed",
       "title": "MiniMax-M2.7-highspeed",
       "created": 1773799200,
       "context_length": 204800,
@@ -101,7 +101,7 @@
     {
       "id": "minimax/minimax-m2.5",
       "upstream_id": "MiniMax-M2.5",
-      "display_name": "MiniMax M2.5",
+      "display_name": "MiniMax-M2.5",
       "title": "MiniMax-M2.5",
       "created": 1770948000,
       "context_length": 204800,
@@ -128,7 +128,7 @@
     {
       "id": "minimax/minimax-m2.5-highspeed",
       "upstream_id": "MiniMax-M2.5-highspeed",
-      "display_name": "MiniMax M2.5 highspeed",
+      "display_name": "MiniMax-M2.5-highspeed",
       "title": "MiniMax-M2.5-highspeed",
       "created": 1770948000,
       "context_length": 204800,
@@ -155,7 +155,7 @@
     {
       "id": "minimax/minimax-m2.1",
       "upstream_id": "MiniMax-M2.1",
-      "display_name": "MiniMax M2.1",
+      "display_name": "MiniMax-M2.1",
       "title": "MiniMax-M2.1",
       "created": 1766455200,
       "context_length": 204800,
@@ -182,7 +182,7 @@
     {
       "id": "minimax/minimax-m2.1-highspeed",
       "upstream_id": "MiniMax-M2.1-highspeed",
-      "display_name": "MiniMax M2.1 highspeed",
+      "display_name": "MiniMax-M2.1-highspeed",
       "title": "MiniMax-M2.1-highspeed",
       "created": 1766455200,
       "context_length": 204800,
@@ -209,7 +209,7 @@
     {
       "id": "minimax/minimax-m2",
       "upstream_id": "MiniMax-M2",
-      "display_name": "MiniMax M2",
+      "display_name": "MiniMax-M2",
       "title": "MiniMax-M2",
       "created": 1761530400,
       "context_length": 204800,
@@ -233,5 +233,6 @@
       ],
       "status": 1
     }
-  ]
+  ],
+  "pricing_source": "https://platform.minimax.io/docs/guides/pricing-paygo.md"
 }

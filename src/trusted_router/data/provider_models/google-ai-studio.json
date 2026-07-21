@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Google AI Studio chat and image models that are available from the Gemini API before the OpenRouter snapshot catches up. Verified against Google Gemini /v1beta/models and direct countTokens/generateContent smoke.",
   "provider": "google-ai-studio",
   "source": "https://generativelanguage.googleapis.com/v1beta/models",
-  "generated_at": "2026-07-21T19:51:53Z",
+  "generated_at": "2026-07-21T20:47:51Z",
   "model_count": 32,
   "models": [
     {
@@ -726,8 +726,10 @@
       "upstream_id": "gemini-3.5-flash-lite",
       "context_length": 1048576,
       "max_output_tokens": 65536,
-      "routable": false,
-      "routable_reason": "awaiting-price"
+      "routable": true,
+      "input_token_price_per_m": 300000,
+      "output_token_price_per_m": 2500000,
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "Gemini 3.6 Flash",
@@ -756,5 +758,5 @@
       "cached_input_token_price_per_m": 150000
     }
   ],
-  "pricing_source": "https://r.jina.ai/https://ai.google.dev/gemini-api/docs/pricing"
+  "pricing_source": "https://ai.google.dev/gemini-api/docs/pricing"
 }

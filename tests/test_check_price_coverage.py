@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 from scripts import check_price_coverage
 from scripts.check_price_coverage import audit
@@ -95,14 +96,21 @@ def test_kimi_discovery_ignores_unpriced_auto_alias() -> None:
 
 
 def test_cerebras_discovery_uses_canonical_ids_and_ignores_unknown_models() -> None:
-    assert check_price_coverage._cerebras_model_id("gpt-oss-120b") == (
-        "openai/gpt-oss-120b"
-    )
+    assert check_price_coverage._cerebras_model_id("gpt-oss-120b") == ("openai/gpt-oss-120b")
     assert check_price_coverage._cerebras_model_id("zai-glm-4.7") == "z-ai/glm-4.7"
-    assert check_price_coverage._cerebras_model_id("gemma-4-31b") == (
-        "google/gemma-4-31b-it"
-    )
+    assert check_price_coverage._cerebras_model_id("gemma-4-31b") == ("google/gemma-4-31b-it")
     assert check_price_coverage._cerebras_model_id("unknown") is None
+
+
+def test_novita_discovery_ignores_internal_aliases_but_catches_public_families() -> None:
+    assert check_price_coverage._novita_model_id("ai_infer_test_1") is None
+    assert check_price_coverage._novita_model_id("bunny") is None
+    assert check_price_coverage._novita_model_id("gt-4p") is None
+    assert check_price_coverage._novita_model_id("gpt-image-2-oai") is None
+    assert check_price_coverage._novita_model_id("Kimi-K3") == "moonshotai/kimi-k3"
+    assert check_price_coverage._novita_model_id("vendor/Future-Text-1") == (
+        "vendor/future-text-1"
+    )
 
 
 def test_provider_glm_required_gate_targets_current_flagships() -> None:
@@ -169,6 +177,119 @@ def test_provider_model_discovery_warns_on_unpublished_manifest_model() -> None:
     )
 
     assert any("minimax/minimax-m9" in warning for warning in warnings)
+
+
+def test_existing_provider_native_alias_does_not_reappear_as_canonical_launch(
+    monkeypatch,
+    tmp_path,
+) -> None:  # noqa: ANN001
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    (manifest_dir / "novita.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "zai-org/glm-4.6",
+                        "upstream_id": "zai-org/glm-4.6",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", manifest_dir)
+
+    def fake_fetch_json(url: str, env_names: tuple[str, ...]) -> dict:
+        if "api.novita.ai" in url:
+            return {
+                "data": [
+                    {
+                        "id": "zai-org/glm-4.6",
+                        "status": 1,
+                        "endpoints": ["chat/completions"],
+                        "output_modalities": ["text"],
+                    }
+                ]
+            }
+        return _known_provider_model_payload(url, env_names)
+
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-5.2",
+        fetch_json=fake_fetch_json,
+        published_model_ids={"z-ai/glm-5.2"},
+    )
+
+    assert not any("novita: live model API lists required unpublished" in item for item in warnings)
+
+
+def test_new_awaiting_price_row_is_not_hidden_by_global_model(
+    monkeypatch,
+    tmp_path,
+) -> None:  # noqa: ANN001
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    (manifest_dir / "novita.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "vendor/new-model",
+                        "upstream_id": "vendor/new-model",
+                        "routable": False,
+                        "routable_reason": "awaiting-price",
+                        "unresolved_since": "2026-07-21",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_price_coverage, "MANIFEST_DIR", manifest_dir)
+
+    def fake_fetch_json(url: str, env_names: tuple[str, ...]) -> dict:
+        if "api.novita.ai" in url:
+            return {
+                "data": [
+                    {
+                        "id": "vendor/new-model",
+                        "status": 1,
+                        "endpoints": ["chat/completions"],
+                        "output_modalities": ["text"],
+                    }
+                ]
+            }
+        return _known_provider_model_payload(url, env_names)
+
+    warnings, _info = check_price_coverage._model_discovery_audit(
+        fetch_text=lambda _url: "Supported Models: GLM-5.2",
+        fetch_json=fake_fetch_json,
+        published_model_ids={"vendor/new-model", "z-ai/glm-5.2"},
+    )
+
+    assert any(
+        warning.startswith("novita: newly discovered required model(s) still await a price")
+        for warning in warnings
+    )
+
+
+def test_inactive_provider_rows_do_not_trigger_model_discovery() -> None:
+    assert not check_price_coverage._active_discovery_row(
+        {
+            "id": "vendor/retired",
+            "status": 4,
+            "endpoints": ["chat/completions"],
+            "output_modalities": ["text"],
+        }
+    )
+    assert not check_price_coverage._active_discovery_row(
+        {
+            "id": "vendor/image-only",
+            "status": 1,
+            "endpoints": ["chat/completions"],
+            "output_modalities": ["image"],
+        }
+    )
 
 
 def test_provider_glm_discovery_warns_on_unpublished_route(monkeypatch, tmp_path) -> None:  # noqa: ANN001

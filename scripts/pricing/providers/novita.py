@@ -5,6 +5,7 @@ operator account can invoke it. The public pricing table remains authoritative
 for billing. This intersection lets new launches appear automatically without
 guessing capabilities or creating zero-priced routes.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,12 +22,14 @@ from scripts.pricing.base import (
     reconcile_manifest_tombstones,
     validate,
 )
-from scripts.pricing.model_ids import canonicalize_native_model_id
+from scripts.pricing.model_ids import (
+    canonicalize_native_model_id,
+    canonicalize_unqualified_model_id,
+)
 
 SLUG = "novita"
-URL = "https://r.jina.ai/https://novita.ai/pricing"
+URL = "https://novita.ai/pricing"
 MODELS_URL = "https://api.novita.ai/openai/v1/models"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -80,6 +83,36 @@ def _existing_native_ids() -> dict[str, str]:
     return mapped
 
 
+def _known_manifest_model_ids() -> set[str]:
+    if not MANIFEST_PATH.exists():
+        return set()
+    try:
+        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return set()
+    return {
+        model_id
+        for row in rows
+        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
+    }
+
+
+def _new_required_price_ids(
+    discovered: dict[str, dict[str, Any]],
+) -> frozenset[str]:
+    """Return newly listed, live chat models that need a public price row."""
+
+    known = _known_manifest_model_ids()
+    return frozenset(
+        model_id
+        for model_id, row in discovered.items()
+        if model_id not in known and row.get("status") == 1
+    )
+
+
 def _live_model_rows() -> dict[str, dict[str, Any]]:
     api_key = os.environ.get("NOVITA_API_KEY")
     if not api_key:
@@ -110,6 +143,7 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             existing_ids.get(native_id)
             or existing_ids.get(native_id.casefold())
             or canonicalize_native_model_id(native_id)
+            or canonicalize_unqualified_model_id(native_id)
         )
         if model_id is None:
             continue
@@ -145,18 +179,17 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
+    discovered = _live_model_rows()
+    required_price_ids = _new_required_price_ids(discovered)
     result = fetch_provider(
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
+        required_models=required_price_ids,
     )
-    discovered = _live_model_rows()
     _DISCOVERED_MANIFEST_ROWS = discovered
     result.prices = {
-        model_id: price
-        for model_id, price in result.prices.items()
-        if model_id in discovered
+        model_id: price for model_id, price in result.prices.items() if model_id in discovered
     }
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
@@ -190,9 +223,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         return value
 
     existing_by_id = {
-        row["id"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     present_rows: dict[str, dict[str, Any]] = {}
     updated = 0

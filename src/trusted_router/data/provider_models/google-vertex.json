@@ -2,8 +2,8 @@
   "_about": "Provider-native supplement for Google Vertex AI models whose availability is verified independently from Google AI Studio discovery. Gemini 3.6 Flash was verified with a direct global Vertex streamGenerateContent request in the TrustedRouter GCP project on 2026-07-21.",
   "provider": "google-vertex",
   "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-6-flash",
-  "pricing_source": "https://r.jina.ai/https://ai.google.dev/gemini-api/docs/pricing",
-  "generated_at": "2026-07-21T19:51:53Z",
+  "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
+  "generated_at": "2026-07-21T20:47:51Z",
   "model_count": 1,
   "models": [
     {

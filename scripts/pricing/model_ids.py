@@ -6,6 +6,7 @@ API-backed provider adapter needs the same conservative normalization:
 explicit hand maps win for tricky aliases, and simple vendor/model IDs are
 lowercased with known author namespace rewrites.
 """
+
 from __future__ import annotations
 
 import re
@@ -23,6 +24,48 @@ _AUTHOR_ALIASES = {
 }
 
 _MODEL_CHARS_RE = re.compile(r"[^a-z0-9._-]+")
+
+
+def canonicalize_unqualified_model_id(native_id: str) -> str | None:
+    """Normalize common provider model-family slugs without an author.
+
+    Aggregators such as Cerebras, Fireworks, Phala, and Wafer often expose
+    short IDs like ``gpt-oss-120b`` or ``glm-5p2``.  Explicit provider maps
+    still win for aliases and quantizations; this fallback handles ordinary
+    future releases whose family unambiguously identifies the public author.
+    """
+
+    value = native_id.strip().casefold()
+    for prefix in (
+        "accounts/fireworks/models/",
+        "accounts/fireworks/routers/",
+        "phala/",
+        "models/",
+    ):
+        value = value.removeprefix(prefix)
+    value = value.replace("_", "-")
+    value = re.sub(r"-(\d+)p(\d+)(?=$|-)", r"-\1.\2", value)
+    value = re.sub(r"([km])(\d+)p(\d+)(?=$|-)", r"\1\2.\3", value)
+    value = re.sub(r"-{2,}", "-", value).strip("-")
+    if not value:
+        return None
+    if value.startswith("zai-glm-"):
+        return f"z-ai/{value.removeprefix('zai-')}"
+    family_authors = (
+        (("glm-",), "z-ai"),
+        (("gpt-oss-",), "openai"),
+        (("kimi-",), "moonshotai"),
+        (("deepseek-",), "deepseek"),
+        (("minimax-",), "minimax"),
+        (("qwen", "qwq-"), "qwen"),
+        (("gemma-",), "google"),
+        (("llama-",), "meta-llama"),
+        (("mimo-",), "xiaomi"),
+    )
+    for prefixes, author in family_authors:
+        if value.startswith(prefixes):
+            return f"{author}/{value}"
+    return None
 
 
 def canonicalize_native_model_id(native_id: str) -> str | None:

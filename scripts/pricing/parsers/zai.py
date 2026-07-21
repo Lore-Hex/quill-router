@@ -1,9 +1,9 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses docs.z.ai/guides/overview/pricing as rendered by r.jina.ai.
+# Parses the official docs.z.ai pricing Markdown table.
 # Captured fixture lives at tests/fixtures/pricing/zai.html.
 #
-# Page format: Jina returns a clean markdown table.
+# Page format: the provider returns a clean Markdown table.
 #
 #   | Model | Input | Cached Input | Cached Input Storage | Output |
 #   | --- | --- | --- | --- | --- |
@@ -13,7 +13,7 @@
 #
 # Z.AI's GLM family is single-tier (no context conditioning), so we
 # emit flat ModelPrice rows.
-"""Z.AI / Zhipu pricing parser (Jina-rendered markdown)."""
+"""Z.AI / Zhipu official pricing Markdown parser."""
 from __future__ import annotations
 
 import re

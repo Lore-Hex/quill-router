@@ -12,6 +12,7 @@ expectation is that fetch_provider:
   6. Persists the rewritten parser to disk.
   7. Returns ProviderPricingResult(source="self_healed").
 """
+
 from __future__ import annotations
 
 import json
@@ -33,13 +34,16 @@ def tmp_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     parsers_dir.mkdir()
     monkeypatch.setattr(pricing_base, "PARSERS_DIR", parsers_dir)
 
-    initial_src = textwrap.dedent(
-        """
+    initial_src = (
+        textwrap.dedent(
+            """
         def parse(html: str) -> dict:
             # Intentionally returns nothing — triggers validation failure.
             return {}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
 
     parser_file = parsers_dir / "testslug.py"
     parser_file.write_text(initial_src, encoding="utf-8")
@@ -47,9 +51,7 @@ def tmp_parser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _stub_fetch_html(monkeypatch: pytest.MonkeyPatch, html: str) -> None:
-    monkeypatch.setattr(
-        pricing_base, "fetch_html", lambda url, extra_headers=None: html
-    )
+    monkeypatch.setattr(pricing_base, "fetch_html", lambda url, extra_headers=None: html)
 
 
 def _stub_self_heal(monkeypatch: pytest.MonkeyPatch, returned_src: str) -> None:
@@ -60,8 +62,9 @@ def _stub_self_heal(monkeypatch: pytest.MonkeyPatch, returned_src: str) -> None:
     )
 
 
-_VALID_REWRITE = textwrap.dedent(
-    """
+_VALID_REWRITE = (
+    textwrap.dedent(
+        """
     def parse(html: str) -> dict:
         return {
             "test/model": {
@@ -70,7 +73,9 @@ _VALID_REWRITE = textwrap.dedent(
             }
         }
     """
-).strip() + "\n"
+    ).strip()
+    + "\n"
+)
 
 
 def test_self_heal_happy_path_persists_new_parser(
@@ -95,13 +100,102 @@ def test_self_heal_happy_path_persists_new_parser(
     assert result.heal_diff and "test/model" in result.heal_diff
 
 
+def test_new_runtime_required_model_triggers_self_heal(
+    tmp_parser: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_parser.write_text(
+        textwrap.dedent(
+            """
+            def parse(html: str) -> dict:
+                return {
+                    "test/existing": {
+                        "prompt_micro_per_m": 1_000_000,
+                        "completion_micro_per_m": 2_000_000,
+                    }
+                }
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    rewrite = (
+        textwrap.dedent(
+            """
+        def parse(html: str) -> dict:
+            return {
+                "test/existing": {
+                    "prompt_micro_per_m": 1_000_000,
+                    "completion_micro_per_m": 2_000_000,
+                },
+                "test/new-launch": {
+                    "prompt_micro_per_m": 3_000_000,
+                    "completion_micro_per_m": 4_000_000,
+                },
+            }
+        """
+        ).strip()
+        + "\n"
+    )
+    _stub_fetch_html(monkeypatch, "new launch pricing")
+    _stub_self_heal(monkeypatch, rewrite)
+
+    result = pricing_base.fetch_provider(
+        slug="testslug",
+        url="https://example.com/pricing",
+        expected_models=["test/existing"],
+        required_models=["test/new-launch"],
+    )
+
+    assert result.source == "self_healed"
+    assert set(result.prices) == {"test/existing", "test/new-launch"}
+
+
+def test_required_model_may_be_added_without_fixture_regression(
+    tmp_parser: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmp_parser.write_text(
+        "def parse(html: str) -> dict:\n"
+        "    return {'test/existing': {'prompt_micro_per_m': 1, "
+        "'completion_micro_per_m': 2}}\n",
+        encoding="utf-8",
+    )
+    fixture_dir = tmp_path / "fixtures"
+    fixture_dir.mkdir()
+    (fixture_dir / "testslug.html").write_text("captured-layout", encoding="utf-8")
+    monkeypatch.setattr(pricing_base, "PRICING_FIXTURES_DIR", fixture_dir)
+    _stub_fetch_html(monkeypatch, "live-layout")
+    rewrite = (
+        "def parse(html: str) -> dict:\n"
+        "    return {\n"
+        "        'test/existing': {'prompt_micro_per_m': 1, "
+        "'completion_micro_per_m': 2},\n"
+        "        'test/new-launch': {'prompt_micro_per_m': 3, "
+        "'completion_micro_per_m': 4},\n"
+        "    }\n"
+    )
+    _stub_self_heal(monkeypatch, rewrite)
+
+    result = pricing_base.fetch_provider(
+        slug="testslug",
+        url="https://example.com/pricing",
+        expected_models=["test/existing"],
+        required_models=["test/new-launch"],
+    )
+
+    assert set(result.prices) == {"test/existing", "test/new-launch"}
+
+
 def test_self_heal_normalizes_candidate_before_persisting(
     tmp_parser: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html>doesn't matter</html>")
-    unsorted_rewrite = textwrap.dedent(
-        """
+    unsorted_rewrite = (
+        textwrap.dedent(
+            """
         from __future__ import annotations
 
         import re
@@ -117,7 +211,9 @@ def test_self_heal_normalizes_candidate_before_persisting(
                 }
             }
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, unsorted_rewrite)
 
     result = pricing_base.fetch_provider(
@@ -137,8 +233,9 @@ def test_self_heal_rejects_candidate_with_unfixable_lint_violation(
 ) -> None:
     original = tmp_parser.read_text(encoding="utf-8")
     _stub_fetch_html(monkeypatch, "1")
-    invalid_rewrite = textwrap.dedent(
-        """
+    invalid_rewrite = (
+        textwrap.dedent(
+            """
         def parse(html: str) -> dict:
             try:
                 price = int(html) * 1_000_000
@@ -151,7 +248,9 @@ def test_self_heal_rejects_candidate_with_unfixable_lint_violation(
                 }
             }
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, invalid_rewrite)
 
     with pytest.raises(RuntimeError, match="Ruff normalization failed"):
@@ -179,8 +278,9 @@ def test_self_heal_rejects_captured_fixture_regression(
     monkeypatch: pytest.MonkeyPatch,
     fixture_result: str,
 ) -> None:
-    original = textwrap.dedent(
-        """
+    original = (
+        textwrap.dedent(
+            """
         def parse(html: str) -> dict:
             if "captured-layout" not in html:
                 return {}
@@ -191,17 +291,18 @@ def test_self_heal_rejects_captured_fixture_regression(
                 }
             }
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     tmp_parser.write_text(original, encoding="utf-8")
     fixture_dir = tmp_path / "fixtures"
     fixture_dir.mkdir()
-    (fixture_dir / "testslug.html").write_text(
-        "captured-layout", encoding="utf-8"
-    )
+    (fixture_dir / "testslug.html").write_text("captured-layout", encoding="utf-8")
     monkeypatch.setattr(pricing_base, "PRICING_FIXTURES_DIR", fixture_dir)
     _stub_fetch_html(monkeypatch, "live-layout")
-    candidate = textwrap.dedent(
-        f"""
+    candidate = (
+        textwrap.dedent(
+            f"""
         def parse(html: str) -> dict:
             if "live-layout" in html:
                 return {{
@@ -212,7 +313,9 @@ def test_self_heal_rejects_captured_fixture_regression(
                 }}
             {fixture_result}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, candidate)
 
     with pytest.raises(RuntimeError, match="fixture regression"):
@@ -230,14 +333,17 @@ def test_self_heal_rejects_subprocess_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
-    bad = textwrap.dedent(
-        """
+    bad = (
+        textwrap.dedent(
+            """
         import subprocess
 
         def parse(html: str) -> dict:
             return {"test/model": {"prompt_micro_per_m": 1, "completion_micro_per_m": 1}}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="AST whitelist"):
@@ -256,14 +362,17 @@ def test_self_heal_rejects_urllib_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
-    bad = textwrap.dedent(
-        """
+    bad = (
+        textwrap.dedent(
+            """
         import urllib.request
 
         def parse(html: str) -> dict:
             return {"test/model": {"prompt_micro_per_m": 1, "completion_micro_per_m": 1}}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="AST whitelist"):
@@ -280,13 +389,16 @@ def test_self_heal_rejects_dunder_escape_hatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
-    bad = textwrap.dedent(
-        """
+    bad = (
+        textwrap.dedent(
+            """
         def parse(html: str) -> dict:
             mod = ().__class__.__bases__[0].__subclasses__()
             return {"test/model": {"prompt_micro_per_m": 1, "completion_micro_per_m": 1}}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="AST whitelist"):
@@ -303,8 +415,9 @@ def test_self_heal_rejects_output_outside_plausibility_range(
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
     # Returns a price 10x above the plausibility ceiling.
-    bad = textwrap.dedent(
-        f"""
+    bad = (
+        textwrap.dedent(
+            f"""
         def parse(html: str) -> dict:
             return {{
                 "test/model": {{
@@ -313,7 +426,9 @@ def test_self_heal_rejects_output_outside_plausibility_range(
                 }}
             }}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="validation"):
@@ -332,12 +447,15 @@ def test_self_heal_rejects_missing_parse_function(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
-    bad = textwrap.dedent(
-        """
+    bad = (
+        textwrap.dedent(
+            """
         def not_parse(html: str) -> dict:
             return {}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="AST whitelist"):
@@ -353,12 +471,15 @@ def test_self_heal_rejects_extra_method_signature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _stub_fetch_html(monkeypatch, "<html></html>")
-    bad = textwrap.dedent(
-        """
+    bad = (
+        textwrap.dedent(
+            """
         def parse(html, extra):
             return {}
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     _stub_self_heal(monkeypatch, bad)
 
     with pytest.raises(RuntimeError, match="AST whitelist"):
@@ -372,6 +493,99 @@ def test_self_heal_rejects_extra_method_signature(
 # ------------------------------------------------------------------
 # ID cross-check tests (refresh._cross_check_ids)
 # ------------------------------------------------------------------
+
+
+def test_new_parser_requirements_are_provider_specific_and_text_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    (manifest_dir / "google-ai-studio.json").write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "id": "google/gemini-3.6-flash",
+                        "routable": False,
+                        "routable_reason": "awaiting-price",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(refresh, "PROVIDER_MANIFEST_DIR", manifest_dir)
+    committed = {
+        "models": [
+                {
+                    "id": "google/gemini-3.7-flash",
+                    "created": 100,
+                "architecture": {"output_modalities": ["text"]},
+                "endpoints": [{"tr_provider_slug": "lightning"}],
+            }
+        ]
+    }
+    upstream = {
+        "models": [
+                {
+                    "id": "google/gemini-3.6-flash",
+                    "created": 90,
+                "architecture": {"output_modalities": ["text"]},
+                "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+            },
+                {
+                    "id": "google/gemini-3.7-flash",
+                    "created": 100,
+                "architecture": {"output_modalities": ["text"]},
+                "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+            },
+                {
+                    "id": "google/gemini-3.7-image",
+                    "created": 101,
+                "architecture": {"output_modalities": ["image"]},
+                    "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+                },
+                {
+                    "id": "google/gemini-3.8-flash",
+                    "created": 102,
+                    "architecture": {"output_modalities": ["text"]},
+                    "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+                },
+                {
+                    "id": "google/gemini-3.8-flash:free",
+                    "created": 103,
+                    "architecture": {"output_modalities": ["text"]},
+                    "endpoints": [{"tr_provider_slug": "google-ai-studio"}],
+                },
+        ]
+    }
+
+    required = refresh._new_parser_requirements(upstream, committed)
+
+    assert required == {"gemini": {"google/gemini-3.8-flash"}}
+
+
+def test_new_parser_requirements_ignore_old_model_added_to_new_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_dir = tmp_path / "provider_models"
+    manifest_dir.mkdir()
+    monkeypatch.setattr(refresh, "PROVIDER_MANIFEST_DIR", manifest_dir)
+    committed = {"models": [{"id": "known/latest", "created": 200}]}
+    upstream = {
+        "models": [
+            {
+                "id": "openai/old-model",
+                "created": 100,
+                "architecture": {"output_modalities": ["text"]},
+                "endpoints": [{"tr_provider_slug": "openai"}],
+            }
+        ]
+    }
+
+    assert refresh._new_parser_requirements(upstream, committed) == {}
 
 
 def _fake_or_snapshot(model_endpoints: list[tuple[str, str]]) -> dict:
@@ -415,9 +629,7 @@ def test_cross_check_ids_flags_or_models_missing_from_parser() -> None:
 
 
 def test_cross_check_ids_flags_parser_models_or_does_not_list() -> None:
-    or_snapshot = _fake_or_snapshot(
-        [("anthropic/claude-opus-4.7", "anthropic")]
-    )
+    or_snapshot = _fake_or_snapshot([("anthropic/claude-opus-4.7", "anthropic")])
     results = {
         "anthropic": pricing_base.ProviderPricingResult(
             slug="anthropic",
@@ -563,10 +775,13 @@ def test_manifest_dispatch_restores_mass_pruned_file(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     manifest_path = tmp_path / "fake.json"
-    old_text = json.dumps(
-        {"provider": "fake", "models": [{"id": "a"}, {"id": "b"}]},
-        indent=2,
-    ) + "\n"
+    old_text = (
+        json.dumps(
+            {"provider": "fake", "models": [{"id": "a"}, {"id": "b"}]},
+            indent=2,
+        )
+        + "\n"
+    )
     manifest_path.write_text(old_text, encoding="utf-8")
 
     class FakeProvider:

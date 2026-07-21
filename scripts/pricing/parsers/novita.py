@@ -1,7 +1,12 @@
-"""Novita pricing parser for markdown-link and plain-text table layouts."""
+"""Novita pricing parser for its server-rendered catalog and legacy tables."""
+
 from __future__ import annotations
 
+import json
 import re
+from decimal import Decimal, InvalidOperation
+
+from bs4 import BeautifulSoup
 
 # Display name (as shown in the Model Name column) → OR-canonical id.
 _DISPLAY_TO_OR_ID: dict[str, str] = {
@@ -138,11 +143,184 @@ _ROW_RE = re.compile(
 _INPUT_PRICE_RE = re.compile(r"\$([\d.]+)\s*/Mt")
 _CACHE_PRICE_RE = re.compile(r"Cache Read\s*\$([\d.]+)\s*/Mt")
 _FREE_RE = re.compile(r"\bFree\b")
+_NEXT_PUSH_PREFIX = "self.__next_f.push("
+_NEXT_MODELS_KEY = "initialFullLLMModels"
+_NEXT_MODELS_MARKER = '"initialFullLLMModels":'
+_PRICE_TEXT_RE = re.compile(r"\$+([\d.]+)\s*/\s*M(?:t|\s+tokens)", re.I)
+
+
+def _usd_per_m_to_micro(raw: object) -> int | None:
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return None
+    if not value.is_finite() or value < 0:
+        return None
+    return int((value * Decimal(1_000_000)).to_integral_value())
+
+
+def _embedded_price(
+    source: dict,
+    *,
+    info_field: str,
+    numeric_field: str,
+) -> int | None:
+    infos = source.get("infos")
+    if isinstance(infos, dict):
+        match = _PRICE_TEXT_RE.search(str(infos.get(info_field) or ""))
+        if match:
+            return _usd_per_m_to_micro(match.group(1))
+
+    # Novita's numeric pricePerM unit is 1/10,000 USD per million tokens.
+    # Prefer the human-readable USD field above, but retain this fallback for
+    # catalog rows whose display string is absent.
+    pricing = source.get(numeric_field)
+    if not isinstance(pricing, dict):
+        return None
+    raw = pricing.get("pricePerM")
+    try:
+        value = Decimal(str(raw)) * Decimal(100)
+    except (InvalidOperation, ValueError):
+        return None
+    if not value.is_finite() or value < 0:
+        return None
+    return int(value.to_integral_value())
+
+
+def _canonical_embedded_id(source: dict) -> str | None:
+    raw_id = source.get("id")
+    display_name = source.get("displayName")
+    if isinstance(display_name, str) and display_name in _DISPLAY_TO_OR_ID:
+        return _DISPLAY_TO_OR_ID[display_name]
+    if not isinstance(raw_id, str) or "/" not in raw_id:
+        return None
+    if raw_id.startswith("zai-org/"):
+        return f"z-ai/{raw_id.removeprefix('zai-org/')}"
+    return raw_id
+
+
+def _next_catalog_rows(html: str) -> list[dict]:
+    """Decode the model list embedded in Novita's server-rendered Next page."""
+
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text()
+        if _NEXT_MODELS_KEY not in text or not text.startswith(_NEXT_PUSH_PREFIX):
+            continue
+        try:
+            payload = json.loads(text[len(_NEXT_PUSH_PREFIX) : -1])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], str):
+            continue
+        flight = payload[1]
+        marker_index = flight.find(_NEXT_MODELS_MARKER)
+        if marker_index < 0:
+            continue
+        start = marker_index + len(_NEXT_MODELS_MARKER)
+        try:
+            rows, _end = json.JSONDecoder().raw_decode(flight, start)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _parse_embedded_catalog(html: str) -> dict:
+    out: dict = {}
+    for source in _next_catalog_rows(html):
+        if source.get("type") != "Chat":
+            continue
+        status = source.get("status")
+        if isinstance(status, int) and status <= 0:
+            continue
+        model_id = _canonical_embedded_id(source)
+        if model_id is None:
+            continue
+        prompt = _embedded_price(
+            source,
+            info_field="inputPricing",
+            numeric_field="input_pricing",
+        )
+        completion = _embedded_price(
+            source,
+            info_field="outputPricing",
+            numeric_field="output_pricing",
+        )
+        if prompt is None or completion is None:
+            continue
+        row: dict = {
+            "prompt_micro_per_m": prompt,
+            "completion_micro_per_m": completion,
+        }
+        cached = _embedded_price(
+            source,
+            info_field="cacheReadPricing",
+            numeric_field="cache_read_input_pricing",
+        )
+        # A zero cache field in Novita's payload means the model has no cache
+        # price, not that cache reads are free.
+        if cached is not None and cached > 0:
+            row["prompt_cached_micro_per_m"] = cached
+        out[model_id] = row
+    return out
+
+
+def _parse_dom_tables(html: str) -> dict:
+    """Parse one model at a time from Novita's server-rendered table rows."""
+
+    out: dict = {}
+    soup = BeautifulSoup(html, "html.parser")
+    for table_row in soup.find_all("tr"):
+        cells = table_row.find_all(["th", "td"], recursive=False)
+        if len(cells) < 4:
+            continue
+        name = cells[0].get_text(" ", strip=True)
+        model_id = _DISPLAY_TO_OR_ID.get(name)
+        if model_id is None:
+            link = cells[0].find("a")
+            link_text = link.get_text(" ", strip=True) if link else ""
+            if "/" in link_text:
+                model_id = link_text
+        if model_id is None:
+            continue
+
+        input_text = cells[2].get_text(" ", strip=True)
+        output_text = cells[3].get_text(" ", strip=True)
+        input_match = _PRICE_TEXT_RE.search(input_text)
+        output_match = _PRICE_TEXT_RE.search(output_text)
+        if input_match and output_match:
+            prompt = _usd_per_m_to_micro(input_match.group(1))
+            completion = _usd_per_m_to_micro(output_match.group(1))
+        elif _FREE_RE.search(input_text) and _FREE_RE.search(output_text):
+            prompt = completion = 0
+        else:
+            continue
+        if prompt is None or completion is None:
+            continue
+        row = {
+            "prompt_micro_per_m": prompt,
+            "completion_micro_per_m": completion,
+        }
+        cache_match = _CACHE_PRICE_RE.search(input_text)
+        if cache_match:
+            cached = _usd_per_m_to_micro(cache_match.group(1))
+            if cached is not None:
+                row["prompt_cached_micro_per_m"] = cached
+        out[model_id] = row
+    return out
 
 
 def parse(html: str) -> dict:
-    out: dict = {}
-    # Older Jina renders use markdown links with canonical model IDs.
+    # The embedded catalog carries canonical IDs and row-local prices. Parsing
+    # it first prevents a flattened page projection from associating one
+    # model's input price with another model's output price.
+    out: dict = _parse_embedded_catalog(html)
+    for model_id, row in _parse_dom_tables(html).items():
+        out.setdefault(model_id, row)
+
+    # Historical captured renders use markdown links with canonical model IDs.
     for match in _LINK_PRICE_RE.finditer(html):
         model_id, input_usd, cached_usd, output_usd = match.groups()
         if model_id in out:
@@ -150,17 +328,13 @@ def parse(html: str) -> dict:
         try:
             row: dict = {
                 "prompt_micro_per_m": int(round(float(input_usd) * 1_000_000)),
-                "completion_micro_per_m": int(
-                    round(float(output_usd) * 1_000_000)
-                ),
+                "completion_micro_per_m": int(round(float(output_usd) * 1_000_000)),
             }
         except ValueError:
             continue
         if cached_usd:
             try:
-                row["prompt_cached_micro_per_m"] = int(
-                    round(float(cached_usd) * 1_000_000)
-                )
+                row["prompt_cached_micro_per_m"] = int(round(float(cached_usd) * 1_000_000))
             except ValueError:
                 pass
         out[model_id] = row
@@ -174,9 +348,12 @@ def parse(html: str) -> dict:
                 "completion_micro_per_m": 0,
             }
 
-    # Current renders use display names in a tab-delimited table. Preserve
-    # link-layout values above if both layouts appear in one response.
-    for match in _ROW_RE.finditer(html):
+    # Historical plain-text renders use display names in a tab-delimited table.
+    # Never run this loose compatibility parser over a live HTML document.
+    plain_text_matches = (
+        () if re.search(r"<\s*(?:!doctype|html|body)\b", html, re.I) else _ROW_RE.finditer(html)
+    )
+    for match in plain_text_matches:
         name = match.group("name").strip()
         if not name or name not in _DISPLAY_TO_OR_ID:
             continue
@@ -220,9 +397,7 @@ def parse(html: str) -> dict:
         }
         if cache_usd is not None:
             try:
-                row["prompt_cached_micro_per_m"] = int(
-                    round(float(cache_usd) * 1_000_000)
-                )
+                row["prompt_cached_micro_per_m"] = int(round(float(cache_usd) * 1_000_000))
             except ValueError:
                 pass
         out[or_id] = row

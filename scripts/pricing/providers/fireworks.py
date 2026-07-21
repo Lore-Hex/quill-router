@@ -20,11 +20,14 @@ from scripts.pricing.base import (
     fetch_provider,
     validate,
 )
+from scripts.pricing.model_ids import (
+    canonicalize_unqualified_model_id,
+    remember_upstream_id,
+)
 
 SLUG = "fireworks"
-URL = "https://r.jina.ai/https://docs.fireworks.ai/serverless/pricing"
+URL = "https://docs.fireworks.ai/serverless/pricing.md"
 MODELS_URL = "https://api.fireworks.ai/inference/v1/models"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -79,22 +82,24 @@ def _live_model_ids() -> set[str]:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        canonical = _NATIVE_TO_CANONICAL.get(native_id)
+        canonical = _NATIVE_TO_CANONICAL.get(native_id) or canonicalize_unqualified_model_id(
+            native_id
+        )
         if canonical is not None:
             discovered.add(canonical)
+            remember_upstream_id(UPSTREAM_ID_MAP, canonical, native_id)
     return discovered
 
 
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_LIVE_MODEL_IDS
 
+    live_model_ids = _live_model_ids()
     result = fetch_provider(
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )
-    live_model_ids = _live_model_ids()
     _DISCOVERED_LIVE_MODEL_IDS = live_model_ids
     docs_only = sorted(set(result.prices) - live_model_ids)
     result.prices = {

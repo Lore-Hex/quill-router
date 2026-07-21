@@ -25,6 +25,7 @@ To add a new Phala-served model: probe /v1/models, find the
 `phala/<bare>` row, and add the `phala/<bare>` → OR-canonical pair
 to `_NATIVE_TO_OR_ID`. Refresh.py overlays the price automatically.
 """
+
 from __future__ import annotations
 
 import os
@@ -40,7 +41,10 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.model_ids import remember_upstream_id
+from scripts.pricing.model_ids import (
+    canonicalize_unqualified_model_id,
+    remember_upstream_id,
+)
 from trusted_router.provider_lifecycle import (
     provider_model_retired,
     provider_price_microdollars,
@@ -140,9 +144,7 @@ def _extract_rates(pricing: object) -> tuple[float, float, float | None] | None:
 
 
 def fetch() -> ProviderPricingResult:
-    api_key = os.environ.get("PHALA_CONFIDENTIAL_API_KEY") or os.environ.get(
-        "PHALA_API_KEY"
-    )
+    api_key = os.environ.get("PHALA_CONFIDENTIAL_API_KEY") or os.environ.get("PHALA_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -169,7 +171,7 @@ def fetch() -> ProviderPricingResult:
         # into a confidential route.
         if not native_id.startswith("phala/"):
             continue
-        or_id = _NATIVE_TO_OR_ID.get(native_id)
+        or_id = _NATIVE_TO_OR_ID.get(native_id) or canonicalize_unqualified_model_id(native_id)
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)

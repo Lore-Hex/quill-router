@@ -48,6 +48,7 @@ from scripts.pricing.base import (
     ModelPrice,
     PriceTier,
     ProviderPricingResult,
+    configure_runtime_required_models,
     guard_manifest_prune,
     log,
 )
@@ -61,6 +62,7 @@ from trusted_router.provider_lifecycle import provider_model_retired  # noqa: E4
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_PATH = REPO_ROOT / "src" / "trusted_router" / "data" / "openrouter_snapshot.json"
+PROVIDER_MANIFEST_DIR = SNAPSHOT_PATH.parent / "provider_models"
 
 # Provider modules in order of execution. Together stays first because existing
 # refresh contracts depend on it; Meta is another JSON API path that does not
@@ -79,8 +81,8 @@ PROVIDER_SLUGS = [
     "kimi",
     "zai",
     "fireworks",
-    # New backends added 2026-05-08. Each has a Jina-rendered or
-    # direct-fetch pricing source + a parser in scripts/pricing/parsers/.
+    # New backends added 2026-05-08. Each has a provider-owned pricing source
+    # plus a deterministic parser in scripts/pricing/parsers/.
     "grok",
     "novita",
     "phala",
@@ -128,6 +130,34 @@ _PRICING_RESULT_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "cloudflare_workers_ai": ("cloudflare-workers-ai",),
     "atlas_cloud": ("atlas-cloud",),
 }
+
+# These providers run a pricing-page parser (Kimi has a custom multi-page
+# wrapper around the same parser contract). A new model seen in a fresh
+# upstream catalog is a strict parser requirement only for this set; API-priced
+# providers such as Cerebras, Makora, and Phala discover prices directly.
+_SELF_HEALING_PARSER_SLUGS = frozenset(
+    {
+        "anthropic",
+        "cohere",
+        "deepseek",
+        "fireworks",
+        "gemini",
+        "grok",
+        "kimi",
+        "minimax",
+        "mistral",
+        "morph",
+        "novita",
+        "openai",
+        "siliconflow",
+        "streamlake",
+        "thinkingmachines",
+        "venice",
+        "voyage",
+        "xiaomi",
+        "zai",
+    }
+)
 
 # A shared official price feed does not prove shared model availability.
 # Vertex routes must already exist in the endpoint snapshot before the merger
@@ -177,6 +207,127 @@ def _endpoint_pricing_source(slug: str, healed_slugs: set[str]) -> str:
 
 def _import_provider(slug: str):
     return importlib.import_module(f"scripts.pricing.providers.{slug}")
+
+
+def _result_slug_for_provider(provider_slug: str) -> str:
+    return next(
+        (
+            result_slug
+            for result_slug, provider_slugs in _PRICING_RESULT_PROVIDER_ALIASES.items()
+            if provider_slug in provider_slugs
+        ),
+        provider_slug,
+    )
+
+
+def _model_outputs_text(model: dict[str, Any]) -> bool:
+    """Return false only when upstream metadata explicitly excludes text."""
+
+    architecture = model.get("architecture")
+    if not isinstance(architecture, dict):
+        return True
+    output_modalities = architecture.get("output_modalities")
+    if isinstance(output_modalities, list) and output_modalities:
+        return "text" in {str(value).casefold() for value in output_modalities}
+    modality = architecture.get("modality")
+    if isinstance(modality, str) and "->" in modality:
+        return "text" in modality.rsplit("->", 1)[-1].casefold()
+    return True
+
+
+def _manifest_model_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return set()
+    return {
+        model_id
+        for row in rows
+        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
+    }
+
+
+def _known_model_ids(snapshot: dict[str, Any]) -> set[str]:
+    known = {
+        model_id
+        for model in snapshot.get("models", [])
+        if isinstance(model, dict) and isinstance((model_id := model.get("id")), str) and model_id
+    }
+    for path in PROVIDER_MANIFEST_DIR.glob("*.json"):
+        known.update(_manifest_model_ids(path))
+    return known
+
+
+def _latest_model_created(snapshot: dict[str, Any]) -> int:
+    created_values = [
+        created
+        for model in snapshot.get("models", [])
+        if isinstance(model, dict)
+        and isinstance((created := model.get("created")), int)
+        and not isinstance(created, bool)
+        and created > 0
+    ]
+    return max(created_values, default=0)
+
+
+def _is_launch_candidate(model_id: str) -> bool:
+    """Exclude catalog aliases that do not represent independently priced launches."""
+
+    return not model_id.startswith("~") and not model_id.endswith(":free")
+
+
+def _new_parser_requirements(
+    upstream_snapshot: dict[str, Any],
+    committed_snapshot: dict[str, Any],
+) -> dict[str, set[str]]:
+    """Find genuinely new model launches that need parsed prices.
+
+    This is deliberately launch-oriented.  Existing manifest rows, including
+    explicitly unresolved historical rows, are not reclassified here.  The
+    separate coverage audit reports those. OpenRouter frequently adds an old
+    model to another provider long after launch; treating that provider/model
+    pair as a launch produced hundreds of false parser failures. A hard gate
+    now requires all three signals: globally unknown ID, newer creation time
+    than the committed catalog, and a text endpoint on a parser-priced
+    provider. Provider-native discovery remains stricter for providers that
+    expose authenticated model lists.
+    """
+
+    known = _known_model_ids(committed_snapshot)
+    latest_known_created = _latest_model_created(committed_snapshot)
+    required: dict[str, set[str]] = {}
+    for model in upstream_snapshot.get("models", []):
+        if not isinstance(model, dict) or not _model_outputs_text(model):
+            continue
+        model_id = model.get("id")
+        endpoints = model.get("endpoints")
+        created = model.get("created")
+        if (
+            not isinstance(model_id, str)
+            or not isinstance(endpoints, list)
+            or model_id in known
+            or not _is_launch_candidate(model_id)
+            or not isinstance(created, int)
+            or isinstance(created, bool)
+            or created <= latest_known_created
+        ):
+            continue
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            provider_slug = endpoint.get("tr_provider_slug")
+            if not isinstance(provider_slug, str):
+                continue
+            result_slug = _result_slug_for_provider(provider_slug)
+            if result_slug not in _SELF_HEALING_PARSER_SLUGS:
+                continue
+            required.setdefault(result_slug, set()).add(model_id)
+    return required
 
 
 def _upstream_id_map_for(slug: str) -> dict[str, str]:
@@ -678,9 +829,7 @@ def _merge_snapshot(
             new_model["pricing"] = new_pricing
             # Tag pricing_source as self-healed if ANY of the slugs that
             # priced this model went through the LLM rewrite.
-            new_model["pricing_source"] = _endpoint_pricing_source(
-                cheapest_slug, healed_slugs
-            )
+            new_model["pricing_source"] = _endpoint_pricing_source(cheapest_slug, healed_slugs)
         else:
             # Every keyed provider returned $0 for a model that OR prices
             # above $0 — a feed glitch across all of them at once. Fall
@@ -821,9 +970,7 @@ def _write_provider_manifests(results: dict[str, ProviderPricingResult]) -> list
             # before adding or expanding provider-owned rebuild behavior.
             continue
         manifest_path_value = getattr(module, "MANIFEST_PATH", None)
-        manifest_path = (
-            Path(manifest_path_value) if manifest_path_value is not None else None
-        )
+        manifest_path = Path(manifest_path_value) if manifest_path_value is not None else None
         before_text: str | None = None
         before_rows: list[Any] | None = None
         if manifest_path is not None and manifest_path.exists():
@@ -922,15 +1069,27 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
+    log.info("pricing.refresh.openrouter_ingest")
+    or_snapshot = build_openrouter_snapshot()
+    committed_snapshot = _read_existing_snapshot()
+    required_by_slug = _new_parser_requirements(or_snapshot, committed_snapshot)
+    configure_runtime_required_models(required_by_slug)
+    if required_by_slug:
+        log.info(
+            "pricing.refresh.new_parser_models providers=%d models=%d",
+            len(required_by_slug),
+            sum(len(model_ids) for model_ids in required_by_slug.values()),
+        )
+
     log.info("pricing.refresh.start providers=%d", len(PROVIDER_SLUGS))
     results, failures = _fetch_all_providers()
 
     unrecovered_failures = _apply_stale_fallbacks(
         results,
         failures,
-        _read_existing_snapshot(),
+        committed_snapshot,
     )
-    healed = [slug for slug, res in results.items() if res.source == "self_healed"]
+    healed = [slug for slug, res in results.items() if res.heal_diff is not None]
 
     if len(unrecovered_failures) > MAX_TOLERATED_FAILURES:
         log.error(
@@ -942,9 +1101,6 @@ def main(argv: list[str] | None = None) -> int:
         for line in _summary_lines(results, healed, failures, [], []):
             print(line)
         return 1
-
-    log.info("pricing.refresh.openrouter_ingest")
-    or_snapshot = build_openrouter_snapshot()
 
     provider_index = _index_provider_prices(results)
     disagreements = _cross_check(provider_index, or_snapshot)

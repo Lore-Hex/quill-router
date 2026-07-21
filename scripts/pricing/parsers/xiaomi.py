@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 
+from bs4 import BeautifulSoup
+
 
 def _money_to_micro_per_m(value: str) -> int:
     return int((Decimal(value) * Decimal(1_000_000)).to_integral_value())
@@ -26,13 +28,9 @@ def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
     if not section_match:
         return {}
 
-    mapping = {
-        "mimo-v2.5-pro": "xiaomi/mimo-v2.5-pro",
-        "mimo-v2.5": "xiaomi/mimo-v2.5",
-    }
     prices: dict[str, dict[str, int]] = {}
     table_row_pattern = re.compile(
-        r"\|\s*`?(mimo-v2\.5(?:-pro)?)`?\s*"
+        r"\|\s*`?(mimo-[a-z0-9._-]+)`?\s*"
         r"\|\s*\$([0-9.]+)\s*"
         r"\|\s*\$([0-9.]+)\s*"
         r"\|\s*\$([0-9.]+)\s*\|",
@@ -42,7 +40,7 @@ def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
     # currency markers. Keep the three-dollar requirement so the preceding RMB
     # table can never be interpreted as USD.
     flat_row_pattern = re.compile(
-        r"`?(mimo-v2\.5(?:-pro)?)`?\s+"
+        r"`?(mimo-[a-z0-9._-]+)`?\s+"
         r"\$([0-9.]+)\s+\$([0-9.]+)\s+\$([0-9.]+)",
         flags=re.I,
     )
@@ -51,9 +49,7 @@ def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
     if not rows:
         rows = flat_row_pattern.findall(section)
     for model, cache, prompt, completion in rows:
-        model_id = mapping.get(model.casefold())
-        if model_id is None:
-            continue
+        model_id = f"xiaomi/{model.casefold()}"
         prices[model_id] = {
             "prompt_micro_per_m": _money_to_micro_per_m(prompt),
             "completion_micro_per_m": _money_to_micro_per_m(completion),
@@ -67,13 +63,44 @@ def parse(html: str) -> dict[str, dict[str, int]]:
     # card parser below as a compatibility fallback for older captures and
     # for UltraSpeed if Xiaomi republishes its standalone PAYG card.
     prices = _overseas_payg_prices(html)
+    soup = BeautifulSoup(html, "html.parser")
+    for heading in soup.find_all("h4"):
+        title = heading.get_text(" ", strip=True)
+        if not re.fullmatch(r"MiMo-[A-Za-z0-9._-]+", title, flags=re.I):
+            continue
+        container = heading.parent
+        while container is not None:
+            if len(container.find_all("h4")) > 1:
+                container = None
+                break
+            block = container.get_text(" ", strip=True)
+            if re.search(r"Input\s*\(cache\s+miss\)", block, flags=re.I) and re.search(
+                r"\bOutput\b",
+                block,
+                flags=re.I,
+            ):
+                break
+            container = container.parent
+        if container is None:
+            continue
+        block = container.get_text(" ", strip=True)
+        cache = re.search(r"Input\s*\(cache\s+hit\)\s*\$\s*([0-9.]+)", block, flags=re.I)
+        prompt = re.search(r"Input\s*\(cache\s+miss\)\s*\$\s*([0-9.]+)", block, flags=re.I)
+        completion = re.search(r"\bOutput\s*\$\s*([0-9.]+)", block, flags=re.I)
+        if not prompt or not completion:
+            continue
+        row = {
+            "prompt_micro_per_m": _money_to_micro_per_m(prompt.group(1)),
+            "completion_micro_per_m": _money_to_micro_per_m(completion.group(1)),
+        }
+        if cache:
+            row["prompt_cached_micro_per_m"] = _money_to_micro_per_m(cache.group(1))
+        prices.setdefault(f"xiaomi/{title.casefold()}", row)
+
     text = re.sub(r"\s+", " ", html)
-    mapping = {
-        "MiMo-V2.5-Pro": "xiaomi/mimo-v2.5-pro",
-        "MiMo-V2.5-Pro-UltraSpeed": "xiaomi/mimo-v2.5-pro-ultraspeed",
-        "MiMo-V2.5": "xiaomi/mimo-v2.5",
-    }
-    for title, model_id in mapping.items():
+    titles = dict.fromkeys(re.findall(r"####\s*(MiMo-[A-Za-z0-9._-]+)", html, flags=re.I))
+    for title in titles:
+        model_id = f"xiaomi/{title.casefold()}"
         block = _section(text, title)
         if not block:
             continue

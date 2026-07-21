@@ -1,6 +1,6 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses platform.openai.com/docs/pricing as rendered by r.jina.ai.
+# Parses the normalized projection of OpenAI's official developer pricing page.
 # Captured fixture lives at tests/fixtures/pricing/openai.html.
 #
 # The page format changed in mid-2026: the flagship Standard table now has
@@ -21,7 +21,7 @@
 # We only extract the Standard tier (first flagship table on the page);
 # Batch/Flex/Priority variants come later in the doc and are skipped via
 # the `_live_seen` guard.
-"""OpenAI pricing parser (Jina-rendered markdown)."""
+"""OpenAI pricing parser for provider-owned HTML or normalized Markdown."""
 from __future__ import annotations
 
 import re

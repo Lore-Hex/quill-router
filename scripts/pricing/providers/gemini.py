@@ -1,11 +1,9 @@
 """Google Gemini — human-only provider config.
 
-ai.google.dev/pricing 302-redirects to OAuth, so a direct fetch never
-returns HTML. We route through `r.jina.ai` against the docs path
-(`/gemini-api/docs/pricing`) which Jina renders server-side and
-returns as markdown. This bypass works because Jina hits the page
-from its own infrastructure (with whatever cookies/state it carries)
-and gives us back the rendered content.
+Google's official pricing page is server-rendered and is fetched directly.
+An earlier implementation depended on a Jina mirror, but that endpoint began
+returning HTTP 401 while the official page remained available. Keeping the
+official source as the fetch target removes that unnecessary failure mode.
 
 The Gemini docs pricing page has explicit context-tier breakdowns
 (e.g. "$1.25, prompts <= 200k tokens / $2.50, prompts > 200k tokens"
@@ -17,10 +15,12 @@ providers. This adapter owns AI Studio model discovery. The shared refresh may
 apply Google's standard Gemini token prices to existing Vertex endpoint rows,
 but it never invents Vertex availability from AI Studio discovery.
 """
+
 from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -36,9 +36,9 @@ from scripts.pricing.base import (
 )
 
 SLUG = "gemini"
-URL = "https://r.jina.ai/https://ai.google.dev/gemini-api/docs/pricing"
+URL = "https://ai.google.dev/gemini-api/docs/pricing"
+VERTEX_PRICING_URL = "https://cloud.google.com/vertex-ai/generative-ai/pricing"
 MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -56,6 +56,7 @@ EXPECTED_MODELS = [
     "google/gemini-3.6-flash",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_STANDARD_TEXT_MODEL_RE = re.compile(r"^google/gemini-\d+(?:\.\d+)?-(?:pro|flash|flash-lite)$")
 
 
 def _positive_int(value: object) -> int | None:
@@ -127,6 +128,41 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _known_manifest_model_ids() -> set[str]:
+    if not MANIFEST_PATH.exists():
+        return set()
+    try:
+        raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return set()
+    return {
+        model_id
+        for row in rows
+        if isinstance(row, dict) and isinstance((model_id := row.get("id")), str) and model_id
+    }
+
+
+def _new_required_price_ids(live_rows: dict[str, dict[str, Any]]) -> frozenset[str]:
+    """Require prices for newly launched stable Gemini text SKUs.
+
+    Google's model feed also contains aliases, TTS, image-output, robotics,
+    and experimental rows that do not correspond one-to-one with a token
+    pricing section.  Stable Pro, Flash, and Flash Lite release IDs do.  A new
+    stable release therefore triggers parser self-heal immediately, even when
+    OpenRouter has not listed it yet.
+    """
+
+    known = _known_manifest_model_ids()
+    return frozenset(
+        model_id
+        for model_id in live_rows
+        if model_id not in known and _STANDARD_TEXT_MODEL_RE.fullmatch(model_id)
+    )
+
+
 def _refresh_price(row: dict[str, Any], result: ProviderPricingResult, model_id: str) -> bool:
     price = result.prices.get(model_id)
     if price is None:
@@ -173,7 +209,7 @@ def _refresh_verified_vertex_manifest(result: ProviderPricingResult) -> int:
             updated += 1
     if not updated:
         return 0
-    raw["pricing_source"] = URL
+    raw["pricing_source"] = VERTEX_PRICING_URL
     raw["generated_at"] = (
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
@@ -188,13 +224,14 @@ def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
     _DISCOVERED_MANIFEST_ROWS = {}
+    live_rows = _live_model_rows()
+    required_price_ids = _new_required_price_ids(live_rows)
     result = fetch_provider(
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
+        required_models=required_price_ids,
     )
-    live_rows = _live_model_rows()
     _DISCOVERED_MANIFEST_ROWS = live_rows
     result.prices = {
         model_id: price for model_id, price in result.prices.items() if model_id in live_rows
@@ -224,9 +261,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         raise RuntimeError("gemini discovery returned no supported model rows")
 
     existing_by_id = {
-        row["id"]: row
-        for row in rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
+        row["id"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
     present_rows: dict[str, dict[str, Any]] = {}
     updated: list[str] = []
@@ -297,7 +332,4 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if vertex_updated:
         changes.append(f"repriced {vertex_updated} verified Vertex rows")
     suffix = f", {', '.join(changes)}" if changes else ""
-    return [
-        f"gemini: refreshed Google AI Studio manifest "
-        f"({len(updated)} priced rows{suffix})"
-    ]
+    return [f"gemini: refreshed Google AI Studio manifest ({len(updated)} priced rows{suffix})"]

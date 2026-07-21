@@ -23,7 +23,10 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
-from scripts.pricing.model_ids import remember_upstream_id
+from scripts.pricing.model_ids import (
+    canonicalize_unqualified_model_id,
+    remember_upstream_id,
+)
 from scripts.pricing.openai_catalog import openai_model_price, positive_int
 
 SLUG = "cerebras"
@@ -126,7 +129,9 @@ def fetch() -> ProviderPricingResult:
         native_id = source.get("id")
         if not isinstance(native_id, str):
             continue
-        canonical_id = _CANONICAL_BY_NATIVE.get(native_id)
+        canonical_id = _CANONICAL_BY_NATIVE.get(native_id) or canonicalize_unqualified_model_id(
+            native_id
+        )
         if canonical_id is None:
             continue
         price = openai_model_price(source)

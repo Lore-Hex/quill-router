@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
+from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
-from scripts.pricing.providers import nebius
+from scripts.pricing.providers import minimax, nebius
 from scripts.pricing.providers import xiaomi as xiaomi_provider
 
 
@@ -39,6 +41,58 @@ def test_minimax_parser_reads_official_token_plan_tiers() -> None:
         "completion_micro_per_m": 2_400_000,
         "prompt_cached_micro_per_m": 60_000,
     }
+
+
+def test_minimax_parser_normalizes_future_flat_price_rows() -> None:
+    prices = minimax_parser.parse("MiniMax-M4 $0.4/ M tokens $1.6/ M tokens $0.08/ M tokens")
+
+    assert prices["minimax/minimax-m4"] == {
+        "prompt_micro_per_m": 400_000,
+        "completion_micro_per_m": 1_600_000,
+        "prompt_cached_micro_per_m": 80_000,
+    }
+
+
+def test_minimax_live_discovery_requires_new_model_before_manifest_write(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest = tmp_path / "minimax.json"
+    manifest.write_text(
+        json.dumps({"models": [{"id": "minimax/minimax-m3", "upstream_id": "MiniMax-M3"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(minimax, "MANIFEST_PATH", manifest)
+    monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    monkeypatch.setattr(
+        minimax,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {"id": "MiniMax-M3", "status": 1},
+                {"id": "MiniMax-M4", "status": 1},
+            ]
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def fake_fetch_provider(**kwargs: object) -> ProviderPricingResult:
+        captured.update(kwargs)
+        return ProviderPricingResult(
+            slug="minimax",
+            prices={
+                "minimax/minimax-m3": ModelPrice(300_000, 1_200_000),
+                "minimax/minimax-m4": ModelPrice(400_000, 1_600_000),
+            },
+            source="deterministic",
+        )
+
+    monkeypatch.setattr(minimax, "fetch_provider", fake_fetch_provider)
+
+    result = minimax.fetch()
+
+    assert captured["required_models"] == frozenset({"minimax/minimax-m4"})
+    assert set(result.prices) == {"minimax/minimax-m3", "minimax/minimax-m4"}
 
 
 def test_xiaomi_parser_reads_official_mimo_payg_prices() -> None:
@@ -139,7 +193,25 @@ def test_xiaomi_provider_uses_current_official_payg_page() -> None:
     assert xiaomi_provider.PUBLIC_PRICING_URL == (
         "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
     )
-    assert xiaomi_provider.PUBLIC_PRICING_URL in xiaomi_provider.URL
+    assert xiaomi_provider.URL == xiaomi_provider.PUBLIC_PRICING_URL
+
+
+def test_xiaomi_parser_normalizes_future_payg_model_rows() -> None:
+    html = """
+    ### Overseas Pricing of the Model
+    |  | **Input (Cache Hit)** | **Input (Cache Miss)** | **Output** |
+    | --- | --- | --- | --- |
+    | `mimo-v2.6-pro` | $0.01 | $0.50 | $1.00 |
+    ### Pricing for Web Search Plugins
+    """
+
+    assert xiaomi_parser.parse(html) == {
+        "xiaomi/mimo-v2.6-pro": {
+            "prompt_micro_per_m": 500_000,
+            "completion_micro_per_m": 1_000_000,
+            "prompt_cached_micro_per_m": 10_000,
+        }
+    }
 
 
 class _FakeResponse:
@@ -154,7 +226,8 @@ class _FakeResponse:
 
 
 def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
-    tmp_path, monkeypatch  # noqa: ANN001
+    tmp_path,
+    monkeypatch,  # noqa: ANN001
 ) -> None:
     payload = {
         "data": [
@@ -224,10 +297,7 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
     assert result.prices[canonical].prompt_micro_per_m == 600_000
     assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in result.prices
     assert nebius._DISCOVERED_ROWS[canonical]["id"] == canonical
-    assert (
-        nebius._DISCOVERED_ROWS[canonical]["upstream_id"]
-        == "nvidia/Nemotron-3-Ultra-550b-a55b"
-    )
+    assert nebius._DISCOVERED_ROWS[canonical]["upstream_id"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
     assert "Qwen/Qwen3-Embedding-8B" not in result.prices
 
     manifest = tmp_path / "nebius.json"

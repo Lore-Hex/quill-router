@@ -11,8 +11,7 @@ from __future__ import annotations
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "grok"
-URL = "https://r.jina.ai/https://docs.x.ai/developers/pricing"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = "https://docs.x.ai/developers/pricing.md"
 
 EXPECTED_MODELS = [
     "x-ai/grok-4.5",
@@ -24,5 +23,4 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )

@@ -68,11 +68,11 @@
       "context_length": 262144,
       "input_token_price_per_m": 740000,
       "output_token_price_per_m": 2960000,
-      "cached_input_token_price_per_m": 150000,
+      "cached_input_token_price_per_m": 999900000,
       "routable": false,
       "routable_reason": "provider-canary-failed"
     }
   ],
-  "generated_at": "2026-07-21T19:51:53Z",
+  "generated_at": "2026-07-21T20:47:51Z",
   "model_count": 3
 }

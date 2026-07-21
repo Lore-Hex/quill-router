@@ -25,11 +25,17 @@ MODEL_IDS = {
     "morph-dsv4flash": "deepseek/deepseek-v4-flash",
 }
 
-# Published pricing (USD per 1M tokens) for Morph's own Fast Apply models.
+# Published pricing (USD per 1M tokens) for Morph's current chat catalog.
 # Source: https://www.morphllm.com/pricing (as of the last successful fetch).
-FALLBACK_PRICES: dict[str, tuple[Decimal, Decimal]] = {
-    "morph/morph-v3-fast": (Decimal("0.80"), Decimal("1.20")),
-    "morph/morph-v3-large": (Decimal("0.90"), Decimal("1.90")),
+FALLBACK_PRICES: dict[str, tuple[Decimal, Decimal, Decimal | None]] = {
+    "z-ai/glm-5.2": (Decimal("1.10"), Decimal("4.10"), None),
+    "qwen/qwen3.5-397b-a17b": (Decimal("0.50"), Decimal("3.50"), Decimal("0.30")),
+    "qwen/qwen3.6-27b": (Decimal("0.29"), Decimal("2.40"), None),
+    "minimax/minimax-m2.7": (Decimal("0.28"), Decimal("1.20"), None),
+    "minimax/minimax-m3": (Decimal("0.60"), Decimal("2.40"), None),
+    "deepseek/deepseek-v4-flash": (Decimal("0.14"), Decimal("0.28"), None),
+    "morph/morph-v3-fast": (Decimal("0.80"), Decimal("1.20"), None),
+    "morph/morph-v3-large": (Decimal("0.90"), Decimal("1.90"), None),
 }
 
 
@@ -92,13 +98,13 @@ def parse(html: str) -> dict[str, PriceRow]:
     # nothing usable, emit the published prices for Morph's own Fast Apply
     # models so downstream never sees an empty dict.
     if not output or _checkpoint_blocked(html):
-        for canonical, (prompt, completion) in FALLBACK_PRICES.items():
-            output.setdefault(
-                canonical,
-                {
-                    "prompt_micro_per_m": _micro_per_m(prompt),
-                    "completion_micro_per_m": _micro_per_m(completion),
-                },
-            )
+        for canonical, (prompt, completion, cached) in FALLBACK_PRICES.items():
+            row = {
+                "prompt_micro_per_m": _micro_per_m(prompt),
+                "completion_micro_per_m": _micro_per_m(completion),
+            }
+            if cached is not None:
+                row["prompt_cached_micro_per_m"] = _micro_per_m(cached)
+            output.setdefault(canonical, row)
 
     return output

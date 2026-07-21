@@ -1,6 +1,8 @@
 # LLM-MAINTAINED FILE — re-validated every hour by scripts/pricing/refresh.py.
 #
-# Parses ai.google.dev/gemini-api/docs/pricing as rendered by r.jina.ai.
+# Parses the server-rendered HTML at ai.google.dev/gemini-api/docs/pricing.
+# The parser also accepts the historical normalized Markdown format so captured
+# fixtures remain useful during the migration away from that mirror.
 # Captured fixture lives at tests/fixtures/pricing/gemini.html.
 #
 # Page format: each model lives under a `## Gemini X.Y Flavor` heading,
@@ -14,10 +16,13 @@
 # We extract the Paid Tier column. When a price line carries
 # "<= 200k / > 200k" markers, we emit two PriceTier rows; otherwise
 # a single uncapped tier.
-"""Google Gemini pricing parser (Jina-rendered markdown)."""
+"""Google Gemini pricing parser for official HTML and legacy Markdown."""
+
 from __future__ import annotations
 
 import re
+
+from bs4 import BeautifulSoup, Tag
 
 # Markdown heading text → OR-canonical id.
 _NAME_TO_OR_ID = {
@@ -36,6 +41,25 @@ _NAME_TO_OR_ID = {
     "Gemini 1.5 Flash": "google/gemini-1.5-flash",
 }
 
+_STANDARD_MODEL_HEADING_RE = re.compile(
+    r"^Gemini\s+(?P<version>\d+(?:\.\d+)?)\s+"
+    r"(?P<variant>Pro|Flash(?:[ -]Lite)?)$",
+    re.IGNORECASE,
+)
+
+
+def _model_id_from_heading(heading: str) -> str | None:
+    """Map stable Gemini pricing headings without a per-release code edit."""
+
+    mapped = _NAME_TO_OR_ID.get(heading)
+    if mapped is not None:
+        return mapped
+    match = _STANDARD_MODEL_HEADING_RE.fullmatch(heading.strip())
+    if match is None:
+        return None
+    variant = match.group("variant").casefold().replace(" ", "-")
+    return f"google/gemini-{match.group('version')}-{variant}"
+
 
 # "$1.25, prompts <= 200k tokens $2.50, prompts > 200k tokens" — a
 # tiered price line with an explicit threshold.
@@ -45,11 +69,6 @@ _TIERED_PRICE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# "$0.30 (text / image / video) $1.00 (audio)" or just "$0.30" — a
-# flat price (we take the first text/image/video price for chat).
-_FLAT_TEXT_PRICE_RE = re.compile(
-    r"\$([\d.]+)(?:\s*\(text|\s*$|\s*[a-zA-Z]?[^,$])"
-)
 _ANY_DOLLAR_RE = re.compile(r"\$([\d.]+)")
 
 
@@ -93,7 +112,8 @@ def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
         )
     # Flat: take the first $-amount in the cell. Skip cells that say
     # "Free of charge" or "Not available".
-    if "Free" in text or "Not available" in text:
+    lowered = text.casefold()
+    if "free" in lowered or "not available" in lowered:
         return [], False
     flat_match = _ANY_DOLLAR_RE.search(text)
     if flat_match:
@@ -101,9 +121,65 @@ def _parse_price_cell(text: str) -> tuple[list[tuple[int | None, int]], bool]:
     return [], False
 
 
-def parse(md: str) -> dict:
-    out: dict = {}
-    # Walk every "## Heading" + the table directly under it.
+def _price_from_rows(rows: list[tuple[str, str]]) -> dict[str, object] | None:
+    """Build one model price from label/paid-tier cell pairs."""
+
+    prompt_tiers: list[tuple[int | None, int]] = []
+    completion_tiers: list[tuple[int | None, int]] = []
+    cached_tiers: list[tuple[int | None, int]] = []
+    for raw_label, paid_cell in rows:
+        label = raw_label.casefold()
+        if "input price" in label and not prompt_tiers:
+            prompt_tiers, _ = _parse_price_cell(paid_cell)
+        elif "output price" in label and not completion_tiers:
+            completion_tiers, _ = _parse_price_cell(paid_cell)
+        elif "context caching price" in label and not cached_tiers:
+            cached_tiers, _ = _parse_price_cell(paid_cell)
+    if not prompt_tiers or not completion_tiers:
+        return None
+
+    # Gemini tiers prompt and completion at the same thresholds. If the page
+    # ever diverges, keep billing conservative and use the low flat tier until
+    # the hourly parser review adapts the richer shape.
+    if len(prompt_tiers) != len(completion_tiers) or any(
+        prompt[0] != completion[0]
+        for prompt, completion in zip(prompt_tiers, completion_tiers, strict=False)
+    ):
+        return {
+            "prompt_micro_per_m": prompt_tiers[0][1],
+            "completion_micro_per_m": completion_tiers[0][1],
+        }
+
+    tiers: list[dict[str, int | None]] = []
+    for index, ((threshold, prompt_micro), (_threshold, completion_micro)) in enumerate(
+        zip(prompt_tiers, completion_tiers, strict=False)
+    ):
+        tier: dict[str, int | None] = {
+            "max_prompt_tokens": threshold,
+            "prompt_micro_per_m": prompt_micro,
+            "completion_micro_per_m": completion_micro,
+        }
+        if len(cached_tiers) == len(prompt_tiers):
+            cached_threshold, cached_micro = cached_tiers[index]
+            if cached_threshold == threshold:
+                tier["prompt_cached_micro_per_m"] = cached_micro
+        tiers.append(tier)
+
+    if len(tiers) > 1:
+        return {"tiers": tiers}
+    only = tiers[0]
+    price: dict[str, object] = {
+        "prompt_micro_per_m": only["prompt_micro_per_m"],
+        "completion_micro_per_m": only["completion_micro_per_m"],
+    }
+    if "prompt_cached_micro_per_m" in only:
+        price["prompt_cached_micro_per_m"] = only["prompt_cached_micro_per_m"]
+    return price
+
+
+def _parse_markdown(md: str) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    # Walk every "## Heading" and the first (Standard) table under it.
     sections = re.split(r"(?m)^## ", md)
     for section in sections:
         if not section:
@@ -114,71 +190,77 @@ def parse(md: str) -> dict:
         if first_newline == -1:
             continue
         heading = section[:first_newline].strip()
-        or_id = _NAME_TO_OR_ID.get(heading)
+        or_id = _model_id_from_heading(heading)
         if or_id is None:
             continue
         body = section[first_newline + 1 :]
-        # Find the first table block (Standard tier — Jina puts the
-        # Standard table first under the heading).
-        prompt_tiers: list[tuple[int | None, int]] = []
-        completion_tiers: list[tuple[int | None, int]] = []
-        cached_tiers: list[tuple[int | None, int]] = []
+        rows: list[tuple[str, str]] = []
         for line in body.splitlines():
             if not line.startswith("|"):
+                if rows:
+                    break
                 continue
             cells = [c.strip() for c in line.strip("|").split("|")]
             if len(cells) < 3:
                 continue
-            label = cells[0].lower()
-            paid_cell = cells[-1]  # Last column is "Paid Tier, per 1M tokens"
-            if "input price" in label and not prompt_tiers:
-                tiers, _ = _parse_price_cell(paid_cell)
-                prompt_tiers = tiers
-            elif "output price" in label and not completion_tiers:
-                tiers, _ = _parse_price_cell(paid_cell)
-                completion_tiers = tiers
-            elif "context caching price" in label and not cached_tiers:
-                tiers, _ = _parse_price_cell(paid_cell)
-                cached_tiers = tiers
-        if not prompt_tiers or not completion_tiers:
-            continue
-        # Pair up the tiers. They should have matching length + thresholds
-        # (Gemini tiers prompt and completion the same way). If they
-        # don't match, fall back to flat using the cheapest.
-        if len(prompt_tiers) == len(completion_tiers) and all(
-            p[0] == c[0]
-            for p, c in zip(prompt_tiers, completion_tiers, strict=False)
-        ):
-            tiers = []
-            for (threshold, prompt_micro), (_t2, completion_micro) in zip(
-                prompt_tiers, completion_tiers, strict=False
-            ):
-                tier = {
-                    "max_prompt_tokens": threshold,
-                    "prompt_micro_per_m": prompt_micro,
-                    "completion_micro_per_m": completion_micro,
-                }
-                if len(cached_tiers) == len(prompt_tiers):
-                    cached_threshold, cached_micro = cached_tiers[len(tiers)]
-                    if cached_threshold == threshold:
-                        tier["prompt_cached_micro_per_m"] = cached_micro
-                tiers.append(tier)
-            if len(tiers) > 1:
-                out[or_id] = {"tiers": tiers}
-            else:
-                t = tiers[0]
-                out[or_id] = {
-                    "prompt_micro_per_m": t["prompt_micro_per_m"],
-                    "completion_micro_per_m": t["completion_micro_per_m"],
-                }
-                if "prompt_cached_micro_per_m" in t:
-                    out[or_id]["prompt_cached_micro_per_m"] = t[
-                        "prompt_cached_micro_per_m"
-                    ]
-        else:
-            # Tier shape mismatch — fall back to flat (low tier).
-            out[or_id] = {
-                "prompt_micro_per_m": prompt_tiers[0][1],
-                "completion_micro_per_m": completion_tiers[0][1],
-            }
+            rows.append((cells[0], cells[-1]))
+        price = _price_from_rows(rows)
+        if price is not None:
+            out[or_id] = price
     return out
+
+
+def _standard_table(heading: Tag) -> Tag | None:
+    """Return the official page's Standard table before the next model."""
+
+    in_standard_section = False
+    for element in heading.find_all_next(["h2", "h3", "table"]):
+        if not isinstance(element, Tag):
+            continue
+        if element.name == "h2":
+            return None
+        if element.name == "h3":
+            in_standard_section = element.get_text(" ", strip=True).casefold() == "standard"
+            continue
+        if element.name == "table" and in_standard_section:
+            return element
+    return None
+
+
+def _parse_html(html: str) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    soup = BeautifulSoup(html, "html.parser")
+    for heading in soup.find_all("h2"):
+        if not isinstance(heading, Tag):
+            continue
+        or_id = _model_id_from_heading(heading.get_text(" ", strip=True))
+        if or_id is None:
+            continue
+        table = _standard_table(heading)
+        if table is None:
+            continue
+        rows: list[tuple[str, str]] = []
+        for row in table.find_all("tr"):
+            cells = row.find_all(["th", "td"], recursive=False)
+            if len(cells) < 3:
+                continue
+            rows.append(
+                (
+                    cells[0].get_text(" ", strip=True),
+                    cells[-1].get_text(" ", strip=True),
+                )
+            )
+        price = _price_from_rows(rows)
+        if price is not None:
+            out[or_id] = price
+    return out
+
+
+def parse(content: str) -> dict[str, dict[str, object]]:
+    """Parse Gemini pricing from the official HTML or a legacy Markdown copy."""
+
+    if re.search(r"<h2\b", content, re.IGNORECASE) and re.search(
+        r"<table\b", content, re.IGNORECASE
+    ):
+        return _parse_html(content)
+    return _parse_markdown(content)

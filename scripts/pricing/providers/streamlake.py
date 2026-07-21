@@ -15,8 +15,7 @@ from scripts.pricing.openai_catalog import probe_openai_chat
 
 SLUG = "streamlake"
 BASE_URL = "https://vanchin.streamlake.ai/api/gateway/v1/endpoints"
-URL = "https://r.jina.ai/https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
-JINA_HEADERS = {"X-Return-Format": "markdown"}
+URL = "https://www.streamlake.ai/document/DOC/mgrnm4xm362hvp5wyce"
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -45,7 +44,6 @@ def fetch() -> ProviderPricingResult:
         slug=SLUG,
         url=URL,
         expected_models=EXPECTED_MODELS,
-        extra_headers=JINA_HEADERS,
     )
     _LIVE_CANARY_OK = probe_openai_chat(
         base_url=BASE_URL,
