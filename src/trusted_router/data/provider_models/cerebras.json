@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for the Cerebras models enabled on the TrustedRouter Cerebras account. Verified from Cerebras /v1/models and direct chat completions on 2026-06-05. The canonical OpenRouter-style model IDs remain openai/gpt-oss-120b and z-ai/glm-4.7; cerebras/* aliases are included so users can request the Cerebras-specific route directly.",
   "provider": "cerebras",
   "source": "https://api.cerebras.ai/public/v1/models",
-  "generated_at": "2026-07-21T20:47:51Z",
+  "generated_at": "2026-07-21T22:10:14Z",
   "model_count": 6,
   "models": [
     {
