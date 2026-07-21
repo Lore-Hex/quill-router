@@ -51,7 +51,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -98,7 +100,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -145,7 +149,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -193,7 +199,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -240,7 +248,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -288,7 +298,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -335,7 +347,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
@@ -383,7 +397,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -430,7 +446,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b",
@@ -478,7 +496,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -525,7 +545,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
@@ -572,7 +594,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "yutori/n1.5",
@@ -620,7 +644,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "z-ai/glm-5.1",
@@ -667,7 +693,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     },
     {
       "id": "z-ai/glm-5.2",
@@ -714,7 +742,9 @@
         "top_logprobs",
         "top_p",
         "user"
-      ]
+      ],
+      "routable": false,
+      "routable_reason": "provider-canary-failed"
     }
   ]
 }

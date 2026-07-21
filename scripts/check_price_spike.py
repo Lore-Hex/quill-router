@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Compare two openrouter_snapshot.json files; fail on suspicious price spikes.
+"""Compare two catalog snapshots; fail on suspicious provider price spikes.
 
 Used in `.github/workflows/refresh-prices.yml` between the
 provider-direct refresh step and the auto-commit step. The hourly
 auto-rollback already catches catalog-shape regressions, so this only
 needs to defend against literal-2x parsing-bug spikes.
 
-Fails (exit 1) when:
-  * any single model's prompt OR completion cost goes ≥ 2× the previous
-    value (>=100% increase); OR
-  * an existing model's both prompt and completion go to literal 0.
+The safety decision compares the same provider endpoint over time, not a
+model's aggregate headline. A model headline can legitimately jump when its
+cheapest route disappears or when a new route has a different input/output
+mix. Comparing headlines froze every provider refresh in July 2026 even though
+no continuing provider endpoint changed price.
+
+Fails (exit 1) when the same stable provider endpoint:
+  * increases prompt OR completion cost by ≥ 2×; OR
+  * changes both prompt and completion to literal 0.
 
 Removed models are noted in --summary output but do not fail.
 
@@ -43,6 +48,39 @@ def _load(path: Path) -> dict[str, dict[str, str]]:
             "prompt": str(pricing.get("prompt") or "0"),
             "completion": str(pricing.get("completion") or "0"),
         }
+    return out
+
+
+def _endpoint_key(model_id: str, endpoint: dict[str, object]) -> str | None:
+    provider = endpoint.get("tr_provider_slug") or endpoint.get("provider_name")
+    upstream_model = endpoint.get("model_id")
+    tag = endpoint.get("tag") or ""
+    if not isinstance(provider, str) or not provider:
+        return None
+    if not isinstance(upstream_model, str) or not upstream_model:
+        return None
+    return f"{model_id} [{provider}:{tag}:{upstream_model}]"
+
+
+def _load_endpoints(path: Path) -> dict[str, dict[str, str]]:
+    """Return prices keyed by a stable model/provider/native-id route."""
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, dict[str, str]] = {}
+    for model in snapshot.get("models", []):
+        if not isinstance(model, dict) or not isinstance(model.get("id"), str):
+            continue
+        model_id = model["id"]
+        for endpoint in model.get("endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            key = _endpoint_key(model_id, endpoint)
+            pricing = endpoint.get("pricing") or {}
+            if key is None or not isinstance(pricing, dict):
+                continue
+            out[key] = {
+                "prompt": str(pricing.get("prompt") or "0"),
+                "completion": str(pricing.get("completion") or "0"),
+            }
     return out
 
 
@@ -141,7 +179,19 @@ def main(argv: list[str] | None = None) -> int:
 
     before = _load(args.before)
     after = _load(args.after)
-    failures, changes, removed = check(before, after, args.spike_ratio)
+    _headline_failures, changes, removed = check(before, after, args.spike_ratio)
+    before_endpoints = _load_endpoints(args.before)
+    after_endpoints = _load_endpoints(args.after)
+    if before_endpoints and after_endpoints:
+        failures, _endpoint_changes, _removed_endpoints = check(
+            before_endpoints,
+            after_endpoints,
+            args.spike_ratio,
+        )
+    else:
+        # Keep the utility useful for compact fixtures and older snapshots that
+        # predate endpoint pricing.
+        failures = _headline_failures
 
     if args.summary:
         print(_summary_line(changes, removed))
@@ -156,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"removed: {', '.join(removed[:20])}" + (
                 f" (+{len(removed) - 20} more)" if len(removed) > 20 else ""
             ))
+        if failures:
+            print("PRICE SPIKE FAILURES:")
+            for line in failures:
+                print(f"  {line}")
         return 1 if failures else 0
 
     for line in changes:

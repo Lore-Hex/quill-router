@@ -756,13 +756,10 @@ MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
 # for a provider, ONLY its listed models keep that provider's endpoints; routes
 # for any other model on that provider are dropped before serving/routing.
 #
-# Cerebras (the key wired into the enclave) serves only gpt-oss-120b and
-# glm-4.7 on our account — verified 2026-06-04 from the Cerebras dashboard —
-# NOT the Llama models OpenRouter lists for Cerebras's GA tier. Without this
-# filter every Llama-via-Cerebras route 502s, and because Cerebras is rank-0
-# ("fastest") it gets tried first for those models. The provider-native
-# Cerebras manifest publishes the two verified canonical routes plus
-# cerebras/* convenience aliases that map to the same upstream IDs.
+# Cerebras and Together use their generated provider manifests as the
+# authoritative prepaid allowlist. That keeps OpenRouter inventory from
+# reintroducing unavailable routes while allowing a newly discovered official
+# serverless model to become routable without another source-code allowlist.
 
 # Inverse of the allowlist, but keyed by MODEL across ALL providers: specific
 # prepaid (Credits) model ids that 502 on every provider that lists them, while

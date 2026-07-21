@@ -64,11 +64,11 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
         "data": [
             {
                 "id": "zai-org/GLM-5.2",
-                "pricing": {"input": 1.4, "output": 4.4},
+                "pricing": {"input": "0.0000014", "output": "0.0000044"},
             },
             {
                 "id": "meta-llama-3.3-70b-instruct",
-                "pricing": {"input": 0.6, "output": 0.6},
+                "pricing": {"input": "0.0000006", "output": "0.0000006"},
             },
         ]
     }
@@ -122,7 +122,7 @@ def test_friendli_tombstones_second_miss_then_restores_annotations(
     payload["data"].append(
         {
             "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
-            "pricing": {"input": 0.2, "output": 0.8},
+            "pricing": {"input": "0.0000002", "output": "0.0000008"},
         }
     )
     result = friendli.fetch()

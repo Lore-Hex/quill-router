@@ -164,8 +164,8 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
             if route["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
             and route["usage_type"] == "Credits"
         }
-        assert {"baseten", "nebius"} <= nemotron_hosts, (model_id, routes)
-        assert not {"together", "gmi"} & nemotron_hosts, (model_id, routes)
+        assert {"baseten", "nebius", "together"} <= nemotron_hosts, (model_id, routes)
+        assert "gmi" not in nemotron_hosts, (model_id, routes)
 
 
 def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:

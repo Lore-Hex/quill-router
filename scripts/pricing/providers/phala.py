@@ -40,7 +40,7 @@ from scripts.pricing.base import (
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.model_ids import remember_upstream_id
 from trusted_router.provider_lifecycle import (
     provider_model_retired,
     provider_price_microdollars,
@@ -163,7 +163,13 @@ def fetch() -> ProviderPricingResult:
         native_id = row.get("id")
         if not isinstance(native_id, str):
             continue
-        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
+        # /v1/models mixes Phala's confidential `phala/*` endpoints with
+        # ordinary provider pass-through rows. Only the former are covered by
+        # this key and by the TEE claim. Never canonicalize an arbitrary row
+        # into a confidential route.
+        if not native_id.startswith("phala/"):
+            continue
+        or_id = _NATIVE_TO_OR_ID.get(native_id)
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)

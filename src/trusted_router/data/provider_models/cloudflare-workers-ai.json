@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
   "source": "https://api.cloudflare.com/client/v4/accounts/96781cbfaebf2b28d851b9c677dd2e81/ai/models/search?per_page=100",
-  "generated_at": "2026-07-19T00:35:33Z",
+  "generated_at": "2026-07-21T14:09:26Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27,
   "models": [
@@ -66,7 +66,7 @@
       "id": "google/gemma-2b-it-lora",
       "upstream_id": "@cf/google/gemma-2b-it-lora",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "account-unfunded",
       "context_length": 8192
     },
     {
@@ -108,7 +108,7 @@
       "id": "google/gemma-7b-it-lora",
       "upstream_id": "@cf/google/gemma-7b-it-lora",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "account-unfunded",
       "context_length": 3500
     },
     {
@@ -150,7 +150,7 @@
       "id": "meta-llama/llama-2-7b-chat-hf-lora",
       "upstream_id": "@cf/meta-llama/llama-2-7b-chat-hf-lora",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "account-unfunded",
       "context_length": 8192
     },
     {
@@ -324,7 +324,7 @@
       "id": "mistralai/mistral-7b-instruct-v0.2-lora",
       "upstream_id": "@cf/mistral/mistral-7b-instruct-v0.2-lora",
       "routable": false,
-      "routable_reason": "awaiting-price",
+      "routable_reason": "account-unfunded",
       "context_length": 15000
     },
     {

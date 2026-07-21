@@ -2,7 +2,7 @@
   "_about": "Provider-native DigitalOcean Gradient AI serverless catalog. Availability comes from /v1/models and rates from DigitalOcean's official pricing documentation.",
   "provider": "digitalocean",
   "source": "https://inference.do-ai.run/v1/models",
-  "generated_at": "2026-07-19T00:34:04Z",
+  "generated_at": "2026-07-21T14:09:26Z",
   "price_scale": "microdollars_per_million",
   "model_count": 23,
   "models": [
