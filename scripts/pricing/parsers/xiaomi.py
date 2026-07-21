@@ -31,14 +31,26 @@ def _overseas_payg_prices(html: str) -> dict[str, dict[str, int]]:
         "mimo-v2.5": "xiaomi/mimo-v2.5",
     }
     prices: dict[str, dict[str, int]] = {}
-    row_pattern = re.compile(
+    table_row_pattern = re.compile(
         r"\|\s*`?(mimo-v2\.5(?:-pro)?)`?\s*"
         r"\|\s*\$([0-9.]+)\s*"
         r"\|\s*\$([0-9.]+)\s*"
         r"\|\s*\$([0-9.]+)\s*\|",
         flags=re.I,
     )
-    for model, cache, prompt, completion in row_pattern.findall(section_match.group(1)):
+    # Some renderers flatten the Markdown table while preserving the model and
+    # currency markers. Keep the three-dollar requirement so the preceding RMB
+    # table can never be interpreted as USD.
+    flat_row_pattern = re.compile(
+        r"`?(mimo-v2\.5(?:-pro)?)`?\s+"
+        r"\$([0-9.]+)\s+\$([0-9.]+)\s+\$([0-9.]+)",
+        flags=re.I,
+    )
+    section = section_match.group(1)
+    rows = table_row_pattern.findall(section)
+    if not rows:
+        rows = flat_row_pattern.findall(section)
+    for model, cache, prompt, completion in rows:
         model_id = mapping.get(model.casefold())
         if model_id is None:
             continue

@@ -5,6 +5,7 @@ import json
 from scripts.pricing.parsers import minimax as minimax_parser
 from scripts.pricing.parsers import xiaomi as xiaomi_parser
 from scripts.pricing.providers import nebius
+from scripts.pricing.providers import xiaomi as xiaomi_provider
 
 
 def test_minimax_parser_reads_official_token_plan_tiers() -> None:
@@ -93,6 +94,52 @@ def test_xiaomi_parser_reads_current_overseas_markdown_table() -> None:
             "prompt_cached_micro_per_m": 2_800,
         },
     }
+
+
+def test_xiaomi_parser_reads_flattened_overseas_table_without_using_domestic_prices() -> None:
+    html = """
+    ### Domestic Pricing of the Model
+    MiMo-V2.5 Series
+    Input (Cache Hit) Input (Cache Miss) Output
+    `mimo-v2.5-pro` ¥0.025 ¥3.00 ¥6.00
+    `mimo-v2.5` ¥0.02 ¥1.00 ¥2.00
+    ### Overseas Pricing of the Model
+    MiMo-V2.5 Series
+    Input (Cache Hit) Input (Cache Miss) Output
+    `mimo-v2.5-pro` $0.0036 $0.435 $0.87
+    `mimo-v2.5` $0.0028 $0.14 $0.28
+    ### Pricing for Web Search Plugins
+    """
+
+    assert xiaomi_parser.parse(html) == {
+        "xiaomi/mimo-v2.5-pro": {
+            "prompt_micro_per_m": 435_000,
+            "completion_micro_per_m": 870_000,
+            "prompt_cached_micro_per_m": 3_600,
+        },
+        "xiaomi/mimo-v2.5": {
+            "prompt_micro_per_m": 140_000,
+            "completion_micro_per_m": 280_000,
+            "prompt_cached_micro_per_m": 2_800,
+        },
+    }
+
+
+def test_xiaomi_parser_rejects_domestic_only_pricing_as_usd() -> None:
+    html = """
+    ### Domestic Pricing of the Model
+    `mimo-v2.5-pro` ¥0.025 ¥3.00 ¥6.00
+    `mimo-v2.5` ¥0.02 ¥1.00 ¥2.00
+    """
+
+    assert xiaomi_parser.parse(html) == {}
+
+
+def test_xiaomi_provider_uses_current_official_payg_page() -> None:
+    assert xiaomi_provider.PUBLIC_PRICING_URL == (
+        "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
+    )
+    assert xiaomi_provider.PUBLIC_PRICING_URL in xiaomi_provider.URL
 
 
 class _FakeResponse:
