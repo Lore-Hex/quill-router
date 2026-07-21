@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Crusoe Managed Inference routes. Generated from https://api.inference.crusoecloud.com/v1/models; prices are provider cost in integer microdollars per million tokens and catalog applies markup.",
   "provider": "crusoe",
   "source": "https://api.inference.crusoecloud.com/v1/models",
-  "generated_at": "2026-06-27T01:44:37Z",
+  "generated_at": "2026-07-21T17:30:23Z",
   "price_scale": "microdollars_per_million",
   "model_count": 15,
   "models": [
@@ -52,8 +52,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "deepseek/deepseek-v4-flash",
@@ -101,8 +100,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "deepseek/deepseek-v4-pro",
@@ -150,8 +148,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "google/gemma-4-31b-it",
@@ -167,8 +164,7 @@
       "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 140000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -200,8 +196,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "meta-llama/llama-3.3-70b-instruct",
@@ -249,8 +244,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "moonshotai/kimi-k2.6",
@@ -266,8 +260,7 @@
       "output_token_price_per_m": 3500000,
       "cached_input_token_price_per_m": 350000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -299,8 +292,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-nano-30b-a3b",
@@ -348,8 +340,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-reasoning-30b-a3b",
@@ -365,8 +356,7 @@
       "output_token_price_per_m": 1830000,
       "cached_input_token_price_per_m": 300000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -398,8 +388,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-super-120b-a12b",
@@ -447,8 +436,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b",
@@ -497,8 +485,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "openai/gpt-oss-120b",
@@ -546,8 +533,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "qwen/qwen3-235b-a22b-2507",
@@ -595,8 +581,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "yutori/n1.5",
@@ -612,8 +597,7 @@
       "output_token_price_per_m": 5000000,
       "cached_input_token_price_per_m": 1500000,
       "input_modalities": [
-        "text",
-        "image"
+        "text"
       ],
       "output_modalities": [
         "text"
@@ -645,8 +629,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "z-ai/glm-5.1",
@@ -694,15 +677,14 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     },
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai/GLM-5.2",
       "display_name": "zai/GLM-5.2",
       "title": "zai/GLM-5.2",
-      "context_length": 262144,
+      "context_length": 1048576,
       "model_type": "chat",
       "endpoints": [
         "chat/completions"
@@ -743,8 +725,7 @@
         "top_p",
         "user"
       ],
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "status": 1
     }
   ]
 }
