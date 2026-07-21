@@ -9,7 +9,8 @@ from pathlib import Path
 from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "xiaomi"
-URL = "https://r.jina.ai/https://mimo.mi.com/docs/en-US/pricing"
+PUBLIC_PRICING_URL = "https://mimo.mi.com/docs/en-US/price/pay-as-you-go"
+URL = f"https://r.jina.ai/{PUBLIC_PRICING_URL}"
 JINA_HEADERS = {"X-Return-Format": "markdown"}
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
@@ -64,7 +65,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     if missing:
         raise RuntimeError(f"xiaomi manifest did not update expected model(s): {missing}")
 
-    raw["source"] = "https://mimo.mi.com/docs/en-US/pricing"
+    raw["source"] = PUBLIC_PRICING_URL
     raw["_note"] = (
         "Xiaomi MiMo provider-native routes. PAYG prices for MiMo V2.5 and "
         "V2.5 Pro are refreshed hourly from Xiaomi's official overseas USD "
