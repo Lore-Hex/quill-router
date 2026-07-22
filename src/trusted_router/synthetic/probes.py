@@ -634,10 +634,17 @@ def rotation_candidates() -> dict[str, list[str]]:
     endpoint. Iterates ENDPOINTS rather than Model.prepaid_available (a catalog
     dedup marker) so supplemental provider-native models are covered too."""
     from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS
+    from trusted_router.provider_lifecycle import provider_model_retired
 
     pool: dict[str, list[str]] = {}
     for endpoint in MODEL_ENDPOINTS.values():
         if endpoint.usage_type != "Credits":
+            continue
+        if provider_model_retired(
+            endpoint.provider,
+            endpoint.model_id,
+            endpoint.upstream_id,
+        ):
             continue
         model = MODELS.get(endpoint.model_id)
         provider = PROVIDERS.get(endpoint.provider)

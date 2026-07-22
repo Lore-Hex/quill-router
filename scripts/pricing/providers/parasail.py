@@ -48,6 +48,7 @@ from scripts.pricing.base import (
     validate,
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "parasail"
 URL = "https://api.parasail.io/v1/models"
@@ -382,6 +383,8 @@ def fetch() -> ProviderPricingResult:
         if or_id is None:
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
+        if provider_model_retired(SLUG, or_id, native_id):
+            continue
         or_ids_live.add(or_id)
 
     prices: dict[str, ModelPrice] = {}
@@ -398,7 +401,12 @@ def fetch() -> ProviderPricingResult:
             f"doesn't list: {', '.join(unpriced)}"
         )
 
-    errors = validate(prices, EXPECTED_MODELS)
+    active_expected_models = [
+        model_id
+        for model_id in EXPECTED_MODELS
+        if not provider_model_retired(SLUG, model_id, UPSTREAM_ID_MAP.get(model_id))
+    ]
+    errors = validate(prices, active_expected_models)
     if errors:
         notes.append(f"validation notes: {errors}")
 
@@ -498,6 +506,22 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
     rows = raw.get("models")
     if not isinstance(rows, list):
         raise RuntimeError("parasail manifest has no models list")
+
+    # A stale provider feed or old manifest must not restore a route after its
+    # announced cutoff. Before the cutoff this is byte-for-byte a no-op.
+    rows[:] = [
+        row
+        for row in rows
+        if not (
+            isinstance(row, dict)
+            and isinstance(row.get("id"), str)
+            and provider_model_retired(
+                SLUG,
+                row["id"],
+                row.get("upstream_id") if isinstance(row.get("upstream_id"), str) else None,
+            )
+        )
+    ]
 
     existing_by_id: dict[str, dict[str, Any]] = {
         row["id"]: row
