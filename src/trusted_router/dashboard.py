@@ -77,6 +77,7 @@ MODEL_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 PROVIDER_PERFORMANCE_INDEX_MIN_SAMPLES = 20
 MODEL_COMPARE_URL_LIMIT = 2_600
 MODEL_COMPARE_MODEL_LIMIT = 73
+MODEL_COMPARE_PAGE_SIZE = 100
 SEO_CORE_PATHS: tuple[str, ...] = (
     "/azure-openai-alternative",
     "/deepseek-api-privacy",
@@ -122,7 +123,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/legal/subprocessors",
     "/chat",
     "/synth",
-    "/fusion",
+    "/compare/models",
     "/compare/openrouter",
     "/compare/vercel-ai-gateway",
     "/compare/litellm",
@@ -144,11 +145,12 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/pricing",
     "/docs",
     "/apps",
+    "/resources",
+    "/careers",
     "/blog",
     "/docs/agent-setup",
     "/docs/evals",
     "/docs/synth",
-    "/docs/fusion",
     "/docs/mcp",
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
@@ -909,15 +911,6 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "fallbacks to return one OpenAI-compatible answer."
         ),
     ),
-    "docs/fusion": PublicPage(
-        template="public/fusion.html",
-        og_card="synth.png",
-        title="TrustedRouter Synth",
-        description=(
-            "Run a panel of models inside the attested gateway, then use judge and final "
-            "fallbacks to return one OpenAI-compatible answer."
-        ),
-    ),
     "docs/x402": PublicPage(
         template="public/x402.html",
         title="x402 Stablecoin Funding For Agents",
@@ -1219,6 +1212,22 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Apps routing through TrustedRouter can self-identify and appear "
             "here. Opt-in by construction and privacy-safe: names and counts "
             "only, never prompts or keys."
+        ),
+    ),
+    "resources": PublicPage(
+        template="public/resources.html",
+        title="Resources",
+        description=(
+            "Guides, comparisons, privacy references, model APIs, benchmarks, and "
+            "integration pages for building with TrustedRouter."
+        ),
+    ),
+    "careers": PublicPage(
+        template="public/careers.html",
+        title="Work on TrustedRouter",
+        description=(
+            "Work on attested AI routing, open model orchestration, evals, and "
+            "infrastructure developers can verify."
         ),
     ),
 }
@@ -2200,8 +2209,16 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                 f"Compare {left.name} and {right.name} by providers, context, price, "
                 "and TrustedRouter route support."
             ),
-            left=_model_detail_view(left, test_mode=test_mode),
-            right=_model_detail_view(right, test_mode=test_mode),
+            left=_model_detail_view(
+                left,
+                test_mode=test_mode,
+                include_section_links=False,
+            ),
+            right=_model_detail_view(
+                right,
+                test_mode=test_mode,
+                include_section_links=False,
+            ),
             comparison=_comparison_view(left, right),
             json_ld_blob=_json_ld_graph(
                 _breadcrumb_node(
@@ -2212,6 +2229,76 @@ def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -
                         (f"{left.name} vs {right.name}", site_path),
                     ),
                 )
+            ),
+            google_enabled=settings.google_oauth_enabled,
+            github_enabled=settings.github_oauth_enabled,
+            static_version=_static_version(settings),
+        )
+    )
+
+
+def public_model_compare_index_html(settings: Settings, *, page: int = 1) -> str | None:
+    pairs = _model_comparison_pairs()
+    page_count = max(1, (len(pairs) + MODEL_COMPARE_PAGE_SIZE - 1) // MODEL_COMPARE_PAGE_SIZE)
+    if page < 1 or page > page_count:
+        return None
+    start = (page - 1) * MODEL_COMPARE_PAGE_SIZE
+    selected = pairs[start : start + MODEL_COMPARE_PAGE_SIZE]
+    rows = [
+        {
+            "href": f"/compare/models/{left.id}/vs/{right.id}",
+            "label": f"{left.name} vs {right.name}",
+            "left_id": left.id,
+            "right_id": right.id,
+            "left_routes": len(endpoints_for_model(left.id)),
+            "right_routes": len(endpoints_for_model(right.id)),
+        }
+        for left, right in selected
+    ]
+    site_path = "/compare/models" if page == 1 else f"/compare/models/page/{page}"
+    return (
+        _env()
+        .get_template("public/model_compare_index.html")
+        .render(
+            api_base_url=settings.api_base_url,
+            site_url=f"https://{settings.trusted_domain}{site_path}",
+            title=(
+                "Compare AI Models | TrustedRouter"
+                if page == 1
+                else f"Compare AI Models, Page {page} | TrustedRouter"
+            ),
+            heading="Compare AI models",
+            description=(
+                "Compare context, provider routes, pricing, privacy posture, and measured "
+                "performance across the TrustedRouter model catalog."
+            ),
+            comparisons=rows,
+            page=page,
+            page_count=page_count,
+            pages=[
+                {
+                    "number": number,
+                    "href": (
+                        "/compare/models" if number == 1 else f"/compare/models/page/{number}"
+                    ),
+                }
+                for number in range(1, page_count + 1)
+            ],
+            json_ld_blob=_json_ld_graph(
+                _breadcrumb_node(
+                    settings,
+                    (("Home", "/"), ("Models", "/models"), ("Compare models", site_path)),
+                ),
+                _item_list_node(
+                    name=f"TrustedRouter model comparisons, page {page}",
+                    items=[
+                        {
+                            "name": str(row["label"]),
+                            "url": f"https://{settings.trusted_domain}{row['href']}",
+                        }
+                        for row in rows
+                    ],
+                ),
             ),
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
@@ -2365,8 +2452,12 @@ def sitemap_models_xml(settings: Settings) -> str:
 
 def sitemap_comparisons_xml(settings: Settings) -> str:
     domain = settings.trusted_domain
-    paths: list[tuple[str, str, str]] = []
-    for left, right in _model_comparison_pairs():
+    pairs = _model_comparison_pairs()
+    page_count = max(1, (len(pairs) + MODEL_COMPARE_PAGE_SIZE - 1) // MODEL_COMPARE_PAGE_SIZE)
+    paths: list[tuple[str, str, str]] = [
+        (f"/compare/models/page/{page}", "weekly", "0.4") for page in range(2, page_count + 1)
+    ]
+    for left, right in pairs:
         paths.append((f"/compare/models/{left.id}/vs/{right.id}", "weekly", "0.5"))
     return _sitemap_urlset(domain, paths)
 
@@ -2756,7 +2847,19 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         "eu_focused_provider_available": model_eu_focused_provider_available(model),
         "detail_href": f"/models/{model.id}",
         "benchmarks_href": (
-            f"/models/{model.id}/benchmarks" if model.id not in META_MODEL_IDS else None
+            f"/models/{model.id}/benchmarks"
+            if model.id not in META_MODEL_IDS and scores_for_model(model.id)
+            else None
+        ),
+        "providers_href": (
+            f"/models/{model.id}/providers"
+            if model.id not in META_MODEL_IDS and len(endpoints) >= 2
+            else None
+        ),
+        "pricing_href": (
+            f"/models/{model.id}/pricing"
+            if model.id not in META_MODEL_IDS and len(endpoints) >= 2
+            else None
         ),
     }
 
@@ -2853,6 +2956,7 @@ def _model_detail_view(
     *,
     active_section: str | None = None,
     test_mode: bool = False,
+    include_section_links: bool = True,
 ) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
@@ -2911,10 +3015,20 @@ def _model_detail_view(
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
         "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),
+        "benchmarks_href": (
+            f"/models/{model.id}/benchmarks" if not is_meta and scores_for_model(model.id) else None
+        ),
+        "providers_href": (
+            f"/models/{model.id}/providers" if not is_meta and len(endpoints) >= 2 else None
+        ),
+        "pricing_href": (
+            f"/models/{model.id}/pricing" if not is_meta and len(endpoints) >= 2 else None
+        ),
         "section_links": _model_section_links(
             model.id,
             active_section=active_section,
-            include_sections=not is_meta,
+            include_sections=not is_meta and include_section_links,
+            test_mode=test_mode,
         ),
         "ai_iq": ai_iq,
         "is_meta": is_meta,
@@ -2945,6 +3059,7 @@ def _model_section_links(
     *,
     active_section: str | None,
     include_sections: bool = True,
+    test_mode: bool = False,
 ) -> list[dict[str, object]]:
     links: list[dict[str, object]] = [
         {
@@ -2955,7 +3070,13 @@ def _model_section_links(
     ]
     if not include_sections:
         return links
+    model = MODELS.get(model_id)
+    if model is None:
+        return links
+    measured = measured_for_model(model_id, test_mode=test_mode)
     for section in MODEL_SEO_SECTIONS:
+        if section != active_section and not _model_section_indexable(model, section, measured):
+            continue
         links.append(
             {
                 "label": MODEL_SEO_SECTION_LABELS[section],
@@ -3211,11 +3332,8 @@ def _privacy_summary(model: Model) -> str:
 def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for model in _public_models_for_seo():
-        endpoints = [
-            endpoint
-            for endpoint in endpoints_for_model(model.id)
-            if endpoint.provider == provider_slug
-        ]
+        all_endpoints = endpoints_for_model(model.id)
+        endpoints = [endpoint for endpoint in all_endpoints if endpoint.provider == provider_slug]
         if not endpoints:
             continue
         rows.append(
@@ -3223,7 +3341,15 @@ def _provider_model_rows(provider_slug: str, *, test_mode: bool = False) -> list
                 "id": model.id,
                 "name": model.name,
                 "detail_href": f"/models/{model.id}",
-                "benchmarks_href": f"/models/{model.id}/benchmarks",
+                "benchmarks_href": (
+                    f"/models/{model.id}/benchmarks" if scores_for_model(model.id) else None
+                ),
+                "providers_href": (
+                    f"/models/{model.id}/providers" if len(all_endpoints) >= 2 else None
+                ),
+                "pricing_href": (
+                    f"/models/{model.id}/pricing" if len(all_endpoints) >= 2 else None
+                ),
                 "context_length": f"{model.context_length:,}",
                 "endpoint_count": len(endpoints),
                 "prompt_price": _endpoint_price_range(

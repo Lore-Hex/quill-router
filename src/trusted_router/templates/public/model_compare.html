@@ -75,9 +75,9 @@
     <div class="panel-body">
       <ul class="link-list">
         <li><a href="/models/{{ left.id }}">Overview</a><span>{{ left.endpoint_count }} endpoints</span></li>
-        <li><a href="/models/{{ left.id }}/pricing">Pricing</a><span>Prompt and completion rates</span></li>
-        <li><a href="/models/{{ left.id }}/benchmarks">Benchmarks</a><span>TrustedRouter and external sources</span></li>
-        <li><a href="/models/{{ left.id }}/providers">Providers</a><span>All serving providers</span></li>
+        {% if left.pricing_href %}<li><a href="{{ left.pricing_href }}">Pricing</a><span>Prompt and completion rates</span></li>{% endif %}
+        {% if left.benchmarks_href %}<li><a href="{{ left.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
+        {% if left.providers_href %}<li><a href="{{ left.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
       </ul>
     </div>
   </div>
@@ -86,9 +86,9 @@
     <div class="panel-body">
       <ul class="link-list">
         <li><a href="/models/{{ right.id }}">Overview</a><span>{{ right.endpoint_count }} endpoints</span></li>
-        <li><a href="/models/{{ right.id }}/pricing">Pricing</a><span>Prompt and completion rates</span></li>
-        <li><a href="/models/{{ right.id }}/benchmarks">Benchmarks</a><span>TrustedRouter and external sources</span></li>
-        <li><a href="/models/{{ right.id }}/providers">Providers</a><span>All serving providers</span></li>
+        {% if right.pricing_href %}<li><a href="{{ right.pricing_href }}">Pricing</a><span>Prompt and completion rates</span></li>{% endif %}
+        {% if right.benchmarks_href %}<li><a href="{{ right.benchmarks_href }}">Benchmarks</a><span>TrustedRouter and external sources</span></li>{% endif %}
+        {% if right.providers_href %}<li><a href="{{ right.providers_href }}">Providers</a><span>All serving providers</span></li>{% endif %}
       </ul>
     </div>
   </div>

@@ -1,0 +1,41 @@
+{% extends "public/_base.html" %}
+{% block body %}
+<section class="model-catalog">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Model comparisons</span>
+      <h2>Pick two models. Compare the routes that actually serve them.</h2>
+    </div>
+    <p>Every comparison uses the current TrustedRouter catalog, prices, provider posture, and measured route data.</p>
+  </div>
+  <div class="model-table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Comparison</th>
+          <th>First model</th>
+          <th>Routes</th>
+          <th>Second model</th>
+          <th>Routes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for comparison in comparisons %}
+        <tr>
+          <td><a href="{{ comparison.href }}"><strong>{{ comparison.label }}</strong></a></td>
+          <td><a href="/models/{{ comparison.left_id }}"><code>{{ comparison.left_id }}</code></a></td>
+          <td>{{ comparison.left_routes }}</td>
+          <td><a href="/models/{{ comparison.right_id }}"><code>{{ comparison.right_id }}</code></a></td>
+          <td>{{ comparison.right_routes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <nav class="model-filter-row" aria-label="Comparison pages">
+    {% for item in pages %}
+    <a class="pill {% if item.number == page %}good{% endif %}" href="{{ item.href }}"{% if item.number == page %} aria-current="page"{% endif %}>{{ item.number }}</a>
+    {% endfor %}
+  </nav>
+</section>
+{% endblock %}

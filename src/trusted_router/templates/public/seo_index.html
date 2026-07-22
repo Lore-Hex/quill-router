@@ -45,10 +45,9 @@
           <td>{{ model.completion_price }}</td>
           <td>
             <div class="mini-links">
-              <a href="{{ model.detail_href }}/benchmarks">benchmarks</a>
-              <a href="{{ model.detail_href }}/performance">performance</a>
-              <a href="{{ model.detail_href }}/pricing">pricing</a>
-              <a href="{{ model.detail_href }}/api">api</a>
+              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
+              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
+              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
             </div>
           </td>
         </tr>

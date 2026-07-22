@@ -1,20 +1,26 @@
 """HTTP middleware shared across the FastAPI app.
 
-Four middlewares register in order from outermost to innermost:
+HTTP middleware registers in order from outermost to innermost:
   1. request_id  — mints/accepts a per-request id, echoes in response
                    header, makes it available as request.state.request_id.
-  2. public_pageview — captures signed first-party attribution and emits
+  2. canonical_public_host — keeps marketing URLs off www/status aliases.
+  3. public_pageview — captures signed first-party attribution and emits
                        metadata-only public pageview events.
-  3. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
+  4. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
                    via STORE.hit_rate_limit; logs structured 429s with
                    the request_id from (1).
-  4. security_headers — sets HSTS so browsers remember to skip http://
+  5. security_headers — sets HSTS so browsers remember to skip http://
                         on subsequent visits.
+
+Starlette's GZipMiddleware wraps compressible responses larger than 1 KiB.
+It explicitly excludes ``text/event-stream``, so inference streaming remains
+unbuffered while catalog, documentation, and public SEO pages compress.
 
 Splitting these out of main.py keeps the app factory readable. The
 middleware here has no FastAPI dependencies beyond Request/Response;
 it could be reused by other ASGI services in the same project.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +31,8 @@ from hashlib import sha256
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
     pageview_attribution_fields,
@@ -47,6 +54,21 @@ OAUTH_KEY_EXCHANGE_CORS_HEADERS = {
     "Access-Control-Allow-Headers": "content-type",
     "Access-Control-Max-Age": "600",
 }
+STATUS_HOST_EXACT_PATHS = frozenset(
+    {
+        "/",
+        "/favicon.ico",
+        "/health",
+        "/healthz",
+        "/og.png",
+        "/robots.txt",
+        "/status",
+        "/status.json",
+        "/v1/health",
+        "/v1/healthz",
+    }
+)
+STATUS_HOST_PATH_PREFIXES = ("/static/", "/status/")
 
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
@@ -57,6 +79,8 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     request_id to mint the id before pageview/rate-limit logs use it,
     so request_id is registered first.
     """
+
+    app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -74,11 +98,7 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         chars); else mints one. This means traces survive the LB hop
         without the LB being able to inject log-injection payloads."""
         upstream = request.headers.get("x-request-id", "").strip()
-        if (
-            upstream
-            and len(upstream) <= 64
-            and all(c.isalnum() or c in "-_" for c in upstream)
-        ):
+        if upstream and len(upstream) <= 64 and all(c.isalnum() or c in "-_" for c in upstream):
             request_id = upstream
         else:
             request_id = uuid.uuid4().hex
@@ -86,6 +106,33 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         response = await call_next(request)
         response.headers.setdefault("X-TrustedRouter-Request-Id", request_id)
         return response
+
+    @app.middleware("http")
+    async def canonical_public_host_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Keep crawlable pages on one host.
+
+        ``www`` is only an alias. The status hostname intentionally serves a
+        small status surface, but relative links in that page previously let
+        crawlers discover the entire marketing site under the status host.
+        Redirecting those escaped paths prevents duplicate pages and
+        status-host 404s without changing the status API or static assets.
+        """
+        hostname = request.headers.get("host", "").split(":", 1)[0].lower()
+        path = request.url.path
+        if hostname == f"www.{settings.trusted_domain}":
+            return RedirectResponse(
+                url=_canonical_public_url(settings, request),
+                status_code=308,
+            )
+        if hostname == f"status.{settings.trusted_domain}" and not _status_host_path(path):
+            return RedirectResponse(
+                url=_canonical_public_url(settings, request),
+                status_code=308,
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def public_pageview_middleware(
@@ -215,6 +262,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
             "max-age=63072000; includeSubDomains",
         )
         return response
+
+
+def _status_host_path(path: str) -> bool:
+    return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
+
+
+def _canonical_public_url(settings: Settings, request: Request) -> str:
+    query = request.url.query
+    suffix = f"?{query}" if query else ""
+    return f"https://{settings.trusted_domain}{request.url.path}{suffix}"
 
 
 def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | None:

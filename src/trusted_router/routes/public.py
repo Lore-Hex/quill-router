@@ -54,6 +54,7 @@ from trusted_router.dashboard import (
     public_leaderboard_html,
     public_legal_html,
     public_model_compare_html,
+    public_model_compare_index_html,
     public_model_detail_html,
     public_model_not_found_html,
     public_model_section_html,
@@ -88,6 +89,14 @@ from trusted_router.trust import gcp_release, trust_html
 from trusted_router.views import render_template
 
 STATUS_SNAPSHOT_CACHE_SECONDS = 15
+LEGACY_MODEL_PAGE_REDIRECTS: dict[str, str] = {
+    "deepseek/deepseek-chat-v3.1": "/models/deepseek/deepseek-v3.1",
+    "google/gemini-3-pro-image": "/models/google/gemini-3.1-flash-image-preview",
+    # Muse Spark was removed after the only configured route failed every
+    # health probe. There is no like-for-like successor, so retain the old
+    # backlink by sending readers to the current open-weight catalog.
+    "meta/muse-spark-1.1": "/models?filter=open",
+}
 STATUS_RAW_SAMPLE_LIMIT_PER_DAY = 35_000
 STATUS_LIVE_SAMPLE_LIMIT = 500
 STATUS_HOUR_ROLLUP_LIMIT = 5_000
@@ -355,8 +364,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_page_html(settings, "docs/synth")
 
     @public_html_route("/docs/fusion")
-    async def fusion_docs() -> str:
-        return public_page_html(settings, "docs/synth")
+    async def fusion_docs() -> RedirectResponse:
+        return RedirectResponse(url="/docs/synth", status_code=301)
 
     @public_html_route("/docs/x402")
     async def x402_docs() -> str:
@@ -575,6 +584,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     @public_html_route("/apps")
     async def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
+
+    @public_html_route("/resources")
+    async def resources() -> str:
+        return public_page_html(settings, "resources")
+
+    @public_html_route("/careers")
+    async def careers() -> str:
+        return public_page_html(settings, "careers")
 
     @public_html_route("/blog")
     async def blog() -> str:
@@ -883,6 +900,24 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         return HTMLResponse(body)
 
+    @public_html_route("/compare/models")
+    async def model_compare_index() -> HTMLResponse:
+        body = public_model_compare_index_html(settings)
+        assert body is not None
+        return HTMLResponse(body)
+
+    @public_html_route("/compare/models/page/{page}")
+    async def model_compare_index_page(page: int) -> Response:
+        if page == 1:
+            return RedirectResponse(url="/compare/models", status_code=301)
+        body = public_model_compare_index_html(settings, page=page)
+        if body is None:
+            return HTMLResponse(
+                public_model_not_found_html(settings, f"comparison page {page}"),
+                status_code=404,
+            )
+        return HTMLResponse(body)
+
     @public_html_route("/compare/models/{left_author}/{left_slug}/vs/{right_author}/{right_slug}")
     async def model_compare(
         left_author: str,
@@ -918,8 +953,8 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         return public_fusion_html(settings)
 
     @public_html_route("/fusion")
-    async def fusion() -> str:
-        return public_fusion_html(settings)
+    async def fusion() -> RedirectResponse:
+        return RedirectResponse(url="/synth", status_code=301)
 
     # Per-model detail page. Path captures `{author}/{slug}` (e.g.
     # `z-ai/glm-4.6`, `moonshotai/kimi-k2.6`) so the URL exactly mirrors
@@ -932,9 +967,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         methods=["GET", "HEAD"],
         response_class=HTMLResponse,
     )
-    async def model_detail(model_id: str) -> HTMLResponse:
+    async def model_detail(model_id: str) -> Response:
         cleaned = model_id.strip()
         maybe_base_model_id, separator, maybe_section = cleaned.rpartition("/")
+        legacy_model_id = (
+            maybe_base_model_id
+            if separator and maybe_section in MODEL_SEO_SECTIONS
+            else cleaned
+        )
+        legacy_target = LEGACY_MODEL_PAGE_REDIRECTS.get(legacy_model_id)
+        if legacy_target:
+            return RedirectResponse(url=legacy_target, status_code=301)
         if separator and maybe_section in MODEL_SEO_SECTIONS:
             body = public_model_section_html(settings, maybe_base_model_id, maybe_section)
             if body is None:
