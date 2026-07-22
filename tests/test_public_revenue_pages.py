@@ -437,6 +437,7 @@ def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -
 
     assert docs.status_code == providers.status_code == agent_setup.status_code == 200
     assert '"min_privacy": "confidential"' in docs.text
+    assert "<code>e2e</code> and <code>e2ee</code>" in docs.text
     assert "requires both provider-side confidential compute and end-to-end encryption" in docs.text
     assert "Unsupported model/provider combinations fail closed" in docs.text
     assert 'provider.min_privacy = "confidential"' in providers.text

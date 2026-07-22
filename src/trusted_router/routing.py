@@ -345,7 +345,7 @@ def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
         if key not in PRIVACY_TIER_ALIASES:
             raise api_error(
                 400,
-                "provider.min_privacy must be one of: any, no_store, zdr, confidential (alias: e2ee)",
+                "provider.min_privacy must be one of: any, no_store, zdr, confidential (aliases: e2e, e2ee)",
                 ErrorType.BAD_REQUEST,
             )
         min_privacy_rank = PRIVACY_TIER_ALIASES[key]
