@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
+FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,15 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Friendli announced that Qwen3-235B-A22B-Instruct-2507 retires from its
+    # serverless Model API at 2026-08-05 00:00 UTC. Dedicated endpoints are
+    # unaffected; TrustedRouter uses Friendli's serverless endpoint.
+    _Retirement(
+        provider="friendli",
+        model_ids=frozenset({"qwen/qwen3-235b-a22b-2507"}),
+        upstream_ids=frozenset({"Qwen/Qwen3-235B-A22B-Instruct-2507"}),
+        effective_at=FRIENDLI_QWEN3_235B_RETIREMENT_AT,
+    ),
     # Together announced that its serverless MiniMax M2.7 route retires on
     # 2026-07-27 and named MiniMax M3 as the replacement. The announcement did
     # not include a time zone, so use 00:00 UTC as the conservative cutover.
