@@ -85,7 +85,7 @@ Run a PONG smoke test before editing app code.</code></pre>
     }
   }]
 }</code></pre>
-      <p class="muted">The advisor sees the same prompt context as the worker. Use <span class="mono">provider.data_collection = "deny"</span>, <span class="mono">trustedrouter/zdr</span>, <span class="mono">trustedrouter/e2e</span>, or EU routing when those privacy requirements matter. If the advisor is itself a Synth model such as <span class="mono">trustedrouter/zeus-1.0</span>, TrustedRouter decrements orchestration depth automatically.</p>
+      <p class="muted">The advisor sees the same prompt context as the worker. Use <span class="mono">provider.min_privacy = "zdr"</span> for a hard zero-retention floor or <span class="mono">provider.min_privacy = "confidential"</span> to require both provider-side confidential compute and E2EE. The <span class="mono">trustedrouter/zdr</span> and <span class="mono">trustedrouter/e2e</span> aliases select those pools. If the advisor is itself a Synth model such as <span class="mono">trustedrouter/zeus-1.0</span>, TrustedRouter decrements orchestration depth automatically.</p>
     </div>
   </div>
 

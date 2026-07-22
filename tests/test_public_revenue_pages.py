@@ -424,10 +424,24 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "ATTESTED GATEWAY" in response.text  # attestation record
     assert "Get API key" in response.text  # primary CTA
     assert "Provider failover" in response.text  # hero proof row
-    assert "data_collection" in response.text  # privacy-level routing pref
+    assert 'min_privacy": "confidential"' in response.text
     assert 'href="/eu"' in response.text
     assert '/static/charter.css?v=' in response.text
     assert 'class="brand-mark"' in response.text
+
+
+def test_public_docs_explain_hard_confidential_e2ee_filter(client: TestClient) -> None:
+    docs = client.get("/docs")
+    providers = client.get("/providers")
+    agent_setup = client.get("/docs/agent-setup")
+
+    assert docs.status_code == providers.status_code == agent_setup.status_code == 200
+    assert '"min_privacy": "confidential"' in docs.text
+    assert "requires both provider-side confidential compute and end-to-end encryption" in docs.text
+    assert "Unsupported model/provider combinations fail closed" in docs.text
+    assert 'provider.min_privacy = "confidential"' in providers.text
+    assert "these hard filters fail closed" in providers.text
+    assert 'provider.min_privacy = "confidential"' in agent_setup.text
 
 
 def test_eu_host_renders_eu_landing_page(client: TestClient) -> None:

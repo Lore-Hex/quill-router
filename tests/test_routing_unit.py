@@ -320,8 +320,42 @@ def test_min_privacy_parses_friendly_aliases() -> None:
     assert p.min_privacy_rank == PRIVACY_TIER_ZERO_RETENTION
     p2 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "maximum"}})
     assert p2.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
+    p3 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "e2ee"}})
+    assert p3.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
     # Default: no filter.
     assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
+
+
+def test_confidential_privacy_tier_requires_compute_and_e2ee() -> None:
+    from trusted_router.catalog import (
+        PRIVACY_TIER_CONFIDENTIAL,
+        PRIVACY_TIER_STANDARD,
+        Provider,
+        provider_privacy_tier,
+    )
+
+    confidential_compute_only = Provider(
+        slug="compute-only",
+        name="Compute only",
+        provider_confidential_compute=True,
+        provider_e2ee=False,
+    )
+    e2ee_only = Provider(
+        slug="e2ee-only",
+        name="E2EE only",
+        provider_confidential_compute=False,
+        provider_e2ee=True,
+    )
+    both = Provider(
+        slug="both",
+        name="Both",
+        provider_confidential_compute=True,
+        provider_e2ee=True,
+    )
+
+    assert provider_privacy_tier(confidential_compute_only) == PRIVACY_TIER_STANDARD
+    assert provider_privacy_tier(e2ee_only) == PRIVACY_TIER_STANDARD
+    assert provider_privacy_tier(both) == PRIVACY_TIER_CONFIDENTIAL
 
 
 def test_min_privacy_rejects_unknown_value() -> None:
