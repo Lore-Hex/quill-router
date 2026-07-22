@@ -1299,6 +1299,21 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     )
 
 
+def test_every_tinfoil_endpoint_is_confidential_and_e2ee() -> None:
+    provider = PROVIDERS["tinfoil"]
+    endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "tinfoil"
+    ]
+
+    assert endpoints
+    assert provider.provider_confidential_compute is True
+    assert provider.provider_e2ee is True
+    assert all(
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_CONFIDENTIAL
+        for endpoint in endpoints
+    )
+
+
 def test_eu_meta_model_restricts_endpoint_pool_to_eu_focused_providers() -> None:
     eu_endpoints = chat_route_endpoint_candidates(
         {"model": EU_MODEL_ID},
