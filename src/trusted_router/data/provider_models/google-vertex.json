@@ -3,7 +3,7 @@
   "provider": "google-vertex",
   "source": "https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-6-flash",
   "pricing_source": "https://cloud.google.com/vertex-ai/generative-ai/pricing",
-  "generated_at": "2026-07-21T23:00:35Z",
+  "generated_at": "2026-07-22T00:02:00Z",
   "model_count": 1,
   "models": [
     {
