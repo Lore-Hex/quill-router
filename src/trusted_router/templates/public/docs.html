@@ -51,7 +51,7 @@ const r = await client.chat.completions.create({
   "model": "your/model",
   "provider": {"min_privacy": "confidential"}
 }</code></pre>
-      <p>This stronger hard minimum requires both provider-side confidential compute and end-to-end encryption. <code>e2ee</code> is an accepted value alias. Unsupported model/provider combinations fail closed.</p>
+      <p>This stronger hard minimum requires both provider-side confidential compute and end-to-end encryption. <code>e2e</code> and <code>e2ee</code> are accepted value aliases. Unsupported model/provider combinations fail closed.</p>
     </div>
   </div>
   <p class="muted" style="margin-top:14px"><code>trustedrouter/e2e</code> and <code>trustedrouter/confidential</code> select the same confidential + E2EE pool. <code>provider.data_collection = "deny"</code> remains an OpenRouter-compatible routing preference; use <code>min_privacy</code> when the privacy floor must never be relaxed.</p>

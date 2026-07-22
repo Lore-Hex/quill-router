@@ -320,8 +320,11 @@ def test_min_privacy_parses_friendly_aliases() -> None:
     assert p.min_privacy_rank == PRIVACY_TIER_ZERO_RETENTION
     p2 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "maximum"}})
     assert p2.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
-    p3 = provider_route_preferences({"model": "x", "provider": {"min_privacy": "e2ee"}})
-    assert p3.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
+    for alias in ("e2e", "e2ee"):
+        preferences = provider_route_preferences(
+            {"model": "x", "provider": {"min_privacy": alias}}
+        )
+        assert preferences.min_privacy_rank == PRIVACY_TIER_CONFIDENTIAL
     # Default: no filter.
     assert provider_route_preferences({"model": "x"}).min_privacy_rank == 0
 

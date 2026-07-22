@@ -276,7 +276,8 @@ the router-core error budget when fallback remains available.
   `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
   `min_privacy`, `data_collection`, and `sort`) so clients can request explicit
   fallback chains or provider preferences. `min_privacy="confidential"` is a
-  hard provider-side confidential-compute + E2EE requirement and fails closed
+  hard provider-side confidential-compute + E2EE requirement and fails closed;
+  the request-value aliases `e2e` and `e2ee` select the same tier
   rather than falling back to a weaker route.
 - Billing: prepaid credits and BYOK first; no subscription is required.
 - Trust: hosted open source, with the running API's source commit, image
