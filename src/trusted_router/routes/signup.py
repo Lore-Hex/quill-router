@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from trusted_router.acquisition import record_signup_attribution
 from trusted_router.errors import api_error
 from trusted_router.schemas import SignupRequest
 from trusted_router.storage import STORE
@@ -11,7 +12,7 @@ from trusted_router.types import ErrorType
 
 def register_signup_routes(router: APIRouter) -> None:
     @router.post("/signup")
-    async def signup(body: SignupRequest) -> JSONResponse:
+    async def signup(body: SignupRequest, request: Request) -> JSONResponse:
         result = STORE.signup(email=str(body.email).lower(), workspace_name=body.name)
         if result is None:
             raise api_error(
@@ -19,6 +20,11 @@ def register_signup_routes(router: APIRouter) -> None:
                 "This email is already registered. Sign in with your saved management key.",
                 ErrorType.ALREADY_REGISTERED,
             )
+        record_signup_attribution(
+            request,
+            workspace_id=result.workspace.id,
+            signup_provider="email",
+        )
         return JSONResponse(
             {
                 "data": {

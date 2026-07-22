@@ -84,6 +84,17 @@ function openSigninModal() {
         dialog.showModal();
     }
 }
+function trackFunnelEvent(event) {
+    void fetch("/analytics/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event }),
+        credentials: "same-origin",
+        keepalive: true,
+    }).catch(() => {
+        /* measurement is best-effort and must never interrupt sign-in */
+    });
+}
 function setSigninError(message) {
     const el = document.getElementById("signinError");
     if (!el)
@@ -213,6 +224,7 @@ function init() {
         const opener = target.closest('[data-action="open-signin"]');
         if (opener) {
             event.preventDefault();
+            trackFunnelEvent("sign_in_opened");
             openSigninModal();
             return;
         }

@@ -20,6 +20,7 @@ from typing import Any
 import stripe
 from fastapi import APIRouter, HTTPException, Request
 
+from trusted_router.acquisition import record_credit_purchase
 from trusted_router.auth import SettingsDep
 from trusted_router.errors import api_error
 from trusted_router.money import MICRODOLLARS_PER_CENT
@@ -117,6 +118,12 @@ def register(router: APIRouter) -> None:
                 credited = STORE.credit_workspace_typed_direct(
                     workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
                 )
+                if credited:
+                    record_credit_purchase(
+                        workspace_id,
+                        amount_microdollars=amount_total * MICRODOLLARS_PER_CENT,
+                        payment_method="stripe",
+                    )
                 # Capture the Stripe customer the first time they pay so
                 # auto-refill can use it later. The default payment method
                 # arrives separately in `setup_intent.succeeded` (or via the
@@ -208,6 +215,12 @@ def register(router: APIRouter) -> None:
                 credited = STORE.credit_workspace_typed_direct(
                     workspace_id, amount_microdollars, event_id
                 )
+                if credited:
+                    record_credit_purchase(
+                        workspace_id,
+                        amount_microdollars=amount_microdollars,
+                        payment_method="stripe_auto_refill",
+                    )
                 STORE.record_auto_refill_outcome(workspace_id, status="succeeded")
                 # Also persist the payment-method if Stripe surfaced one —
                 # first auto-refill after a Checkout that didn't include

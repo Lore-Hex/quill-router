@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import stripe
 
+from trusted_router.acquisition import record_credit_purchase
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import (
@@ -168,6 +169,12 @@ def credit_x402_payment_intent(
         amount_microdollars,
         x402_event_id(payment_intent_id),
     )
+    if credited:
+        record_credit_purchase(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            payment_method="stablecoin",
+        )
     return _x402_settle_payload(
         status=status,
         payment_intent_id=payment_intent_id,

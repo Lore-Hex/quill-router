@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from trusted_router.acquisition import record_credit_purchase
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
 from trusted_router.money import (
@@ -150,6 +151,12 @@ def credit_paypal_capture(
         amount_microdollars,
         f"paypal_capture:{capture_id}",
     )
+    if credited:
+        record_credit_purchase(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            payment_method="paypal",
+        )
     return PayPalCaptureResult(
         order_id=parsed["order_id"],
         capture_id=capture_id,

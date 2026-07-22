@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from trusted_router.storage_models import (
+    AcquisitionAttribution,
     ApiKey,
     AuthSession,
     BroadcastDeliveryJob,
@@ -61,6 +62,24 @@ class Store(Protocol):
         email: str,
         workspace_name: str | None = ...,
     ) -> SignupResult | None: ...
+    def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool: ...
+    def get_acquisition_attribution(
+        self, workspace_id: str
+    ) -> AcquisitionAttribution | None: ...
+    def claim_acquisition_milestones(
+        self,
+        workspace_id: str,
+        milestones: list[str],
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, list[str]]: ...
+    def record_acquisition_purchase(
+        self,
+        workspace_id: str,
+        *,
+        amount_microdollars: int,
+        occurred_at: str,
+    ) -> AcquisitionAttribution | None: ...
     def create_workspace(
         self,
         owner_user_id: str,

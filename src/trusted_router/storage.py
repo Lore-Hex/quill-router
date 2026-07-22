@@ -5,6 +5,7 @@ import threading
 import uuid
 from typing import Any, cast
 
+from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
 from trusted_router.storage_byok import InMemoryByok
@@ -13,6 +14,7 @@ from trusted_router.storage_email_blocks import InMemoryEmailBlocks
 from trusted_router.storage_generations import InMemoryGenerations
 from trusted_router.storage_keys import InMemoryApiKeys
 from trusted_router.storage_models import (
+    AcquisitionAttribution,
     ApiKey,
     AuthSession,
     BroadcastDeliveryJob,
@@ -74,6 +76,7 @@ class InMemoryStore:
             credit_money_by_workspace=self.credit_money,
             lock=self._lock,
         )
+        self.acquisition_store = InMemoryAcquisitionAttribution(lock=self._lock)
         self.generation_store = InMemoryGenerations(
             lock=self._lock,
             add_usage_to_key=self.api_keys.add_usage,
@@ -100,6 +103,7 @@ class InMemoryStore:
             self.credit_money.clear()
             self.stripe_events.clear()
             self.api_keys.reset()
+            self.acquisition_store.reset()
             self.generation_store.reset()
             self.synthetic_store.reset()
             self.byok_store.reset()
@@ -153,6 +157,40 @@ class InMemoryStore:
             raw_key=raw_key,
             api_key=api_key,
             trial_credit_microdollars=trial,
+        )
+
+    def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
+        return self.acquisition_store.create(record)
+
+    def get_acquisition_attribution(
+        self, workspace_id: str
+    ) -> AcquisitionAttribution | None:
+        return self.acquisition_store.get(workspace_id)
+
+    def claim_acquisition_milestones(
+        self,
+        workspace_id: str,
+        milestones: list[str],
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, list[str]]:
+        return self.acquisition_store.claim_milestones(
+            workspace_id,
+            milestones,
+            occurred_at=occurred_at,
+        )
+
+    def record_acquisition_purchase(
+        self,
+        workspace_id: str,
+        *,
+        amount_microdollars: int,
+        occurred_at: str,
+    ) -> AcquisitionAttribution | None:
+        return self.acquisition_store.record_purchase(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            occurred_at=occurred_at,
         )
 
     # Auth sessions delegate to storage_auth_sessions.InMemoryAuthSessions.

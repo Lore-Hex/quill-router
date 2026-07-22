@@ -24,6 +24,7 @@ from trusted_router.catalog import validate_auto_model_order
 from trusted_router.config import Settings, get_settings
 from trusted_router.errors import error_response
 from trusted_router.middleware import register_http_middleware
+from trusted_router.routes.acquisition import register_acquisition_routes
 from trusted_router.routes.activity import register_activity_routes
 from trusted_router.routes.auth import register_auth_routes
 from trusted_router.routes.billing import register_billing_routes
@@ -154,6 +155,7 @@ def _make_api_router(settings: Settings) -> APIRouter:
 
     register_inference_routes(inference_router)
 
+    register_acquisition_routes(router)
     register_catalog_routes(router)
     register_auth_routes(router)
     register_byok_routes(router)

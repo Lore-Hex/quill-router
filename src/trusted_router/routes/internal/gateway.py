@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
 
+from trusted_router.acquisition import record_successful_api_call_safely
 from trusted_router.auth import SettingsDep, is_api_key_expired
 from trusted_router.byok_crypto import byok_cache_key, encrypted_secret_payload
 from trusted_router.catalog import (
@@ -1079,6 +1080,19 @@ def _settle_gateway_authorization(
     if success and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
     if success:
+        if background_tasks is not None:
+            background_tasks.add_task(
+                record_successful_api_call_safely,
+                authorization.workspace_id,
+                model=model.id,
+                provider=selected_endpoint.provider,
+            )
+        else:
+            record_successful_api_call_safely(
+                authorization.workspace_id,
+                model=model.id,
+                provider=selected_endpoint.provider,
+            )
         # Alert-mode budgets: email the owner when a window is crossed (never
         # blocks — the block happens at authorize for limit-mode keys). Off the
         # hot path; best-effort.

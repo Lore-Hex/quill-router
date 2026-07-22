@@ -1064,6 +1064,7 @@ def make_fake_store(
     *, ready_barrier: threading.Barrier | None = None
 ) -> tuple[Any, FakeSpannerDatabase, FakeBigtableTable]:
     from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
     from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
     from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
     from trusted_router.storage_gcp_byok import SpannerByok
@@ -1100,6 +1101,7 @@ def make_fake_store(
         delete_entities_tx=store._delete_entities_tx,
     )
     store.api_keys = SpannerApiKeys(io)
+    store.acquisition_store = SpannerAcquisitionAttribution(io)
     store.generation_store = SpannerGenerations(
         io,
         bt_table=bt,

@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>Effective</strong><span>July 13, 2026</span></div>
+  <div><strong>Effective</strong><span>July 21, 2026</span></div>
   <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
   <div><strong>Prompt storage</strong><span>Off by default</span></div>
   <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
@@ -21,7 +21,7 @@
   <h3>Prompts and outputs</h3>
   <p>TrustedRouter does not store prompt or output content by default. Prompt traffic is designed to terminate inside the attested gateway. If a workspace explicitly enables a content-bearing Broadcast destination or another content feature, the selected content is sent to that destination under the workspace's configuration and the destination's terms. Downstream model providers process content according to the selected route and provider terms.</p>
   <h3>Website information</h3>
-  <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service.</p>
+  <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service. Our first-party campaign cookie is signed, HttpOnly, and limited to source, campaign, landing page, pseudonymous click identifiers, and an anonymous identifier. It does not contain prompts, outputs, API keys, BYOK credentials, email addresses, or payment details. TrustedRouter honors browser Global Privacy Control and Do Not Track signals by not creating or using this attribution cookie for that request.</p>
 
   <h2>How we use information</h2>
   <p>We use information to provide and secure the service, authenticate users, route requests, meter usage, process payments, prevent abuse, respond to support, maintain reliability, comply with law, and improve product performance. We do not use customer prompts or outputs to train our own models.</p>

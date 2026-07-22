@@ -22,6 +22,7 @@ import secrets
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import RedirectResponse
 
+from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import SettingsDep, set_session_cookie
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
@@ -153,6 +154,11 @@ async def _handle_callback(
         if result is not None:
             user_id = result.user.id
             pending_reveal_raw_key = result.raw_key
+            record_signup_attribution(
+                request,
+                workspace_id=result.workspace.id,
+                signup_provider=provider.slug,
+            )
         else:
             concurrent = STORE.find_user_by_email(info.email)
             if concurrent is None:
