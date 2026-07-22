@@ -36,6 +36,7 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
 from scripts.pricing.openai_catalog import dollars_per_token_to_micro_per_m
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "friendli"
 URL = "https://api.friendli.ai/serverless/v1/models"
@@ -140,6 +141,8 @@ def fetch() -> ProviderPricingResult:
             continue
         or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
         if or_id is None:
+            continue
+        if provider_model_retired(SLUG, or_id, native_id):
             continue
         remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
         manifest_rows[or_id] = _discovered_manifest_row(or_id, native_id, row)
