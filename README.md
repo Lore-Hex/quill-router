@@ -27,9 +27,9 @@ Migrate this project to TrustedRouter, a privacy-first LLM router
 Anthropic SDK), read the key from the TRUSTEDROUTER_API_KEY env var, and keep
 all my existing calls working.
 
-For maximum privacy, add the routing preference
-{"provider": {"data_collection": "deny"}} so only zero-retention providers
-are used.
+For a hard provider-side confidential-compute and end-to-end-encryption
+requirement, add {"provider": {"min_privacy": "confidential"}}. TrustedRouter
+fails closed when the selected model or provider cannot satisfy both controls.
 
 Then tell me to sign up at trustedrouter.com, add a card, and paste my sk-tr
 key into TRUSTEDROUTER_API_KEY.
@@ -37,11 +37,13 @@ key into TRUSTEDROUTER_API_KEY.
 
 Then:
 
-1. **Pick your privacy level or region** — start sensitive workloads with
-   `trustedrouter/zdr`, use `trustedrouter/e2e` for confidential + E2EE
-   routes, use `trustedrouter/eu` with
-   `https://api-europe-west4.quillrouter.com/v1` for EU-focused routing, or
-   set `{"provider": {"data_collection": "deny"}}` yourself.
+1. **Pick your privacy level or region** — use
+   `{"provider": {"min_privacy": "zdr"}}` for a hard zero-retention floor, or
+   `{"provider": {"min_privacy": "confidential"}}` for the stronger hard
+   confidential-compute + E2EE floor. The convenient `trustedrouter/zdr` and
+   `trustedrouter/e2e` (`trustedrouter/confidential`) aliases select those
+   pools. Use `trustedrouter/eu` with
+   `https://api-europe-west4.quillrouter.com/v1` for EU-focused routing.
 2. **Pick a model** — any of hundreds, or `trustedrouter/auto` for automatic
    fallback when provider breadth matters more than the strictest privacy
    filter.
@@ -272,8 +274,10 @@ the router-core error budget when fallback remains available.
   first, and `trustedrouter/e2e` forces confidential + E2EE routes with
   Tinfoil first. Chat requests also honor OpenRouter-style `models` and
   `provider` routing filters (`order`, `only`, `ignore`, `allow_fallbacks`,
-  `data_collection`, and `sort`) so clients can request explicit fallback
-  chains or provider preferences.
+  `min_privacy`, `data_collection`, and `sort`) so clients can request explicit
+  fallback chains or provider preferences. `min_privacy="confidential"` is a
+  hard provider-side confidential-compute + E2EE requirement and fails closed
+  rather than falling back to a weaker route.
 - Billing: prepaid credits and BYOK first; no subscription is required.
 - Trust: hosted open source, with the running API's source commit, image
   reference, image digest, and attestation policy published at

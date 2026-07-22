@@ -131,7 +131,7 @@
           <ul class="check-list">
             <li>Use <code>trustedrouter/auto</code> for healthy-provider rollover</li>
             <li>Use <code>trustedrouter/zdr</code> for zero-retention routing</li>
-            <li>Use <code>trustedrouter/e2e</code> for confidential provider routes</li>
+            <li>Use <code>trustedrouter/e2e</code> for confidential + E2EE provider routes</li>
             <li>Use <a href="/eu"><code>trustedrouter/eu</code></a> for Europe-focused routing</li>
             <li>Bring your own provider keys where needed</li>
           </ul>
@@ -150,7 +150,7 @@ response = client.chat.completions.create(
     model="trustedrouter/auto",
     messages=[{"role": "user", "content": "Hello"}],
     extra_body={
-        "provider": {"data_collection": "deny"}
+        "provider": {"min_privacy": "confidential"}
     },
 )</code></pre>
         </div>
