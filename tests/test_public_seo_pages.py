@@ -4,8 +4,10 @@ import json
 import logging
 import re
 
+import pytest
 from fastapi.testclient import TestClient
 
+from trusted_router.dashboard import MODEL_COMPARE_PAGE_SIZE
 from trusted_router.routes.public import INDEXNOW_KEY
 
 
@@ -61,7 +63,11 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         in core.text
     )
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
-    assert "<loc>https://trustedrouter.com/docs/fusion</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
+    assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
+    assert "<loc>https://trustedrouter.com/compare/models</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/resources</loc>" in core.text
+    assert "<loc>https://trustedrouter.com/careers</loc>" in core.text
 
     models = client.get("/sitemap-models.xml")
     assert models.status_code == 200
@@ -88,9 +94,48 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/compare/models/z-ai/glm-5.2/vs/moonshotai/kimi-k2.6</loc>"
         in comparisons.text
     )
+    assert "<loc>https://trustedrouter.com/compare/models/page/2</loc>" in comparisons.text
     combined = sitemap.text + core.text + models.text + providers.text + comparisons.text
     assert "trustedrouter/monitor" not in combined
     assert "openrouter.ai" not in combined
+
+
+def test_public_pages_are_gzip_compressed(client: TestClient) -> None:
+    response = client.get("/models", headers={"accept-encoding": "gzip"})
+
+    assert response.status_code == 200
+    assert response.headers["content-encoding"] == "gzip"
+    assert "Accept-Encoding" in response.headers.get("vary", "")
+    assert "Hundreds of models" in response.text
+
+
+def test_public_host_aliases_redirect_to_the_canonical_marketing_host(
+    client: TestClient,
+) -> None:
+    www = client.get(
+        "/api/reference?group=models",
+        headers={"host": "www.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert www.status_code == 308
+    assert www.headers["location"] == "https://trustedrouter.com/api/reference?group=models"
+
+    escaped_status_link = client.get(
+        "/providers/minimax",
+        headers={"host": "status.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert escaped_status_link.status_code == 308
+    assert escaped_status_link.headers["location"] == (
+        "https://trustedrouter.com/providers/minimax"
+    )
+
+    status_json = client.get(
+        "/status.json",
+        headers={"host": "status.trustedrouter.com"},
+        follow_redirects=False,
+    )
+    assert status_json.status_code == 200
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
@@ -478,9 +523,7 @@ def test_public_legal_dpa_baa_and_subprocessors_are_honest(client: TestClient) -
     system_names = {row["name"] for row in payload["system_subprocessors"]}
     model_names = {row["name"] for row in payload["model_provider_subprocessors"]}
     assert {"Google Cloud Platform", "Stripe", "Sentry"}.issubset(system_names)
-    assert {"Anthropic", "OpenAI", "Google AI Studio", "Google Vertex AI"}.issubset(
-        model_names
-    )
+    assert {"Anthropic", "OpenAI", "Google AI Studio", "Google Vertex AI"}.issubset(model_names)
     anthropic = next(
         row for row in payload["model_provider_subprocessors"] if row["id"] == "anthropic"
     )
@@ -551,6 +594,44 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     assert "Policy source" in response.text
 
 
+def test_provider_detail_links_indexable_performance_page(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import dashboard
+
+    measured = {
+        "provider_row": {
+            "sample_count": 25,
+            "p50_ttft_ms": 125,
+            "p50_tokens_per_second": 80.0,
+            "uptime": 0.999,
+        },
+        "models": [],
+    }
+    monkeypatch.setattr(dashboard, "measured_for_provider", lambda *_args, **_kwargs: measured)
+
+    response = client.get("/providers/minimax")
+    assert response.status_code == 200
+    assert 'href="/providers/minimax/performance"' in response.text
+
+    sitemap = client.get("/sitemap-providers.xml")
+    assert "<loc>https://trustedrouter.com/providers/minimax/performance</loc>" in sitemap.text
+
+
+def test_model_overview_only_links_subpages_with_indexable_content(
+    client: TestClient,
+) -> None:
+    response = client.get("/models/minimax/minimax-m3")
+
+    assert response.status_code == 200
+    assert 'href="/models/minimax/minimax-m3/benchmarks"' in response.text
+    assert 'href="/models/minimax/minimax-m3/providers"' in response.text
+    assert 'href="/models/minimax/minimax-m3/pricing"' in response.text
+    assert 'href="/models/minimax/minimax-m3/uptime"' not in response.text
+    assert 'href="/models/minimax/minimax-m3/api"' not in response.text
+
+
 def test_model_seo_cluster_pages_are_public_and_not_openrouter_links(
     client: TestClient,
 ) -> None:
@@ -603,12 +684,104 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "openrouter.ai" not in response.text.lower()
 
 
+def test_model_comparison_directory_links_every_sitemap_pair(client: TestClient) -> None:
+    sitemap = client.get("/sitemap-comparisons.xml")
+    sitemap_pairs = set(
+        re.findall(
+            r"<loc>https://trustedrouter\.com(/compare/models/[^<]+/vs/[^<]+)</loc>",
+            sitemap.text,
+        )
+    )
+    expected_page_count = (
+        len(sitemap_pairs) + MODEL_COMPARE_PAGE_SIZE - 1
+    ) // MODEL_COMPARE_PAGE_SIZE
+
+    first = client.get("/compare/models")
+    assert first.status_code == 200
+    assert "Compare AI models" in first.text
+    assert f'href="/compare/models/page/{expected_page_count}"' in first.text
+
+    linked_paths: set[str] = set()
+    for page in range(1, expected_page_count + 1):
+        path = "/compare/models" if page == 1 else f"/compare/models/page/{page}"
+        response = client.get(path)
+        assert response.status_code == 200, path
+        linked_paths.update(
+            re.findall(
+                r'href="(/compare/models/[^\"]+/vs/[^\"]+)"',
+                response.text,
+            )
+        )
+
+    assert len(sitemap_pairs) == 2_600
+    assert linked_paths == sitemap_pairs
+
+
+def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> None:
+    response = client.get("/resources")
+    assert response.status_code == 200
+    expected_paths = {
+        "/apps",
+        "/aws-bedrock-alternative",
+        "/azure-openai-alternative",
+        "/benchmarks",
+        "/best-llm-router",
+        "/claude-api-privacy",
+        "/cline-api-provider",
+        "/compare/litellm",
+        "/compare/vercel-ai-gateway",
+        "/confidential-computing-llm",
+        "/deepseek-api-privacy",
+        "/eu-ai-act-llm-compliance",
+        "/gdpr-compliant-llm-api",
+        "/gemini-flash-alternative",
+        "/glm-5-api",
+        "/gpt-oss-120b-api",
+        "/groq-alternative",
+        "/litellm-alternative",
+        "/llm-api-for-financial-services",
+        "/llm-api-for-law-firms",
+        "/llm-data-residency",
+        "/llm-document-processing",
+        "/llm-failover",
+        "/minimax-m3-api",
+        "/portkey-alternative",
+        "/private-llm-api",
+        "/rankings",
+        "/sillytavern-api",
+        "/tinfoil-alternative",
+        "/trustedos",
+        "/vertex-ai-alternative",
+    }
+    for path in expected_paths:
+        assert f'href="{path}"' in response.text, path
+
+    footer = client.get("/")
+    assert 'href="/resources"' in footer.text
+    assert 'href="/careers"' in footer.text
+
+
+def test_retired_model_pages_redirect_to_current_catalog_entries(client: TestClient) -> None:
+    redirects = {
+        "/models/deepseek/deepseek-chat-v3.1/performance": ("/models/deepseek/deepseek-v3.1"),
+        "/models/google/gemini-3-pro-image/performance": (
+            "/models/google/gemini-3.1-flash-image-preview"
+        ),
+        "/models/meta/muse-spark-1.1/performance": "/models?filter=open",
+    }
+    for path, target in redirects.items():
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 301, path
+        assert response.headers["location"] == target
+
+
 def test_benchmarks_and_rankings_pages_link_model_clusters(client: TestClient) -> None:
     for path in ["/benchmarks", "/rankings"]:
         response = client.get(path)
         assert response.status_code == 200
         assert "/models/minimax/minimax-m3/benchmarks" in response.text
-        assert "/models/minimax/minimax-m3/performance" in response.text
+        assert "/models/minimax/minimax-m3/api" not in response.text
+        assert "/models/minimax/minimax-m3/uptime" not in response.text
         assert "/providers/minimax" in response.text
         assert 'href="https://aiiq.org/models/minimax-m3/"' in response.text
         assert "openrouter.ai" not in response.text.lower()

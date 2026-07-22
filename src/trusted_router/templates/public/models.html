@@ -18,7 +18,7 @@
       <span class="eyebrow">Models</span>
       <h2>Route by model, provider, price, or privacy posture.</h2>
     </div>
-    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key.</p>
+    <p>API JSON remains at <span class="mono">{{ api_base_url }}/models</span> with an API key. <a href="/compare/models">Compare models</a>.</p>
   </div>
   <div class="model-filter-row" aria-label="Model filters">
     {% for item in model_filters %}
@@ -51,11 +51,11 @@
               {% if model.us_provider_available %}<span class="pill">US providers</span>{% endif %}
               {% if model.eu_focused_provider_available %}<span class="pill">EU-focused</span>{% endif %}
             </div>
-            {% if model.benchmarks_href %}
+            {% if model.benchmarks_href or model.providers_href or model.pricing_href %}
             <div class="mini-links">
-              <a href="{{ model.benchmarks_href }}">benchmarks</a>
-              <a href="{{ model.detail_href }}/providers">providers</a>
-              <a href="{{ model.detail_href }}/pricing">pricing</a>
+              {% if model.benchmarks_href %}<a href="{{ model.benchmarks_href }}">benchmarks</a>{% endif %}
+              {% if model.providers_href %}<a href="{{ model.providers_href }}">providers</a>{% endif %}
+              {% if model.pricing_href %}<a href="{{ model.pricing_href }}">pricing</a>{% endif %}
             </div>
             {% endif %}
           </td>

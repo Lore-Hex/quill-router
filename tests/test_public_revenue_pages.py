@@ -16,9 +16,9 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/compare/litellm": "LiteLLM for your own infra",
         "/docs/migrate-from-openrouter": "Change base_url",
         "/docs/synth": "Run a panel of models inside the attested gateway.",
-        "/docs/fusion": "Run a panel of models inside the attested gateway.",
         "/synth": "Synthesize many models into one perfect frontier answer.",
-        "/fusion": "Synthesize many models into one perfect frontier answer.",
+        "/resources": "Guides, comparisons, privacy references",
+        "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
         "/security": "TrustedRouter does not store prompt or output content by default.",
@@ -27,7 +27,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         # The marker is a load-bearing headline from the page so a
         # silent template breakage gets caught here.
         "/openrouter-alternative": "An OpenRouter alternative built around verifiable privacy.",
-        "/private-llm-api": "A private LLM API where \"private\" means cryptographically verified.",
+        "/private-llm-api": 'A private LLM API where "private" means cryptographically verified.',
         "/hipaa-llm-api": "The LLM API whose privacy posture is verifiable",
         "/llm-zero-data-retention": "Zero data retention as a verifiable property",
         "/claude-api-privacy": "Call Claude through a prompt path you can verify.",
@@ -89,9 +89,7 @@ def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
         "/compare/litellm",
         "/docs/migrate-from-openrouter",
         "/docs/synth",
-        "/docs/fusion",
         "/synth",
-        "/fusion",
         "/blog",
         "/blog/fusion-evals-open-source",
         "/security",
@@ -136,7 +134,9 @@ def test_agent_discovery_surfaces_model_advisor_skill(client: TestClient) -> Non
     for path in ["/docs", "/docs/agent-setup"]:
         response = client.get(path)
         assert "https://github.com/Lore-Hex/LLM-advisor" in response.text
-        assert "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in response.text
+        assert (
+            "https://raw.githubusercontent.com/Lore-Hex/LLM-advisor/main/SKILL.md" in response.text
+        )
 
     for path in ["/llms.txt", "/docs/llms.txt", "/docs/llms-full.txt"]:
         response = client.get(path)
@@ -222,8 +222,12 @@ def test_synth_playground_is_public_and_uses_browser_key_proxy(client: TestClien
     assert "z-ai/glm-5.2" in response.text
     assert client.head("/synth").status_code == 200
     assert client.get("/synth/", follow_redirects=False).status_code == 200
-    assert client.head("/fusion").status_code == 200
-    assert client.get("/fusion/", follow_redirects=False).status_code == 200
+    legacy = client.get("/fusion", follow_redirects=False)
+    assert legacy.status_code == 301
+    assert legacy.headers["location"] == "/synth"
+    legacy_slash = client.get("/fusion/", follow_redirects=False)
+    assert legacy_slash.status_code == 301
+    assert legacy_slash.headers["location"] == "/synth"
 
 
 def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
@@ -247,9 +251,14 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "google/gemma-4-31b-it" in response.text
     assert "deepseek/deepseek-v4-pro" in response.text
     assert "Final fallback can switch before the first byte" in response.text
-    assert "TrustedRouter stores billing and route metadata, not prompt/output content by default." in response.text
+    assert (
+        "TrustedRouter stores billing and route metadata, not prompt/output content by default."
+        in response.text
+    )
     assert "OpenAI compatible API" in response.text
-    assert client.get("/docs/fusion").status_code == 200
+    legacy = client.get("/docs/fusion", follow_redirects=False)
+    assert legacy.status_code == 301
+    assert legacy.headers["location"] == "/docs/synth"
 
 
 def test_homepage_and_nav_link_to_choose(client: TestClient) -> None:
@@ -318,8 +327,8 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
 
     assert response.status_code == 200
     assert "TrustedRouter Socrates 1.1" in response.text
-    assert "<span class=\"pill\">advisor</span>" in response.text
-    assert "<span class=\"pill\">named preset</span>" in response.text
+    assert '<span class="pill">advisor</span>' in response.text
+    assert '<span class="pill">named preset</span>' in response.text
     assert "Models used by this orchestration" in response.text
     assert "xiaomi/mimo-v2.5-pro-ultraspeed" in response.text
     assert "minimax/minimax-m3" in response.text
@@ -331,9 +340,9 @@ def test_public_meta_model_detail_renders_orchestration_components(client: TestC
 
     rolling = client.get("/models/trustedrouter/socrates")
     assert rolling.status_code == 200
-    assert "<span class=\"pill\">advisor</span>" in rolling.text
-    assert "<span class=\"pill\">rolling alias</span>" in rolling.text
-    assert "Canonical: <a href=\"/models/trustedrouter/socrates-1.1\"" in rolling.text
+    assert '<span class="pill">advisor</span>' in rolling.text
+    assert '<span class="pill">rolling alias</span>' in rolling.text
+    assert 'Canonical: <a href="/models/trustedrouter/socrates-1.1"' in rolling.text
 
 
 def test_public_k3_combo_pages_render_exact_graphs(
@@ -426,7 +435,7 @@ def test_dashboard_links_to_public_models_not_keyed_api_catalog(client: TestClie
     assert "Provider failover" in response.text  # hero proof row
     assert 'min_privacy": "confidential"' in response.text
     assert 'href="/eu"' in response.text
-    assert '/static/charter.css?v=' in response.text
+    assert "/static/charter.css?v=" in response.text
     assert 'class="brand-mark"' in response.text
 
 
