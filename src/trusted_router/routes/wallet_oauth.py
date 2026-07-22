@@ -20,6 +20,7 @@ from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from trusted_router.acquisition import record_signup_attribution
 from trusted_router.auth import (
     SESSION_COOKIE_NAME,
     SettingsDep,
@@ -87,6 +88,7 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
 
     @router.post("/auth/wallet/verify")
     async def wallet_verify(
+        request: Request,
         body: WalletVerifyRequest,
         settings: SettingsDep,
     ) -> Response:
@@ -105,13 +107,20 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
         if recovered != body.address.strip().lower():
             raise api_error(400, "Signature does not match address", ErrorType.BAD_REQUEST)
 
-        user = STORE.find_user_by_wallet(body.address) or STORE.create_wallet_user(body.address)
+        existing_user = STORE.find_user_by_wallet(body.address)
+        user = existing_user or STORE.create_wallet_user(body.address)
         workspaces = STORE.list_workspaces_for_user(user.id)
         workspace = workspaces[0] if workspaces else STORE.create_workspace(
             user.id,
             "Personal Workspace",
             trial_credit_microdollars=0,
         )
+        if existing_user is None:
+            record_signup_attribution(
+                request,
+                workspace_id=workspace.id,
+                signup_provider="metamask",
+            )
 
         raw_token, _ = STORE.create_auth_session(
             user_id=user.id,

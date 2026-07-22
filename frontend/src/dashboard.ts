@@ -91,6 +91,18 @@ function openSigninModal(): void {
   }
 }
 
+function trackFunnelEvent(event: "sign_in_opened"): void {
+  void fetch("/analytics/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ event }),
+    credentials: "same-origin",
+    keepalive: true,
+  }).catch(() => {
+    /* measurement is best-effort and must never interrupt sign-in */
+  });
+}
+
 function setSigninError(message: string): void {
   const el = document.getElementById("signinError");
   if (!el) return;
@@ -221,6 +233,7 @@ function init(): void {
     const opener = target.closest('[data-action="open-signin"]') as HTMLElement | null;
     if (opener) {
       event.preventDefault();
+      trackFunnelEvent("sign_in_opened");
       openSigninModal();
       return;
     }

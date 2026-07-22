@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from trusted_router.storage import (
+    AcquisitionAttribution,
     ApiKey,
     AuthSession,
     BroadcastDeliveryJob,
@@ -37,6 +38,7 @@ from trusted_router.storage import (
     Workspace,
     iso_now,
 )
+from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
 from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
 from trusted_router.storage_gcp_byok import SpannerByok
@@ -220,6 +222,7 @@ class SpannerBigtableStore:
             delete_entities_tx=self._delete_entities_tx,
         )
         self.api_keys = SpannerApiKeys(io)
+        self.acquisition_store = SpannerAcquisitionAttribution(io)
         self.generation_store = SpannerGenerations(
             io,
             bt_table=self._bt_table,
@@ -243,6 +246,40 @@ class SpannerBigtableStore:
 
     def reset(self) -> None:
         raise RuntimeError("refusing to reset production Spanner/Bigtable store")
+
+    def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
+        return self.acquisition_store.create(record)
+
+    def get_acquisition_attribution(
+        self, workspace_id: str
+    ) -> AcquisitionAttribution | None:
+        return self.acquisition_store.get(workspace_id)
+
+    def claim_acquisition_milestones(
+        self,
+        workspace_id: str,
+        milestones: list[str],
+        *,
+        occurred_at: str,
+    ) -> tuple[AcquisitionAttribution | None, list[str]]:
+        return self.acquisition_store.claim_milestones(
+            workspace_id,
+            milestones,
+            occurred_at=occurred_at,
+        )
+
+    def record_acquisition_purchase(
+        self,
+        workspace_id: str,
+        *,
+        amount_microdollars: int,
+        occurred_at: str,
+    ) -> AcquisitionAttribution | None:
+        return self.acquisition_store.record_purchase(
+            workspace_id,
+            amount_microdollars=amount_microdollars,
+            occurred_at=occurred_at,
+        )
 
     def ensure_user(self, user_id: str, email: str | None = None) -> User:
         normalized_email = _normalize_email(email or user_id)

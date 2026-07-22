@@ -3,7 +3,8 @@
 Four middlewares register in order from outermost to innermost:
   1. request_id  — mints/accepts a per-request id, echoes in response
                    header, makes it available as request.state.request_id.
-  2. public_pageview — emits metadata-only public blog pageview events.
+  2. public_pageview — captures signed first-party attribution and emits
+                       metadata-only public pageview events.
   3. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
                    via STORE.hit_rate_limit; logs structured 429s with
                    the request_id from (1).
@@ -26,6 +27,11 @@ from urllib.parse import parse_qs, urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
+from trusted_router.acquisition import (
+    pageview_attribution_fields,
+    prepare_request_attribution,
+    set_attribution_cookie,
+)
 from trusted_router.auth import get_authorization_bearer
 from trusted_router.config import Settings
 from trusted_router.errors import error_response
@@ -86,8 +92,11 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
+        attribution, attribution_changed = prepare_request_attribution(request, settings)
         start = time.perf_counter()
         response = await call_next(request)
+        if attribution is not None and attribution_changed:
+            set_attribution_cookie(response, attribution, settings)
         _log_public_page_view(request, response, latency_ms=(time.perf_counter() - start) * 1000)
         return response
 
@@ -299,19 +308,19 @@ def _log_public_page_view(request: Request, response: Response, *, latency_ms: f
     """Emit privacy-bounded public page analytics through the app logger.
 
     The Axiom integration subscribes to Python log records. We only log
-    metadata needed for blog traffic analytics and deliberately avoid raw IPs,
+    metadata needed for public-site analytics and deliberately avoid raw IPs,
     cookies, auth headers, full query strings, or user-agent strings.
     """
     if request.method.upper() != "GET":
         return
     path = request.url.path
-    if path != "/blog" and not path.startswith("/blog/"):
+    if not _is_public_html_response(path, response):
         return
     slug = path.removeprefix("/blog/") if path.startswith("/blog/") else ""
     extra: dict[str, object] = {
         "event": "public.page_view",
         "request_id": getattr(request.state, "request_id", None),
-        "page_kind": "blog_post" if slug else "blog_index",
+        "page_kind": _page_kind(path),
         "path": path,
         "blog_slug": slug or None,
         "status_code": response.status_code,
@@ -320,7 +329,39 @@ def _log_public_page_view(request: Request, response: Response, *, latency_ms: f
         "user_agent_family": _user_agent_family(request.headers.get("user-agent", "")),
     }
     extra.update(_utm_fields(request))
+    extra.update(pageview_attribution_fields(request))
     log.info("public.page_view", extra=extra)
+
+
+def _is_public_html_response(path: str, response: Response) -> bool:
+    excluded = (
+        "/auth",
+        "/console",
+        "/internal",
+        "/v1",
+        "/static",
+        "/health",
+        "/openapi",
+    )
+    if path.startswith(excluded) or path.endswith("_oauth_callback"):
+        return False
+    return "text/html" in response.headers.get("content-type", "").lower()
+
+
+def _page_kind(path: str) -> str:
+    if path == "/":
+        return "homepage"
+    if path == "/blog":
+        return "blog_index"
+    if path.startswith("/blog/"):
+        return "blog_post"
+    if path.startswith("/docs"):
+        return "docs"
+    if path.startswith("/models/"):
+        return "model"
+    if path.startswith("/providers/"):
+        return "provider"
+    return "marketing"
 
 
 def _referer_host(request: Request) -> str | None:
