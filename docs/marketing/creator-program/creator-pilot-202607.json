@@ -1,0 +1,111 @@
+{
+  "campaign": "creator_pilot_202607",
+  "landing_path": "/for-developers",
+  "key_ttl_days": 90,
+  "creators": [
+    {
+      "slug": "theo_t3gg",
+      "display_name": "Theo, t3.gg",
+      "concept": "cost_per_completed_job",
+      "viewer_code": "THEO-TR",
+      "creator_credit_microdollars": 250000000,
+      "daily_limit_microdollars": 50000000
+    },
+    {
+      "slug": "cole_medin",
+      "display_name": "Cole Medin",
+      "concept": "agent_model_bakeoff",
+      "viewer_code": "COLE-TR",
+      "creator_credit_microdollars": 150000000,
+      "daily_limit_microdollars": 30000000
+    },
+    {
+      "slug": "ai_jason",
+      "display_name": "AI Jason",
+      "concept": "openai_base_url_eval",
+      "viewer_code": "JASON-TR",
+      "creator_credit_microdollars": 150000000,
+      "daily_limit_microdollars": 30000000
+    },
+    {
+      "slug": "indydevdan",
+      "display_name": "IndyDevDan",
+      "concept": "agent_provider_fallback",
+      "viewer_code": "INDY-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "sonny_sangha",
+      "display_name": "Sonny Sangha",
+      "concept": "build_one_agent",
+      "viewer_code": "SONNY-TR",
+      "creator_credit_microdollars": 150000000,
+      "daily_limit_microdollars": 30000000
+    },
+    {
+      "slug": "david_ondrej",
+      "display_name": "David Ondrej",
+      "concept": "open_model_comparison",
+      "viewer_code": "DAVID-TR",
+      "creator_credit_microdollars": 150000000,
+      "daily_limit_microdollars": 30000000
+    },
+    {
+      "slug": "tech_with_tim",
+      "display_name": "Tech With Tim",
+      "concept": "three_model_eval",
+      "viewer_code": "TIM-TR",
+      "creator_credit_microdollars": 150000000,
+      "daily_limit_microdollars": 30000000
+    },
+    {
+      "slug": "no_code_mba",
+      "display_name": "No Code MBA",
+      "concept": "one_api_many_models",
+      "viewer_code": "NOCODE-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "arielle_phoenix",
+      "display_name": "Arielle Phoenix",
+      "concept": "automation_model_routing",
+      "viewer_code": "ARIELLE-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "devops_ai_toolkit",
+      "display_name": "DevOps and AI Toolkit",
+      "concept": "attestation_and_rollover",
+      "viewer_code": "DEVOPS-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "pointer",
+      "display_name": "Pointer",
+      "concept": "provable_privacy",
+      "viewer_code": "POINTER-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "ai_weekly",
+      "display_name": "AI Weekly",
+      "concept": "hundreds_of_models",
+      "viewer_code": "AIWEEKLY-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    },
+    {
+      "slug": "thecodeman",
+      "display_name": "TheCodeMan",
+      "concept": "dotnet_openai_migration",
+      "viewer_code": "CODEMAN-TR",
+      "creator_credit_microdollars": 100000000,
+      "daily_limit_microdollars": 25000000
+    }
+  ]
+}

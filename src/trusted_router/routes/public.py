@@ -568,6 +568,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def docs_hub() -> str:
         return public_page_html(settings, "docs")
 
+    @public_html_route("/for-developers")
+    async def for_developers() -> str:
+        return public_page_html(settings, "for-developers")
+
     @public_html_route("/apps")
     async def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
