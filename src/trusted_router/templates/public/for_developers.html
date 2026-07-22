@@ -1,0 +1,93 @@
+{% extends "public/_base.html" %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="What to verify">
+  <div><strong>One request</strong><span>OpenAI SDK compatible.</span></div>
+  <div><strong>Live catalog</strong><span>Models, routes, and prices.</span></div>
+  <div><strong>Fresh evidence</strong><span>Challenge the gateway with your nonce.</span></div>
+  <div><strong>Public status</strong><span>Check the service before a test.</span></div>
+</section>
+
+<section class="marketing-split" aria-label="TrustedRouter quickstart">
+  <div class="marketing-copy">
+    <span class="eyebrow">60-second quickstart</span>
+    <h2>Change the base URL. Keep the client.</h2>
+    <ol class="plain-list">
+      <li>Create an API key and export it as <code>TRUSTEDROUTER_API_KEY</code>.</li>
+      <li>Install the OpenAI client: <code>pip install openai</code>.</li>
+      <li>Run the request at right. A successful response should contain <code>PONG</code>.</li>
+    </ol>
+    <div class="hero-actions">
+      <button class="btn primary" type="button" data-action="open-signin">Create key</button>
+      <a class="btn" href="/docs/migrate-from-openrouter">Migration guide <span aria-hidden="true">→</span></a>
+    </div>
+  </div>
+  <div class="copy-terminal">
+    <div class="code-head"><span>Quickstart</span><span>Python</span></div>
+    <pre><code>import os
+from openai import OpenAI
+
+client = OpenAI(
+    api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+    base_url="{{ api_base_url }}",
+)
+
+response = client.chat.completions.create(
+    model="trustedrouter/zdr",
+    messages=[{
+        "role": "user",
+        "content": "Reply with PONG only.",
+    }],
+    max_tokens=128,
+)
+
+print(response.choices[0].message.content)</code></pre>
+  </div>
+</section>
+
+<section class="marketing-grid three" aria-label="Developer test paths">
+  <a class="marketing-card card-as-link" href="/v1/models">
+    <span class="card-label">Catalog</span>
+    <h3>Inspect the live API.</h3>
+    <p>Use the deployed model list as the source of truth for model IDs, context, capabilities, and pricing.</p>
+    <span class="card-link">Open model JSON →</span>
+  </a>
+  <a class="marketing-card card-as-link" href="https://trust.trustedrouter.com">
+    <span class="card-label">Attestation</span>
+    <h3>Verify before sending data.</h3>
+    <p>Generate fresh nonce-bound evidence and compare the running image with the published open-source release.</p>
+    <span class="card-link">Verify gateway →</span>
+  </a>
+  <a class="marketing-card card-as-link" href="https://status.trustedrouter.com">
+    <span class="card-label">Operations</span>
+    <h3>Check status and latency.</h3>
+    <p>See router-core health separately from provider response health and regional measurements.</p>
+    <span class="card-link">Open status →</span>
+  </a>
+</section>
+
+<section class="marketing-split" aria-label="Test ideas">
+  <div class="marketing-copy">
+    <span class="eyebrow">Test it honestly</span>
+    <h2>Four useful experiments.</h2>
+    <ul class="check-list">
+      <li>Change only <code>base_url</code> in an existing OpenAI integration.</li>
+      <li>Run the same three prompts across an open model, a frontier model, and <code>trustedrouter/cheap</code>.</li>
+      <li>Use an ordered <code>models</code> list and leave provider fallback enabled.</li>
+      <li>Challenge the live gateway with your own nonce before the request.</li>
+    </ul>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">State the boundary</span>
+    <h2>What the proof does not claim.</h2>
+    <p>TrustedRouter attestation verifies the hosted gateway workload. It does not prove that the source has no bugs, and it does not make every downstream provider end-to-end encrypted.</p>
+    <p>Prompt and output content is not durably stored by TrustedRouter by default. Provider retention, training, jurisdiction, and confidential-compute posture remain provider specific.</p>
+    <div class="sdk-links">
+      <a class="pill" href="/providers">Provider posture</a>
+      <a class="pill" href="/models">Model routes</a>
+      <a class="pill" href="/leaderboard">Measured performance</a>
+      <a class="pill" href="https://github.com/Lore-Hex/quill-router">Source</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

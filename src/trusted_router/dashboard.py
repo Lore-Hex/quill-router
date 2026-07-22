@@ -153,6 +153,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
     "/docs/web-search",
+    "/for-developers",
     "/llms.txt",
     "/docs/llms.txt",
     "/docs/llms-full.txt",
@@ -1190,6 +1191,24 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             "Point any OpenAI-compatible SDK at TrustedRouter with one base_url "
             "change. Guides, Python / TypeScript / Swift SDKs, and the "
             "OpenAI-compatible API reference."
+        ),
+    ),
+    "for-developers": PublicPage(
+        template="public/for_developers.html",
+        title="Try TrustedRouter in 60 Seconds",
+        description=(
+            "Run one OpenAI-compatible request, inspect the live model catalog, "
+            "and verify the attested gateway before moving real traffic."
+        ),
+        faq_items=(
+            (
+                "Does TrustedRouter store prompts or outputs?",
+                "TrustedRouter does not durably store prompt or output content by default. Operational metadata includes model, provider, token counts, latency, cost, status, and region. Downstream provider handling remains provider specific and is published on model and provider pages.",
+            ),
+            (
+                "What does gateway attestation prove?",
+                "A fresh nonce challenge lets you verify that the live prompt gateway is running the published workload image. It does not prove the code is bug free or make every downstream provider confidential.",
+            ),
         ),
     ),
     "apps": PublicPage(
