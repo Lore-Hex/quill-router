@@ -99,6 +99,46 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
 <rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="54" font-size="30" font-weight="700"><tspan fill="#1d9e75">TrustedRouter.com:</tspan><tspan fill="#111827" dx="10">Liberty 2.0 tops the frontier on DRACO</tspan></text>
+<text x="60" y="86" font-size="18" fill="#6b7280">All-American open-weights model vs. the leading frontier models &#183; agentic deep research &#183; whisker = 95% CI</text>
+<line x1="332" y1="120" x2="332" y2="524" stroke="#eef0f2"/>
+<text x="332" y="546" font-size="14" text-anchor="middle" fill="#9a9890">55</text>
+<line x1="491" y1="120" x2="491" y2="524" stroke="#eef0f2"/>
+<text x="491" y="546" font-size="14" text-anchor="middle" fill="#9a9890">60</text>
+<line x1="649" y1="120" x2="649" y2="524" stroke="#eef0f2"/>
+<text x="649" y="546" font-size="14" text-anchor="middle" fill="#9a9890">65</text>
+<line x1="808" y1="120" x2="808" y2="524" stroke="#eef0f2"/>
+<text x="808" y="546" font-size="14" text-anchor="middle" fill="#9a9890">70</text>
+<line x1="967" y1="120" x2="967" y2="524" stroke="#eef0f2"/>
+<text x="967" y="546" font-size="14" text-anchor="middle" fill="#9a9890">75</text>
+<rect x="332" y="158" width="486" height="34" rx="4" fill="#1d9e75"/>
+<text x="318" y="181" font-size="17" font-weight="700" text-anchor="end" fill="#111827">Liberty 2.0</text>
+<line x1="624" y1="175" x2="1005" y2="175" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="624" y1="164" x2="624" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<line x1="1005" y1="164" x2="1005" y2="186" stroke="#1f2937" stroke-width="2.5"/>
+<text x="1019" y="181" font-size="19" font-weight="700" fill="#111827">70.3</text>
+<rect x="332" y="238" width="327" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="261" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Fable 5</text>
+<text x="671" y="261" font-size="17" font-weight="600" fill="#6b7280">65.3</text>
+<rect x="332" y="318" width="263" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="341" font-size="17" font-weight="400" text-anchor="end" fill="#374151">GPT-5.5</text>
+<text x="607" y="341" font-size="17" font-weight="600" fill="#6b7280">63.3</text>
+<rect x="332" y="398" width="241" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="421" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Iris 1.0</text>
+<text x="585" y="421" font-size="17" font-weight="600" fill="#6b7280">62.6</text>
+<rect x="332" y="478" width="168" height="34" rx="4" fill="#c9c7bf"/>
+<text x="318" y="501" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Opus 4.8</text>
+<text x="512" y="501" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
+<text x="60" y="590" font-size="15" fill="#888780">Liberty 2.0: 20-task DRACO sample, Sonnet-graded (tracks the full 100-task set within ~1 pt in our runs). Frontier models: full-100, same harness.</text>
+<text x="1140" y="612" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
+<p>On <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark, Liberty 2.0 scores <strong>70.3</strong> &#8212; ahead of the leading closed frontier models: Fable 5 at 65.3, GPT-5.5 at 63.3, and Claude Opus 4.8 at 60.3. An all-American, all-open-weights model, out in front of the frontier on real research.</p>
+<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
+<rect width="1200" height="630" fill="#ffffff"/>
 <text x="60" y="70" font-size="44" font-weight="700" fill="#111827">Liberty 2.0</text>
 <text x="60" y="112" font-size="21" fill="#6b7280">American open models, combined into one &#8212; run only in the US, private by default</text>
 <rect x="60" y="150" width="1080" height="1" fill="#e5e7eb"/>
@@ -127,8 +167,6 @@ BLOG_POSTS: tuple[BlogPost, ...] = (
 <text x="1140" y="600" text-anchor="end" font-size="20" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
 </svg>
 </figure>
-<p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
-<p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
 <p>Every model in Liberty 2.0 is open-weights, and every one runs on US-based providers. Your requests pass through TrustedRouter's private, encrypted gateway and never leave the country &#8212; what you send stays in the US, and stays private.</p>
 <p>Call it with the same key and base URL as everything else on TrustedRouter. The model ID is <span class="mono">trustedrouter/liberty-2.0</span>.</p>
 """,
