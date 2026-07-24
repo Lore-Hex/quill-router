@@ -656,6 +656,26 @@ def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
     }
 
 
+def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
+    endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
+    baseten = [endpoint for endpoint in endpoints if endpoint.provider == "baseten"]
+
+    assert {endpoint.usage_type for endpoint in baseten} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in baseten} == {
+        "zai-org/GLM-5.2-Fast"
+    }
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in baseten} == {
+        2_205_000
+    }
+    assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in baseten} == {
+        6_930_000
+    }
+    assert {
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        for endpoint in baseten
+    } == {220_500}
+
+
 def test_alibaba_catalog_is_staged_but_not_routable_until_entitled() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 

@@ -11,7 +11,8 @@ provider-native id, not a guessed lowercase slug.
 from __future__ import annotations
 
 import os
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -19,17 +20,26 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_TIMEOUT,
     PROVIDER_FETCH_TRANSPORT_RETRIES,
     PROVIDER_FETCH_UA,
-    ModelPrice,
     ProviderPricingResult,
     validate,
 )
-from scripts.pricing.model_ids import mapped_or_canonical_model_id, remember_upstream_id
+from scripts.pricing.manifest import write_discovered_chat_manifest
+from scripts.pricing.openai_catalog import discover_openai_chat_catalog
 
 SLUG = "baseten"
 URL = "https://inference.baseten.co/v1/models"
+MANIFEST_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "src"
+    / "trusted_router"
+    / "data"
+    / "provider_models"
+    / "baseten.json"
+)
 
 EXPECTED_MODELS = [
     "z-ai/glm-5.2",
+    "z-ai/glm-5.2-fast",
     "moonshotai/kimi-k2.7-code",
     "thinkingmachines/inkling-1m",
 ]
@@ -45,26 +55,18 @@ _NATIVE_TO_OR_ID = {
     "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
     "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": "nvidia/nemotron-3-ultra-550b-a55b",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "zai-org/GLM-5.2-Fast": "z-ai/glm-5.2-fast",
     "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "thinkingmachines/inkling": "thinkingmachines/inkling-1m",
 }
 
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}
-
-
-def _price_to_micro_per_m(value: object) -> int | None:
-    """Baseten returns dollars/token; TR stores microdollars/million tokens."""
-
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        return None
-    if parsed < 0:
-        return None
-    return int((parsed * Decimal("1000000000000")).to_integral_value(ROUND_HALF_UP))
+_DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
 
 
 def fetch() -> ProviderPricingResult:
+    global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
+
     api_key = os.environ.get("BASETEN_API_KEY")
     headers = {"User-Agent": PROVIDER_FETCH_UA, "Accept": "application/json"}
     if api_key:
@@ -80,34 +82,13 @@ def fetch() -> ProviderPricingResult:
         payload = response.json()
 
     rows = payload.get("data") if isinstance(payload, dict) else payload
-    if not isinstance(rows, list):
-        rows = []
-    prices: dict[str, ModelPrice] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        native_id = row.get("id")
-        if not isinstance(native_id, str):
-            continue
-        or_id = mapped_or_canonical_model_id(native_id, _NATIVE_TO_OR_ID)
-        if or_id is None:
-            continue
-        remember_upstream_id(UPSTREAM_ID_MAP, or_id, native_id)
-        pricing = row.get("pricing")
-        if not isinstance(pricing, dict):
-            continue
-        prompt = _price_to_micro_per_m(pricing.get("prompt") or pricing.get("input"))
-        completion = _price_to_micro_per_m(pricing.get("completion") or pricing.get("output"))
-        if prompt is None or completion is None:
-            continue
-        cache_read = _price_to_micro_per_m(
-            pricing.get("input_cache_read") or pricing.get("cache_read")
-        )
-        prices[or_id] = ModelPrice(
-            prompt_micro_per_m=prompt,
-            completion_micro_per_m=completion,
-            prompt_cached_micro_per_m=cache_read,
-        )
+    source_rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    prices, discovered = discover_openai_chat_catalog(
+        source_rows,
+        explicit_map=_NATIVE_TO_OR_ID,
+        upstream_id_map=UPSTREAM_ID_MAP,
+    )
+    _DISCOVERED_MANIFEST_ROWS = discovered
 
     notes: list[str] = []
     errors = validate(prices, EXPECTED_MODELS)
@@ -121,4 +102,13 @@ def fetch() -> ProviderPricingResult:
         source="api",
         fetched_url=URL,
         notes=notes,
+    )
+
+
+def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
+    return write_discovered_chat_manifest(
+        result,
+        manifest_path=MANIFEST_PATH,
+        discovered_rows=_DISCOVERED_MANIFEST_ROWS,
+        source_url=URL,
     )
