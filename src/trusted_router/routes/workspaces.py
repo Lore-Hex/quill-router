@@ -30,7 +30,8 @@ def register_workspace_routes(router: APIRouter) -> None:
         workspace = STORE.create_workspace(
             principal.user.id,
             str(body.get("name") or "Workspace"),
-            trial_credit_microdollars=0 if principal.user.wallet_address else None,
+            # Starter credit belongs to the account's first workspace only.
+            trial_credit_microdollars=0,
         )
         return JSONResponse({"data": workspace_shape(workspace)}, status_code=201)
 

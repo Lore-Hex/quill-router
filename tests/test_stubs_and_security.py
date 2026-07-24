@@ -18,6 +18,7 @@ from trusted_router.og import (
 from trusted_router.secrets import LocalKeyFile
 from trusted_router.sentry_config import before_send
 from trusted_router.storage import STORE
+from trusted_router.typed_balance import live_credit_summary
 
 TEST_BYOK_KMS_KEY_NAME = (
     "projects/test/locations/us-central1/keyRings/trusted-router/cryptoKeys/byok-envelope"
@@ -273,7 +274,8 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     assert data["email"] == "alpha@example.com"
     assert data["management"] is True
     assert data["user_id"] != "alpha@example.com"
-    assert isinstance(data["trial_credit_microdollars"], int)
+    assert data["trial_credit_microdollars"] == 100_000
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 100_000
 
     headers = {"authorization": f"Bearer {data['key']}"}
     workspaces = client.get("/v1/workspaces", headers=headers)
@@ -283,12 +285,58 @@ def test_signup_creates_management_key_and_rejects_duplicate_email(client: TestC
     duplicate = client.post("/v1/signup", json={"email": "alpha@example.com"})
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["type"] == "already_registered"
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 100_000
 
 
 def test_signup_validates_email(client: TestClient) -> None:
     resp = client.post("/v1/signup", json={"email": "not-an-email"})
     assert resp.status_code == 400
     assert resp.json()["error"]["type"] == "bad_request"
+
+
+def test_signup_credit_can_be_disabled_explicitly() -> None:
+    app = create_app(
+        Settings(environment="test", signup_trial_credit_microdollars=0),
+        init_observability=False,
+    )
+    with TestClient(app) as zero_credit_client:
+        created = zero_credit_client.post(
+            "/v1/signup",
+            json={"email": "no-starter@example.com"},
+        )
+
+    assert created.status_code == 201, created.text
+    data = created.json()["data"]
+    assert data["trial_credit_microdollars"] == 0
+    assert live_credit_summary(data["workspace_id"])["total_credits"] == 0
+
+
+def test_negative_signup_credit_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="cannot be negative"):
+        Settings(signup_trial_credit_microdollars=-1)
+
+
+def test_secondary_workspace_does_not_repeat_signup_credit(
+    client: TestClient,
+) -> None:
+    signup = client.post(
+        "/v1/signup",
+        json={"email": "secondary-workspace@example.com"},
+    )
+    assert signup.status_code == 201, signup.text
+    signup_data = signup.json()["data"]
+    headers = {"x-trustedrouter-user": signup_data["email"]}
+
+    created = client.post(
+        "/v1/workspaces",
+        headers=headers,
+        json={"name": "Second workspace"},
+    )
+
+    assert created.status_code == 201, created.text
+    second_id = created.json()["data"]["id"]
+    assert live_credit_summary(signup_data["workspace_id"])["total_credits"] == 100_000
+    assert live_credit_summary(second_id)["total_credits"] == 0
 
 
 def test_production_dashboard_does_not_default_to_dev_user_header() -> None:

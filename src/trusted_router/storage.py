@@ -5,6 +5,7 @@ import threading
 import uuid
 from typing import Any, cast
 
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
 from trusted_router.storage_broadcast import InMemoryBroadcastDestinations
@@ -116,7 +117,13 @@ class InMemoryStore:
             self.verification_tokens.reset()
             self.email_blocks.reset()
 
-    def ensure_user(self, user_id: str, email: str | None = None) -> User:
+    def ensure_user(
+        self,
+        user_id: str,
+        email: str | None = None,
+        *,
+        trial_credit_microdollars: int | None = None,
+    ) -> User:
         with self._lock:
             normalized_email = _normalize_email(email or user_id)
             existing_id = self.user_ids_by_email.get(normalized_email)
@@ -126,7 +133,11 @@ class InMemoryStore:
             new_id = str(uuid.uuid4())
             self.users[new_id] = User(id=new_id, email=normalized_email)
             self.user_ids_by_email[normalized_email] = new_id
-            self.create_workspace(owner_user_id=new_id, name="Personal Workspace")
+            self.create_workspace(
+                owner_user_id=new_id,
+                name="Personal Workspace",
+                trial_credit_microdollars=trial_credit_microdollars,
+            )
             return self.users[new_id]
 
     def signup(
@@ -134,13 +145,18 @@ class InMemoryStore:
         *,
         email: str,
         workspace_name: str | None = None,
+        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
     ) -> SignupResult | None:
         """Atomically create a new account end-to-end. Returns None if the
         email is already registered."""
         with self._lock:
             if self.user_ids_by_email.get(_normalize_email(email)) is not None:
                 return None
-            user = self.ensure_user(email, email=email)
+            user = self.ensure_user(
+                email,
+                email=email,
+                trial_credit_microdollars=trial_credit_microdollars,
+            )
             workspace = self.list_workspaces_for_user(user.id)[0]
             if workspace_name:
                 workspace.name = workspace_name
@@ -238,12 +254,8 @@ class InMemoryStore:
             self.members[(workspace.id, owner_user_id)] = Member(
                 workspace_id=workspace.id, user_id=owner_user_id, role="owner"
             )
-            # Trial credit is NOT granted at workspace-creation time anymore.
-            # Policy moved to: grant the trial credit only after a valid
-            # credit card is attached (via the Stripe setup_intent.succeeded
-            # webhook in routes/internal/webhook.py). Stops free-credit
-            # farming with throwaway emails. Wallet sign-in already passed
-            # 0 explicitly, so its behavior is unchanged.
+            # Account creation passes the configured starter amount explicitly.
+            # Secondary workspaces omit it and therefore start at zero.
             initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
             self.credits[workspace.id] = CreditAccount(workspace_id=workspace.id)
             self.credit_money[workspace.id] = CreditMoney(
@@ -352,7 +364,12 @@ class InMemoryStore:
                 return None
             return self.users.get(user_id)
 
-    def create_wallet_user(self, address: str) -> User:
+    def create_wallet_user(
+        self,
+        address: str,
+        *,
+        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+    ) -> User:
         """Create a fresh user keyed only by wallet address. email and
         email_verified stay unset until the verification flow completes."""
         with self._lock:
@@ -366,7 +383,7 @@ class InMemoryStore:
             self.create_workspace(
                 owner_user_id=new_id,
                 name="Personal Workspace",
-                trial_credit_microdollars=0,
+                trial_credit_microdollars=trial_credit_microdollars,
             )
             return self.users[new_id]
 

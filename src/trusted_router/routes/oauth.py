@@ -150,7 +150,10 @@ async def _handle_callback(
         # signup() returns None only on a TOCTOU race; fall back to a
         # fresh lookup, surface a real 500 if even that fails so we
         # don't deref None silently.
-        result = STORE.signup(email=info.email)
+        result = STORE.signup(
+            email=info.email,
+            trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+        )
         if result is not None:
             user_id = result.user.id
             pending_reveal_raw_key = result.raw_key

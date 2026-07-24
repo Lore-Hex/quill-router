@@ -139,19 +139,9 @@ def test_setup_checkout_completed_marks_customer_pending_without_granting_trial(
     with no charge) can arrive before `setup_intent.succeeded`. The setup
     intent is the event that proves the reusable payment method exists.
     Checkout completion alone may know the customer but must not grant
-    trial credit or mark the card saved. The test resets the workspace credit
-    + dedup ledger entry to
-    a pre-card-attach state first to override the conftest
-    auto_credit_test_workspaces fixture (which simulates "card already
-    attached" for the rest of the suite)."""
+    starter credit or mark the card saved."""
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    # Force pre-card-attach state — undo the conftest test-only auto-credit.
-    # Clearing both the credit balance AND the per-workspace "trial" event-id
-    # in the dedup ledger so the webhook's idempotent credit_workspace_once
-    # actually fires (otherwise it'd see the conftest fixture's grant as a
-    # prior trial-grant and no-op).
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_checkout_setup_1",
         "type": "checkout.session.completed",
@@ -185,7 +175,6 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
     STORE.credits[workspace_id].stripe_customer_id = None
     STORE.credits[workspace_id].stripe_payment_method_id = None
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_setup_intent_missing_customer",
         "type": "setup_intent.succeeded",
@@ -209,15 +198,12 @@ def test_setup_intent_without_customer_does_not_grant_trial_or_save_method(
     assert account.stripe_payment_method_id is None
 
 
-def test_setup_intent_grants_no_trial_credit_by_default(
+def test_setup_intent_never_grants_starter_credit(
     user_headers: dict[str, str], client
 ) -> None:
-    """New policy (2026-06-25): attaching a valid card saves the payment method
-    but grants NO free credit — signup_trial_credit_microdollars defaults to 0."""
+    """Attaching a card saves it but cannot repeat account starter credit."""
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
-    # Undo the conftest auto-credit so a grant *would* fire if it were enabled.
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_setup_intent_no_trial",
         "type": "setup_intent.succeeded",
@@ -242,16 +228,15 @@ def test_setup_intent_grants_no_trial_credit_by_default(
     assert account.stripe_payment_method_id == "pm_no_trial"
 
 
-def test_setup_intent_grants_configured_trial_credit_when_enabled(
+def test_setup_intent_does_not_reapply_configured_signup_credit(
     user_headers: dict[str, str], client, monkeypatch
 ) -> None:
-    """Setting signup_trial_credit_microdollars > 0 re-enables the grant."""
+    """The signup amount is irrelevant after account creation."""
     monkeypatch.setattr(
         client.app.state.settings, "signup_trial_credit_microdollars", 5_000_000
     )
     workspace_id = client.get("/v1/workspaces", headers=user_headers).json()["data"][0]["id"]
     STORE.credit_money[workspace_id].total_credits_microdollars = 0
-    STORE.stripe_events.discard(f"trial:{workspace_id}")
     event = {
         "id": "evt_setup_intent_enabled_trial",
         "type": "setup_intent.succeeded",
@@ -268,10 +253,10 @@ def test_setup_intent_grants_configured_trial_credit_when_enabled(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()["data"]
-    assert body["trial_credit_granted_microdollars"] == 5_000_000
+    assert body["trial_credit_granted_microdollars"] == 0
     account = STORE.get_credit_account(workspace_id)
     assert account is not None
-    assert _credit_summary(workspace_id)["total_credits"] == 5_000_000
+    assert _credit_summary(workspace_id)["total_credits"] == 0
 
 
 def test_payment_intent_succeeded_from_checkout_saves_payment_method_without_crediting(

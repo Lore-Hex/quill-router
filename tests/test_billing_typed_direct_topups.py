@@ -89,26 +89,23 @@ def test_credit_workspace_once_wrapper_cross_path_idempotency() -> None:
     assert _typed_credit(db, ws)["total_credits"] == 1_400_000
 
 
-def test_gcp_signup_reports_typed_trial_credit(monkeypatch) -> None:
+def test_gcp_signup_seeds_typed_starter_credit() -> None:
     store, db, _ = make_fake_store()
-    original_create_api_key = store.create_api_key
     grant_amount = 3_000_000
 
-    def create_api_key_and_grant(*args, **kwargs):
-        result = original_create_api_key(*args, **kwargs)
-        workspace_id = kwargs["workspace_id"]
-        assert store.credit_workspace_typed_direct(
-            workspace_id, grant_amount, f"trial:{workspace_id}"
-        )
-        return result
-
-    monkeypatch.setattr(store, "create_api_key", create_api_key_and_grant)
-
-    result = store.signup(email="typed-signup@example.com")
+    result = store.signup(
+        email="typed-signup@example.com",
+        trial_credit_microdollars=grant_amount,
+    )
 
     assert result is not None
     assert result.trial_credit_microdollars == grant_amount
     assert "total_credits_microdollars" not in _json_credit(db, result.workspace.id)
+    assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
+    assert store.signup(
+        email="typed-signup@example.com",
+        trial_credit_microdollars=grant_amount,
+    ) is None
     assert _typed_credit(db, result.workspace.id)["total_credits"] == grant_amount
 
 

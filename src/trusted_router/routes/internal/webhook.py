@@ -32,34 +32,6 @@ from trusted_router.types import ErrorType
 log = logging.getLogger(__name__)
 
 
-def _grant_trial_credit_on_card_attach(
-    workspace_id: str, amount_microdollars: int
-) -> int:
-    """First time a valid card is attached to this workspace, grant the
-    configured trial credit (settings.signup_trial_credit_microdollars).
-    Idempotent across webhook replays + repeat setup_intents (e.g. user adds a
-    second card later) by using a deterministic per-workspace event_id —
-    credit_workspace_typed_direct dedupes via the stripe_events ledger so the
-    trial only ever lands once.
-
-    Returns the amount actually credited: 0 if already granted previously, if
-    the grant is disabled (amount_microdollars <= 0 — the default policy as of
-    2026-06-25: NO free credit for new users), else the configured amount on
-    the first attach.
-
-    Trial credit was previously granted at signup; it then required a
-    Stripe-validated card to defend against throwaway-email farming, and now
-    defaults to $0. See storage.py / storage_gcp.py create_workspace for the
-    matching "$0 at creation" change.
-    """
-    if amount_microdollars <= 0:
-        return 0
-    event_id = f"trial:{workspace_id}"
-    if STORE.credit_workspace_typed_direct(workspace_id, amount_microdollars, event_id):
-        return amount_microdollars
-    return 0
-
-
 def register(router: APIRouter) -> None:
     @router.post("/internal/stripe/webhook")
     async def stripe_webhook(request: Request, settings: SettingsDep) -> dict[str, Any]:
@@ -131,18 +103,13 @@ def register(router: APIRouter) -> None:
                 # with `setup_future_usage`).
                 if isinstance(customer_id, str):
                     STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
-                # A successful paid checkout is the strongest possible
-                # card-validation signal — Stripe just successfully charged
-                # the card. Grant the trial credit too if it hasn't been
-                # granted yet (idempotent via the per-workspace event_id).
-                granted = _grant_trial_credit_on_card_attach(
-                    workspace_id, settings.signup_trial_credit_microdollars
-                )
                 return {
                     "data": {
                         "credited": credited,
                         "event_id": event_id,
-                        "trial_credit_granted_microdollars": granted,
+                        # Kept for response compatibility. Starter credit is
+                        # granted atomically at account creation, never here.
+                        "trial_credit_granted_microdollars": 0,
                     }
                 }
 
@@ -163,14 +130,11 @@ def register(router: APIRouter) -> None:
                     customer_id=customer_id,
                     payment_method_id=payment_method,
                 )
-                granted = _grant_trial_credit_on_card_attach(
-                    workspace_id, settings.signup_trial_credit_microdollars
-                )
                 return {
                     "data": {
                         "setup_saved": True,
                         "event_id": event_id,
-                        "trial_credit_granted_microdollars": granted,
+                        "trial_credit_granted_microdollars": 0,
                     }
                 }
 

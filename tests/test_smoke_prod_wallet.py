@@ -6,7 +6,7 @@ Run separately from the normal prod smoke suite:
 
 It creates a throwaway wallet-only user/workspace in production and verifies
 that MetaMask-style auth reaches the console without an email gate and with
-zero credits.
+the standard starter credit.
 """
 
 from __future__ import annotations
@@ -58,4 +58,4 @@ def test_prod_wallet_siwe_reaches_console_without_email_gate() -> None:
         assert "API Keys" in console.text
         credits = client.get("/console/credits")
         assert credits.status_code == 200, credits.text
-        assert "$0.00" in credits.text
+        assert "$0.10" in credits.text

@@ -2,8 +2,8 @@
 
 Wallet users authenticate fully with a signed SIWE challenge. We do not
 require email before creating an active console session: crypto-native
-users expect wallet-only auth. The resulting workspace starts with $0
-credits; email/OAuth signup remains the path that gets the trial grant.
+users expect wallet-only auth. A newly created wallet account receives the
+same one-time starter credit as email and OAuth signups.
 
 The `/auth/wallet/email` page remains as a legacy/optional email attach
 flow for old pending sessions, but new wallet logins no longer enter
@@ -108,11 +108,16 @@ def register_wallet_oauth_routes(router: APIRouter) -> None:
             raise api_error(400, "Signature does not match address", ErrorType.BAD_REQUEST)
 
         existing_user = STORE.find_user_by_wallet(body.address)
-        user = existing_user or STORE.create_wallet_user(body.address)
+        user = existing_user or STORE.create_wallet_user(
+            body.address,
+            trial_credit_microdollars=settings.signup_trial_credit_microdollars,
+        )
         workspaces = STORE.list_workspaces_for_user(user.id)
         workspace = workspaces[0] if workspaces else STORE.create_workspace(
             user.id,
             "Personal Workspace",
+            # Only repair a missing workspace here. Existing accounts do not
+            # receive a retroactive or repeat starter grant.
             trial_credit_microdollars=0,
         )
         if existing_user is None:
