@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
+BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 
@@ -31,6 +32,30 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Baseten announced that these Model API routes become inactive at
+    # 2026-07-24 17:00 PT, which is 2026-07-25 00:00 UTC. Dedicated
+    # deployments and other providers serving the same checkpoints are
+    # unaffected.
+    _Retirement(
+        provider="baseten",
+        model_ids=frozenset(
+            {
+                "z-ai/glm-5",
+                "z-ai/glm-5.1",
+                "moonshotai/kimi-k2.5",
+                "nvidia/nemotron-120b-a12b",
+            }
+        ),
+        upstream_ids=frozenset(
+            {
+                "zai-org/GLM-5",
+                "zai-org/GLM-5.1",
+                "moonshotai/Kimi-K2.5",
+                "nvidia/Nemotron-120B-A12B",
+            }
+        ),
+        effective_at=BASETEN_JULY_2026_RETIREMENT_AT,
+    ),
     # Parasail announced that these three serverless routes retire on
     # 2026-08-04. The notice did not specify a time zone, so use 00:00 UTC as
     # the conservative cutover. Other providers serving the same checkpoints

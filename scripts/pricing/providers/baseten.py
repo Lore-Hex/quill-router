@@ -25,6 +25,7 @@ from scripts.pricing.base import (
 )
 from scripts.pricing.manifest import write_discovered_chat_manifest
 from scripts.pricing.openai_catalog import discover_openai_chat_catalog
+from trusted_router.provider_lifecycle import provider_model_retired
 
 SLUG = "baseten"
 URL = "https://inference.baseten.co/v1/models"
@@ -88,6 +89,24 @@ def fetch() -> ProviderPricingResult:
         explicit_map=_NATIVE_TO_OR_ID,
         upstream_id_map=UPSTREAM_ID_MAP,
     )
+    prices = {
+        model_id: price
+        for model_id, price in prices.items()
+        if not provider_model_retired(
+            SLUG,
+            model_id,
+            str(discovered.get(model_id, {}).get("upstream_id") or ""),
+        )
+    }
+    discovered = {
+        model_id: row
+        for model_id, row in discovered.items()
+        if not provider_model_retired(
+            SLUG,
+            model_id,
+            str(row.get("upstream_id") or ""),
+        )
+    }
     _DISCOVERED_MANIFEST_ROWS = discovered
 
     notes: list[str] = []
