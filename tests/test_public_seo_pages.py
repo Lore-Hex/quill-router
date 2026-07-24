@@ -62,6 +62,10 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
         "<loc>https://trustedrouter.com/blog/openpatcher-s1-exploitbench-cve-2024-2887</loc>"
         in core.text
     )
+    assert (
+        "<loc>https://trustedrouter.com/blog/how-confidential-computing-protects-ai-prompts</loc>"
+        in core.text
+    )
     assert "<loc>https://trustedrouter.com/docs/synth</loc>" in core.text
     assert "<loc>https://trustedrouter.com/docs/fusion</loc>" not in core.text
     assert "<loc>https://trustedrouter.com/fusion</loc>" not in core.text
@@ -373,6 +377,40 @@ def test_blog_index_shows_scannable_post_images(client: TestClient) -> None:
     assert 'alt="Synth is two jobs, and no model wins both visual summary"' in response.text
     assert 'href="/blog/fusion-is-two-jobs"' in response.text
     assert response.text.count('class="blog-thumb"') >= 10
+
+
+def test_confidential_computing_blog_explains_and_verifies_the_boundary(
+    client: TestClient,
+) -> None:
+    response = client.get("/blog/how-confidential-computing-protects-ai-prompts")
+    assert response.status_code == 200
+    assert "The cloud should not be able to read your prompts" in response.text
+    assert "data <em>in use</em>" in response.text
+    assert "Trusted Execution Environment" in response.text
+    assert "remote attestation" in response.text
+    assert "api.trustedrouter.com" in response.text
+    assert "tools/verify-attestation.py" in response.text
+    assert "--expect-digest" in response.text
+    assert "--samples 4" in response.text
+    assert 'provider.min_privacy = "confidential"' in response.text
+    assert "/models/trustedrouter/e2e" in response.text
+    assert "does not prove the code has no bugs" in response.text
+    assert "https://www.redhat.com/en/topics/security/what-is-confidential-computing" in (
+        response.text
+    )
+    assert "https://security.apple.com/blog/private-cloud-compute/" in response.text
+
+    card = (
+        "https://trustedrouter.com/static/og/blog/"
+        "how-confidential-computing-protects-ai-prompts.png"
+    )
+    assert f'property="og:image" content="{card}"' in response.text
+    assert "how-confidential-computing-protects-ai-prompts" in json.dumps(
+        _json_ld(response.text)
+    )
+    assert client.get(
+        "/static/og/blog/how-confidential-computing-protects-ai-prompts.png"
+    ).status_code == 200
 
 
 def test_blog_page_views_emit_axiom_safe_metadata(client: TestClient, caplog) -> None:

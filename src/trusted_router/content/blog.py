@@ -30,6 +30,103 @@ class BlogPost:
 
 BLOG_POSTS: tuple[BlogPost, ...] = (
     BlogPost(
+        slug="how-confidential-computing-protects-ai-prompts",
+        title="The cloud should not be able to read your prompts",
+        description=(
+            "A plain-English guide to confidential computing, trusted execution "
+            "environments, remote attestation, and how an agent can verify the "
+            "TrustedRouter prompt path before sending data."
+        ),
+        published_date="2026-07-23",
+        source_label=None,
+        source_url=None,
+        body_html="""
+<figure style="margin:0 0 32px">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif" role="img" aria-label="TrustedRouter confidential computing and attestation request path">
+<rect width="1200" height="630" fill="#ffffff"/>
+<text x="60" y="58" font-size="38" font-weight="700" fill="#111827">The cloud should not be able to read your prompts</text>
+<text x="60" y="92" font-size="19" fill="#6b7280">Disk encryption and HTTPS still leave plaintext inside a normal server.</text>
+<defs>
+  <marker id="cc-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+    <path d="M0 0 L7 3 L0 6 z" fill="#6b7280"/>
+  </marker>
+</defs>
+
+<rect x="55" y="155" width="220" height="190" rx="8" fill="#f3f4f6" stroke="#d1d5db" stroke-width="2"/>
+<text x="165" y="202" font-size="22" font-weight="700" text-anchor="middle" fill="#111827">Your agent</text>
+<text x="165" y="238" font-size="16" text-anchor="middle" fill="#4b5563">Creates a fresh nonce</text>
+<text x="165" y="266" font-size="16" text-anchor="middle" fill="#4b5563">Verifies the gateway</text>
+<text x="165" y="294" font-size="16" text-anchor="middle" fill="#4b5563">Then sends the prompt</text>
+
+<line x1="275" y1="250" x2="365" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="320" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="375" y="130" width="455" height="240" rx="8" fill="#e1f5ee" stroke="#1d9e75" stroke-width="2.5"/>
+<rect x="395" y="150" width="118" height="28" rx="4" fill="#1d9e75"/>
+<text x="454" y="170" font-size="13" font-weight="700" text-anchor="middle" fill="#ffffff">DATA IN USE</text>
+<text x="602" y="218" font-size="27" font-weight="700" text-anchor="middle" fill="#0f6e56">Attested gateway</text>
+<text x="602" y="252" font-size="17" text-anchor="middle" fill="#374151">GCP Confidential Space</text>
+<text x="602" y="291" font-size="16" text-anchor="middle" fill="#374151">TLS key and prompt stay in protected memory</text>
+<text x="602" y="320" font-size="16" text-anchor="middle" fill="#374151">Measured production image, debug access disabled</text>
+<text x="602" y="349" font-size="16" text-anchor="middle" fill="#374151">Public source request path</text>
+
+<line x1="830" y1="250" x2="925" y2="250" stroke="#6b7280" stroke-width="2.5" marker-end="url(#cc-arrow)"/>
+<text x="878" y="228" font-size="14" text-anchor="middle" fill="#6b7280">TLS</text>
+
+<rect x="935" y="155" width="210" height="190" rx="8" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+<text x="1040" y="202" font-size="21" font-weight="700" text-anchor="middle" fill="#9a3412">Model provider</text>
+<text x="1040" y="238" font-size="15" text-anchor="middle" fill="#4b5563">Usually sees the prompt</text>
+<text x="1040" y="266" font-size="15" text-anchor="middle" fill="#4b5563">Choose ZDR or require</text>
+<text x="1040" y="291" font-size="15" text-anchor="middle" fill="#4b5563">confidential + E2EE</text>
+<text x="1040" y="319" font-size="14" text-anchor="middle" fill="#9a3412">This boundary matters</text>
+
+<rect x="375" y="404" width="455" height="78" rx="8" fill="#f9fafb" stroke="#d1d5db" stroke-width="2"/>
+<text x="602" y="435" font-size="17" font-weight="700" text-anchor="middle" fill="#374151">Control plane</text>
+<text x="602" y="463" font-size="15" text-anchor="middle" fill="#6b7280">Keys, billing, route metadata. It cannot decrypt prompt traffic.</text>
+
+<rect x="55" y="515" width="1090" height="72" rx="8" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="2"/>
+<text x="82" y="546" font-size="17" font-weight="700" fill="#065f46">Your agent checks before sending:</text>
+<text x="82" y="572" font-size="15" fill="#047857">Google signature  &#183;  fresh nonce  &#183;  image digest  &#183;  TLS certificate + session binding  &#183;  debug off</text>
+<text x="1140" y="618" text-anchor="end" font-size="19" font-weight="700" fill="#0f6e56">TrustedRouter.com</text>
+</svg>
+</figure>
+<p>The cloud administrator should not be able to read your prompts. Disk encryption and HTTPS do not get you there. They protect data while it is stored and while it crosses the network. A normal server decrypts the request before the application uses it, which leaves plaintext in memory where a privileged operator, debugger, compromised hypervisor, or host bug may reach it.</p>
+<p><a href="https://www.redhat.com/en/topics/security/what-is-confidential-computing">Red Hat describes confidential computing</a> as protection for data <em>in use</em>. The code runs inside a hardware-backed Trusted Execution Environment, usually shortened to TEE. The host can give that workload CPU and memory, send it network packets, restart it, or kill it. The processor blocks the host from inspecting the workload's protected memory. The prompt becomes plaintext only inside that boundary.</p>
+<p>A TEE does not make bad code good. Code running inside the protected memory can still leak a prompt. Bugs still matter. The cloud hardware and its attestation service remain part of the trust base. Confidential computing removes a very large class of operator and host access, but you still need to know which code entered the protected memory.</p>
+<p>That is what remote attestation is for. Before an agent sends a prompt, it sends fresh random data called a nonce. The confidential workload asks the platform for a signed attestation token containing that nonce and measurements of the running environment. A verifier checks the platform signature, the intended audience, the production debug state, and the container image digest. Replaying an old token fails because its nonce is wrong.</p>
+<p>Apple made this verification model unusually clear in its <a href="https://security.apple.com/blog/private-cloud-compute/">Private Cloud Compute design</a>. Traditional cloud controls are hard for a user to inspect from the outside. Apple therefore treats verifiable software transparency, stateless processing, and the absence of privileged runtime access as product requirements. TrustedRouter applies the same basic demand to a public-source AI gateway: identify the code that will receive the prompt before trusting it with the prompt.</p>
+<p>Here is what happens on a normal request to <span class="mono">api.trustedrouter.com</span>:</p>
+<ol>
+  <li>The client opens TLS directly to a regional TrustedRouter gateway. The TLS private key and HTTP request terminate inside GCP Confidential Space.</li>
+  <li>The gateway asks the control plane to authorize the API key and choose eligible routes. That exchange contains billing and routing metadata, not the prompt body.</li>
+  <li>The gateway calls the selected model provider, streams the answer back, and settles integer token costs against the authorization.</li>
+  <li>The control plane records metadata such as model, provider, token counts, latency, status, and cost. The prompt and answer stay out of that database and its logs.</li>
+</ol>
+<p><a href="https://cloud.google.com/confidential-computing/confidential-space/docs/confidential-space-overview">GCP Confidential Space</a> runs the gateway container on a Confidential VM with hardware isolation and remote attestation. TrustedRouter uses the production image. The public verifier rejects a debug image because Google's debug variant enables operator access that is unacceptable for sensitive production prompts.</p>
+<p>TrustedRouter also binds the attestation to the live TLS connection. The signed token covers the certificate presented on that connection and an RFC 9266 TLS exporter derived from that exact session. This matters because a valid token fetched through one connection should not be reusable to bless a different proxy connection. The verifier keeps the socket open and confirms that the follow-up request stays on the attested session.</p>
+<p>You can have an agent verify the live service now. This uses the public release record, checks out the source commit named by that release, and runs the strict verifier from the same commit. It does not pipe downloaded code straight into a shell, so the agent can inspect the verifier first.</p>
+<pre><code>release="$(mktemp)"
+curl -fsS https://trust.trustedrouter.com/gcp-release.json -o "$release"
+commit="$(jq -r '.source_commit' "$release")"
+digest="$(jq -r '.image_digest' "$release")"
+
+git clone https://github.com/Lore-Hex/quill-cloud-proxy.git
+cd quill-cloud-proxy
+git checkout "$commit"
+
+# Read tools/verify-attestation.py, then run it.
+uv run --script tools/verify-attestation.py \
+  --api-host api.trustedrouter.com \
+  --expect-digest "$digest" \
+  --samples 4</code></pre>
+<p>A passing run confirms a Google-signed Confidential Space token, a fresh nonce, the expected audience and image digest, production debug state, the TLS leaf certificate, the TLS session exporter, and repeated requests on the same attested socket. The <a href="https://trust.trustedrouter.com/gcp-release.json">release record</a> names the source commit and deployed image. The repository also includes <a href="https://github.com/Lore-Hex/quill-cloud-proxy/blob/main/tools/verify-build.sh">a full rebuild verifier</a> for an engineer who wants to compare the published binary with a local build.</p>
+<p>What does that prove? It proves that the gateway at the other end of the verified TLS session is running the measured production image and that the connection is bound to that workload. The source and verifier are public, so an engineer can inspect the code paths that handle prompts, logging, settlement, and provider calls. It does not prove the code has no bugs, that your own machine is clean, or that every downstream model provider uses confidential computing.</p>
+<p>The provider boundary is the part people skip. The selected model provider normally receives the prompt. <span class="mono">provider.min_privacy = "zdr"</span> requires a route with a zero-data-retention posture. The stronger <span class="mono">provider.min_privacy = "confidential"</span> requires provider-side confidential compute and end-to-end encryption, and fails closed when no eligible route exists. The model aliases <a href="/models/trustedrouter/e2e"><span class="mono">trustedrouter/e2e</span></a> and <a href="/models/trustedrouter/confidential"><span class="mono">trustedrouter/confidential</span></a> select that same stronger pool.</p>
+<p>The distinction is useful. Attestation proves the TrustedRouter gateway. A confidential provider route extends the protected path through model execution. A ZDR contract governs retention after a provider receives the data. Those are three different properties, and the <a href="/security">security page</a> and <a href="/providers">provider directory</a> expose them separately.</p>
+<p>A privacy policy asks you to believe whoever runs the server. Make the server identify itself before your agent sends the prompt.</p>
+""",
+    ),
+    BlogPost(
         slug="prometheus-2-new-draco-state-of-the-art",
         title="Prometheus 2.0: new DRACO state of the art",
         description=(
