@@ -59,9 +59,9 @@ def test_gcp_wallet_user_email_and_membership_are_uuid_keyed() -> None:
     workspace = store.list_workspaces_for_user(wallet_user.id)[0]
     credit = store.get_credit_account(workspace.id)
     assert credit is not None
-    assert store.typed_credit_snapshot(workspace.id)[0] == 100_000
+    assert store.typed_credit_snapshot(workspace.id)[0] == 0
     assert store.create_wallet_user("0x" + "c" * 40).id == wallet_user.id
-    assert store.typed_credit_snapshot(workspace.id)[0] == 100_000
+    assert store.typed_credit_snapshot(workspace.id)[0] == 0
     invited = store.add_members(workspace.id, ["friend@example.com"], role="member")[0]
     store.remove_members(workspace.id, ["friend@example.com"])
     assert not store.user_is_member(invited.user_id, workspace.id)

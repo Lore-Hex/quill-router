@@ -379,7 +379,7 @@ def test_wallet_challenge_returns_siwe_message(client: TestClient) -> None:
     assert data["expires_at"]
 
 
-def test_wallet_verify_success_creates_active_wallet_only_session_with_starter_credit(
+def test_wallet_verify_success_creates_active_wallet_only_session_with_zero_credits(
     client: TestClient,
 ) -> None:
     private_key = "0x" + "1" * 64
@@ -405,7 +405,7 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_starter_c
     assert user.email_verified is False
     workspace = STORE.list_workspaces_for_user(user.id)[0]
     assert data["workspace_id"] == workspace.id
-    assert live_credit_summary(workspace.id)["total_credits"] == 100_000
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
     session_cookie = client.cookies.get("tr_session")
     assert session_cookie is not None
     session = STORE.get_auth_session_by_raw(session_cookie)
@@ -435,7 +435,7 @@ def test_wallet_verify_success_creates_active_wallet_only_session_with_starter_c
     )
     assert second_verify.status_code == 200
     assert len(STORE.list_workspaces_for_user(user.id)) == 1
-    assert live_credit_summary(workspace.id)["total_credits"] == 100_000
+    assert live_credit_summary(workspace.id)["total_credits"] == 0
 
 
 def test_wallet_verify_replay_rejects_second_use(client: TestClient) -> None:

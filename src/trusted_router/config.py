@@ -41,8 +41,9 @@ class Settings(BaseSettings):
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
 
-    # Starter credit granted exactly once with a new account's first workspace.
-    # $0.10 = 100,000 microdollars. Secondary workspaces receive no grant.
+    # Starter credit granted exactly once with a new email/OAuth account's
+    # first workspace. Wallet-only and secondary workspaces receive no grant.
+    # $0.10 = 100,000 microdollars.
     signup_trial_credit_microdollars: int = 100_000
 
     sentry_dsn: str | None = None

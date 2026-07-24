@@ -6,8 +6,9 @@ MICRODOLLARS_PER_DOLLAR = 1_000_000
 MICRODOLLARS_PER_CENT = 10_000
 TOKENS_PER_MILLION = 1_000_000
 
-# Starter credit granted exactly once with a newly created account. Keep this
-# integer-only so signup never introduces float rounding into the credit ledger.
+# Starter credit granted exactly once with a newly created email/OAuth account.
+# Wallet-only accounts start at zero. Keep this integer-only so signup never
+# introduces float rounding into the credit ledger.
 DEFAULT_SIGNUP_CREDIT_MICRODOLLARS = 10 * MICRODOLLARS_PER_CENT
 
 # Stripe checkout cap ($10,000).

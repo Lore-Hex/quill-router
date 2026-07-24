@@ -569,12 +569,7 @@ class SpannerBigtableStore:
             return None
         return self.get_user(str(record["user_id"]))
 
-    def create_wallet_user(
-        self,
-        address: str,
-        *,
-        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
-    ) -> User:
+    def create_wallet_user(self, address: str) -> User:
         normalized = address.strip().lower()
         existing = self.find_user_by_wallet(normalized)
         if existing is not None:
@@ -602,7 +597,7 @@ class SpannerBigtableStore:
             self._seed_credit_balance_on_create(
                 transaction,
                 workspace.id,
-                trial_credit_microdollars,
+                0,
             )
             return new_user
 

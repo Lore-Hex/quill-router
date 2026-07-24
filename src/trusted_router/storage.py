@@ -364,12 +364,7 @@ class InMemoryStore:
                 return None
             return self.users.get(user_id)
 
-    def create_wallet_user(
-        self,
-        address: str,
-        *,
-        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
-    ) -> User:
+    def create_wallet_user(self, address: str) -> User:
         """Create a fresh user keyed only by wallet address. email and
         email_verified stay unset until the verification flow completes."""
         with self._lock:
@@ -383,7 +378,7 @@ class InMemoryStore:
             self.create_workspace(
                 owner_user_id=new_id,
                 name="Personal Workspace",
-                trial_credit_microdollars=trial_credit_microdollars,
+                trial_credit_microdollars=0,
             )
             return self.users[new_id]
 
