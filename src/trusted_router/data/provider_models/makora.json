@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-07-22T00:02:00Z",
+  "generated_at": "2026-07-24T06:26:04Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11,
   "models": [
@@ -57,9 +57,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 627000,
-      "output_token_price_per_m": 1344000,
-      "cached_input_token_price_per_m": 68860,
+      "input_token_price_per_m": 1390000,
+      "output_token_price_per_m": 2790000,
+      "cached_input_token_price_per_m": 301000,
       "input_modalities": [
         "text"
       ],
@@ -140,9 +140,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 440000,
-      "output_token_price_per_m": 1540400,
-      "cached_input_token_price_per_m": 110000,
+      "input_token_price_per_m": 940000,
+      "output_token_price_per_m": 2800000,
+      "cached_input_token_price_per_m": 180000,
       "input_modalities": [
         "text"
       ],
@@ -182,9 +182,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 328000,
-      "output_token_price_per_m": 1353200,
-      "cached_input_token_price_per_m": 64600,
+      "input_token_price_per_m": 970100,
+      "output_token_price_per_m": 3865000,
+      "cached_input_token_price_per_m": 190120,
       "input_modalities": [
         "text",
         "image"
@@ -366,9 +366,9 @@
       "endpoints": [
         "chat/completions"
       ],
-      "input_token_price_per_m": 1020000,
-      "output_token_price_per_m": 3400000,
-      "cached_input_token_price_per_m": 161500,
+      "input_token_price_per_m": 720000,
+      "output_token_price_per_m": 2380000,
+      "cached_input_token_price_per_m": 120000,
       "input_modalities": [
         "text"
       ],

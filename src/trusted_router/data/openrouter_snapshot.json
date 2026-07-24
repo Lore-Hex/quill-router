@@ -2980,9 +2980,9 @@
           "tr_provider_slug": "makora",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.000000627",
-            "completion": "0.000001344",
-            "input_cache_read": "0.00000006886"
+            "prompt": "0.00000139",
+            "completion": "0.00000279",
+            "input_cache_read": "0.000000301"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -10099,9 +10099,9 @@
           "tr_provider_slug": "makora",
           "context_length": 262144,
           "pricing": {
-            "prompt": "0.000000328",
-            "completion": "0.0000013532",
-            "input_cache_read": "0.0000000646"
+            "prompt": "0.0000009701",
+            "completion": "0.000003865",
+            "input_cache_read": "0.00000019012"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -24073,9 +24073,9 @@
           "tr_provider_slug": "makora",
           "context_length": 1048576,
           "pricing": {
-            "prompt": "0.00000044",
-            "completion": "0.0000015404",
-            "input_cache_read": "0.00000011"
+            "prompt": "0.00000094",
+            "completion": "0.0000028",
+            "input_cache_read": "0.00000018"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scripts.pricing.base import ModelPrice, ProviderPricingResult
 from scripts.pricing.providers import baseten, wafer
 
 
@@ -22,10 +23,20 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
         "data": [
             {
                 "id": "zai-org/GLM-5.2",
+                "context_length": 524288,
                 "pricing": {
                     "prompt": "0.0000014",
                     "completion": "0.0000044",
-                    "input_cache_read": "0.00000026",
+                    "input_cache_read": "0.00000014",
+                },
+            },
+            {
+                "id": "zai-org/GLM-5.2-Fast",
+                "context_length": 524288,
+                "pricing": {
+                    "prompt": "0.0000021",
+                    "completion": "0.0000066",
+                    "input_cache_read": "0.00000021",
                 },
             },
             {
@@ -64,19 +75,115 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
 
     result = baseten.fetch()
     glm = result.prices["z-ai/glm-5.2"]
+    glm_fast = result.prices["z-ai/glm-5.2-fast"]
     kimi = result.prices["moonshotai/kimi-k2.7-code"]
     inkling = result.prices["thinkingmachines/inkling-1m"]
 
     assert glm.prompt_micro_per_m == 1_400_000
     assert glm.completion_micro_per_m == 4_400_000
-    assert glm.tiers[0].prompt_cached_micro_per_m == 260_000
+    assert glm.tiers[0].prompt_cached_micro_per_m == 140_000
+    assert glm_fast.prompt_micro_per_m == 2_100_000
+    assert glm_fast.completion_micro_per_m == 6_600_000
+    assert glm_fast.tiers[0].prompt_cached_micro_per_m == 210_000
     assert kimi.prompt_micro_per_m == 950_000
     assert kimi.completion_micro_per_m == 4_000_000
     assert inkling.prompt_micro_per_m == 1_000_000
     assert inkling.completion_micro_per_m == 4_050_000
     assert inkling.tiers[0].prompt_cached_micro_per_m == 170_000
     assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "zai-org/GLM-5.2"
+    assert baseten.UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] == "zai-org/GLM-5.2-Fast"
     assert baseten.UPSTREAM_ID_MAP["thinkingmachines/inkling-1m"] == "thinkingmachines/inkling"
+
+
+def test_baseten_provider_appends_new_priced_models_to_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "baseten.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "baseten",
+                "source": baseten.URL,
+                "generated_at": "2026-01-01T00:00:00Z",
+                "model_count": 1,
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai-org/GLM-5.2",
+                        "display_name": "GLM 5.2",
+                        "context_length": 262144,
+                        "endpoints": ["chat/completions"],
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(baseten, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(
+        baseten,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            "z-ai/glm-5.2": {
+                "id": "z-ai/glm-5.2",
+                "upstream_id": "zai-org/GLM-5.2",
+                "display_name": "GLM 5.2",
+                "context_length": 524288,
+                "endpoints": ["chat/completions"],
+            },
+            "z-ai/glm-5.2-fast": {
+                "id": "z-ai/glm-5.2-fast",
+                "upstream_id": "zai-org/GLM-5.2-Fast",
+                "display_name": "GLM 5.2 Fast",
+                "context_length": 524288,
+                "endpoints": ["chat/completions"],
+            },
+        },
+    )
+    result = ProviderPricingResult(
+        slug="baseten",
+        source="api",
+        fetched_url=baseten.URL,
+        prices={
+            "z-ai/glm-5.2": ModelPrice(
+                1_400_000,
+                4_400_000,
+                prompt_cached_micro_per_m=140_000,
+            ),
+            "z-ai/glm-5.2-fast": ModelPrice(
+                2_100_000,
+                6_600_000,
+                prompt_cached_micro_per_m=210_000,
+            ),
+        },
+    )
+
+    notes = baseten.write_provider_manifest(result)
+
+    assert notes == ["baseten: refreshed provider_models/baseten.json (2 priced rows, appended 1)"]
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {row["id"]: row for row in raw["models"]}
+    assert raw["model_count"] == 2
+    assert by_id["z-ai/glm-5.2"]["context_length"] == 524288
+    assert by_id["z-ai/glm-5.2"]["cached_input_token_price_per_m"] == 140_000
+    assert by_id["z-ai/glm-5.2-fast"] == {
+        "display_name": "GLM 5.2 Fast",
+        "title": "zai-org/GLM-5.2-Fast",
+        "model_type": "chat",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+        "endpoints": ["chat/completions"],
+        "status": 1,
+        "id": "z-ai/glm-5.2-fast",
+        "upstream_id": "zai-org/GLM-5.2-Fast",
+        "context_length": 524288,
+        "input_token_price_per_m": 2_100_000,
+        "output_token_price_per_m": 6_600_000,
+        "cached_input_token_price_per_m": 210_000,
+    }
 
 
 def test_wafer_fetch_discovers_prices_and_native_ids(monkeypatch) -> None:  # noqa: ANN001

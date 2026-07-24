@@ -114,6 +114,7 @@ _BASETEN_MODEL_IDS = {
     "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
     "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": "nvidia/nemotron-3-ultra-550b-a55b",
     "zai-org/GLM-5.2": "z-ai/glm-5.2",
+    "zai-org/GLM-5.2-Fast": "z-ai/glm-5.2-fast",
     "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
 }
 
