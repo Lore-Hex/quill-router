@@ -13,7 +13,7 @@ os.environ["TR_STORAGE_BACKEND"] = "memory"
 
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.money import DEFAULT_TRIAL_CREDIT_MICRODOLLARS
+from trusted_router.money import MICRODOLLARS_PER_DOLLAR
 from trusted_router.storage import STORE, InMemoryStore, configure_store
 
 
@@ -26,18 +26,12 @@ def reset_store() -> None:
 
 @pytest.fixture(autouse=True)
 def auto_credit_test_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pre-credit every workspace created during a test with the default
-    trial amount.
+    """Pre-credit every workspace created during a test with starter credit.
 
-    Production policy (storage.py / storage_gcp.py) now creates new
-    workspaces at $0 — the trial credit is granted by the Stripe
-    webhook only after a valid card attaches (see
-    routes/internal/webhook.py). The tests under tests/ pre-date that
-    change and assume a freshly-signed-up user can immediately make a
-    chat completion / authorize a gateway request without first going
-    through Stripe Checkout. Rather than touch ~30 tests, we wrap the
-    backing InMemoryStore's `create_workspace` here so they keep
-    getting the implicit "card already attached" credit.
+    Production grants starter credit only to the first account workspace.
+    Older tests create workspaces directly and assume enough balance for an
+    inference request, so this fixture preserves that convenience. Explicit
+    values, including zero for secondary workspaces, are always respected.
 
     The wrap targets `InMemoryStore.create_workspace` at the CLASS
     level so it survives `configure_store(...)` calls inside tests
@@ -69,22 +63,15 @@ def auto_credit_test_workspaces(monkeypatch: pytest.MonkeyPatch) -> None:
             name,
             trial_credit_microdollars=trial_credit_microdollars,
         )
-        # Respect explicit trial_credit_microdollars=0 — wallet sign-in
-        # passes that on purpose and asserts the workspace stays at $0.
-        # Only auto-grant when the caller didn't specify a value at all
-        # (i.e. inherits the new "$0 default"), restoring the pre-change
-        # implicit behavior for tests that don't care about the policy.
+        # Only auto-grant when the caller did not specify a policy amount.
         if trial_credit_microdollars is None:
-            # Use the SAME event_id the production webhook uses
-            # (routes/internal/webhook.py::_grant_trial_credit_on_card_attach).
-            # That way if a test then exercises the webhook flow on the
-            # same workspace, the webhook's grant call is correctly
-            # dedup'd to a no-op — exactly as it would be in production
-            # for a workspace that already has a trial credit on file.
             self.credit_workspace_once(
                 ws.id,
-                DEFAULT_TRIAL_CREDIT_MICRODOLLARS,
-                f"trial:{ws.id}",
+                # This is test execution budget, not the product's $0.10
+                # signup grant. Some billing tests reserve more than ten
+                # cents to exercise large-request and tool-cost paths.
+                10 * MICRODOLLARS_PER_DOLLAR,
+                f"test-starter:{ws.id}",
             )
         return ws
 

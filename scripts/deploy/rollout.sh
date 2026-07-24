@@ -84,6 +84,9 @@ ENV_VARS=(
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
   "TR_STORAGE_BACKEND=spanner-bigtable"
+  # Exactly $0.10 once per newly created account. Keep this explicit in the
+  # rollout so a stale Cloud Run env override cannot silently change policy.
+  "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"
   "TR_GCP_PROJECT_ID=${PROJECT_ID}"
   "TR_SPANNER_INSTANCE_ID=${SPANNER_INSTANCE_ID}"
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"

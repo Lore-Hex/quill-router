@@ -41,11 +41,9 @@ class Settings(BaseSettings):
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
 
-    # Free "trial" credit granted to a new workspace the first time a valid
-    # payment card is attached (routes/internal/webhook.py). Default 0 = NO free
-    # credit for new users (policy as of 2026-06-25); a card attach saves the
-    # method but grants nothing. Set to e.g. 10_000_000 ($10) to re-enable.
-    signup_trial_credit_microdollars: int = 0
+    # Starter credit granted exactly once with a new account's first workspace.
+    # $0.10 = 100,000 microdollars. Secondary workspaces receive no grant.
+    signup_trial_credit_microdollars: int = 100_000
 
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.05
@@ -231,6 +229,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def production_is_fail_closed(self) -> Settings:
         environment = self.environment.lower()
+        if self.signup_trial_credit_microdollars < 0:
+            raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
         if (

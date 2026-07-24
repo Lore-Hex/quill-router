@@ -9,6 +9,12 @@ from scripts.check_price_coverage import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
+
+
 def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()

@@ -9,7 +9,9 @@
       <div class="secret-row"><code>{{ revealed_key }}</code></div>
       <div class="signup-foot signup-foot-flush">Workspace <span class="mono">{{ workspace_name }}</span></div>
     </div>
-    {% if trial_credit_microdollars == 0 %}
+    {% if trial_credit_microdollars > 0 %}
+    <p class="microcopy">{{ trial_credit }} in starter credit is ready. Try a fast, inexpensive model now; no card is required.</p>
+    {% else %}
     <p class="microcopy">Add a card on the <a href="/console/credits">Credits</a> page to start routing — prepaid, you pay only for what you use. No charge to add it; Stripe just verifies the card.</p>
     {% endif %}
     <p>Use this key in the OpenAI SDK by setting <code>base_url={{ api_base_url }}</code>.</p>

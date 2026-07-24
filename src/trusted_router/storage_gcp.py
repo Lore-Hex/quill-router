@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.storage import (
     AcquisitionAttribution,
     ApiKey,
@@ -281,7 +282,13 @@ class SpannerBigtableStore:
             occurred_at=occurred_at,
         )
 
-    def ensure_user(self, user_id: str, email: str | None = None) -> User:
+    def ensure_user(
+        self,
+        user_id: str,
+        email: str | None = None,
+        *,
+        trial_credit_microdollars: int | None = None,
+    ) -> User:
         normalized_email = _normalize_email(email or user_id)
 
         def txn(transaction: Any) -> User:
@@ -298,16 +305,16 @@ class SpannerBigtableStore:
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
-            # New accounts start at $0; trial credit is granted on first
-            # valid-card attach via the Stripe webhook. See
-            # routes/internal/webhook.py + the create_workspace doc above.
+            initial_total = (
+                0 if trial_credit_microdollars is None else trial_credit_microdollars
+            )
             credit = CreditAccount(workspace_id=workspace.id)
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": new_user.id})
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(transaction, workspace.id, 0)
+            self._seed_credit_balance_on_create(transaction, workspace.id, initial_total)
             return new_user
 
         return self._run_in_transaction(txn)
@@ -317,10 +324,15 @@ class SpannerBigtableStore:
         *,
         email: str,
         workspace_name: str | None = None,
+        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
     ) -> SignupResult | None:
         if self.find_user_by_email(email) is not None:
             return None
-        user = self.ensure_user(email, email=email)
+        user = self.ensure_user(
+            email,
+            email=email,
+            trial_credit_microdollars=trial_credit_microdollars,
+        )
         workspace = self.list_workspaces_for_user(user.id)[0]
         if workspace_name:
             workspace.name = workspace_name
@@ -401,12 +413,8 @@ class SpannerBigtableStore:
     ) -> Workspace:
         workspace = Workspace(id=str(uuid.uuid4()), name=name, owner_user_id=owner_user_id)
         member = Member(workspace_id=workspace.id, user_id=owner_user_id, role="owner")
-        # Trial credit is NOT granted at workspace-creation time anymore.
-        # Policy moved to: grant the trial credit only after a valid
-        # credit card is attached (via the Stripe setup_intent.succeeded
-        # webhook in routes/internal/webhook.py). Stops free-credit
-        # farming with throwaway emails. Wallet sign-in already passed
-        # 0 explicitly, so its behavior is unchanged.
+        # Account creation passes the configured starter amount explicitly.
+        # Secondary workspaces omit it and therefore start at zero.
         initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
         credit = CreditAccount(workspace_id=workspace.id)
         with self._database.batch() as batch:
@@ -561,7 +569,12 @@ class SpannerBigtableStore:
             return None
         return self.get_user(str(record["user_id"]))
 
-    def create_wallet_user(self, address: str) -> User:
+    def create_wallet_user(
+        self,
+        address: str,
+        *,
+        trial_credit_microdollars: int = DEFAULT_SIGNUP_CREDIT_MICRODOLLARS,
+    ) -> User:
         normalized = address.strip().lower()
         existing = self.find_user_by_wallet(normalized)
         if existing is not None:
@@ -586,7 +599,11 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
             self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
-            self._seed_credit_balance_on_create(transaction, workspace.id, 0)
+            self._seed_credit_balance_on_create(
+                transaction,
+                workspace.id,
+                trial_credit_microdollars,
+            )
             return new_user
 
         return self._run_in_transaction(txn)
