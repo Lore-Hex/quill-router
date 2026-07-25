@@ -2801,7 +2801,11 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     ai_iq = (
         ai_iq_for_model(model.id, test_mode=test_mode) if model.id not in META_MODEL_IDS else None
     )
-    if model.id in META_MODEL_IDS:
+    if (
+        model.id in META_MODEL_IDS
+        and model.prompt_price_microdollars_per_million_tokens == 0
+        and model.completion_price_microdollars_per_million_tokens == 0
+    ):
         candidates = meta_candidate_models(model.id)
         prompt = _price_range(candidates, "prompt_price_microdollars_per_million_tokens")
         completion = _price_range(candidates, "completion_price_microdollars_per_million_tokens")
@@ -2960,6 +2964,10 @@ def _model_detail_view(
 ) -> dict[str, object]:
     provider = PROVIDERS[model.provider]
     is_meta = model.id in META_MODEL_IDS
+    fixed_price = is_meta and (
+        model.prompt_price_microdollars_per_million_tokens > 0
+        or model.completion_price_microdollars_per_million_tokens > 0
+    )
     endpoints = endpoints_for_model(model.id)
     ai_iq = None if is_meta else ai_iq_for_model(model.id, test_mode=test_mode)
     candidate_models = []
@@ -3012,6 +3020,11 @@ def _model_detail_view(
         "publisher_slug": model.provider,
         "context_length": f"{model.context_length:,}",
         "context_length_int": model.context_length,
+        "fixed_price": fixed_price,
+        "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
+        "completion_price": _price(
+            model.completion_price_microdollars_per_million_tokens
+        ),
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
         "providers": _endpoint_provider_views(endpoints, fallback_provider=model.provider),

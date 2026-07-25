@@ -973,6 +973,8 @@ LIBERTY_1_0_1M_MODEL_ID = "trustedrouter/liberty-1.0-1m"
 
 LIBERTY_2_0_MODEL_ID = "trustedrouter/liberty-2.0"
 
+PARASAIL_LIBERTY_2_0_MODEL_ID = "parasail/liberty-2.0"
+
 LIBERTY_3_0_MODEL_ID = "trustedrouter/liberty-3.0"
 
 US_PROVIDER_ONLY_MODEL_IDS = frozenset(
@@ -1067,6 +1069,7 @@ META_MODEL_IDS = frozenset(
         LIBERTY_1_0_MODEL_ID,
         LIBERTY_1_0_1M_MODEL_ID,
         LIBERTY_2_0_MODEL_ID,
+        PARASAIL_LIBERTY_2_0_MODEL_ID,
         LIBERTY_3_0_MODEL_ID,
         SYNTH_MODEL_ID,
         IRIS_MODEL_ID,
@@ -1407,6 +1410,11 @@ ADVISOR_CATALOG_MODEL_ORDERS: dict[str, tuple[str, ...]] = {
         LIBERTY_1_0_1M_MODEL_ID,
         LIBERTY_1_0_MODEL_ID,
     ),
+    PARASAIL_LIBERTY_2_0_MODEL_ID: (
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        LIBERTY_1_0_1M_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+    ),
     LIBERTY_3_0_MODEL_ID: (
         "nvidia/nemotron-3-ultra-550b-a55b",
         "google/gemma-4-31b-it",
@@ -1696,6 +1704,7 @@ for _advisor_model_id in (
     OPEN_PATCHER_G2_MODEL_ID,
     ATHENA_MODEL_ID,
     LIBERTY_2_0_MODEL_ID,
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
     LIBERTY_3_0_MODEL_ID,
 ):
     ORCHESTRATION_PRIMITIVE_BY_MODEL_ID[_advisor_model_id] = "advisor"

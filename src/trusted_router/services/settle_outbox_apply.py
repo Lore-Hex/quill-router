@@ -17,6 +17,8 @@ from google.api_core.exceptions import (
 from pydantic import ValidationError
 
 from trusted_router.catalog import PROVIDERS, endpoint_for_id
+from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
+from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.storage import STORE, Generation, typed_billing_store
 from trusted_router.storage_gcp_authorize import SettleOutcome
@@ -128,8 +130,25 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
     # Do not short-circuit auth.settled here. The claim/finalize layer is the
     # authority; this pre-read is only for body construction and is TOCTOU-prone.
     usage_type = UsageType.coerce(row.selected_usage_type)
+    operator_cost_raw = body_dict.pop(PARTNER_OPERATOR_COST_SETTLE_FIELD, None)
     try:
-        generation = _frozen_generation(auth, row, body, body_dict, usage_type) if success else None
+        operator_cost = (
+            _operator_cost_microdollars(operator_cost_raw)
+            if operator_cost_raw is not None
+            else None
+        )
+        generation = (
+            _frozen_generation(
+                auth,
+                row,
+                body,
+                body_dict,
+                usage_type,
+                operator_cost_microdollars=operator_cost,
+            )
+            if success
+            else None
+        )
     except (ValueError, TypeError):
         # MF3: deterministic-bad frozen rows dead-letter cleanly. Inline would
         # 500 at request time where the enclave retries; the drain must classify.
@@ -156,11 +175,17 @@ def _frozen_generation(
     body: GatewaySettleRequest,
     body_dict: dict[str, Any],
     usage_type: UsageType,
+    *,
+    operator_cost_microdollars: int | None = None,
 ) -> Generation:
     # MF5: rebuild generation metadata from the row's frozen decision and
     # settle_body only. Retired endpoints fall back to parsing the stored id;
     # pricing/catalog drift must not change the amount or provider attribution.
-    provider_slug = _provider_slug(row.selected_endpoint_id)
+    provider_slug = (
+        "parasail"
+        if row.model_id == PARASAIL_LIBERTY_2_0_MODEL_ID
+        else _provider_slug(row.selected_endpoint_id)
+    )
     provider_name = PROVIDERS[provider_slug].name if provider_slug in PROVIDERS else provider_slug
     _uncached_input, total_input, _cache_read, _cache_creation = normalized_prompt_accounting(
         provider_slug, body
@@ -175,7 +200,14 @@ def _frozen_generation(
         input_tokens=total_input,
         output_tokens=body.output_count,
         actual_cost_microdollars=row.actual_cost_micro,
+        operator_cost_microdollars=operator_cost_microdollars,
     )
+
+
+def _operator_cost_microdollars(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("invalid frozen operator cost")
+    return value
 
 
 def _provider_slug(endpoint_id: str | None) -> str:
