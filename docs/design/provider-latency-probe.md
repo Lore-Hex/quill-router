@@ -22,8 +22,8 @@ Every production inference already writes a privacy-safe `ProviderBenchmarkSampl
 tenant identifiers, no prompt/output. It carries `first_token_milliseconds`
 (TTFT), `ttfb_milliseconds` (TTFB), `elapsed_milliseconds`, `status`,
 `speed_tokens_per_second`, `error_type/status`, region, and an internal
-`source` field (`organic` | `synthetic`). Indexed in Bigtable by provider and
-provider#model.
+`source` field (`organic` | `synthetic` | `synthetic_throughput`). Indexed in
+Bigtable by provider and provider#model.
 
 ### Synthetic rotation probe (coverage + drift)
 `provider_rotation_probe()` (`synthetic/probes.py`) is "just a synthetic user":
@@ -36,10 +36,25 @@ to `POST /internal/synthetic/benchmark` — deliberately separate from the
 `/status` router-health SLO. Dark-launched behind `TR_SYNTHETIC_ROTATION_ENABLED`
 (+ `TR_SYNTHETIC_ROTATION_PER_PASS`).
 
+### Sustained throughput probe
+`provider_throughput_probe()` measures real post-first-token decode speed rather
+than dividing token count by total request latency. A deterministic selector
+chooses 200 routes: every active chat provider receives one slot, models used by
+TrustedRouter aliases and orchestration presets rank first, recent launches get
+a bounded bonus, and measured provider rank breaks ties.
+
+The US monitor runs one sustained route every two minutes with a 512-token cap.
+That is 3.6 samples per route per day, roughly 25 per week and 108 per 30 days.
+The probe requires final provider usage, discards response bytes, and persists
+only token counts, timing, route, finish reason, and calculated cost. These
+samples use `source="synthetic_throughput"` and contribute only throughput:
+they cannot change uptime, TTFT, API drift, route-health alerts, or app usage.
+
 ### Aggregation + surfaces
-`synthetic/leaderboard.py` aggregates samples (organic + synthetic combined;
-`source` not surfaced publicly) into per-model and per-provider stats. Surfaced,
-all behind short caches (no per-view store scan):
+`synthetic/leaderboard.py` aggregates organic and short synthetic samples for
+availability/latency. When sustained samples exist for a route, their median
+replaces the older end-to-end token-rate estimate. `source` is not surfaced
+publicly. All pages remain behind short caches (no per-view store scan):
 - **`/leaderboard`** — ranked providers + models by measured TTFT/TTFB/throughput/uptime.
 - **`/models/{id}/performance`** — per-provider measured table for that model.
 - **`/providers/{slug}`** — provider aggregate + per-model table.
@@ -63,9 +78,11 @@ provider/model only. Probe content is "reply exactly PONG". No content is ever
 read by the probe or proxy. Consistent with the "0 prompt/output logs" promise.
 
 ## Cost
-Upstream tokens only; folds into the existing per-minute monitor job (no new
-infra). Two-stage random over prepaid endpoints, `max_tokens=16` → ~$10–30/mo at
-the launch cadence. Dark-launch flag lets us watch real spend before ramping.
+Upstream tokens only; folds into the existing monitor job with no new service.
+The short random probe remains mostly `max_tokens=16`. The sustained set has a
+512-token cap and one US request per two-minute invocation. A deterministic CI
+test prices all 200 selected routes at their full cap and enforces a reviewed
+$75/month upper bound; the July 2026 catalog projects about $52/month.
 
 ## Shipped in
 PRs #34 (probe + TTFB/source), #35 (drift), #36 (aggregation), #37 (/leaderboard),

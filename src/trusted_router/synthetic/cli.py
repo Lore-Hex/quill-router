@@ -18,8 +18,13 @@ from trusted_router.synthetic.probes import (
     gateway_billing_probe,
     gateway_fallback_probe,
     provider_rotation_probe,
+    provider_throughput_probe,
     rotation_candidates,
     run_synthetic_once,
+)
+from trusted_router.synthetic.throughput import (
+    choose_throughput_target,
+    throughput_candidates,
 )
 
 # Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-granularity
@@ -33,11 +38,20 @@ _DEFAULT_RUN_SPACING_SECONDS = 30.0
 # take per pass. Dark-launched: only runs when TR_SYNTHETIC_ROTATION_ENABLED is
 # truthy, so we can watch real token spend for ~24h before ramping.
 _DEFAULT_ROTATION_PER_PASS = 4
+_DEFAULT_THROUGHPUT_ROUTE_LIMIT = 200
+_DEFAULT_THROUGHPUT_MAX_TOKENS = 512
+_DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
+_DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
+_DEFAULT_THROUGHPUT_INTERVAL_SECONDS = 120
 
 
 async def _one_probe_pass(
-    *, settings: Settings, monitor_region: str, control_plane: str,
-    internal_token: str | None, api_key: str | None,
+    *,
+    settings: Settings,
+    monitor_region: str,
+    control_plane: str,
+    internal_token: str | None,
+    api_key: str | None,
     timeout: httpx.Timeout,
 ) -> list[SyntheticProbeSample]:
     synthetic_task = asyncio.create_task(
@@ -90,6 +104,13 @@ async def _probe_and_rotation_pass(
     rotation_enabled: bool,
     rotation_per_pass: int,
     rotation_rng: random.Random,
+    throughput_enabled: bool = False,
+    throughput_region: str = "us-central1",
+    throughput_route_limit: int = _DEFAULT_THROUGHPUT_ROUTE_LIMIT,
+    throughput_max_tokens: int = _DEFAULT_THROUGHPUT_MAX_TOKENS,
+    throughput_minimum_output_tokens: int = _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS,
+    throughput_timeout_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS,
+    throughput_interval_seconds: int = _DEFAULT_THROUGHPUT_INTERVAL_SECONDS,
 ) -> tuple[list[SyntheticProbeSample], list[ProviderBenchmarkSample]]:
     probe_task = asyncio.create_task(
         _one_probe_pass(
@@ -101,25 +122,53 @@ async def _probe_and_rotation_pass(
             timeout=timeout,
         )
     )
+    benchmark_tasks: list[asyncio.Task[list[ProviderBenchmarkSample]]] = []
     if rotation_enabled and api_key:
-        rotation_task = asyncio.create_task(
-            _rotation_pass(
-                settings=settings,
-                monitor_region=monitor_region,
-                api_key=api_key,
-                timeout=timeout,
-                count=rotation_per_pass,
-                rng=rotation_rng,
+        benchmark_tasks.append(
+            asyncio.create_task(
+                _rotation_pass(
+                    settings=settings,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    timeout=timeout,
+                    count=rotation_per_pass,
+                    rng=rotation_rng,
+                )
             )
         )
-        probe_samples, rotation_samples = await asyncio.gather(probe_task, rotation_task)
-        return probe_samples, rotation_samples
-    return await probe_task, []
+    if throughput_enabled and api_key and monitor_region == throughput_region:
+        benchmark_tasks.append(
+            asyncio.create_task(
+                _throughput_pass(
+                    settings=settings,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    route_limit=throughput_route_limit,
+                    max_tokens=throughput_max_tokens,
+                    minimum_output_tokens=throughput_minimum_output_tokens,
+                    timeout_seconds=throughput_timeout_seconds,
+                    interval_seconds=throughput_interval_seconds,
+                )
+            )
+        )
+    if not benchmark_tasks:
+        return await probe_task, []
+    probe_samples, benchmark_groups = await asyncio.gather(
+        probe_task,
+        asyncio.gather(*benchmark_tasks),
+    )
+    benchmark_samples = [sample for group in benchmark_groups for sample in group]
+    return probe_samples, benchmark_samples
 
 
 async def _rotation_pass(
-    *, settings: Settings, monitor_region: str, api_key: str,
-    timeout: httpx.Timeout, count: int, rng: random.Random,
+    *,
+    settings: Settings,
+    monitor_region: str,
+    api_key: str,
+    timeout: httpx.Timeout,
+    count: int,
+    rng: random.Random,
 ) -> list[ProviderBenchmarkSample]:
     pool = rotation_candidates()
     target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
@@ -143,6 +192,41 @@ async def _rotation_pass(
         if not probes:
             return []
         return list(await asyncio.gather(*probes))
+
+
+async def _throughput_pass(
+    *,
+    settings: Settings,
+    monitor_region: str,
+    api_key: str,
+    route_limit: int,
+    max_tokens: int,
+    minimum_output_tokens: int,
+    timeout_seconds: float,
+    interval_seconds: int,
+) -> list[ProviderBenchmarkSample]:
+    candidates = throughput_candidates(limit=route_limit)
+    picked = choose_throughput_target(
+        candidates,
+        interval_seconds=interval_seconds,
+    )
+    if picked is None:
+        return []
+    provider, model = picked
+    target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+        return [
+            await provider_throughput_probe(
+                client,
+                target,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                provider=provider,
+                model=model,
+                max_tokens=max_tokens,
+                minimum_output_tokens=minimum_output_tokens,
+            )
+        ]
 
 
 async def _post_route_health(
@@ -218,6 +302,55 @@ async def run() -> int:
         int(os.environ.get("TR_SYNTHETIC_ROTATION_PER_PASS", str(_DEFAULT_ROTATION_PER_PASS))),
     )
     rotation_rng = random.Random()  # noqa: S311 - picks which model to probe, not cryptographic
+    throughput_enabled = os.environ.get("TR_SYNTHETIC_THROUGHPUT_ENABLED", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    throughput_region = os.environ.get("TR_SYNTHETIC_THROUGHPUT_REGION", "us-central1")
+    throughput_route_limit = max(
+        0,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_THROUGHPUT_ROUTE_LIMIT",
+                str(_DEFAULT_THROUGHPUT_ROUTE_LIMIT),
+            )
+        ),
+    )
+    throughput_max_tokens = max(
+        2,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS",
+                str(_DEFAULT_THROUGHPUT_MAX_TOKENS),
+            )
+        ),
+    )
+    throughput_minimum_output_tokens = max(
+        2,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS",
+                str(_DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS),
+            )
+        ),
+    )
+    throughput_timeout_seconds = float(
+        os.environ.get(
+            "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS",
+            str(_DEFAULT_THROUGHPUT_TIMEOUT_SECONDS),
+        )
+    )
+    throughput_interval_seconds = max(
+        1,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS",
+                str(_DEFAULT_THROUGHPUT_INTERVAL_SECONDS),
+            )
+        ),
+    )
 
     all_samples: list[SyntheticProbeSample] = []
     rotation_samples: list[ProviderBenchmarkSample] = []
@@ -233,6 +366,13 @@ async def run() -> int:
             rotation_enabled=rotation_enabled,
             rotation_per_pass=rotation_per_pass,
             rotation_rng=rotation_rng,
+            throughput_enabled=throughput_enabled,
+            throughput_region=throughput_region,
+            throughput_route_limit=throughput_route_limit,
+            throughput_max_tokens=throughput_max_tokens,
+            throughput_minimum_output_tokens=throughput_minimum_output_tokens,
+            throughput_timeout_seconds=throughput_timeout_seconds,
+            throughput_interval_seconds=throughput_interval_seconds,
         )
         all_samples.extend(pass_samples)
         rotation_samples.extend(pass_rotation_samples)

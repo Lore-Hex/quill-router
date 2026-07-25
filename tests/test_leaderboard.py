@@ -18,6 +18,7 @@ def _sample(
     tps: float | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
+    source: str = "organic",
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
     return ProviderBenchmarkSample(
@@ -33,6 +34,7 @@ def _sample(
         speed_tokens_per_second=tps,
         error_type=error_type,
         error_status=error_status,
+        source=source,
         created_at=created_at,
     )
 
@@ -102,6 +104,53 @@ def test_empty_samples_produce_empty_leaderboard() -> None:
     assert result["models"] == []
     assert result["providers"] == []
     assert result["total_samples"] == 0
+
+
+def test_sustained_throughput_replaces_legacy_speed_without_affecting_uptime() -> None:
+    samples = [
+        _sample(provider="p", model="p/m", ttft=100, tps=10.0),
+        _sample(
+            provider="p",
+            model="p/m",
+            status="error",
+            error_type="provider_error",
+            error_status=502,
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=400.0,
+            source="synthetic_throughput",
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=600.0,
+            source="synthetic_throughput",
+        ),
+        _sample(
+            provider="p",
+            model="p/m",
+            status="error",
+            error_type="ReadTimeout",
+            source="synthetic_throughput",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+    provider = result["providers"][0]
+
+    assert model["sample_count"] == 2
+    assert model["throughput_sample_count"] == 2
+    assert model["uptime"] == 0.5
+    assert model["p50_tokens_per_second"] == 500.0
+    assert provider["sample_count"] == 2
+    assert provider["throughput_sample_count"] == 2
+    assert provider["uptime"] == 0.5
+    assert provider["p50_tokens_per_second"] == 500.0
+    assert result["total_samples"] == 2
+    assert result["total_throughput_samples"] == 2
 
 
 def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:
@@ -346,12 +395,27 @@ def test_aggregate_still_counts_real_provider_downtime() -> None:
     # still count against uptime (not silently excluded by the config filter).
     samples = [
         _sample(provider="parasail", model="x/y", ttft=100),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="rate_limited", error_status=429),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="ttfb_exceeded", error_status=None),
-        _sample(provider="parasail", model="x/y", status="error",
-                error_type="provider_error", error_status=500),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="rate_limited",
+            error_status=429,
+        ),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="ttfb_exceeded",
+            error_status=None,
+        ),
+        _sample(
+            provider="parasail",
+            model="x/y",
+            status="error",
+            error_type="provider_error",
+            error_status=500,
+        ),
     ]
     result = aggregate_leaderboard(samples)
     model = result["models"][0]
