@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 
 from trusted_router.acquisition import (
+    acquisition_request_is_automated,
     pageview_attribution_fields,
     prepare_request_attribution,
     set_attribution_cookie,
@@ -384,6 +385,8 @@ def _log_public_page_view(request: Request, response: Response, *, latency_ms: f
         "latency_ms": round(latency_ms, 2),
         "referer_host": _referer_host(request),
         "user_agent_family": _user_agent_family(request.headers.get("user-agent", "")),
+        "automated_request": acquisition_request_is_automated(request),
+        "measurement_tier": "server_request",
     }
     extra.update(_utm_fields(request))
     extra.update(pageview_attribution_fields(request))

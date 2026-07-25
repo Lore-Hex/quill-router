@@ -20,10 +20,14 @@ API keys, BYOK keys, email addresses, payment credentials, request bodies, IP
 addresses, or full referring URLs. Click identifiers are retained only in the
 private Spanner record for future consented offline conversion uploads. Logs
 contain booleans indicating which click identifier was present, never its raw
-value.
+value. Public landing events also contain a server-keyed HMAC fingerprint of
+the click identifier. This lets reports deduplicate the same ad click across
+cookie churn without exposing an identifier that an analytics operator can
+reuse outside TrustedRouter.
 
 Requests carrying `Sec-GPC: 1` or `DNT: 1` do not create or use attribution.
-Known crawler user agents do not receive attribution cookies.
+Known crawler, link-preview, prefetch, and prerender requests do not receive
+attribution cookies.
 
 ## Durable Record
 
@@ -37,12 +41,19 @@ record.
 
 Structured metadata-only events are shipped through the existing Axiom logger:
 
-1. `acquisition.sign_in_opened`
-2. `acquisition.signup_completed`
-3. `acquisition.api_key_created`
-4. `acquisition.first_successful_api_call`
-5. `acquisition.credit_purchase_completed`
-6. `acquisition.retained_api_usage_7d`
+1. `acquisition.landing_engaged`
+2. `acquisition.sign_in_opened`
+3. `acquisition.signup_completed`
+4. `acquisition.api_key_created`
+5. `acquisition.first_successful_api_call`
+6. `acquisition.credit_purchase_completed`
+7. `acquisition.retained_api_usage_7d`
+
+`public.page_view` is a server-request metric and is deliberately labeled
+`measurement_tier=server_request`. Paid-landing reports should use
+`acquisition.landing_engaged`, which is emitted only after JavaScript has seen
+the document remain visible for 1.5 seconds. Compare unique click fingerprints,
+not raw server pageviews, with ad-platform clicks.
 
 Workspace and anonymous identifiers are SHA-256 fingerprints in logs. Purchase
 amounts remain integer microdollars. Stripe, PayPal, and stablecoin events are

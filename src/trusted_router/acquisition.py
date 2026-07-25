@@ -36,6 +36,16 @@ _COOKIE_VERSION = 1
 _MAX_COOKIE_BYTES = 3_800
 _ANONYMOUS_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _CLICK_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,256}$")
+_CLICK_ID_FIELDS = ("gclid", "gbraid", "wbraid", "twclid")
+_AUTOMATED_USER_AGENT_TOKENS = (
+    "bot",
+    "crawler",
+    "spider",
+    "facebookexternalhit",
+    "preview",
+    "slack-imgproxy",
+)
+_AUTOMATED_PURPOSE_TOKENS = ("prefetch", "prerender", "preview")
 _TOUCH_FIELDS = frozenset(
     {
         "utm_source",
@@ -323,6 +333,7 @@ def log_browser_funnel_event(request: Request, event: str) -> None:
             "event": f"acquisition.{event}",
             "anonymous_fingerprint": _fingerprint(context.anonymous_id),
             **_safe_touch_log_fields(touch),
+            **_click_id_log_fields(request, touch),
         },
     )
 
@@ -334,6 +345,7 @@ def pageview_attribution_fields(request: Request) -> dict[str, object]:
     return {
         "anonymous_fingerprint": _fingerprint(context.anonymous_id),
         **_safe_touch_log_fields(context.last_touch),
+        **_click_id_log_fields(request, context.last_touch),
     }
 
 
@@ -381,7 +393,7 @@ def _touch_from_request(request: Request) -> dict[str, str]:
         value = _safe_text(request.query_params.get(name), 128)
         if value:
             touch[name] = value
-    for name in ("gclid", "gbraid", "wbraid", "twclid"):
+    for name in _CLICK_ID_FIELDS:
         value = str(request.query_params.get(name) or "").strip()
         if _CLICK_ID_RE.fullmatch(value):
             touch[name] = value
@@ -434,7 +446,11 @@ def _direct_context(request: Request) -> AttributionContext:
 
 
 def _should_capture_request(request: Request) -> bool:
-    if request.method.upper() != "GET" or _privacy_signal_enabled(request):
+    if (
+        request.method.upper() != "GET"
+        or _privacy_signal_enabled(request)
+        or acquisition_request_is_automated(request)
+    ):
         return False
     path = request.url.path
     excluded = (
@@ -448,8 +464,18 @@ def _should_capture_request(request: Request) -> bool:
     )
     if path.startswith(excluded) or path.endswith("_oauth_callback"):
         return False
+    return True
+
+
+def acquisition_request_is_automated(request: Request) -> bool:
     user_agent = request.headers.get("user-agent", "").lower()
-    return not any(token in user_agent for token in ("bot", "crawler", "spider"))
+    if any(token in user_agent for token in _AUTOMATED_USER_AGENT_TOKENS):
+        return True
+    purpose = " ".join(
+        request.headers.get(name, "").lower()
+        for name in ("purpose", "sec-purpose", "x-purpose")
+    )
+    return any(token in purpose for token in _AUTOMATED_PURPOSE_TOKENS)
 
 
 def _has_explicit_campaign_touch(request: Request) -> bool:
@@ -499,6 +525,27 @@ def _cookie_signing_key(settings: Settings) -> bytes:
         b"trustedrouter-attribution-cookie-v1",
         hashlib.sha256,
     ).digest()
+
+
+def _click_id_log_fields(request: Request, touch: dict[str, str]) -> dict[str, str]:
+    settings = getattr(request.app.state, "settings", None)
+    if not isinstance(settings, Settings):
+        return {}
+    key = hmac.new(
+        _cookie_signing_key(settings),
+        b"trustedrouter-attribution-click-fingerprint-v1",
+        hashlib.sha256,
+    ).digest()
+    fields: dict[str, str] = {}
+    for name in _CLICK_ID_FIELDS:
+        value = touch.get(name)
+        if value:
+            fields[f"{name}_fingerprint"] = hmac.new(
+                key,
+                f"{name}:{value}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+    return fields
 
 
 def _cookie_expired(created_at: str) -> bool:

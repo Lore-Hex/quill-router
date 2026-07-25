@@ -95,6 +95,22 @@ function trackFunnelEvent(event) {
         /* measurement is best-effort and must never interrupt sign-in */
     });
 }
+function trackEngagedLanding() {
+    let sent = false;
+    const sendWhenVisible = () => {
+        if (sent || document.visibilityState !== "visible")
+            return;
+        sent = true;
+        document.removeEventListener("visibilitychange", sendWhenVisible);
+        trackFunnelEvent("landing_engaged");
+    };
+    window.setTimeout(() => {
+        sendWhenVisible();
+        if (!sent) {
+            document.addEventListener("visibilitychange", sendWhenVisible);
+        }
+    }, 1500);
+}
 function setSigninError(message) {
     const el = document.getElementById("signinError");
     if (!el)
@@ -211,6 +227,7 @@ function applyAuthAwareChrome() {
 function init() {
     applyAuthAwareChrome();
     applyStoredTheme();
+    trackEngagedLanding();
     document.addEventListener("click", (event) => {
         const target = event.target;
         if (!target)

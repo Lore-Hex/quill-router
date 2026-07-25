@@ -258,6 +258,9 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert "/v1/auth/wallet/challenge" in js.text
     assert "/v1/auth/wallet/verify" in js.text
     assert "eth_requestAccounts" in js.text
+    assert 'trackFunnelEvent("landing_engaged")' in js.text
+    assert 'document.visibilityState !== "visible"' in js.text
+    assert 'fetch("/analytics/events"' in js.text
     assert "alert(" not in js.text
 
     css = client.get("/static/dashboard.css")
