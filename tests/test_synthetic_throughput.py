@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -198,6 +199,38 @@ async def test_throughput_probe_errors_keep_separate_provenance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_throughput_probe_has_a_total_wall_clock_deadline() -> None:
+    class _SlowStream(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            await asyncio.sleep(1)
+            yield b'data: {"choices":[{"delta":{"content":"benchmark"}}]}\n\n'
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_SlowStream())
+
+    target = SyntheticTarget(
+        "throughput",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_throughput_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="slow-provider",
+            model="slow/model",
+            total_timeout_seconds=0.01,
+        )
+
+    assert sample.status == "error"
+    assert sample.source == "synthetic_throughput"
+    assert sample.error_type == "TimeoutError"
+    assert sample.error_status is None
+
+
+@pytest.mark.asyncio
 async def test_throughput_pass_runs_in_configured_region_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -246,6 +279,59 @@ async def test_throughput_pass_runs_in_configured_region_only(
     assert eu_samples == []
     assert eu_benchmarks == []
     assert calls == ["us-central1"]
+
+
+@pytest.mark.asyncio
+async def test_throughput_only_cli_skips_every_health_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_posts: list[dict[str, Any]] = []
+
+    async def forbidden_probe(**_kwargs: Any) -> list[Any]:
+        raise AssertionError("throughput-only mode must not run health probes")
+
+    async def fake_throughput_pass(**_kwargs: Any) -> list[ProviderBenchmarkSample]:
+        return [_benchmark_sample()]
+
+    class _Response:
+        status_code = 200
+        text = '{"data":{"recorded":1}}'
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> None:
+            return None
+
+        async def post(self, url: str, **kwargs: Any) -> _Response:
+            assert url.endswith("/v1/internal/synthetic/benchmark")
+            benchmark_posts.append(kwargs["json"])
+            return _Response()
+
+    settings = Settings(
+        environment="test",
+        sentry_dsn=None,
+        internal_gateway_token="internal",  # noqa: S106 - test placeholder.
+        synthetic_monitor_api_key="sk-test",  # noqa: S106 - test placeholder.
+    )
+    monkeypatch.setattr(cli_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_module, "_one_probe_pass", forbidden_probe)
+    monkeypatch.setattr(cli_module, "_rotation_pass", forbidden_probe)
+    monkeypatch.setattr(cli_module, "_throughput_pass", fake_throughput_pass)
+    monkeypatch.setattr(cli_module.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv("TR_SYNTHETIC_MONITOR_REGION", "us-central1")
+    monkeypatch.setenv("TR_SYNTHETIC_ROTATION_ENABLED", "true")
+    monkeypatch.setenv("TR_SYNTHETIC_THROUGHPUT_ENABLED", "true")
+    monkeypatch.setenv("TR_SYNTHETIC_THROUGHPUT_ONLY", "true")
+    monkeypatch.setenv("TR_SYNTHETIC_THROUGHPUT_REGION", "us-central1")
+
+    assert await cli_module.run() == 0
+    assert len(benchmark_posts) == 1
+    assert benchmark_posts[0]["samples"][0]["source"] == "synthetic_throughput"
 
 
 def _benchmark_sample() -> ProviderBenchmarkSample:

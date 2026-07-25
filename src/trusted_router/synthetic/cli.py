@@ -45,6 +45,13 @@ _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = 120
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in ("1", "true", "yes", "on")
+
+
 async def _one_probe_pass(
     *,
     settings: Settings,
@@ -225,6 +232,7 @@ async def _throughput_pass(
                 model=model,
                 max_tokens=max_tokens,
                 minimum_output_tokens=minimum_output_tokens,
+                total_timeout_seconds=timeout_seconds,
             )
         ]
 
@@ -291,23 +299,14 @@ async def run() -> int:
             str(_DEFAULT_RUN_SPACING_SECONDS),
         )
     )
-    rotation_enabled = os.environ.get("TR_SYNTHETIC_ROTATION_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    rotation_enabled = _env_flag("TR_SYNTHETIC_ROTATION_ENABLED")
     rotation_per_pass = max(
         0,
         int(os.environ.get("TR_SYNTHETIC_ROTATION_PER_PASS", str(_DEFAULT_ROTATION_PER_PASS))),
     )
     rotation_rng = random.Random()  # noqa: S311 - picks which model to probe, not cryptographic
-    throughput_enabled = os.environ.get("TR_SYNTHETIC_THROUGHPUT_ENABLED", "false").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    throughput_enabled = _env_flag("TR_SYNTHETIC_THROUGHPUT_ENABLED")
+    throughput_only = _env_flag("TR_SYNTHETIC_THROUGHPUT_ONLY")
     throughput_region = os.environ.get("TR_SYNTHETIC_THROUGHPUT_REGION", "us-central1")
     throughput_route_limit = max(
         0,
@@ -353,58 +352,94 @@ async def run() -> int:
     )
 
     all_samples: list[SyntheticProbeSample] = []
-    rotation_samples: list[ProviderBenchmarkSample] = []
-    pass_start_monotonic = time.monotonic()
-    for pass_idx in range(runs_per_invocation):
-        pass_samples, pass_rotation_samples = await _probe_and_rotation_pass(
-            settings=settings,
-            monitor_region=monitor_region,
-            control_plane=control_plane,
-            internal_token=internal_token,
-            api_key=api_key,
-            timeout=timeout,
-            rotation_enabled=rotation_enabled,
-            rotation_per_pass=rotation_per_pass,
-            rotation_rng=rotation_rng,
-            throughput_enabled=throughput_enabled,
-            throughput_region=throughput_region,
-            throughput_route_limit=throughput_route_limit,
-            throughput_max_tokens=throughput_max_tokens,
-            throughput_minimum_output_tokens=throughput_minimum_output_tokens,
-            throughput_timeout_seconds=throughput_timeout_seconds,
-            throughput_interval_seconds=throughput_interval_seconds,
+    benchmark_samples: list[ProviderBenchmarkSample] = []
+    if throughput_only:
+        if not throughput_enabled:
+            print(
+                "TR_SYNTHETIC_THROUGHPUT_ONLY requires TR_SYNTHETIC_THROUGHPUT_ENABLED",
+                file=sys.stderr,
+            )
+            return 2
+        if monitor_region != throughput_region:
+            print(
+                "throughput-only job must run in TR_SYNTHETIC_THROUGHPUT_REGION",
+                file=sys.stderr,
+            )
+            return 2
+        if not api_key:
+            print(
+                "TR_SYNTHETIC_MONITOR_API_KEY is required for throughput probes",
+                file=sys.stderr,
+            )
+            return 2
+        benchmark_samples.extend(
+            await _throughput_pass(
+                settings=settings,
+                monitor_region=monitor_region,
+                api_key=api_key,
+                route_limit=throughput_route_limit,
+                max_tokens=throughput_max_tokens,
+                minimum_output_tokens=throughput_minimum_output_tokens,
+                timeout_seconds=throughput_timeout_seconds,
+                interval_seconds=throughput_interval_seconds,
+            )
         )
-        all_samples.extend(pass_samples)
-        rotation_samples.extend(pass_rotation_samples)
-        # Sleep until the next probe pass should start, but only if
-        # there IS a next pass. Compensates for the time the probe
-        # itself took so the spacing is between pass-starts, not
-        # pass-ends.
-        if pass_idx + 1 < runs_per_invocation:
-            target = (pass_idx + 1) * run_spacing_seconds
-            elapsed = time.monotonic() - pass_start_monotonic
-            to_sleep = target - elapsed
-            if to_sleep > 0:
-                await asyncio.sleep(to_sleep)
+    else:
+        pass_start_monotonic = time.monotonic()
+        for pass_idx in range(runs_per_invocation):
+            pass_samples, pass_benchmark_samples = await _probe_and_rotation_pass(
+                settings=settings,
+                monitor_region=monitor_region,
+                control_plane=control_plane,
+                internal_token=internal_token,
+                api_key=api_key,
+                timeout=timeout,
+                rotation_enabled=rotation_enabled,
+                rotation_per_pass=rotation_per_pass,
+                rotation_rng=rotation_rng,
+                throughput_enabled=throughput_enabled,
+                throughput_region=throughput_region,
+                throughput_route_limit=throughput_route_limit,
+                throughput_max_tokens=throughput_max_tokens,
+                throughput_minimum_output_tokens=throughput_minimum_output_tokens,
+                throughput_timeout_seconds=throughput_timeout_seconds,
+                throughput_interval_seconds=throughput_interval_seconds,
+            )
+            all_samples.extend(pass_samples)
+            benchmark_samples.extend(pass_benchmark_samples)
+            # Sleep until the next probe pass should start, but only if
+            # there IS a next pass. Compensates for the time the probe
+            # itself took so the spacing is between pass-starts, not
+            # pass-ends.
+            if pass_idx + 1 < runs_per_invocation:
+                target = (pass_idx + 1) * run_spacing_seconds
+                elapsed = time.monotonic() - pass_start_monotonic
+                to_sleep = target - elapsed
+                if to_sleep > 0:
+                    await asyncio.sleep(to_sleep)
 
     ingest_url = os.environ.get(
         "TR_SYNTHETIC_INGEST_URL",
         f"{control_plane.rstrip('/')}/v1/internal/synthetic/samples",
     )
     if not internal_token:
-        for sample in all_samples:
-            print(sample.public_dict())
+        for probe_sample in all_samples:
+            print(probe_sample.public_dict())
+        for benchmark_sample in benchmark_samples:
+            print(asdict(benchmark_sample))
         print("TR_INTERNAL_GATEWAY_TOKEN is required to ingest samples", file=sys.stderr)
         return 2
     async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            ingest_url,
-            headers={"x-trustedrouter-internal-token": internal_token},
-            json={"samples": [sample.public_dict() for sample in all_samples]},
-        )
-        print(response.text)
-        ok = response.status_code == 200
-        if rotation_samples:
+        ok = True
+        if all_samples:
+            response = await client.post(
+                ingest_url,
+                headers={"x-trustedrouter-internal-token": internal_token},
+                json={"samples": [sample.public_dict() for sample in all_samples]},
+            )
+            print(response.text)
+            ok = response.status_code == 200
+        if benchmark_samples:
             benchmark_url = os.environ.get(
                 "TR_SYNTHETIC_BENCHMARK_INGEST_URL",
                 f"{control_plane.rstrip('/')}/v1/internal/synthetic/benchmark",
@@ -412,19 +447,20 @@ async def run() -> int:
             bench_response = await client.post(
                 benchmark_url,
                 headers={"x-trustedrouter-internal-token": internal_token},
-                json={"samples": [asdict(sample) for sample in rotation_samples]},
+                json={"samples": [asdict(sample) for sample in benchmark_samples]},
             )
             print(bench_response.text)
             ok = ok and bench_response.status_code == 200
-            route_health_url = os.environ.get(
-                "TR_SYNTHETIC_ROUTE_HEALTH_URL",
-                f"{control_plane.rstrip('/')}/v1/internal/synthetic/route-health",
-            )
-            await _post_route_health_if_due(
-                client,
-                url=route_health_url,
-                internal_token=internal_token,
-            )
+            if not throughput_only:
+                route_health_url = os.environ.get(
+                    "TR_SYNTHETIC_ROUTE_HEALTH_URL",
+                    f"{control_plane.rstrip('/')}/v1/internal/synthetic/route-health",
+                )
+                await _post_route_health_if_due(
+                    client,
+                    url=route_health_url,
+                    internal_token=internal_token,
+                )
     return 0 if ok else 1
 
 
