@@ -725,7 +725,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 context_length=context_length,
                 upstream_id=upstream_id,
                 supports_chat=True,
-                supports_messages=False,
+                supports_messages=publisher == "anthropic",
                 # Availability comes from the explicit provider-native
                 # endpoints below. Do not let _build_endpoints synthesize
                 # publisher-direct routes for supplemental-only models
