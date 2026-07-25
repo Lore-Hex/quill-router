@@ -60,6 +60,10 @@
           {% endif %}
         </td></tr>
         <tr><th>Endpoints</th><td>{{ model.endpoint_count }} endpoint{{ '' if model.endpoint_count == 1 else 's' }}</td></tr>
+        {% if model.fixed_price %}
+        <tr><th>Input price</th><td>{{ model.prompt_price }} tokens</td></tr>
+        <tr><th>Output price</th><td>{{ model.completion_price }} tokens</td></tr>
+        {% endif %}
         <tr><th>Modes</th><td>
           {% if model.supports_chat %}<span class="pill">chat</span>{% endif %}
           {% if model.supports_messages %}<span class="pill">messages</span>{% endif %}

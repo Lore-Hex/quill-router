@@ -16,6 +16,8 @@ from google.api_core.exceptions import (
 )
 
 from tests.fakes.spanner import make_fake_store
+from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
+from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.storage import InMemoryStore, configure_store
@@ -231,6 +233,48 @@ def test_typed_settle_applies_frozen_cost(fake_store: tuple[Any, Any, Any]) -> N
     assert generations[0]["total_cost_microdollars"] == 777_777
     assert generations[0]["tokens_prompt"] == 6_097
     assert store.get_gateway_authorization(auth.id).settled is True
+
+
+def test_partner_replay_preserves_public_model_and_provider(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_partner"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+
+    row = _row(
+        auth,
+        cost=13_808,
+        model_id=PARASAIL_LIBERTY_2_0_MODEL_ID,
+    )
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+
+    generations = _generation_bodies(db)
+    assert len(generations) == 1
+    assert generations[0]["model"] == PARASAIL_LIBERTY_2_0_MODEL_ID
+    assert generations[0]["provider"] == "parasail"
+    assert generations[0]["total_cost_microdollars"] == 13_808
+
+
+def test_partner_replay_preserves_internal_operator_cost(
+    fake_store: tuple[Any, Any, Any],
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws_apply_partner_operator_cost"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    body = json.loads(_settle_body(auth.id))
+    body[PARTNER_OPERATOR_COST_SETTLE_FIELD] = 654_321
+
+    row = _row(auth, cost=0, settle_body=json.dumps(body))
+    assert apply_frozen_settle(row) == ApplyOutcome.SETTLED_NOW
+
+    generation = _generation_bodies(db)[0]
+    assert generation["total_cost_microdollars"] == 0
+    assert generation["operator_cost_microdollars"] == 654_321
 
 
 def test_replay_reports_already_charged(fake_store: tuple[Any, Any, Any]) -> None:

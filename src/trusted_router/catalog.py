@@ -55,6 +55,7 @@ from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-c
     ORCHESTRATION_PRIMITIVE_MODEL_IDS,
     ORCHESTRATION_PRIMITIVE_NAMES,
     ORCHESTRATION_ROLLING_ALIAS_MODEL_IDS,
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
@@ -520,7 +521,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         )
         pub_prompt_max = pub_prompt_min
         pub_completion_max = pub_completion_min
-    elif is_meta:
+    elif is_meta and prompt_min == 0 and completion_min == 0:
         prompt_min, prompt_max = _meta_price_range(
             model.id, "prompt_price_microdollars_per_million_tokens"
         )

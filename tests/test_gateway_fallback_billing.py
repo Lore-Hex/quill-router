@@ -7,7 +7,14 @@ from trusted_router.catalog import MODELS, default_endpoint_for_model, endpoint_
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.money import token_cost_microdollars
+from trusted_router.partner_billing import (
+    PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX,
+    PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX,
+    PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+    PARTNER_OPERATOR_COST_SETTLE_FIELD,
+)
 from trusted_router.routes.helpers import cost_microdollars
+from trusted_router.routes.internal import gateway as gateway_routes
 from trusted_router.storage import STORE, CreditAccount, Workspace, configure_store
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 
@@ -166,6 +173,176 @@ def test_gateway_authorizes_every_liberty_alias_to_working_nemotron_hosts() -> N
         }
         assert {"baseten", "nebius", "together"} <= nemotron_hosts, (model_id, routes)
         assert "gmi" not in nemotron_hosts, (model_id, routes)
+
+
+def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> None:
+    client, key = _client_and_key()
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "parasail/liberty-2.0",
+            "estimated_input_tokens": 1_000,
+            "max_output_tokens": 100,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "idempotency_key": "req-parasail-liberty-top",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    assert auth_data["estimated_cost_microdollars"] == 4_000
+    assert auth_data["requested_model"] == "parasail/liberty-2.0"
+    assert auth_data["usage_type"] == "Credits"
+    assert auth_data["route_candidates"]
+    assert all(route["usage_type"] == "Credits" for route in auth_data["route_candidates"])
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 1_234,
+            "actual_output_tokens": 567,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "request_id": "req-parasail-liberty-top",
+            "elapsed_seconds": 1.0,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    data = settle.json()["data"]
+    assert data["cost_microdollars"] == 13_808
+    assert data["model"] == "parasail/liberty-2.0"
+    assert data["provider"] == "parasail"
+
+    generation = STORE.get_generation(data["generation_id"])
+    assert generation is not None
+    assert generation.model == "parasail/liberty-2.0"
+    assert generation.provider == "parasail"
+    assert generation.total_cost_microdollars == 13_808
+
+
+def test_parasail_liberty_internal_calls_are_customer_cost_zero(
+    monkeypatch,
+) -> None:
+    client, key = _client_and_key()
+    route_type = f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"
+    auto_refills: list[str] = []
+    successful_calls: list[str] = []
+    monkeypatch.setattr(
+        gateway_routes,
+        "_schedule_auto_refill",
+        lambda workspace_id, *_args, **_kwargs: auto_refills.append(workspace_id),
+    )
+    monkeypatch.setattr(
+        gateway_routes,
+        "record_successful_api_call_safely",
+        lambda workspace_id, **_kwargs: successful_calls.append(workspace_id),
+    )
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "nvidia/nemotron-3-ultra-550b-a55b",
+            "estimated_input_tokens": 10_000,
+            "max_output_tokens": 2_000,
+            "route_type": route_type,
+            "idempotency_key": (
+                f"{PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX}req:worker:0"
+            ),
+            "provider": {
+                "order": ["parasail"],
+                "allow_fallbacks": True,
+                "sort": "throughput",
+            },
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    assert auth_data["estimated_cost_microdollars"] == 0
+    assert auth_data["route_candidates"]
+    assert all(route["provider"] != "parasail" for route in auth_data["route_candidates"])
+    assert all(route["usage_type"] == "Credits" for route in auth_data["route_candidates"])
+
+    settle = client.post(
+        "/v1/internal/gateway/settle",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 9_000,
+            "actual_output_tokens": 1_500,
+            "route_type": route_type,
+            "request_id": "req-parasail-liberty-worker",
+            "elapsed_seconds": 1.0,
+            PARTNER_OPERATOR_COST_SETTLE_FIELD: 999_999_999,
+        },
+    )
+    assert settle.status_code == 200, settle.text
+    settle_data = settle.json()["data"]
+    assert settle_data["cost_microdollars"] == 0
+    generation = STORE.get_generation(settle_data["generation_id"])
+    assert generation is not None
+    selected_endpoint = endpoint_for_id(settle_data["endpoint_id"])
+    assert selected_endpoint is not None
+    authorization = STORE.get_gateway_authorization(auth_data["authorization_id"])
+    assert authorization is not None
+    assert generation.operator_cost_microdollars == gateway_routes._endpoint_cost_microdollars(
+        selected_endpoint,
+        9_000,
+        1_500,
+        effective_at=authorization.created_at,
+    )
+    assert "operator_cost_microdollars" not in generation.to_openrouter_generation()
+    activity = STORE.activity_events(key["workspace_id"])
+    internal_activity = next(row for row in activity if row["id"] == generation.id)
+    assert "operator_cost_microdollars" not in internal_activity
+    assert auto_refills == []
+    assert successful_calls == []
+
+
+def test_parasail_liberty_billing_markers_fail_closed() -> None:
+    client, key = _client_and_key()
+
+    missing_route = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "parasail/liberty-2.0",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+            "idempotency_key": "req-missing-partner-route",
+        },
+    )
+    assert missing_route.status_code == 400
+
+    missing_prefix = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "nvidia/nemotron-3-ultra-550b-a55b",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+            "route_type": (
+                f"{PARASAIL_LIBERTY_2_0_INTERNAL_ROUTE_PREFIX}advisor.worker"
+            ),
+            "idempotency_key": "req-untrusted-internal-marker",
+        },
+    )
+    assert missing_prefix.status_code == 400
+
+    byok = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "parasail/liberty-2.0",
+            "estimated_input_tokens": 10,
+            "max_output_tokens": 10,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "idempotency_key": "req-partner-byok",
+            "provider": {"usage": "byok"},
+        },
+    )
+    assert byok.status_code == 400
+    assert "does not support BYOK" in byok.text
 
 
 def test_gateway_settle_ancient_legacy_reservation_missing_typed_row_is_clean() -> None:

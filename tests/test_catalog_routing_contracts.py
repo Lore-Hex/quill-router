@@ -34,6 +34,7 @@ from trusted_router.catalog import (
     OPEN_PATCHER_G2_MODEL_ID,
     OPEN_PATCHER_S1_MODEL_ID,
     OPEN_PATCHER_S2_MODEL_ID,
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
     PLATO_1_0_MODEL_ID,
     PLATO_MODEL_ID,
     PLATO_PRO_1_0_MODEL_ID,
@@ -161,6 +162,27 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
             model.completion_price_microdollars_per_million_tokens
             <= model.published_completion_price_microdollars_per_million_tokens
         )
+
+
+def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
+    model = MODELS[PARASAIL_LIBERTY_2_0_MODEL_ID]
+    shape = model_to_openrouter_shape(model)
+
+    assert shape["pricing"]["prompt"] == "0.000002"
+    assert shape["pricing"]["completion"] == "0.00002"
+    assert shape["trustedrouter"]["prompt_price_microdollars_per_million_tokens"] == 2_000_000
+    assert (
+        shape["trustedrouter"]["completion_price_microdollars_per_million_tokens"]
+        == 20_000_000
+    )
+    assert shape["trustedrouter"]["prepaid_available"] is True
+    assert shape["trustedrouter"]["byok_available"] is False
+    assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"
+    assert [candidate.id for candidate in meta_candidate_models(model.id)] == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        LIBERTY_1_0_1M_MODEL_ID,
+        LIBERTY_1_0_MODEL_ID,
+    ]
 
 
 def test_every_prepaid_endpoint_is_backed_by_attested_gateway_dispatch() -> None:

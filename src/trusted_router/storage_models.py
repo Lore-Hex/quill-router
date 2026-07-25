@@ -365,6 +365,9 @@ class Generation:
     http_referer: str | None = None
     app_categories: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
+    # Internal provider COGS for fixed-price orchestration leaves. This is
+    # intentionally omitted from public generation/activity response shapes.
+    operator_cost_microdollars: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.usage_type, UsageType):
@@ -476,6 +479,7 @@ class Generation:
         input_tokens: int,
         output_tokens: int,
         actual_cost_microdollars: int,
+        operator_cost_microdollars: int | None = None,
     ) -> Generation:
         elapsed = max(float(body.get("elapsed_seconds") or 0.001), 0.001)
         first_token_raw = body.get("first_token_seconds") or body.get("time_to_first_token_seconds")
@@ -525,6 +529,7 @@ class Generation:
             ),
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
+            operator_cost_microdollars=operator_cost_microdollars,
         )
 
     def to_openrouter_generation(self) -> dict[str, Any]:

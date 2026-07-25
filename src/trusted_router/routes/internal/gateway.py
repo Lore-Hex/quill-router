@@ -38,6 +38,13 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.partner_billing import (
+    PARASAIL_LIBERTY_2_0_MODEL_ID,
+    PARTNER_OPERATOR_COST_SETTLE_FIELD,
+    PartnerBillingMode,
+    partner_billing_mode,
+    partner_cost_microdollars,
+)
 from trusted_router.pricing import resolve_request_rates
 from trusted_router.provider_compat import byok_storage_provider_candidates
 from trusted_router.provider_types import estimate_tokens_from_text
@@ -163,6 +170,16 @@ def _authorize_gateway_sync(
         body_dict["custom_model_id"] = custom_model.id
         body_dict["custom_model_revision"] = custom_model.revision
         _force_custom_model_credit_routes(body_dict)
+    request_idempotency_key = _gateway_idempotency_key(request, body) or str(
+        uuid.uuid4()
+    )
+    partner_mode = _partner_billing_mode_or_error(
+        requested_model_id=requested_model_id,
+        route_type=body.route_type,
+        idempotency_key=request_idempotency_key,
+    )
+    if partner_mode is not None:
+        _force_partner_credit_routes(body_dict)
     # Embedding-only models can't go through the chat resolver (it
     # rejects supports_chat=False). Route them to the embeddings
     # resolver so the attested enclave can authorize + bill an
@@ -229,9 +246,17 @@ def _authorize_gateway_sync(
     if custom_model is not None and custom_model.hidden_prompt.strip():
         input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     output_tokens = body.output_estimate
-    model_estimate = max(
-        _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
-        for _candidate_model, candidate_endpoint in endpoint_candidates
+    model_estimate = (
+        partner_cost_microdollars(
+            partner_mode,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if partner_mode is not None
+        else max(
+            _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
+            for _candidate_model, candidate_endpoint in endpoint_candidates
+        )
     )
     estimate = model_estimate + additional_cost_reservation
     model_usage_type = UsageType.for_endpoint(endpoint)
@@ -240,9 +265,6 @@ def _authorize_gateway_sync(
         for _candidate_model, candidate_endpoint in endpoint_candidates
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
-    request_idempotency_key = _gateway_idempotency_key(request, body) or str(
-        uuid.uuid4()
-    )
     fingerprint_body = dict(body_dict)
     # Preserve the pre-tagging router's distinction between an absent tags
     # field and an explicitly supplied empty object. That lets an idempotent
@@ -839,11 +861,19 @@ def _requests_monitor_model(body: dict[str, Any]) -> bool:
 
 
 def _force_custom_model_credit_routes(body: dict[str, Any]) -> None:
+    _force_credit_routes(body, error_message="Custom models do not support BYOK routes")
+
+
+def _force_partner_credit_routes(body: dict[str, Any]) -> None:
+    _force_credit_routes(body, error_message="Parasail Liberty does not support BYOK routes")
+
+
+def _force_credit_routes(body: dict[str, Any], *, error_message: str) -> None:
     prefs = provider_route_preferences(body)
     if prefs.usage_type == UsageType.BYOK:
         raise api_error(
             400,
-            "Custom models do not support BYOK routes",
+            error_message,
             ErrorType.MODEL_NOT_SUPPORTED,
         )
     provider = body.get("provider")
@@ -918,6 +948,9 @@ def _settle_gateway_authorization(
             )
 
     settle_body = _settle_body_with_safe_attribution(body, authorization.id)
+    # This field is control-plane-owned. Never trust a caller-supplied value;
+    # only the selected endpoint and frozen price history may set operator COGS.
+    settle_body.pop(PARTNER_OPERATOR_COST_SETTLE_FIELD, None)
 
     selected_endpoint = _select_authorized_endpoint(authorization, body)
     if selected_endpoint is None:
@@ -935,13 +968,47 @@ def _settle_gateway_authorization(
     uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
         selected_endpoint.provider, body
     )
-    actual_cost = _endpoint_cost_microdollars(
-        selected_endpoint,
-        uncached_input,
-        output_tokens,
-        cache_read_tokens=cache_read,
-        cache_creation_tokens=cache_creation,
-        effective_at=authorization.created_at,
+    partner_mode = _partner_billing_mode_or_error(
+        requested_model_id=authorization.requested_model_id,
+        route_type=body.route_type,
+        idempotency_key=authorization.idempotency_key,
+    )
+    if (
+        partner_mode is not None
+        and UsageType.for_endpoint(selected_endpoint) != UsageType.CREDITS
+    ):
+        raise api_error(
+            400,
+            "Parasail Liberty does not support BYOK routes",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    actual_cost = (
+        partner_cost_microdollars(
+            partner_mode,
+            input_tokens=total_input,
+            output_tokens=output_tokens,
+        )
+        if partner_mode is not None
+        else _endpoint_cost_microdollars(
+            selected_endpoint,
+            uncached_input,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            effective_at=authorization.created_at,
+        )
+    )
+    operator_cost = (
+        _endpoint_cost_microdollars(
+            selected_endpoint,
+            uncached_input,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            effective_at=authorization.created_at,
+        )
+        if partner_mode == PartnerBillingMode.INTERNAL
+        else None
     )
     additional_cost = body.additional_cost_microdollars
     if additional_cost:
@@ -966,20 +1033,32 @@ def _settle_gateway_authorization(
         actual_cost += additional_cost
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
+    generation_model_id = (
+        PARASAIL_LIBERTY_2_0_MODEL_ID
+        if partner_mode == PartnerBillingMode.TOP_LEVEL
+        else model.id
+    )
+    generation_provider = (
+        "parasail"
+        if partner_mode == PartnerBillingMode.TOP_LEVEL
+        else selected_endpoint.provider
+    )
+    generation_provider_name = PROVIDERS[generation_provider].name
 
     generation_id: str | None = None
     generation: Generation | None = None
     if success:
         generation = Generation.from_settle_body(
             authorization=authorization,
-            provider_name=PROVIDERS[selected_endpoint.provider].name,
-            model_id=model.id,
+            provider_name=generation_provider_name,
+            model_id=generation_model_id,
             usage_type=selected_usage_type,
-            provider=selected_endpoint.provider,
+            provider=generation_provider,
             body=settle_body,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             actual_cost_microdollars=actual_cost,
+            operator_cost_microdollars=operator_cost,
         )
         generation_id = generation.id
 
@@ -992,6 +1071,9 @@ def _settle_gateway_authorization(
     if settings.settle_outbox_enabled:
         enqueue_start = perf_counter()
         try:
+            frozen_settle_body = dict(settle_body)
+            if operator_cost is not None:
+                frozen_settle_body[PARTNER_OPERATOR_COST_SETTLE_FIELD] = operator_cost
             # §5.4 honest scope: durability starts only when this INSERT commits;
             # crashes before it still rely on enclave redelivery. MF4/MF5 freeze
             # the finalize path and exact resolved cost used by the inline attempt.
@@ -1003,9 +1085,9 @@ def _settle_gateway_authorization(
                     actual_cost_micro=actual_cost,
                     reservation_id=authorization.credit_reservation_id,
                     selected_endpoint_id=selected_endpoint.id,
-                    model_id=model.id,
+                    model_id=generation_model_id,
                     selected_usage_type=str(selected_usage_type),
-                    settle_body=json.dumps(settle_body, separators=(",", ":")),
+                    settle_body=json.dumps(frozen_settle_body, separators=(",", ":")),
                 ),
                 # Grace so inline finalize wins the benign race; the drain only
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
@@ -1077,21 +1159,26 @@ def _settle_gateway_authorization(
             )
         mark_ms = (perf_counter() - mark_start) * 1000
 
-    if success and selected_usage_type == UsageType.CREDITS:
+    is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
+    if (
+        success
+        and is_customer_billing_event
+        and selected_usage_type == UsageType.CREDITS
+    ):
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
-    if success:
+    if success and is_customer_billing_event:
         if background_tasks is not None:
             background_tasks.add_task(
                 record_successful_api_call_safely,
                 authorization.workspace_id,
-                model=model.id,
-                provider=selected_endpoint.provider,
+                model=generation_model_id,
+                provider=generation_provider,
             )
         else:
             record_successful_api_call_safely(
                 authorization.workspace_id,
-                model=model.id,
-                provider=selected_endpoint.provider,
+                model=generation_model_id,
+                provider=generation_provider,
             )
         # Alert-mode budgets: email the owner when a window is crossed (never
         # blocks — the block happens at authorize for limit-mode keys). Off the
@@ -1159,9 +1246,9 @@ def _settle_gateway_authorization(
             **money_pair("cost", actual_cost),
             "usage_type": selected_usage_type.value,
             "limit_usage_type": authorization.usage_type.value,
-            "model": model.id,
+            "model": generation_model_id,
             "endpoint_id": selected_endpoint.id,
-            "provider": selected_endpoint.provider,
+            "provider": generation_provider,
             "region": authorization.region,
         }
     }
@@ -1391,6 +1478,22 @@ def _endpoint_cost_microdollars(
     # must still reserve and settle one unit when its exact fractional cost
     # rounds below one microdollar; otherwise tiny calls can bypass key limits.
     return max(cost, 1) if has_positive_charge else 0
+
+
+def _partner_billing_mode_or_error(
+    *,
+    requested_model_id: str | None,
+    route_type: str | None,
+    idempotency_key: str | None,
+) -> PartnerBillingMode | None:
+    try:
+        return partner_billing_mode(
+            requested_model_id=requested_model_id,
+            route_type=route_type,
+            idempotency_key=idempotency_key,
+        )
+    except ValueError as exc:
+        raise api_error(400, str(exc), ErrorType.BAD_REQUEST) from exc
 
 
 def _schedule_auto_refill(
