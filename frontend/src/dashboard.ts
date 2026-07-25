@@ -91,7 +91,9 @@ function openSigninModal(): void {
   }
 }
 
-function trackFunnelEvent(event: "sign_in_opened"): void {
+type MarketingFunnelEvent = "landing_engaged" | "sign_in_opened";
+
+function trackFunnelEvent(event: MarketingFunnelEvent): void {
   void fetch("/analytics/events", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -101,6 +103,22 @@ function trackFunnelEvent(event: "sign_in_opened"): void {
   }).catch(() => {
     /* measurement is best-effort and must never interrupt sign-in */
   });
+}
+
+function trackEngagedLanding(): void {
+  let sent = false;
+  const sendWhenVisible = (): void => {
+    if (sent || document.visibilityState !== "visible") return;
+    sent = true;
+    document.removeEventListener("visibilitychange", sendWhenVisible);
+    trackFunnelEvent("landing_engaged");
+  };
+  window.setTimeout(() => {
+    sendWhenVisible();
+    if (!sent) {
+      document.addEventListener("visibilitychange", sendWhenVisible);
+    }
+  }, 1500);
 }
 
 function setSigninError(message: string): void {
@@ -220,6 +238,7 @@ function applyAuthAwareChrome(): void {
 function init(): void {
   applyAuthAwareChrome();
   applyStoredTheme();
+  trackEngagedLanding();
 
   document.addEventListener("click", (event) => {
     const target = event.target as HTMLElement | null;

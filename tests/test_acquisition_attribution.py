@@ -138,6 +138,27 @@ def test_crawlers_do_not_receive_attribution_cookie(client: TestClient) -> None:
     assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
 
 
+@pytest.mark.parametrize(
+    ("header", "value"),
+    [
+        ("purpose", "prefetch"),
+        ("sec-purpose", "prefetch;prerender"),
+        ("x-purpose", "preview"),
+    ],
+)
+def test_prefetches_do_not_receive_attribution_cookie(
+    client: TestClient,
+    header: str,
+    value: str,
+) -> None:
+    response = client.get(
+        "/?utm_source=x&twclid=preview-click",
+        headers={header: value, "user-agent": "Mozilla/5.0 Chrome/146.0"},
+    )
+    assert response.status_code == 200
+    assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+
+
 def test_invalid_click_id_is_not_persisted(client: TestClient) -> None:
     response = client.get("/?utm_source=google&gclid=bad%20click%0Avalue")
     assert response.status_code == 200
@@ -201,6 +222,38 @@ def test_signin_open_event_is_campaign_attributed_without_click_id_leak(
     response = client.post("/analytics/events", json={"event": "sign_in_opened"})
     assert response.status_code == 204
     assert "acquisition.sign_in_opened" in caplog.text
+    assert raw_click_id not in caplog.text
+
+
+def test_engaged_landing_has_stable_click_fingerprint_without_raw_id(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_click_id = "tw-private-engaged-123"
+    caplog.set_level(logging.INFO, logger="trusted_router.acquisition")
+
+    assert client.get(f"/?utm_source=x&twclid={raw_click_id}").status_code == 200
+    first = client.post("/analytics/events", json={"event": "landing_engaged"})
+    assert first.status_code == 204
+    first_record = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "acquisition.landing_engaged"
+    )
+
+    caplog.clear()
+    client.cookies.clear()
+    assert client.get(f"/?utm_source=x&twclid={raw_click_id}").status_code == 200
+    second = client.post("/analytics/events", json={"event": "landing_engaged"})
+    assert second.status_code == 204
+    second_record = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "acquisition.landing_engaged"
+    )
+
+    assert first_record.twclid_fingerprint == second_record.twclid_fingerprint
+    assert first_record.anonymous_fingerprint != second_record.anonymous_fingerprint
     assert raw_click_id not in caplog.text
 
 
@@ -278,6 +331,31 @@ def test_public_pageviews_cover_marketing_but_not_console(
     assert len(records) == 1
     assert records[0].path == "/private-llm-api"
     assert records[0].page_kind == "marketing"
+    assert records[0].automated_request is False
+    assert records[0].measurement_tier == "server_request"
+
+
+def test_prefetch_pageview_is_classified_and_has_no_attribution(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    raw_click_id = "tw-prefetch-do-not-attribute"
+    caplog.set_level(logging.INFO, logger="trusted_router.middleware")
+    response = client.get(
+        f"/?utm_source=x&twclid={raw_click_id}",
+        headers={
+            "purpose": "prefetch",
+            "user-agent": "Mozilla/5.0 Chrome/146.0",
+        },
+    )
+    assert response.status_code == 200
+    record = next(
+        item for item in caplog.records if item.getMessage() == "public.page_view"
+    )
+    assert record.automated_request is True
+    assert not hasattr(record, "anonymous_fingerprint")
+    assert not hasattr(record, "twclid_fingerprint")
+    assert raw_click_id not in caplog.text
 
 
 def test_record_signup_helper_uses_direct_fallback_without_cookie(
