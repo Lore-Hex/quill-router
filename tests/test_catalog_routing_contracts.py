@@ -152,8 +152,10 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         assert model.provider in PROVIDERS
         assert isinstance(model.prompt_price_microdollars_per_million_tokens, int)
         assert isinstance(model.completion_price_microdollars_per_million_tokens, int)
+        assert isinstance(model.minimum_charge_microdollars, int)
         assert model.prompt_price_microdollars_per_million_tokens >= 0
         assert model.completion_price_microdollars_per_million_tokens >= 0
+        assert model.minimum_charge_microdollars >= 0
         assert (
             model.prompt_price_microdollars_per_million_tokens
             <= model.published_prompt_price_microdollars_per_million_tokens
@@ -169,12 +171,14 @@ def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
     shape = model_to_openrouter_shape(model)
 
     assert shape["pricing"]["prompt"] == "0.000002"
-    assert shape["pricing"]["completion"] == "0.00002"
+    assert shape["pricing"]["completion"] == "0.000019"
+    assert shape["pricing"]["minimum"] == "0.001"
     assert shape["trustedrouter"]["prompt_price_microdollars_per_million_tokens"] == 2_000_000
     assert (
         shape["trustedrouter"]["completion_price_microdollars_per_million_tokens"]
-        == 20_000_000
+        == 19_000_000
     )
+    assert shape["trustedrouter"]["minimum_charge_microdollars"] == 1_000
     assert shape["trustedrouter"]["prepaid_available"] is True
     assert shape["trustedrouter"]["byok_available"] is False
     assert shape["trustedrouter"]["route_kind"] == "advisor_orchestration"

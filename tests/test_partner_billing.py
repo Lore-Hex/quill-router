@@ -19,7 +19,32 @@ def test_partner_top_level_cost_uses_exact_integer_token_rates() -> None:
             input_tokens=1_234_567,
             output_tokens=89_012,
         )
-        == 4_249_374
+        == 4_160_362
+    )
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "output_tokens", "expected_microdollars"),
+    [
+        (0, 0, 1_000),
+        (1, 1, 1_000),
+        (400, 10, 1_000),
+        (405, 10, 1_000),
+        (406, 10, 1_002),
+    ],
+)
+def test_partner_top_level_cost_enforces_exact_request_minimum(
+    input_tokens: int,
+    output_tokens: int,
+    expected_microdollars: int,
+) -> None:
+    assert (
+        partner_cost_microdollars(
+            PartnerBillingMode.TOP_LEVEL,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        == expected_microdollars
     )
 
 

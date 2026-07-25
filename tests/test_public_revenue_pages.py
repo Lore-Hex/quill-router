@@ -293,6 +293,17 @@ def test_public_model_detail_lists_distinct_serving_providers(client: TestClient
         assert f'title="{provider}"' in response.text
 
 
+def test_public_partner_model_discloses_fixed_price_and_minimum(
+    client: TestClient,
+) -> None:
+    response = client.get("/models/parasail/liberty-2.0")
+
+    assert response.status_code == 200
+    assert "$2/1M tokens" in response.text
+    assert "$19/1M tokens" in response.text
+    assert "$0.001 per successful request" in response.text
+
+
 def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) -> None:
     catalog = client.get("/models")
     detail = client.get("/models/moonshotai/kimi-k2.6")

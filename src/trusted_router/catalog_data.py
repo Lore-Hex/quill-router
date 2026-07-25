@@ -139,6 +139,7 @@ class Model:
     completion_price_microdollars_per_million_tokens: int = 0
     published_prompt_price_microdollars_per_million_tokens: int = 0
     published_completion_price_microdollars_per_million_tokens: int = 0
+    minimum_charge_microdollars: int = 0
     # Full tier list for context-conditional pricing. Defaults to a
     # single tier matching the headline rates above; the ingest path
     # populates multi-tier values when the snapshot carries them.
