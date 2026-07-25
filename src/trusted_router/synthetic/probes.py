@@ -7,7 +7,9 @@ import random
 import secrets
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any
 from urllib.parse import urljoin
 
@@ -76,9 +78,7 @@ def configured_targets(settings: Settings) -> list[SyntheticTarget]:
                     control_plane_url,
                 )
             continue
-        targets.append(
-            SyntheticTarget(name, api_base_url, name, control_plane_url)
-        )
+        targets.append(SyntheticTarget(name, api_base_url, name, control_plane_url))
     return targets
 
 
@@ -677,17 +677,42 @@ def _provider_display_name(provider: str) -> str:
     return entry.name if entry is not None else provider
 
 
-def _sse_line_has_content(line: str) -> bool:
-    """True if an SSE `data:` line carries a visible content/reasoning delta."""
+@dataclass
+class _StreamUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
+@dataclass
+class _StreamObservation:
+    ttfb_milliseconds: int | None = None
+    first_token_milliseconds: int | None = None
+    last_token_milliseconds: int | None = None
+    elapsed_milliseconds: int = 0
+    finish_reason: str | None = None
+    stream_error: tuple[str, int | None, str | None] | None = None
+    usage: _StreamUsage = dataclass_field(default_factory=_StreamUsage)
+
+
+def _sse_line_payload(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line.startswith("data:"):
-        return False
+        return None
     payload = line[len("data:") :].strip()
     if not payload or payload == "[DONE]":
-        return False
+        return None
     try:
         data = json.loads(payload)
     except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _sse_line_has_content(line: str) -> bool:
+    """True if an SSE `data:` line carries a visible content/reasoning delta."""
+    data = _sse_line_payload(line)
+    if data is None:
         return False
     for choice in data.get("choices") or []:
         delta = choice.get("delta") or {}
@@ -716,15 +741,8 @@ def _sse_line_has_content(line: str) -> bool:
 
 def _sse_line_error(line: str) -> tuple[str, int | None, str | None] | None:
     """Return an OpenAI-style SSE error if the data line carries one."""
-    line = line.strip()
-    if not line.startswith("data:"):
-        return None
-    payload = line[len("data:") :].strip()
-    if not payload or payload == "[DONE]":
-        return None
-    try:
-        data = json.loads(payload)
-    except ValueError:
+    data = _sse_line_payload(line)
+    if data is None:
         return None
     error = data.get("error")
     if not isinstance(error, dict):
@@ -742,21 +760,89 @@ def _sse_line_error(line: str) -> tuple[str, int | None, str | None] | None:
 
 def _sse_line_finish_reason(line: str) -> str | None:
     """Return the first choice finish reason from an SSE data line, if any."""
-    line = line.strip()
-    if not line.startswith("data:"):
-        return None
-    payload = line[len("data:") :].strip()
-    if not payload or payload == "[DONE]":
-        return None
-    try:
-        data = json.loads(payload)
-    except ValueError:
+    data = _sse_line_payload(line)
+    if data is None:
         return None
     for choice in data.get("choices") or []:
         reason = choice.get("finish_reason")
         if reason:
             return str(reason)
     return None
+
+
+def _sse_line_usage(line: str) -> _StreamUsage | None:
+    data = _sse_line_payload(line)
+    if data is None:
+        return None
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    completion_details = usage.get("completion_tokens_details")
+    if not isinstance(completion_details, dict):
+        completion_details = {}
+    return _StreamUsage(
+        input_tokens=_first_int(usage, "prompt_tokens", "input_tokens"),
+        output_tokens=_first_int(usage, "completion_tokens", "output_tokens"),
+        reasoning_tokens=_first_int(completion_details, "reasoning_tokens"),
+    )
+
+
+def _first_int(values: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = values.get(key)
+        if value is None:
+            continue
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+async def _observe_provider_stream(
+    response: httpx.Response,
+    *,
+    started: float,
+    clock: Callable[[], float] = time.perf_counter,
+) -> _StreamObservation:
+    observation = _StreamObservation()
+    tail = ""
+
+    def observe_line(line: str, now_milliseconds: int) -> None:
+        finish_reason = _sse_line_finish_reason(line)
+        if finish_reason is not None:
+            observation.finish_reason = finish_reason
+        stream_error = _sse_line_error(line)
+        if stream_error is not None:
+            observation.stream_error = stream_error
+            return
+        if _sse_line_has_content(line):
+            if observation.first_token_milliseconds is None:
+                observation.first_token_milliseconds = now_milliseconds
+            observation.last_token_milliseconds = now_milliseconds
+        usage = _sse_line_usage(line)
+        if usage is not None:
+            observation.usage = usage
+
+    async for chunk in response.aiter_bytes():
+        if not chunk:
+            continue
+        now_milliseconds = _elapsed_ms_with_clock(started, clock)
+        if observation.ttfb_milliseconds is None:
+            observation.ttfb_milliseconds = now_milliseconds
+        tail += chunk.decode("utf-8", "ignore")
+        lines = tail.split("\n")
+        tail = lines.pop()
+        for line in lines:
+            observe_line(line, now_milliseconds)
+            if observation.stream_error is not None:
+                break
+        if observation.stream_error is not None:
+            break
+    if tail and observation.stream_error is None:
+        observe_line(tail, _elapsed_ms_with_clock(started, clock))
+    observation.elapsed_milliseconds = _elapsed_ms_with_clock(started, clock)
+    return observation
 
 
 def _response_error(response: httpx.Response) -> tuple[str, int | None, str | None]:
@@ -876,8 +962,6 @@ async def provider_rotation_probe(
     if not _rotation_omits_temperature(provider, model):
         body["temperature"] = 0
     started = time.perf_counter()
-    ttfb_ms: int | None = None
-    ttft_ms: int | None = None
     served_provider = provider
     served_model = model
     try:
@@ -898,37 +982,14 @@ async def provider_rotation_probe(
                     error_type=error_type,
                     error_message=message,
                 )
-            tail = ""
-            finish_reason: str | None = None
-            stream_error: tuple[str, int | None, str | None] | None = None
-            async for chunk in response.aiter_bytes():
-                if not chunk:
-                    continue
-                now = _elapsed_ms(started)
-                if ttfb_ms is None:
-                    ttfb_ms = now
-                tail += chunk.decode("utf-8", "ignore")
-                lines = tail.split("\n")
-                tail = lines.pop()
-                for line in lines:
-                    line_finish_reason = _sse_line_finish_reason(line)
-                    if line_finish_reason is not None:
-                        finish_reason = line_finish_reason
-                    stream_error = _sse_line_error(line)
-                    if stream_error is not None:
-                        break
-                    if ttft_ms is None and _sse_line_has_content(line):
-                        ttft_ms = now
-                if stream_error is not None:
-                    break
-            elapsed_ms = _elapsed_ms(started)
-            if stream_error is not None:
-                error_type, status, message = stream_error
+            observation = await _observe_provider_stream(response, started=started)
+            if observation.stream_error is not None:
+                error_type, status, message = observation.stream_error
                 return _rotation_error_sample(
                     served_provider,
                     served_model,
                     region=monitor_region,
-                    elapsed_ms=elapsed_ms,
+                    elapsed_ms=observation.elapsed_milliseconds,
                     error_status=status or 502,
                     error_type=error_type,
                     error_message=message,
@@ -943,13 +1004,15 @@ async def provider_rotation_probe(
             error_type=exc.__class__.__name__,
             error_message=str(exc),
         )
-    if ttft_ms is None:
-        error_type = "probe_config_error" if finish_reason == "length" else "empty_stream"
+    if observation.first_token_milliseconds is None:
+        error_type = (
+            "probe_config_error" if observation.finish_reason == "length" else "empty_stream"
+        )
         return _rotation_error_sample(
             served_provider,
             served_model,
             region=monitor_region,
-            elapsed_ms=elapsed_ms,
+            elapsed_ms=observation.elapsed_milliseconds,
             error_status=None,
             error_type=error_type,
         )
@@ -961,12 +1024,187 @@ async def provider_rotation_probe(
         status="success",
         usage_type=UsageType.CREDITS,
         streamed=True,
-        elapsed_milliseconds=elapsed_ms,
-        first_token_milliseconds=ttft_ms,
-        ttfb_milliseconds=ttfb_ms,
-        finish_reason=finish_reason or "stop",
+        elapsed_milliseconds=observation.elapsed_milliseconds,
+        first_token_milliseconds=observation.first_token_milliseconds,
+        ttfb_milliseconds=observation.ttfb_milliseconds,
+        finish_reason=observation.finish_reason or "stop",
         region=monitor_region,
         source="synthetic",
+    )
+
+
+_THROUGHPUT_PROMPT = (
+    "Continue writing the lowercase word benchmark separated by single spaces "
+    "until the response token limit stops you. Do not count, explain, use "
+    "punctuation, or stop early."
+)
+
+
+async def provider_throughput_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+    provider: str,
+    model: str,
+    max_tokens: int = 512,
+    minimum_output_tokens: int = 128,
+    clock: Callable[[], float] = time.perf_counter,
+) -> ProviderBenchmarkSample:
+    """Measure sustained output speed after the first streamed token.
+
+    Unlike the tiny PONG rotation probe, this requires provider-reported final
+    usage and enough output tokens for a stable sample. It records metadata
+    only. The response bytes are discarded inside this function and are never
+    returned to the control plane ingest payload.
+    """
+    if max_tokens <= 1:
+        raise ValueError("max_tokens must be greater than one")
+    if minimum_output_tokens <= 1 or minimum_output_tokens > max_tokens:
+        raise ValueError("minimum_output_tokens must be between 2 and max_tokens")
+
+    url = _api_url(target.api_base_url, "/chat/completions")
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": _THROUGHPUT_PROMPT}],
+        "max_tokens": max_tokens,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "provider": {"only": [provider]},
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "trustedrouter_probe": "throughput",
+        },
+    }
+    if not _rotation_omits_temperature(provider, model):
+        body["temperature"] = 0
+
+    started = clock()
+    served_provider = provider
+    served_model = model
+    try:
+        async with client.stream(
+            "POST", url, json=body, headers=_auth_headers(api_key)
+        ) as response:
+            served_provider = response.headers.get("x-trustedrouter-provider") or provider
+            served_model = response.headers.get("x-trustedrouter-served-model") or model
+            if response.status_code != 200:
+                await response.aread()
+                error_type, error_status, message = _response_error(response)
+                return _rotation_error_sample(
+                    served_provider,
+                    served_model,
+                    region=monitor_region,
+                    elapsed_ms=_elapsed_ms_with_clock(started, clock),
+                    error_status=error_status,
+                    error_type=error_type,
+                    error_message=message,
+                    source="synthetic_throughput",
+                )
+            observation = await _observe_provider_stream(
+                response,
+                started=started,
+                clock=clock,
+            )
+    except (httpx.HTTPError, ValueError) as exc:
+        return _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=_elapsed_ms_with_clock(started, clock),
+            error_status=None,
+            error_type=exc.__class__.__name__,
+            error_message=str(exc),
+            source="synthetic_throughput",
+        )
+
+    if observation.stream_error is not None:
+        error_type, status, message = observation.stream_error
+        return _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=observation.elapsed_milliseconds,
+            error_status=status or 502,
+            error_type=error_type,
+            error_message=message,
+            source="synthetic_throughput",
+        )
+
+    usage = observation.usage
+    first_token_ms = observation.first_token_milliseconds
+    last_token_ms = observation.last_token_milliseconds
+    if (
+        usage.output_tokens < minimum_output_tokens
+        or first_token_ms is None
+        or last_token_ms is None
+        or last_token_ms <= first_token_ms
+    ):
+        sample = _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=observation.elapsed_milliseconds,
+            error_status=None,
+            error_type="insufficient_throughput_sample",
+            source="synthetic_throughput",
+        )
+        sample.input_tokens = usage.input_tokens
+        sample.output_tokens = usage.output_tokens
+        sample.first_token_milliseconds = first_token_ms
+        sample.ttfb_milliseconds = observation.ttfb_milliseconds
+        sample.finish_reason = observation.finish_reason or "insufficient_sample"
+        return sample
+
+    decode_milliseconds = last_token_ms - first_token_ms
+    speed_tokens_per_second = max(1, usage.output_tokens - 1) * 1000 / decode_milliseconds
+    return ProviderBenchmarkSample(
+        id=f"bench-{uuid.uuid4().hex}",
+        model=served_model,
+        provider=served_provider,
+        provider_name=_provider_display_name(served_provider),
+        status="success",
+        usage_type=UsageType.CREDITS,
+        streamed=True,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_cost_microdollars=_benchmark_route_cost_microdollars(
+            served_provider,
+            served_model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+        ),
+        speed_tokens_per_second=round(speed_tokens_per_second, 3),
+        elapsed_milliseconds=observation.elapsed_milliseconds,
+        first_token_milliseconds=first_token_ms,
+        ttfb_milliseconds=observation.ttfb_milliseconds,
+        finish_reason=observation.finish_reason or "stop",
+        region=monitor_region,
+        source="synthetic_throughput",
+    )
+
+
+def _benchmark_route_cost_microdollars(
+    provider: str,
+    model: str,
+    *,
+    input_tokens: int,
+    output_tokens: int,
+) -> int:
+    from trusted_router.money import token_cost_microdollars
+    from trusted_router.synthetic.throughput import credits_endpoint_prices
+
+    prices = credits_endpoint_prices(provider, model)
+    if prices is None:
+        return 0
+    prompt_price, completion_price = prices
+    return token_cost_microdollars(
+        input_tokens,
+        prompt_price,
+    ) + token_cost_microdollars(
+        output_tokens,
+        completion_price,
     )
 
 
@@ -974,10 +1212,7 @@ def _rotation_max_tokens(provider: str, model: str) -> int:
     provider_l = provider.lower()
     model_l = model.lower()
     if provider_l == "openai" and (
-        "/o1" in model_l
-        or "/o3" in model_l
-        or "/o4" in model_l
-        or "/gpt-5" in model_l
+        "/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l
     ):
         return 512
     if "gemini-2.5" in model_l or "gemini-3" in model_l:
@@ -1015,12 +1250,7 @@ def _rotation_omits_temperature(provider: str, model: str) -> bool:
         (provider_l == "kimi" and "kimi-k2." in model_l)
         or (
             provider_l == "openai"
-            and (
-                "/o1" in model_l
-                or "/o3" in model_l
-                or "/o4" in model_l
-                or "/gpt-5" in model_l
-            )
+            and ("/o1" in model_l or "/o3" in model_l or "/o4" in model_l or "/gpt-5" in model_l)
         )
         or (
             provider_l == "anthropic"
@@ -1038,6 +1268,7 @@ def _rotation_error_sample(
     error_status: int | None,
     error_type: str,
     error_message: str | None = None,
+    source: str = "synthetic",
 ) -> ProviderBenchmarkSample:
     status = "unsupported" if _rotation_error_excluded_from_uptime(error_type) else "error"
     truncated_error_message = None
@@ -1059,7 +1290,7 @@ def _rotation_error_sample(
         error_status=error_status,
         error_message=truncated_error_message,
         region=region,
-        source="synthetic",
+        source=source,
     )
 
 
@@ -1068,6 +1299,7 @@ def _rotation_error_excluded_from_uptime(error_type: str | None) -> bool:
         "unsupported_route",
         "probe_config_error",
         "provider_auth_config",
+        "insufficient_throughput_sample",
     }
 
 
@@ -1302,3 +1534,10 @@ def _evidence_str(evidence: dict[str, str | bool | None], key: str) -> str | Non
 
 def _elapsed_ms(started: float) -> int:
     return max(1, int(round((time.perf_counter() - started) * 1000)))
+
+
+def _elapsed_ms_with_clock(
+    started: float,
+    clock: Callable[[], float],
+) -> int:
+    return max(1, int(round((clock() - started) * 1000)))

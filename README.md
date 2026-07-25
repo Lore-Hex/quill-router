@@ -248,8 +248,21 @@ Workers should run from `us-central1` and `europe-west4`, using a dedicated
 auto-refill. Raw samples are append-only Bigtable rows; public status pages
 read compact rollups exposed at `/status`, `/status.json`, and
 `/status/history?window=5m|24h|daily`. Synthetic generations use the
-`TrustedRouter Synthetic` app label and are excluded from public provider
-benchmark/ranking samples so uptime probes do not pollute customer analytics.
+`TrustedRouter Synthetic` app label and are excluded from customer/app
+analytics.
+
+Provider measurement uses two independent probe classes:
+
+- Short PONG probes randomly cover the full active catalog and measure uptime,
+  TTFB, TTFT, and upstream API drift.
+- A sustained 512-token stream covers the 200 most important provider/model
+  routes in deterministic rotation from `us-central1`. It measures output
+  tokens per second after the first token. Long-probe failures never count
+  against provider uptime or API-drift alerts.
+
+The current two-minute schedule gives each sustained route about 25 samples per
+week and 108 per 30 days. CI calculates a full-cap spend estimate from the live
+catalog and fails if it exceeds the reviewed monthly ceiling.
 
 Status separates three SLO classes instead of blending them:
 

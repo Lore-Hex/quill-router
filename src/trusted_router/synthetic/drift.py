@@ -73,6 +73,10 @@ def aggregate(samples: Iterable[ProviderBenchmarkSample]) -> dict[str, ModelStat
     grouped: dict[str, ModelStats] = {}
     ttfts: dict[str, list[int]] = {}
     for sample in samples:
+        if sample.source == "synthetic_throughput":
+            # Sustained-output probes test performance, not API compatibility.
+            # Their longer timeout/error profile must not create drift alerts.
+            continue
         key = _model_key(sample.provider, sample.model)
         stats = grouped.get(key)
         if stats is None:

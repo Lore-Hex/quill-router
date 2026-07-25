@@ -76,6 +76,18 @@ BASE_ENV_VARS=(
   # synthetic-monitor key).
   "TR_SYNTHETIC_ROTATION_ENABLED=true"
   "TR_SYNTHETIC_ROTATION_PER_PASS=4"
+  # Sustained-output benchmark — one deterministic top-200 route per scheduler
+  # tick, from one region only. At the two-minute schedule this gives every
+  # selected provider/model route 3.6 samples/day (~25/week, ~108/month).
+  # Keeping it separate from the PONG probes preserves cheap, high-frequency
+  # uptime coverage. Long-probe failures never count against provider uptime.
+  "TR_SYNTHETIC_THROUGHPUT_ENABLED=true"
+  "TR_SYNTHETIC_THROUGHPUT_REGION=us-central1"
+  "TR_SYNTHETIC_THROUGHPUT_ROUTE_LIMIT=200"
+  "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
+  "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
+  "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
+  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
 )

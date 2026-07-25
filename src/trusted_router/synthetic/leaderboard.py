@@ -91,6 +91,7 @@ class ProviderModelStats:
     success_count: int = 0
     error_count: int = 0
     excluded_count: int = 0
+    throughput_sample_count: int = 0
     p50_ttft_ms: int | None = None
     p95_ttft_ms: int | None = None
     p50_ttfb_ms: int | None = None
@@ -126,6 +127,7 @@ class ProviderModelStats:
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
+            "throughput_sample_count": self.throughput_sample_count,
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -151,6 +153,7 @@ class ProviderStats:
     success_count: int = 0
     error_count: int = 0
     excluded_count: int = 0
+    throughput_sample_count: int = 0
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
     errors: Counter[str] = field(default_factory=Counter)
@@ -182,6 +185,7 @@ class ProviderStats:
             "uptime": round(self.uptime, 4),
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
+            "throughput_sample_count": self.throughput_sample_count,
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -211,7 +215,8 @@ def aggregate_leaderboard(
     by_model: dict[tuple[str, str], ProviderModelStats] = {}
     ttft: dict[tuple[str, str], list[int]] = {}
     ttfb: dict[tuple[str, str], list[int]] = {}
-    tps: dict[tuple[str, str], list[float]] = {}
+    legacy_tps: dict[tuple[str, str], list[float]] = {}
+    sustained_tps: dict[tuple[str, str], list[float]] = {}
 
     for sample in samples:
         key = (sample.provider, sample.model)
@@ -221,7 +226,18 @@ def aggregate_leaderboard(
             by_model[key] = stats
             ttft[key] = []
             ttfb[key] = []
-            tps[key] = []
+            legacy_tps[key] = []
+            sustained_tps[key] = []
+        if sample.source == "synthetic_throughput":
+            if sample.status == "success" and sample.speed_tokens_per_second:
+                sustained_tps[key].append(sample.speed_tokens_per_second)
+                stats.throughput_sample_count += 1
+            if stats.last_seen is None or sample.created_at > stats.last_seen:
+                stats.last_seen = sample.created_at
+            # Long probes are intentionally excluded from availability and
+            # TTFT. The short PONG probe already measures both without making a
+            # slow 512-token completion look like provider downtime.
+            continue
         label = sample.error_type or (
             f"http_{sample.error_status}" if sample.error_status else "error"
         )
@@ -240,7 +256,7 @@ def aggregate_leaderboard(
         if sample.ttfb_milliseconds is not None:
             ttfb[key].append(sample.ttfb_milliseconds)
         if sample.speed_tokens_per_second:
-            tps[key].append(sample.speed_tokens_per_second)
+            legacy_tps[key].append(sample.speed_tokens_per_second)
         if stats.last_seen is None or sample.created_at > stats.last_seen:
             stats.last_seen = sample.created_at
 
@@ -249,7 +265,7 @@ def aggregate_leaderboard(
         stats.p95_ttft_ms = _percentile(ttft[key], 95)
         stats.p50_ttfb_ms = _percentile(ttfb[key], 50)
         stats.p95_ttfb_ms = _percentile(ttfb[key], 95)
-        stats.p50_tokens_per_second = _median_float(tps[key])
+        stats.p50_tokens_per_second = _median_float(sustained_tps[key] or legacy_tps[key])
 
     models = [s for s in by_model.values() if s.sample_count >= min_samples]
     models.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
@@ -261,6 +277,7 @@ def aggregate_leaderboard(
         "model_count": len(models),
         "provider_count": len(providers),
         "total_samples": sum(s.sample_count for s in models),
+        "total_throughput_samples": sum(s.throughput_sample_count for s in models),
         "excluded_samples": sum(s.excluded_count for s in by_model.values()),
     }
 
@@ -281,13 +298,15 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.success_count += stats.success_count
         agg.error_count += stats.error_count
         agg.excluded_count += stats.excluded_count
+        agg.throughput_sample_count += stats.throughput_sample_count
         agg.errors.update(stats.errors)
         agg.excluded_reasons.update(stats.excluded_reasons)
         # Weight each model's p50 by its sample count for the provider median.
         if stats.p50_ttft_ms is not None:
             ttft[stats.provider].extend([stats.p50_ttft_ms] * stats.sample_count)
         if stats.p50_tokens_per_second is not None:
-            tps[stats.provider].extend([stats.p50_tokens_per_second] * stats.sample_count)
+            weight = stats.throughput_sample_count or stats.sample_count
+            tps[stats.provider].extend([stats.p50_tokens_per_second] * weight)
     providers = list(by_provider.values())
     for agg in providers:
         agg.p50_ttft_ms = _percentile(ttft[agg.provider], 50)
