@@ -133,6 +133,11 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
     _is_provider_deprecated_model,
     _supplemental_provider_models_and_endpoints,
 )
+from trusted_router.partner_billing import (
+    PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION,
+    PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS,
+    PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
+)
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
     _CACHE_WRITE_PRICE_MULTIPLIER,
@@ -499,10 +504,21 @@ MODELS: dict[str, Model] = {
         supports_messages=False,
         prepaid_available=True,
         byok_available=False,
-        prompt_price_microdollars_per_million_tokens=2_000_000,
-        completion_price_microdollars_per_million_tokens=20_000_000,
-        published_prompt_price_microdollars_per_million_tokens=2_000_000,
-        published_completion_price_microdollars_per_million_tokens=20_000_000,
+        prompt_price_microdollars_per_million_tokens=(
+            PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION
+        ),
+        completion_price_microdollars_per_million_tokens=(
+            PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION
+        ),
+        published_prompt_price_microdollars_per_million_tokens=(
+            PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION
+        ),
+        published_completion_price_microdollars_per_million_tokens=(
+            PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION
+        ),
+        minimum_charge_microdollars=(
+            PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS
+        ),
     ),
     LIBERTY_3_0_MODEL_ID: Model(
         id=LIBERTY_3_0_MODEL_ID,

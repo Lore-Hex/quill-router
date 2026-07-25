@@ -191,7 +191,7 @@ def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> 
     )
     assert authorize.status_code == 200, authorize.text
     auth_data = authorize.json()["data"]
-    assert auth_data["estimated_cost_microdollars"] == 4_000
+    assert auth_data["estimated_cost_microdollars"] == 3_900
     assert auth_data["requested_model"] == "parasail/liberty-2.0"
     assert auth_data["usage_type"] == "Credits"
     assert auth_data["route_candidates"]
@@ -210,7 +210,7 @@ def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> 
     )
     assert settle.status_code == 200, settle.text
     data = settle.json()["data"]
-    assert data["cost_microdollars"] == 13_808
+    assert data["cost_microdollars"] == 13_241
     assert data["model"] == "parasail/liberty-2.0"
     assert data["provider"] == "parasail"
 
@@ -218,7 +218,85 @@ def test_parasail_liberty_uses_fixed_top_level_price_and_public_generation() -> 
     assert generation is not None
     assert generation.model == "parasail/liberty-2.0"
     assert generation.provider == "parasail"
-    assert generation.total_cost_microdollars == 13_808
+    assert generation.total_cost_microdollars == 13_241
+
+
+def test_parasail_liberty_minimum_is_reserved_and_settled_exactly_once() -> None:
+    client, key = _client_and_key()
+    money = STORE.credit_money[key["workspace_id"]]
+    usage_before = money.total_usage_microdollars
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "parasail/liberty-2.0",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "idempotency_key": "req-parasail-liberty-minimum",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    assert auth_data["estimated_cost_microdollars"] == 1_000
+
+    settle_body = {
+        "authorization_id": auth_data["authorization_id"],
+        "actual_input_tokens": 8,
+        "actual_output_tokens": 3,
+        "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+        "request_id": "req-parasail-liberty-minimum",
+        "elapsed_seconds": 0.1,
+    }
+    settle = client.post("/v1/internal/gateway/settle", json=settle_body)
+    assert settle.status_code == 200, settle.text
+    assert settle.json()["data"]["cost_microdollars"] == 1_000
+    assert money.total_usage_microdollars == usage_before + 1_000
+
+    replay = client.post("/v1/internal/gateway/settle", json=settle_body)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["data"]["already_settled"] is True
+    assert money.total_usage_microdollars == usage_before + 1_000
+
+
+def test_parasail_liberty_failed_request_refunds_minimum_reservation() -> None:
+    client, key = _client_and_key()
+    money = STORE.credit_money[key["workspace_id"]]
+    usage_before = money.total_usage_microdollars
+
+    authorize = client.post(
+        "/v1/internal/gateway/authorize",
+        json={
+            "api_key_hash": key["hash"],
+            "model": "parasail/liberty-2.0",
+            "estimated_input_tokens": 1,
+            "max_output_tokens": 1,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "idempotency_key": "req-parasail-liberty-minimum-refund",
+        },
+    )
+    assert authorize.status_code == 200, authorize.text
+    auth_data = authorize.json()["data"]
+    assert auth_data["estimated_cost_microdollars"] == 1_000
+
+    refund = client.post(
+        "/v1/internal/gateway/refund",
+        json={
+            "authorization_id": auth_data["authorization_id"],
+            "actual_input_tokens": 1,
+            "actual_output_tokens": 0,
+            "route_type": PARASAIL_LIBERTY_2_0_TOP_LEVEL_ROUTE,
+            "request_id": "req-parasail-liberty-minimum-refund",
+            "elapsed_seconds": 0.1,
+            "error_status": 503,
+            "error_type": "provider_error",
+        },
+    )
+    assert refund.status_code == 200, refund.text
+    assert money.total_usage_microdollars == usage_before
+    assert money.reserved_microdollars == 0
+    assert not STORE.generation_store.generations
 
 
 def test_parasail_liberty_internal_calls_are_customer_cost_zero(

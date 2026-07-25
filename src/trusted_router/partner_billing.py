@@ -13,7 +13,8 @@ PARASAIL_LIBERTY_2_0_IDEMPOTENCY_PREFIX = "partner:parasail-liberty-2.0:"
 PARTNER_OPERATOR_COST_SETTLE_FIELD = "_trustedrouter_operator_cost_microdollars"
 
 PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION = 2_000_000
-PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION = 20_000_000
+PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION = 19_000_000
+PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS = 1_000
 
 
 class PartnerBillingMode(StrEnum):
@@ -69,10 +70,11 @@ def partner_cost_microdollars(
 ) -> int:
     if mode == PartnerBillingMode.INTERNAL:
         return 0
-    return token_cost_microdollars(
+    token_cost = token_cost_microdollars(
         input_tokens,
         PARASAIL_LIBERTY_2_0_INPUT_MICRODOLLARS_PER_MILLION,
     ) + token_cost_microdollars(
         output_tokens,
         PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION,
     )
+    return max(token_cost, PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS)

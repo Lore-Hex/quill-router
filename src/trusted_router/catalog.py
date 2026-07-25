@@ -149,6 +149,7 @@ from trusted_router.catalog_registry import (  # noqa: F401 - built there, re-ex
 )
 from trusted_router.money import (
     microdollars_per_million_tokens_to_token_decimal,
+    microdollars_to_decimal,
 )
 from trusted_router.pricing import (  # noqa: F401 - re-exported for back-compat
     _CACHE_READ_PRICE_MULTIPLIER,
@@ -539,6 +540,8 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "prompt": microdollars_per_million_tokens_to_token_decimal(prompt_min),
         "completion": microdollars_per_million_tokens_to_token_decimal(completion_min),
     }
+    if model.minimum_charge_microdollars:
+        pricing["minimum"] = microdollars_to_decimal(model.minimum_charge_microdollars)
     if is_meta and (prompt_max != prompt_min or completion_max != completion_min):
         pricing["prompt_max"] = microdollars_per_million_tokens_to_token_decimal(prompt_max)
         pricing["completion_max"] = microdollars_per_million_tokens_to_token_decimal(completion_max)
@@ -587,6 +590,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         "completion_price_microdollars_per_million_tokens": completion_min,
         "published_prompt_price_microdollars_per_million_tokens": pub_prompt_min,
         "published_completion_price_microdollars_per_million_tokens": pub_completion_min,
+        "minimum_charge_microdollars": model.minimum_charge_microdollars,
         # Uniform pricing means the customer pays the headline rate — no
         # secret 1¢/M discount layered on top. Field kept for OpenRouter
         # consumer compat, but always zero.

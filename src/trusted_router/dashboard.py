@@ -50,7 +50,7 @@ from trusted_router.content.legal import (
     subprocessor_packet,
 )
 from trusted_router.measured import measured_for_model, measured_for_provider
-from trusted_router.money import MICRODOLLARS_PER_DOLLAR
+from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
 from trusted_router.regions import configured_regions, region_map_payload
 
@@ -3024,6 +3024,11 @@ def _model_detail_view(
         "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
         "completion_price": _price(
             model.completion_price_microdollars_per_million_tokens
+        ),
+        "minimum_charge": (
+            format_money_precise(model.minimum_charge_microdollars)
+            if model.minimum_charge_microdollars
+            else None
         ),
         "endpoints": endpoint_views,
         "endpoint_count": len(endpoint_views),
