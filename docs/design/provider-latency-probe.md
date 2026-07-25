@@ -43,8 +43,10 @@ chooses 200 routes: every active chat provider receives one slot, models used by
 TrustedRouter aliases and orchestration presets rank first, recent launches get
 a bounded bonus, and measured provider rank breaks ties.
 
-The US monitor runs one sustained route every two minutes with a 512-token cap.
-That is 3.6 samples per route per day, roughly 25 per week and 108 per 30 days.
+An isolated US throughput job runs one sustained route every two minutes with a
+512-token cap. That is 3.6 samples per route per day, roughly 25 per week and
+108 per 30 days. The ordinary US/EU monitor jobs never run this long probe, so
+slow streams cannot delay health, billing, fallback, TLS, or attestation checks.
 The probe requires final provider usage, discards response bytes, and persists
 only token counts, timing, route, finish reason, and calculated cost. These
 samples use `source="synthetic_throughput"` and contribute only throughput:
@@ -78,11 +80,12 @@ provider/model only. Probe content is "reply exactly PONG". No content is ever
 read by the probe or proxy. Consistent with the "0 prompt/output logs" promise.
 
 ## Cost
-Upstream tokens only; folds into the existing monitor job with no new service.
-The short random probe remains mostly `max_tokens=16`. The sustained set has a
-512-token cap and one US request per two-minute invocation. A deterministic CI
-test prices all 200 selected routes at their full cap and enforces a reviewed
-$75/month upper bound; the July 2026 catalog projects about $52/month.
+The short random probe remains mostly `max_tokens=16`. The sustained set runs
+in its own Cloud Run Job with a 512-token cap and one US request per two-minute
+invocation. A deterministic CI test prices all 200 selected routes at their
+full cap and enforces a reviewed $75/month upstream-token ceiling; the July
+2026 catalog projects about $52/month. The single small Cloud Run task adds a
+minor compute charge independent of provider token spend.
 
 ## Shipped in
 PRs #34 (probe + TTFB/source), #35 (drift), #36 (aggregation), #37 (/leaderboard),

@@ -1050,6 +1050,7 @@ async def provider_throughput_probe(
     model: str,
     max_tokens: int = 512,
     minimum_output_tokens: int = 128,
+    total_timeout_seconds: float | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> ProviderBenchmarkSample:
     """Measure sustained output speed after the first streamed token.
@@ -1084,30 +1085,31 @@ async def provider_throughput_probe(
     served_provider = provider
     served_model = model
     try:
-        async with client.stream(
-            "POST", url, json=body, headers=_auth_headers(api_key)
-        ) as response:
-            served_provider = response.headers.get("x-trustedrouter-provider") or provider
-            served_model = response.headers.get("x-trustedrouter-served-model") or model
-            if response.status_code != 200:
-                await response.aread()
-                error_type, error_status, message = _response_error(response)
-                return _rotation_error_sample(
-                    served_provider,
-                    served_model,
-                    region=monitor_region,
-                    elapsed_ms=_elapsed_ms_with_clock(started, clock),
-                    error_status=error_status,
-                    error_type=error_type,
-                    error_message=message,
-                    source="synthetic_throughput",
+        async with asyncio.timeout(total_timeout_seconds):
+            async with client.stream(
+                "POST", url, json=body, headers=_auth_headers(api_key)
+            ) as response:
+                served_provider = response.headers.get("x-trustedrouter-provider") or provider
+                served_model = response.headers.get("x-trustedrouter-served-model") or model
+                if response.status_code != 200:
+                    await response.aread()
+                    error_type, error_status, message = _response_error(response)
+                    return _rotation_error_sample(
+                        served_provider,
+                        served_model,
+                        region=monitor_region,
+                        elapsed_ms=_elapsed_ms_with_clock(started, clock),
+                        error_status=error_status,
+                        error_type=error_type,
+                        error_message=message,
+                        source="synthetic_throughput",
+                    )
+                observation = await _observe_provider_stream(
+                    response,
+                    started=started,
+                    clock=clock,
                 )
-            observation = await _observe_provider_stream(
-                response,
-                started=started,
-                clock=clock,
-            )
-    except (httpx.HTTPError, ValueError) as exc:
+    except (TimeoutError, httpx.HTTPError, ValueError) as exc:
         return _rotation_error_sample(
             served_provider,
             served_model,

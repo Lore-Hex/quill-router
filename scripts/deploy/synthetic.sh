@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Phase 5: deploy scheduled synthetic monitor jobs in each configured region.
-# Jobs run outside the prompt path and write privacy-safe samples to
-# /internal/synthetic/samples. Cloud Scheduler triggers each regional job
-# every two minutes via the Cloud Run Jobs API. Each pass includes real
-# provider and ledger probes; minute-granularity scheduling can overlap during
-# upstream slowness and create synthetic-only router-core failures.
+# Phase 5: deploy scheduled synthetic monitor jobs and an isolated sustained
+# throughput job. Jobs run outside the prompt path and write privacy-safe
+# samples to internal ingest endpoints. Short uptime probes must never wait on
+# the longer throughput benchmark.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
@@ -65,29 +63,6 @@ BASE_ENV_VARS=(
   # Cloud Run Job self-timeouts.
   "TR_SYNTHETIC_RUNS_PER_INVOCATION=1"
   "TR_SYNTHETIC_RUN_SPACING_SECONDS=0"
-  # Provider/model rotation probe — LAUNCHED (2026-06-04). Each pass takes
-  # TR_SYNTHETIC_ROTATION_PER_PASS random provider+model samples (two-stage),
-  # streams a tiny request, and records measured TTFB/TTFT into the benchmark
-  # store that feeds /leaderboard + the per-model/provider pages + API-drift
-  # detection. Most probes use max_tokens=16; reasoning-heavy models use a
-  # larger cap so hidden reasoning does not falsely look like provider
-  # downtime. To control spend: lower PER_PASS or set ENABLED to false. Watch
-  # the monitor workspace's credit burn (these spend prepaid credits on the
-  # synthetic-monitor key).
-  "TR_SYNTHETIC_ROTATION_ENABLED=true"
-  "TR_SYNTHETIC_ROTATION_PER_PASS=4"
-  # Sustained-output benchmark — one deterministic top-200 route per scheduler
-  # tick, from one region only. At the two-minute schedule this gives every
-  # selected provider/model route 3.6 samples/day (~25/week, ~108/month).
-  # Keeping it separate from the PONG probes preserves cheap, high-frequency
-  # uptime coverage. Long-probe failures never count against provider uptime.
-  "TR_SYNTHETIC_THROUGHPUT_ENABLED=true"
-  "TR_SYNTHETIC_THROUGHPUT_REGION=us-central1"
-  "TR_SYNTHETIC_THROUGHPUT_ROUTE_LIMIT=200"
-  "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
-  "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
-  "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
-  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
   "VERTEX_PROJECT_ID=${PROJECT_ID}"
   "VERTEX_LOCATION=${REGION}"
 )
@@ -100,13 +75,54 @@ fi
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/run.developer"
 ensure_project_role "serviceAccount:${RUN_SERVICE_ACCOUNT}" "roles/secretmanager.secretAccessor"
 
+upsert_scheduler() {
+  local scheduler_name="$1"
+  local job_name="$2"
+  local region="$3"
+  local schedule="$4"
+  local run_uri="https://${region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job_name}:run"
+
+  if gc scheduler jobs describe "$scheduler_name" --location "$region" >/dev/null 2>&1; then
+    log "updating synthetic scheduler ${scheduler_name}"
+    if ! gc scheduler jobs update http "$scheduler_name" \
+      --location "$region" \
+      --schedule "$schedule" \
+      --uri "$run_uri" \
+      --http-method POST \
+      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
+      --quiet >/dev/null; then
+      log "WARN: failed to update synthetic scheduler ${scheduler_name}; leaving existing schedule in place"
+    fi
+  else
+    log "creating synthetic scheduler ${scheduler_name}"
+    if ! gc scheduler jobs create http "$scheduler_name" \
+      --location "$region" \
+      --schedule "$schedule" \
+      --uri "$run_uri" \
+      --http-method POST \
+      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
+      --quiet >/dev/null; then
+      log "WARN: failed to create synthetic scheduler ${scheduler_name}; deploy the job exists but is not scheduled"
+    fi
+  fi
+}
+
 SYNTHETIC_MONITOR_REGIONS="${TR_SYNTHETIC_MONITOR_REGIONS:-us-central1,europe-west4}"
 IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
   scheduler_name="${job_name}-every-minute"
-  env_vars=("${BASE_ENV_VARS[@]}" "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}")
+  env_vars=(
+    "${BASE_ENV_VARS[@]}"
+    "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}"
+    # Short random provider/model probes feed uptime and TTFT. Sustained
+    # throughput is deliberately disabled in these health jobs.
+    "TR_SYNTHETIC_ROTATION_ENABLED=true"
+    "TR_SYNTHETIC_ROTATION_PER_PASS=4"
+    "TR_SYNTHETIC_THROUGHPUT_ENABLED=false"
+    "TR_SYNTHETIC_THROUGHPUT_ONLY=false"
+  )
   set_env_vars="$(IFS='|'; echo "^|^${env_vars[*]}")"
 
   log "deploying synthetic Cloud Run job ${job_name} in ${monitor_region}"
@@ -127,31 +143,50 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   # concurrently via asyncio.gather + httpx. On 1 CPU / 512Mi (the
   # Cloud Run default) the parallel TLS handshakes serialize and
   # probe latency balloons from ~2s to ~12s, blowing past task-
-  # timeout. 2 CPU / 1Gi handles 6 passes × 4 region pairs × 2
-  # probe types per pass comfortably.
+  # timeout. 2 CPU / 1Gi keeps the concurrent regional probes bounded.
 
-  run_uri="https://${monitor_region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${job_name}:run"
-  if gc scheduler jobs describe "$scheduler_name" --location "$monitor_region" >/dev/null 2>&1; then
-    log "updating synthetic scheduler ${scheduler_name}"
-    if ! gc scheduler jobs update http "$scheduler_name" \
-      --location "$monitor_region" \
-      --schedule "*/2 * * * *" \
-      --uri "$run_uri" \
-      --http-method POST \
-      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
-      --quiet >/dev/null; then
-      log "WARN: failed to update synthetic scheduler ${scheduler_name}; leaving existing schedule in place"
-    fi
-  else
-    log "creating synthetic scheduler ${scheduler_name}"
-    if ! gc scheduler jobs create http "$scheduler_name" \
-      --location "$monitor_region" \
-      --schedule "*/2 * * * *" \
-      --uri "$run_uri" \
-      --http-method POST \
-      --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
-      --quiet >/dev/null; then
-      log "WARN: failed to create synthetic scheduler ${scheduler_name}; deploy the job exists but is not scheduled"
-    fi
-  fi
+  upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/2 * * * *"
 done
+
+# Sustained-output benchmark: one deterministic top-200 route per tick. This
+# has a separate Cloud Run Job so a slow 512-token stream cannot delay or
+# overlap TLS, attestation, billing, fallback, or short provider probes.
+throughput_region="us-central1"
+throughput_job_name="trusted-router-throughput-${throughput_region}"
+throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+throughput_env_vars=(
+  "${BASE_ENV_VARS[@]}"
+  "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
+  "TR_SYNTHETIC_ROTATION_ENABLED=false"
+  "TR_SYNTHETIC_ROTATION_PER_PASS=0"
+  "TR_SYNTHETIC_THROUGHPUT_ENABLED=true"
+  "TR_SYNTHETIC_THROUGHPUT_ONLY=true"
+  "TR_SYNTHETIC_THROUGHPUT_REGION=${throughput_region}"
+  "TR_SYNTHETIC_THROUGHPUT_ROUTE_LIMIT=200"
+  "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
+  "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
+  "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
+  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
+)
+throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
+
+log "deploying isolated throughput Cloud Run job ${throughput_job_name}"
+gc run jobs deploy "$throughput_job_name" \
+  --region "$throughput_region" \
+  --image "$IMAGE" \
+  --command="/app/.venv/bin/python" \
+  --args="-m,trusted_router.synthetic.cli" \
+  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --set-env-vars "$throughput_set_env_vars" \
+  --update-secrets "$UPDATE_SECRETS" \
+  --max-retries 0 \
+  --task-timeout 180s \
+  --cpu 1 \
+  --memory 1Gi \
+  --quiet >/dev/null
+
+upsert_scheduler \
+  "$throughput_scheduler_name" \
+  "$throughput_job_name" \
+  "$throughput_region" \
+  "*/2 * * * *"

@@ -257,7 +257,8 @@ Provider measurement uses two independent probe classes:
   TTFB, TTFT, and upstream API drift.
 - A sustained 512-token stream covers the 200 most important provider/model
   routes in deterministic rotation from `us-central1`. It measures output
-  tokens per second after the first token. Long-probe failures never count
+  tokens per second after the first token. It runs in a separate Cloud Run Job,
+  so slow streams cannot delay uptime probes. Long-probe failures never count
   against provider uptime or API-drift alerts.
 
 The current two-minute schedule gives each sustained route about 25 samples per

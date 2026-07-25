@@ -1836,7 +1836,11 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
 
     assert "TR_API_BASE_URL=https://api.trustedrouter.com/v1" in body
     assert "TR_API_BASE_URL=https://api.quillrouter.com/v1" not in body
-    assert '--schedule "*/2 * * * *"' in body
+    assert 'throughput_job_name="trusted-router-throughput-${throughput_region}"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
+    assert '"*/2 * * * *"' in body
 
 
 class _FakeCell:
