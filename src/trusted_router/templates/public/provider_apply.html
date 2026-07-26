@@ -1,0 +1,126 @@
+{% extends "public/_base.html" %}
+
+{% block hero %}
+<section class="public-hero marketing-hero">
+  <div>
+    <div class="kicker">For inference providers</div>
+    <h1>List your models on TrustedRouter.</h1>
+    <p class="lead">Give us stable machine interfaces once. We will validate your routes, publish your models, monitor availability, and keep pricing current.</p>
+    <div class="hero-actions">
+      <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
+      <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
+    </div>
+  </div>
+  <div class="public-hero-metrics" aria-label="Provider integration requirements">
+    <div><strong>1</strong><span>dedicated API key</span></div>
+    <div><strong>3</strong><span>machine-readable URLs</span></div>
+    <div><strong>Hourly</strong><span>catalog refresh</span></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block body %}
+<section class="public-proof-strip" aria-label="Provider onboarding flow">
+  <div><strong>Connect</strong><span>Send a restricted key and API base URL.</span></div>
+  <div><strong>Discover</strong><span>Expose live models through a catalog endpoint.</span></div>
+  <div><strong>Price</strong><span>Publish exact rates through a pricing API.</span></div>
+  <div><strong>Verify</strong><span>We test, monitor, and list working routes.</span></div>
+</section>
+
+<section class="marketing-split" id="integration-contract" aria-label="Provider integration contract">
+  <div class="marketing-copy">
+    <span class="eyebrow">Send one email</span>
+    <h2>Everything needed to connect.</h2>
+    <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. Include a technical contact who can answer routing and pricing questions.</p>
+    <ul class="check-list">
+      <li><strong>Dedicated API key.</strong> A revocable production key scoped to inference and model discovery.</li>
+      <li><strong>Inference API URL.</strong> The HTTPS base URL used to call your models, plus authentication and API documentation.</li>
+      <li><strong>Models API URL.</strong> A machine-readable endpoint such as <code>GET /v1/models</code> with stable model IDs and current availability.</li>
+      <li><strong>Pricing API URL.</strong> A machine-readable endpoint with exact input, output, cache, and other billable rates.</li>
+    </ul>
+    <p class="small-copy">Never send an account password, owner credential, billing credential, or unrestricted administrative key.</p>
+  </div>
+  <div class="copy-terminal" aria-label="Provider onboarding email template">
+    <div class="code-head"><span>Email checklist</span><span>providers@trustedrouter.com</span></div>
+    <pre><code>Company:
+Technical contact:
+
+API base URL:
+API documentation:
+Authentication format:
+Dedicated API key:
+
+Models API URL:
+Pricing API URL:
+
+Supported features:
+Regions:
+Retention policy URL:
+Confidential compute URL:
+Deprecation feed or contact:</code></pre>
+  </div>
+</section>
+
+<section class="model-catalog" aria-labelledby="machine-readable-heading">
+  <div class="model-catalog-head">
+    <div>
+      <span class="eyebrow">Machine readable by design</span>
+      <h2 id="machine-readable-heading">Make launches and price changes automatic.</h2>
+    </div>
+    <p>Web pricing pages are useful for people. TrustedRouter also needs structured sources that software can ingest without guessing.</p>
+  </div>
+  <div class="marketing-grid three">
+    <div class="marketing-card">
+      <span class="card-label">Inference</span>
+      <h3>A stable API base URL.</h3>
+      <p>OpenAI compatibility is preferred. Document chat, Responses, streaming, tools, vision, embeddings, timeouts, and rate-limit behavior where supported.</p>
+      <code>https://api.provider.com/v1</code>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Catalog</span>
+      <h3>A live models endpoint.</h3>
+      <p>Return stable model IDs, availability, context length, maximum output, modalities, and capabilities. Include pagination when needed.</p>
+      <code>GET /v1/models</code>
+    </div>
+    <div class="marketing-card">
+      <span class="card-label">Pricing</span>
+      <h3>An exact pricing endpoint.</h3>
+      <p>Return currency, units, input and output rates, cache read and write rates, minimum charges, tiers, and effective timestamps as exact decimals.</p>
+      <code>GET /v1/pricing</code>
+    </div>
+  </div>
+</section>
+
+<section class="marketing-split" aria-label="What TrustedRouter does next">
+  <div class="marketing-copy">
+    <span class="eyebrow">After the email</span>
+    <h2>We verify before we list.</h2>
+    <ol class="plain-list">
+      <li>Validate authentication and retrieve the live model catalog.</li>
+      <li>Match model IDs to exact prices and supported capabilities.</li>
+      <li>Run non-streaming and streaming probes against representative models.</li>
+      <li>Publish provider and model pages only for callable routes.</li>
+      <li>Refresh availability and pricing automatically as your APIs change.</li>
+    </ol>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Also include</span>
+    <h2>Help developers choose your routes.</h2>
+    <ul class="check-list">
+      <li>Data retention, training, and zero-retention policy links</li>
+      <li>Confidential-compute or attestation documentation</li>
+      <li>Serving regions and data-residency constraints</li>
+      <li>Rate limits, capacity tiers, and expected error contracts</li>
+      <li>A machine-readable deprecation feed, or an operations contact</li>
+    </ul>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><h2>Ready to connect?</h2></div>
+  <div class="panel-body">
+    <p>Send the integration details and dedicated key to <a href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">providers@trustedrouter.com</a>.</p>
+    <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">Start provider integration</a>
+  </div>
+</section>
+{% endblock %}

@@ -581,6 +581,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def for_developers() -> str:
         return public_page_html(settings, "for-developers")
 
+    @public_html_route("/providers/apply")
+    async def provider_apply() -> str:
+        return public_page_html(settings, "providers/apply")
+
     @public_html_route("/apps")
     async def apps() -> str:
         return public_apps_html(settings, apps=_apps_snapshot(settings))
