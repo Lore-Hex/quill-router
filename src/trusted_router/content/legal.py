@@ -16,7 +16,7 @@ SYSTEM_SUBPROCESSORS: tuple[dict[str, str], ...] = (
     {
         "name": "Google Cloud Platform",
         "purpose": "Cloud hosting, Confidential Space, Cloud Run, Spanner, Bigtable, KMS, Secret Manager, and operational infrastructure.",
-        "data_access": "Prompt traffic on the production API terminates inside the attested gateway. GCP services store metadata, billing records, secrets, and operational logs as configured; prompt/output content is not stored by default.",
+        "data_access": "Prompt traffic on the production API terminates inside the attested gateway. GCP services store metadata, billing records, secrets, and operational logs as configured; TrustedRouter never logs or stores prompt/output content.",
         "policy_url": "https://cloud.google.com/security/compliance",
     },
     {
@@ -502,7 +502,7 @@ def hipaa_readiness_packet(settings: Settings) -> dict[str, Any]:
                 "Encrypted transport",
                 "Encrypted metadata and BYOK storage",
                 "API key hashing and scoped access",
-                "Metadata-only logging by default",
+                "Metadata-only operational logging",
                 "Route allowlists for PHI workloads",
             ],
         },

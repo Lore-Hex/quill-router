@@ -99,7 +99,7 @@ Status: evidence collection checklist. Do not mark an item complete until eviden
 - Data classification policy.
 - Retention policy.
 - Public privacy/security statements.
-- Tests proving prompts/outputs are not stored in Spanner, Bigtable, Sentry, logs, dashboard payloads, or broadcast metadata by default.
+- Tests proving prompts/outputs are never stored in Spanner, Bigtable, Sentry, logs, dashboard payloads, or Broadcast metadata.
 - Content export opt-in tests.
 - BYOK redaction tests.
 - API key one-time display/hash tests.

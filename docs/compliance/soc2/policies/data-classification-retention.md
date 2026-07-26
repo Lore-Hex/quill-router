@@ -22,11 +22,11 @@ Classify TrustedRouter data and define retention expectations.
 - Internal data is limited to personnel and contractors with a business need.
 - Confidential data requires access control and encryption in transit and at rest.
 - Restricted data requires least privilege, encryption, redaction, and no source-control storage.
-- Transient Sensitive data must not be stored durably by default and must not be logged.
+- Transient Sensitive data must never be stored durably or logged by TrustedRouter.
 
 ## Retention
 
-- Prompt/output content: not stored by TrustedRouter by default.
+- Prompt/output content: never logged or stored by TrustedRouter.
 - Usage metadata: retained as needed for billing, security, abuse prevention, support, product analytics, and legal obligations.
 - Synthetic monitoring raw samples: retained according to configured raw retention.
 - Status rollups: retained according to configured rollup retention.
@@ -36,7 +36,7 @@ Classify TrustedRouter data and define retention expectations.
 
 ## Content Export
 
-Prompt/output export to PostHog or webhook destinations is disabled by default and requires explicit destination-level opt-in by the customer. Export destinations are customer subprocessors, not TrustedRouter default storage.
+Prompt/output export to PostHog or webhook destinations requires explicit destination-level opt-in by the customer. TrustedRouter sends the content to the customer-selected destination without retaining it. Export destinations are customer subprocessors, not TrustedRouter storage.
 
 ## Evidence
 

@@ -3,7 +3,7 @@
 <section class="public-proof-strip">
   <div><strong>Effective</strong><span>July 21, 2026</span></div>
   <div><strong>Controller</strong><span>{{ entity.name }}</span></div>
-  <div><strong>Prompt storage</strong><span>Off by default</span></div>
+  <div><strong>Prompt and output logs</strong><span>Never</span></div>
   <div><strong>Contact</strong><span><a href="mailto:{{ entity.security_contact_email }}">{{ entity.security_contact_email }}</a></span></div>
 </section>
 
@@ -19,7 +19,7 @@
   <h3>API and service metadata</h3>
   <p>We collect operational metadata such as request and generation identifiers, selected model and provider, token counts, latency, status, cost, region, API-key hash and display hint, rate-limit state, and security events. Raw API keys are shown once and stored only as protected hashes. BYOK provider credentials are encrypted.</p>
   <h3>Prompts and outputs</h3>
-  <p>TrustedRouter does not store prompt or output content by default. Prompt traffic is designed to terminate inside the attested gateway. If a workspace explicitly enables a content-bearing Broadcast destination or another content feature, the selected content is sent to that destination under the workspace's configuration and the destination's terms. Downstream model providers process content according to the selected route and provider terms.</p>
+  <p>TrustedRouter never logs or stores prompt or output content. Prompt traffic is designed to terminate inside the attested gateway. If a workspace explicitly enables a content-bearing Broadcast destination, the selected content is sent to that destination under the workspace's configuration and the destination's terms; it is not retained by TrustedRouter. Downstream model providers process content according to the selected route and provider terms.</p>
   <h3>Website information</h3>
   <p>We may collect IP address, browser and device information, referring page, coarse location derived from IP, cookie or session identifiers, and page interaction data needed to operate, secure, and improve the service. Our first-party campaign cookie is signed, HttpOnly, and limited to source, campaign, landing page, pseudonymous click identifiers, and an anonymous identifier. It does not contain prompts, outputs, API keys, BYOK credentials, email addresses, or payment details. TrustedRouter honors browser Global Privacy Control and Do Not Track signals by not creating or using this attribution cookie for that request.</p>
 
@@ -30,7 +30,7 @@
   <p>We disclose information to infrastructure, authentication, payment, communications, monitoring, and model-provider subprocessors as needed to provide the service. The current platform and downstream model-provider list is published at <a href="/legal/subprocessors">/legal/subprocessors</a>. We may also disclose information when required by law, to protect rights and safety, during a corporate transaction, or with your direction or consent.</p>
 
   <h2>Retention</h2>
-  <p>We retain account, billing, security, and service metadata only as reasonably necessary for the purposes described above, including legal, tax, accounting, fraud-prevention, dispute, and security obligations. Retention periods vary by record type and contractual requirements. Prompt and output content is not retained by TrustedRouter by default. Deleting an account does not require us to delete records that law, security, fraud prevention, or financial controls require us to preserve.</p>
+  <p>We retain account, billing, security, and service metadata only as reasonably necessary for the purposes described above, including legal, tax, accounting, fraud-prevention, dispute, and security obligations. Retention periods vary by record type and contractual requirements. TrustedRouter never retains prompt or output content. Deleting an account does not require us to delete records that law, security, fraud prevention, or financial controls require us to preserve.</p>
 
   <h2>Security</h2>
   <p>We use access controls, encryption, secret isolation, security monitoring, and an attested prompt gateway. No system is perfectly secure. Review current architecture and attestation evidence at <a href="/security">/security</a> and <a href="https://trust.trustedrouter.com">trust.trustedrouter.com</a>.</p>

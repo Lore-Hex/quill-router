@@ -5,7 +5,7 @@
     <span class="eyebrow">Cline and Roo Code API provider</span>
     <h2>Your coding agent streams your entire repo through its API provider, so pick one you can verify.</h2>
     <p>Cline and Roo Code both speak the OpenAI-compatible protocol, which makes TrustedRouter a three-field setup: base URL, API key, model id. That buys you 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek V4, Kimi K2.7, GLM-5.2, and Qwen 3.5, with automatic fallback to another provider when one goes down.</p>
-    <p>Privacy matters more for agents than for chat. Every agent turn ships file contents, diffs, and terminal output upstream. TrustedRouter does not store prompt or output content by default, and the prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose attestation you can check live.</p>
+    <p>Privacy matters more for agents than for chat. Every agent turn ships file contents, diffs, and terminal output upstream. TrustedRouter never logs or stores prompt or output content, and the prompt path runs inside a hardware-attested confidential-compute gateway whose source is open and whose attestation you can check live.</p>
     <p><a class="btn primary" href="/pricing">See per-model pricing</a> <a class="btn" href="/choose">Pick a model route</a></p>
   </div>
   <div class="copy-terminal">
@@ -31,7 +31,7 @@ curl {{ api_base_url }}/chat/completions \
   <div class="matrix-row matrix-head"><span></span><strong>OpenRouter</strong><strong>TrustedRouter</strong></div>
   <div class="matrix-row"><span>Cline / Roo Code setup</span><span>OpenAI-compatible, paste and go</span><span>The same: base URL, key, model id</span></div>
   <div class="matrix-row"><span>Catalog</span><span>Very large catalog, wide ecosystem, well documented</span><span>220+ routes across 30+ providers</span></div>
-  <div class="matrix-row"><span>Prompt handling</span><span>Defined by policy and per-provider settings</span><span>No prompt or output storage by default</span></div>
+  <div class="matrix-row"><span>Prompt handling</span><span>Defined by policy and per-provider settings</span><span>No prompt or output logs or storage</span></div>
   <div class="matrix-row"><span>Proof</span><span>You read the policy</span><span>You check a live attestation: signed JWT, published image digest, open-source gateway</span></div>
   <div class="matrix-row"><span>Privacy tiers</span><span>Varies by provider</span><span>Open / Zero-Data-Retention / TEE, labeled per route</span></div>
 </section>

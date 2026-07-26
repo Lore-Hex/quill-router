@@ -19,7 +19,7 @@ This policy applies to Lore Hex Corp personnel, contractors, systems, repositori
 - Least privilege.
 - Defense in depth.
 - Fail closed for prompt-path trust boundaries.
-- No prompt/output durable storage by default.
+- No prompt/output logging or durable storage.
 - Explicit customer opt-in for content export.
 - Open-source, auditable implementation where practical.
 - Evidence-backed claims. No compliance claim is public until obtained.
@@ -39,7 +39,7 @@ This policy applies to Lore Hex Corp personnel, contractors, systems, repositori
 - Secrets must not be committed to source and must be stored in approved secret systems.
 - Customer API keys must be hashed and raw values shown only once.
 - BYOK keys must be encrypted before durable storage.
-- Prompt/output content must not be logged or stored by default.
+- Prompt/output content must never be logged or stored by TrustedRouter.
 - Security incidents must be recorded, triaged, escalated, and remediated.
 - Vendors that process customer data must be listed and reviewed.
 - Public trust/security pages must state limitations accurately.
