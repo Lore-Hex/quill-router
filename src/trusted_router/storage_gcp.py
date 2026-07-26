@@ -693,7 +693,7 @@ class SpannerBigtableStore:
         limit_daily_microdollars: int | None = None,
         limit_weekly_microdollars: int | None = None,
         limit_monthly_microdollars: int | None = None,
-        budget_alert_only: bool = True,
+        budget_alert_only: bool = False,
         tags: dict[str, str] | None = None,
     ) -> tuple[str, ApiKey]:
         return self.api_keys.create(

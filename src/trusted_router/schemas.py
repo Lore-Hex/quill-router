@@ -97,8 +97,8 @@ class CreateKeyRequest(_Lenient):
     limit_daily: Decimal | None = None
     limit_weekly: Decimal | None = None
     limit_monthly: Decimal | None = None
-    # True = window budgets ALERT (email, don't block); False = hard-limit (429).
-    budget_alert_only: bool = True
+    # False = hard-limit (429, default); True = alert by email without blocking.
+    budget_alert_only: bool = False
     include_byok_in_limit: bool = True
     expires_at: str | None = None
     workspace_id: str | None = None

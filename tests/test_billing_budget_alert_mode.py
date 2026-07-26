@@ -1,5 +1,5 @@
-"""Alert-vs-Limit budget mode: alert mode (default) never blocks — it emails the
-workspace owner when a window is crossed (once per window); limit mode 429s."""
+"""Alert-vs-limit budget mode: hard limits are the default; explicitly selected
+alert mode emails once per crossed window without blocking requests."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _key(*, alert_only: bool, email: str = "owner@example.com"):
 
 def test_alert_mode_never_blocks_over_budget() -> None:
     STORE.reset()
-    _ws, key = _key(alert_only=True)  # the default
+    _ws, key = _key(alert_only=True)
     STORE.api_keys.add_usage(key.hash, 5_000, is_byok=False)  # way over $0.001 daily
     # Alert mode: authorize/reserve must NOT raise — the app keeps working.
     STORE.reserve_key_limit(key.hash, 500, usage_type="Credits")

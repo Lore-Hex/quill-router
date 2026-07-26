@@ -40,6 +40,29 @@ def _seed_workspace_and_key(store) -> tuple[str, str]:
     return workspace.id, api_key.hash
 
 
+def test_gcp_keys_default_to_hard_budgets_and_allow_alert_opt_in() -> None:
+    store, _db, _ = make_fake_store()
+    user = store.ensure_user("gcp-budget-default@example.com")
+    workspace = store.list_workspaces_for_user(user.id)[0]
+
+    _, hard = store.create_api_key(
+        workspace_id=workspace.id,
+        name="hard",
+        creator_user_id=user.id,
+        limit_daily_microdollars=1_000,
+    )
+    _, alert = store.create_api_key(
+        workspace_id=workspace.id,
+        name="alert",
+        creator_user_id=user.id,
+        limit_daily_microdollars=1_000,
+        budget_alert_only=True,
+    )
+
+    assert hard.budget_alert_only is False
+    assert alert.budget_alert_only is True
+
+
 # ── Auth sessions ───────────────────────────────────────────────────────
 
 

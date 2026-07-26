@@ -1,6 +1,6 @@
 """Per-key budget ALERT emails.
 
-When a key is in alert mode (`budget_alert_only`, the default), crossing a
+When a key explicitly opts into alert mode (`budget_alert_only`), crossing a
 daily/weekly/monthly window budget does NOT block the request — it emails the
 workspace owner instead ("know when weird shit is happening" without stopping a
 working app). Called from the gateway settle path AFTER the window usage is

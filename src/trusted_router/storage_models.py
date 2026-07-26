@@ -114,12 +114,11 @@ class ApiKey:
     limit_daily_microdollars: int | None = None
     limit_weekly_microdollars: int | None = None
     limit_monthly_microdollars: int | None = None
-    # When True (the default), the window budgets are ALERT thresholds: a crossed
-    # window emails the workspace owner but NEVER blocks the request (don't stop a
-    # working app). When False, the windows HARD-LIMIT (429). `budget_alerted`
-    # dedups the email — {window: window_start_iso} of the last alert per window,
-    # so at most one email per window (JSON-owned alert state, not a counter).
-    budget_alert_only: bool = True
+    # False (the default) makes window budgets HARD LIMITS (429). True explicitly
+    # opts into alert-only thresholds: crossing a window emails the workspace
+    # owner but does not block requests. `budget_alerted` dedups the email as
+    # {window: window_start_iso} (JSON-owned alert state, not a counter).
+    budget_alert_only: bool = False
     budget_alerted: dict[str, str] = field(default_factory=dict)
     include_byok_in_limit: bool = True
     usage_microdollars: int = 0
