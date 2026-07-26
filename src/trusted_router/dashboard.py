@@ -105,6 +105,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/choose",
     "/models",
     "/providers",
+    "/providers/apply",
     "/benchmarks",
     "/rankings",
     "/leaderboard",
@@ -1201,6 +1202,29 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             (
                 "What does gateway attestation prove?",
                 "A fresh nonce challenge lets you verify that the live prompt gateway is running the published workload image. It does not prove the code is bug free or make every downstream provider confidential.",
+            ),
+        ),
+    ),
+    "providers/apply": PublicPage(
+        template="public/provider_apply.html",
+        title="List Your Models on TrustedRouter",
+        description=(
+            "Give TrustedRouter a dedicated API key, an inference API base URL, "
+            "a machine-readable model catalog, and a pricing API. We will validate, "
+            "list, monitor, and keep your routes current automatically."
+        ),
+        faq_items=(
+            (
+                "What API format works best?",
+                "An OpenAI-compatible HTTPS API is the fastest path. Include the inference base URL, authentication format, supported request types, streaming behavior, and any model-specific capability differences.",
+            ),
+            (
+                "Why do you require model and pricing APIs?",
+                "TrustedRouter refreshes provider catalogs automatically. Machine-readable model availability and pricing let us add launches, update prices, and remove retired routes without relying on stale web pages or manual email updates.",
+            ),
+            (
+                "What kind of API key should we send?",
+                "Create a dedicated, revocable production key scoped only to inference and model discovery. Do not send an account password, owner credential, billing credential, or unrestricted administrative key.",
             ),
         ),
     ),
@@ -2513,6 +2537,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Homepage: https://{domain}/",
         f"- Models: https://{domain}/models",
         f"- Providers: https://{domain}/providers",
+        f"- Provider onboarding: https://{domain}/providers/apply",
         f"- EU routing: https://{domain}/eu",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Benchmarks: https://{domain}/benchmarks",
@@ -2631,6 +2656,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Model catalog: https://{domain}/models",
             f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
             f"- Provider transparency: https://{domain}/providers",
+            f"- Provider onboarding: https://{domain}/providers/apply",
             f"- EU routing: https://{domain}/eu",
             f"- TrustedOS for AI clouds: https://{domain}/trustedos",
             "- Public status: https://status.trustedrouter.com/",
