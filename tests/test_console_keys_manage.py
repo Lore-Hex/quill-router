@@ -130,11 +130,15 @@ def test_member_cannot_disable_enable_or_delete(console: dict, client: TestClien
 
 def test_create_form_budget_alert_only_checkbox(console: dict) -> None:
     client, workspace = console["client"], console["workspace"]
-    # Rendered-checked "Alert only" box submits as 'on' -> alert mode.
+    page = client.get("/console/api-keys").text
+    assert '<input type="checkbox" name="budget_alert_only">' in page
+    assert '<input type="checkbox" name="budget_alert_only" checked>' not in page
+    assert "Budgets hard-stop requests with 429 by default" in page
+    # Alert-only mode requires an explicit checked value.
     client.post("/console/api-keys", data={"name": "alerted", "budget_alert_only": "on"})
     alerted = next(k for k in STORE.list_keys(workspace.id) if k.name == "alerted")
     assert alerted.budget_alert_only is True
-    # Unchecked (field omitted) -> hard limit.
+    # The normal omitted field creates a hard-limit key.
     client.post("/console/api-keys", data={"name": "hardlimit"})
     hard = next(k for k in STORE.list_keys(workspace.id) if k.name == "hardlimit")
     assert hard.budget_alert_only is False
@@ -152,7 +156,7 @@ def test_limit_form_toggles_alert_vs_limit(console: dict) -> None:
     )
     assert STORE.get_key_by_hash(key.hash).budget_alert_only is True
     # The checkbox renders on the page.
-    assert "Alert only" in client.get("/console/api-keys").text
+    assert "Email alert only" in client.get("/console/api-keys").text
 
 
 def test_budget_can_be_cleared_back_to_undefined(console: dict) -> None:

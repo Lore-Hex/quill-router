@@ -64,6 +64,7 @@ def test_oauth_code_exchange_creates_delegated_inference_key(
     assert api_key.limit_microdollars == 12_345_678
     assert api_key.limit_reset == "monthly"
     assert api_key.expires_at == "2099-01-01T00:00:00Z"
+    assert api_key.budget_alert_only is False
 
 
 def test_oauth_code_exchange_returns_signed_in_identity(

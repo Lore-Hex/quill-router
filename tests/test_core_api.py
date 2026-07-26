@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.catalog import PROVIDER_JURISDICTION_US, PROVIDERS
+from trusted_router.spend_windows import KeyWindowLimitExceeded
 from trusted_router.storage import STORE
 
 
@@ -29,6 +30,40 @@ def test_key_create_list_and_one_time_reveal(
     credit_data = credits.json()["data"]
     assert isinstance(credit_data["total_credits_microdollars"], int)
     assert isinstance(credit_data["available_microdollars"], int)
+
+
+def test_api_key_budgets_default_to_hard_limit_and_alert_only_is_opt_in(
+    client: TestClient,
+    user_headers: dict[str, str],
+) -> None:
+    hard_response = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={"name": "hard by default", "limit_daily": "0.001"},
+    )
+    assert hard_response.status_code == 201, hard_response.text
+    hard = STORE.get_key_by_hash(hard_response.json()["data"]["hash"])
+    assert hard is not None
+    assert hard.budget_alert_only is False
+    STORE.api_keys.add_usage(hard.hash, 1_000, is_byok=False)
+    with pytest.raises(KeyWindowLimitExceeded):
+        STORE.reserve_key_limit(hard.hash, 1, usage_type="Credits")
+
+    alert_response = client.post(
+        "/v1/keys",
+        headers=user_headers,
+        json={
+            "name": "explicit email alert",
+            "limit_daily": "0.001",
+            "budget_alert_only": True,
+        },
+    )
+    assert alert_response.status_code == 201, alert_response.text
+    alert = STORE.get_key_by_hash(alert_response.json()["data"]["hash"])
+    assert alert is not None
+    assert alert.budget_alert_only is True
+    STORE.api_keys.add_usage(alert.hash, 1_000, is_byok=False)
+    STORE.reserve_key_limit(alert.hash, 1, usage_type="Credits")
 
 
 def test_inference_key_cannot_call_management_api(

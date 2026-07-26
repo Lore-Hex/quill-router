@@ -94,6 +94,7 @@ def test_issue_chat_browser_key_creates_scoped_key_and_sets_cookie() -> None:
     assert issued.creator_user_id == user_id
     assert issued.management is False  # browser keys must NEVER be mgmt
     assert issued.limit_microdollars == CHAT_BROWSER_KEY_LIMIT_MICRODOLLARS
+    assert issued.budget_alert_only is False
     assert issued.expires_at is not None
 
     # Cookie is set with the right attributes for the chat client
