@@ -183,6 +183,14 @@ primary optimization event to `first_successful_api_call` or a credit purchase
 only after there is enough volume for the bidding system to learn. Report both
 CAC and activated CAC; signup CAC alone is easy to make look good.
 
+Implementation: Google Ads Data Manager pulls the authenticated,
+metadata-only CSV documented in
+[`first-party-attribution.md`](first-party-attribution.md). Keep
+`TrustedRouter Signup` as the only primary bidding conversion initially.
+Configure activation, seven-day retention, and purchase as secondary
+observation conversions until each has enough weekly volume for stable
+optimization.
+
 ## Raw Inputs
 
 The source CSVs were downloaded locally from Ahrefs on 2026-07-21:

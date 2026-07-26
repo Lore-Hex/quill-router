@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     # error log lines we just enriched. DEBUG would flood; ERROR alone
     # would miss the request_id correlation in 429s.
     axiom_log_level: str = "INFO"
+    # Google Ads Data Manager pulls a metadata-only CSV over authenticated
+    # HTTPS. The password is optional so local/test installs stay simple; when
+    # absent the feed route is an intentional 404.
+    google_ads_conversion_feed_username: str = "trustedrouter-data-manager"
+    google_ads_conversion_feed_password: str | None = None
+    google_ads_conversion_feed_retention_days: int = 90
+    google_ads_conversion_feed_max_rows: int = 100_000
     enable_sentry_test_route: bool = False
     sentry_floodgate_enabled: bool = True
     sentry_floodgate_window_seconds: int = 60 * 60
@@ -232,6 +239,21 @@ class Settings(BaseSettings):
         environment = self.environment.lower()
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
+        if not 1 <= self.google_ads_conversion_feed_retention_days <= 90:
+            raise ValueError(
+                "TR_GOOGLE_ADS_CONVERSION_FEED_RETENTION_DAYS must be between 1 and 90"
+            )
+        if self.google_ads_conversion_feed_max_rows < 1:
+            raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_MAX_ROWS must be positive")
+        if ":" in self.google_ads_conversion_feed_username:
+            raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_USERNAME cannot contain ':'")
+        if (
+            self.google_ads_conversion_feed_password is not None
+            and len(self.google_ads_conversion_feed_password) < 32
+        ):
+            raise ValueError(
+                "TR_GOOGLE_ADS_CONVERSION_FEED_PASSWORD must contain at least 32 characters"
+            )
         if self.x402_allow_mock_payments and environment not in {"local", "test"}:
             raise ValueError("TR_X402_ALLOW_MOCK_PAYMENTS is only allowed in local/test")
         if (
@@ -331,6 +353,8 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "paypal_webhook_id",
     "paypal_api_base_url",
     "sentry_dsn",
+    "google_ads_conversion_feed_username",
+    "google_ads_conversion_feed_password",
     "bootstrap_management_key",
     "byok_kms_key_name",
     "byok_envelope_key_b64",

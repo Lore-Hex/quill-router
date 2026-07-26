@@ -11,6 +11,7 @@ from . import broadcast_queue as broadcast_queue
 from . import chat_browser_key as chat_browser_key
 from . import fetch_image as fetch_image
 from . import gateway as gateway
+from . import google_ads as google_ads
 from . import paypal as paypal
 from . import reconcile as reconcile
 from . import sentry as sentry
@@ -23,6 +24,7 @@ def register_internal_routes(router: APIRouter) -> None:
     paypal.register(router)
     broadcast_queue.register(router)
     gateway.register(router)
+    google_ads.register(router)
     fetch_image.register(router)
     reconcile.register(router)
     synthetic.register(router)

@@ -28,6 +28,7 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderBenchmarkSample,
@@ -208,6 +209,20 @@ class InMemoryStore:
             amount_microdollars=amount_microdollars,
             occurred_at=occurred_at,
         )
+
+    def list_google_ads_conversions(
+        self,
+        *,
+        since: str,
+        limit: int,
+    ) -> list[GoogleAdsConversion]:
+        return self.acquisition_store.list_google_ads_conversions(
+            since=since,
+            limit=limit,
+        )
+
+    def backfill_google_ads_conversions(self, *, limit: int) -> int:
+        return self.acquisition_store.backfill_google_ads_conversions(limit=limit)
 
     # Auth sessions delegate to storage_auth_sessions.InMemoryAuthSessions.
     def create_auth_session(

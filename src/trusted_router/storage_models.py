@@ -843,6 +843,27 @@ class AcquisitionAttribution:
 
 
 @dataclass
+class GoogleAdsConversion:
+    """Metadata-only conversion row consumed by Google Ads Data Manager.
+
+    The row deliberately carries no TrustedRouter account, workspace, email,
+    or inference identifier. ``order_id`` is derived from the attribution's
+    random anonymous ID and the event, so Google can deduplicate imports
+    without receiving a product identifier.
+    """
+
+    order_id: str
+    conversion_action: str
+    occurred_at: str
+    gclid: str | None = None
+    gbraid: str | None = None
+    wbraid: str | None = None
+    value_microdollars: int = 0
+    currency_code: str = "USD"
+    created_at: str = field(default_factory=iso_now)
+
+
+@dataclass
 class AuthSession:
     hash: str
     salt: str

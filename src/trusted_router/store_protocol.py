@@ -25,6 +25,7 @@ from trusted_router.storage_models import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderBenchmarkSample,
@@ -87,6 +88,13 @@ class Store(Protocol):
         amount_microdollars: int,
         occurred_at: str,
     ) -> AcquisitionAttribution | None: ...
+    def list_google_ads_conversions(
+        self,
+        *,
+        since: str,
+        limit: int,
+    ) -> list[GoogleAdsConversion]: ...
+    def backfill_google_ads_conversions(self, *, limit: int) -> int: ...
     def create_workspace(
         self,
         owner_user_id: str,
