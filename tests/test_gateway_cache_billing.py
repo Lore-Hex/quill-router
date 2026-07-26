@@ -105,9 +105,14 @@ def test_anthropic_cache_read_and_write_tokens_are_billed() -> None:
 
 def test_openai_compatible_cached_subset_is_normalized() -> None:
     client, key = _client_and_key()
-    auth = _authorize(client, key, "mistralai/mistral-small-3.2-24b-instruct")
+    auth = _authorize(
+        client,
+        key,
+        "z-ai/glm-5.2",
+        provider={"only": ["tinfoil"]},
+    )
     endpoint = endpoint_for_id(auth["endpoint_id"])
-    assert endpoint is not None and endpoint.provider != "anthropic"
+    assert endpoint is not None and endpoint.provider == "tinfoil"
 
     settle = client.post(
         "/v1/internal/gateway/settle",
@@ -126,7 +131,10 @@ def test_openai_compatible_cached_subset_is_normalized() -> None:
 
     prompt_price = endpoint.prompt_price_microdollars_per_million_tokens
     completion_price = endpoint.completion_price_microdollars_per_million_tokens
-    read_price, _ = cache_token_prices_microdollars(endpoint.provider, prompt_price)
+    read_price = (
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+    )
+    assert read_price is not None
     expected = (
         token_cost_microdollars(100, prompt_price)  # 1000 - 900 cached
         + token_cost_microdollars(50, completion_price)

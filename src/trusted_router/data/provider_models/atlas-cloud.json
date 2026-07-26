@@ -646,7 +646,9 @@
       "title": "bytedance/doubao-seed-evolving",
       "model_type": "chat",
       "input_modalities": [
-        "text"
+        "text",
+        "image",
+        "video"
       ],
       "output_modalities": [
         "text"
@@ -3279,8 +3281,53 @@
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Claude Opus 4.8 CC Max",
+      "title": "anthropic/claude-opus-4.8-ccmax",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-4.8-ccmax",
+      "upstream_id": "anthropic/claude-opus-4.8-ccmax",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Claude Sonnet 5 CC Max",
+      "title": "anthropic/claude-sonnet-5-ccmax",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-sonnet-5-ccmax",
+      "upstream_id": "anthropic/claude-sonnet-5-ccmax",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 2000000,
+      "output_token_price_per_m": 10000000,
+      "cached_input_token_price_per_m": 200000
     }
   ],
-  "generated_at": "2026-07-22T00:02:00Z",
-  "model_count": 119
+  "generated_at": "2026-07-26T13:46:39Z",
+  "model_count": 121
 }

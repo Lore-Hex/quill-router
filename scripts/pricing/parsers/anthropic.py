@@ -13,11 +13,18 @@
 """Anthropic pricing-page parser."""
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 
 from bs4 import BeautifulSoup
 
 _MODEL_FAMILIES = {"Fable", "Opus", "Sonnet", "Haiku"}
+_FAST_MODE_RE = re.compile(
+    r"fast mode for (?P<family>Fable|Opus|Sonnet|Haiku) "
+    r"(?P<version>[0-9]+(?:\.[0-9]+)?) at "
+    r"(?P<multiplier>[0-9]+(?:\.[0-9]+)?)x standard pricing",
+    re.IGNORECASE,
+)
 
 
 def parse(html: str) -> dict:
@@ -58,4 +65,21 @@ def parse(html: str) -> dict:
         if cache_read_usd is not None:
             row["prompt_cached_micro_per_m"] = int(cache_read_usd * 1_000_000)
         out[or_id] = row
+
+    # Anthropic documents Fast mode as a multiplier below the standard model
+    # cards rather than rendering a second pricing card. Publish the distinct
+    # `-fast` SKU only when that statement and its base card are both present.
+    page_text = " ".join(soup.stripped_strings)
+    for match in _FAST_MODE_RE.finditer(page_text):
+        family = match.group("family").lower()
+        version = match.group("version")
+        base_id = f"anthropic/claude-{family}-{version}"
+        base = out.get(base_id)
+        if base is None:
+            continue
+        multiplier = Decimal(match.group("multiplier"))
+        out[f"{base_id}-fast"] = {
+            key: int(Decimal(value) * multiplier)
+            for key, value in base.items()
+        }
     return out

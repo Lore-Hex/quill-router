@@ -33,6 +33,7 @@ MANIFEST_PATH = (
 # whatever the page says into these IDs.
 EXPECTED_MODELS = [
     "anthropic/claude-opus-5",
+    "anthropic/claude-opus-5-fast",
     "anthropic/claude-sonnet-5",
     "anthropic/claude-fable-5",
     "anthropic/claude-opus-4.8",
