@@ -214,6 +214,14 @@ grant_tr_deploy_secret_access "trustedrouter-streamlake-api-key"
 ensure_secret_from_env_file "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token" "AXIOM_TOKEN" "AXIOM_API_KEY"
 require_secret_from_env_file "STRIPE_SECRET_KEY" "trustedrouter-stripe-secret-key" "STRIPE_KEY"
 require_secret_from_env_file "STRIPE_WEBHOOK_SECRET" "trustedrouter-stripe-webhook-secret"
+if ! gc secrets describe trustedrouter-google-ads-conversion-feed-password >/dev/null 2>&1; then
+  ensure_secret_value trustedrouter-google-ads-conversion-feed-password "$(python3 - <<'PY'
+import secrets
+print(secrets.token_urlsafe(48))
+PY
+)"
+  log "generated secret trustedrouter-google-ads-conversion-feed-password"
+fi
 
 # OAuth + SES secrets — independently optional. Push to Secret Manager only
 # when the local keys file (or env) supplies a value; production fail-closed

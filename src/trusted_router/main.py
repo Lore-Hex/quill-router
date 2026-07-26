@@ -89,7 +89,14 @@ def create_app(
             return JSONResponse(
                 exc.detail, status_code=exc.status_code, headers=exc.headers
             )
-        return error_response(exc.status_code, str(exc.detail), ErrorType.HTTP_ERROR)
+        response = error_response(
+            exc.status_code,
+            str(exc.detail),
+            ErrorType.HTTP_ERROR,
+        )
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(

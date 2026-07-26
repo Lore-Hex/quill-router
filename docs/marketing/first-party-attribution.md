@@ -17,13 +17,13 @@ days. Production sends it only over HTTPS. The cookie contains:
 
 The cookie and durable attribution record never contain prompts, outputs, raw
 API keys, BYOK keys, email addresses, payment credentials, request bodies, IP
-addresses, or full referring URLs. Click identifiers are retained only in the
-private Spanner record for future consented offline conversion uploads. Logs
-contain booleans indicating which click identifier was present, never its raw
-value. Public landing events also contain a server-keyed HMAC fingerprint of
-the click identifier. This lets reports deduplicate the same ad click across
-cookie churn without exposing an identifier that an analytics operator can
-reuse outside TrustedRouter.
+addresses, or full referring URLs. Click identifiers are retained only in
+private Spanner records and the metadata-only Google conversion rows described
+below. Logs contain booleans indicating which click identifier was present,
+never its raw value. Public landing events also contain a server-keyed HMAC
+fingerprint of the click identifier. This lets reports deduplicate the same ad
+click across cookie churn without exposing an identifier that an analytics
+operator can reuse outside TrustedRouter.
 
 Requests carrying `Sec-GPC: 1` or `DNT: 1` do not create or use attribution.
 Known crawler, link-preview, prefetch, and prerender requests do not receive
@@ -64,6 +64,40 @@ after signup.
 
 Attribution writes are failure-isolated. They cannot fail signup, inference,
 settlement, payment acknowledgement, or streaming.
+
+## Google Ads Data Manager
+
+Google Ads imports attributed outcomes from:
+
+```text
+GET /v1/internal/marketing/google-ads-conversions.csv
+```
+
+The HTTPS feed requires a dedicated HTTP Basic username and a 32-character or
+longer secret from Secret Manager. It is private, uncached, and excluded from
+indexing. The feed covers the last 90 days and fails with `503` rather than
+silently truncating if it reaches the configured row ceiling.
+
+Each Google-attributed milestone creates an idempotent, month-partitioned
+Spanner row:
+
+1. `TrustedRouter Signup`
+2. `TrustedRouter Activated API User`
+3. `TrustedRouter Retained API User 7d`
+4. `TrustedRouter Credit Purchase`
+
+The row contains only `gclid`, `gbraid`, or `wbraid`, the conversion action and
+timestamp, exact integer-derived USD value, currency, and a SHA-256 order ID
+derived from the random anonymous attribution ID. It contains no workspace ID,
+user ID, email, model/provider choice, API key, prompt, output, or request body.
+Google can use the order ID and its own click ID for deduplication without
+receiving a TrustedRouter account identifier.
+
+Signup and product-use rows are committed atomically with their attribution
+milestones. Purchase rows are created only after the payment ledger's
+idempotency check wins. A protected backfill endpoint reconstructs historic
+signup, activation, and retention rows; it deliberately does not synthesize
+historic individual purchases from aggregate totals.
 
 ## Campaign Conventions
 

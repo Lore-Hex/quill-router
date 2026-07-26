@@ -25,6 +25,7 @@ from trusted_router.storage import (
     EncryptedSecretEnvelope,
     GatewayAuthorization,
     Generation,
+    GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
     ProviderBenchmarkSample,
@@ -281,6 +282,20 @@ class SpannerBigtableStore:
             amount_microdollars=amount_microdollars,
             occurred_at=occurred_at,
         )
+
+    def list_google_ads_conversions(
+        self,
+        *,
+        since: str,
+        limit: int,
+    ) -> list[GoogleAdsConversion]:
+        return self.acquisition_store.list_google_ads_conversions(
+            since=since,
+            limit=limit,
+        )
+
+    def backfill_google_ads_conversions(self, *, limit: int) -> int:
+        return self.acquisition_store.backfill_google_ads_conversions(limit=limit)
 
     def ensure_user(
         self,
