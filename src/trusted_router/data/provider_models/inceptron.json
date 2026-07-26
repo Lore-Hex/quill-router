@@ -89,9 +89,9 @@
         "top_logprobs",
         "top_p"
       ],
-      "input_token_price_per_m": 660000,
+      "input_token_price_per_m": 600000,
       "output_token_price_per_m": 3410000,
-      "cached_input_token_price_per_m": 150000
+      "cached_input_token_price_per_m": 200000
     },
     {
       "display_name": "Kimi K2.7 Code",
@@ -185,6 +185,6 @@
       "cached_input_token_price_per_m": 170000
     }
   ],
-  "generated_at": "2026-07-22T00:02:00Z",
+  "generated_at": "2026-07-26T13:46:39Z",
   "model_count": 4
 }

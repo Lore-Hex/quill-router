@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-07-22T00:02:00Z",
+  "generated_at": "2026-07-26T13:46:39Z",
   "model_count": 18,
   "models": [
     {
@@ -333,7 +333,10 @@
       ],
       "context_length": 262144,
       "input_token_price_per_m": 0,
-      "output_token_price_per_m": 0
+      "output_token_price_per_m": 0,
+      "missing_since": "2026-07-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "Qwen2.5 7B Instruct Turbo",

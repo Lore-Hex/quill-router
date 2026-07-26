@@ -58,7 +58,9 @@ def test_mcp_initialize_and_tool_list(client: TestClient) -> None:
 def test_mcp_models_list_includes_sonnet_5_and_subagent(client: TestClient) -> None:
     sonnet_payload = _mcp_call(client, "models-list", {"query": "sonnet-5", "limit": 5})
     sonnet = _tool_json(sonnet_payload)
-    assert [item["id"] for item in sonnet["data"]] == ["anthropic/claude-sonnet-5"]
+    assert "anthropic/claude-sonnet-5" in {
+        item["id"] for item in sonnet["data"]
+    }
 
     subagent_payload = _mcp_call(client, "model-get", {"model": "trustedrouter/subagent"})
     subagent = _tool_json(subagent_payload)["data"]

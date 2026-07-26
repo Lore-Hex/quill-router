@@ -46,6 +46,27 @@ def test_anthropic_parser_discovers_future_claude_names_and_cache_price() -> Non
     }
 
 
+def test_anthropic_parser_derives_documented_fast_mode_multiplier() -> None:
+    html = """
+    <div class="card">
+      <div><h3 class="card_pricing_title_text">Opus 5</h3></div>
+      <span class="tokens_main_val_number" data-value="5"></span>
+      <span class="tokens_main_val_number" data-value="25"></span>
+      <span class="tokens_main_val_number" data-value="6.25"></span>
+      <span class="tokens_main_val_number" data-value="0.50"></span>
+    </div>
+    <p>Get faster speeds with fast mode for Opus 5 at 2x standard pricing.</p>
+    """
+
+    prices = anthropic_parser.parse(html)
+
+    assert prices["anthropic/claude-opus-5-fast"] == {
+        "prompt_micro_per_m": 10_000_000,
+        "completion_micro_per_m": 50_000_000,
+        "prompt_cached_micro_per_m": 1_000_000,
+    }
+
+
 def test_anthropic_models_api_row_preserves_native_id_and_capabilities(
     monkeypatch,
 ) -> None:

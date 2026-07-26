@@ -64,10 +64,9 @@ MANIFEST_PATH = (
 
 # Models we expect on BOTH the pricing page and /v1/models. Drift
 # detector only — a miss lands in notes, it does not fail the run.
-# 2026-07-13 sweep: kimi-k2.5, glm-4.7, deepseek-v3.2 and
-# step-3.5-flash disappeared from the public pricing page (k2.5 and
-# glm-4.7 from /v1/models too) — removed here; mappings kept below
-# so they light back up if Parasail restores them.
+# 2026-07-26 sweep: Mistral Small 3.2 remains on the pricing page but
+# disappeared from /v1/models, so it is no longer expected or routable.
+# Mappings stay below so it lights back up if Parasail restores it.
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
     "google/gemma-4-26b-a4b-it",
@@ -94,7 +93,6 @@ EXPECTED_MODELS = [
     "minimax/minimax-m3",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
-    "mistralai/mistral-small-3.2-24b-instruct",
     "thedrummer/cydonia-24b-v4.1",
     "thedrummer/skyfall-36b-v2",
     "arcee-ai/trinity-large-thinking",

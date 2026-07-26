@@ -2,7 +2,7 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-07-24T06:26:04Z",
+  "generated_at": "2026-07-26T13:46:39Z",
   "price_scale": "microdollars_per_million",
   "model_count": 13,
   "models": [
@@ -91,7 +91,10 @@
       "supported_sampling_parameters": [
         "temperature",
         "stop"
-      ]
+      ],
+      "missing_since": "2026-07-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5",
@@ -120,7 +123,10 @@
         "stop",
         "top_p",
         "top_k"
-      ]
+      ],
+      "missing_since": "2026-07-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "nvidia/nemotron-120b-a12b",
@@ -150,7 +156,10 @@
         "stop",
         "top_p",
         "top_k"
-      ]
+      ],
+      "missing_since": "2026-07-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.1",
@@ -179,7 +188,10 @@
         "stop",
         "top_p",
         "top_k"
-      ]
+      ],
+      "missing_since": "2026-07-26",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "moonshotai/kimi-k2.6",
