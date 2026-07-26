@@ -8,7 +8,7 @@ OG_TITLE = "TrustedRouter | Every model. Provable privacy."
 OG_DESCRIPTION = (
     "One OpenAI-compatible API for hundreds of models, routed through attested "
     "infrastructure with ZDR options, provider failover, BYOK, and no prompt "
-    "or output logs by default."
+    "or output logs. Always."
 )
 OG_IMAGE_WIDTH = 1200
 OG_IMAGE_HEIGHT = 630
@@ -21,7 +21,7 @@ _MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 def og_image_svg(_settings: Settings) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{OG_IMAGE_WIDTH}" height="{OG_IMAGE_HEIGHT}" viewBox="0 0 {OG_IMAGE_WIDTH} {OG_IMAGE_HEIGHT}" role="img" aria-label="TrustedRouter">
   <title>TrustedRouter End-to-End Encrypted Router for AI</title>
-  <desc>Hundreds of models through one verifiable prompt path with no prompt or output logs by default.</desc>
+  <desc>Hundreds of models through one verifiable prompt path. No prompt or output logs. Always.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#07131f"/>

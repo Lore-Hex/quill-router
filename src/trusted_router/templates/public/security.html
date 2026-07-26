@@ -1,7 +1,7 @@
 {% extends "public/_base.html" %}
 {% block body %}
 <section class="public-proof-strip">
-  <div><strong>No prompt logs</strong><span>TrustedRouter does not store prompt or output content by default.</span></div>
+  <div><strong>No prompt or output logs</strong><span>Always.</span></div>
   <div><strong>Fail closed</strong><span>If attestation fails, the prompt path shuts down.</span></div>
   <div><strong>Open source</strong><span>Backend, infrastructure, config, and UI.</span></div>
   <div><strong>Verify</strong><span>Source commit, image reference, image digest.</span></div>
@@ -12,7 +12,7 @@
     <span class="eyebrow">Trust boundary</span>
     <h2>What touches your prompt is the part you can verify.</h2>
     <p>Metadata rows are limited to generation ID, workspace, key hash, model, provider, token counts, cost, usage type, speed, finish reason, status, and region.</p>
-    <p>Prompt and output content are off by default. When a workspace explicitly enables content export for observability, that destination is configured separately and clearly marked.</p>
+    <p>TrustedRouter never logs or stores prompt or output content. A workspace may explicitly send content through the attested gateway to its own configured Broadcast destination; that customer-directed export is not a TrustedRouter log.</p>
     <p>The router can prove the hosted gateway code path and transport boundary. Provider compute policy is listed separately on provider pages.</p>
   </div>
   <div class="trust-diagram" aria-label="Prompt path trust boundary">

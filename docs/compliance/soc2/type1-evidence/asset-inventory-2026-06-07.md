@@ -36,11 +36,10 @@ Status: draft, owner approval required.
 | BYOK provider secret material | Restricted secret | Envelope encryption/Secret Manager/KMS depending on path. |
 | Billing and payment metadata | Confidential financial metadata | Spanner plus Stripe/PayPal. |
 | Request metadata | Confidential operational metadata | Bigtable/Spanner as applicable. |
-| Prompt/output content | Customer content, highest sensitivity | Transient processing only by default; not durable storage by TrustedRouter. |
+| Prompt/output content | Customer content, highest sensitivity | Transient processing only; never logged or durably stored by TrustedRouter. |
 
 ## Approval
 
 Owner signature:
 
 Date:
-

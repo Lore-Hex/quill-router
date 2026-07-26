@@ -38,6 +38,6 @@ resp = client.chat.completions.create(
 </section>
 <section class="quote-feature">
   <div><span class="eyebrow">Verifiable privacy</span><h3>Attestation beats a privacy policy.</h3></div>
-  <div><p>Speed gets you to production. Privacy keeps you there. Every TrustedRouter prompt runs through a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and the attestation is checkable live, bound to your TLS session so it cannot be replayed. TrustedRouter does not store prompt or output content by default.</p><p>Pick a privacy tier per route: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt. Details at <a href="/security">/security</a>. Or skip the reading and try a fast route in the <a href="/chat">playground</a>.</p></div>
+  <div><p>Speed gets you to production. Privacy keeps you there. Every TrustedRouter prompt runs through a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and the attestation is checkable live, bound to your TLS session so it cannot be replayed. TrustedRouter never logs or stores prompt or output content.</p><p>Pick a privacy tier per route: Open, Zero-Data-Retention, or TEE, where even the serving provider cannot read the prompt. Details at <a href="/security">/security</a>. Or skip the reading and try a fast route in the <a href="/chat">playground</a>.</p></div>
 </section>
 {% endblock %}

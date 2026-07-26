@@ -1,8 +1,8 @@
 """/console/broadcast — workspace Broadcast destinations.
 
 Broadcast exports generation metadata to external observability systems.
-Prompt/output content stays off by default and is only exported by the
-attested gateway when a destination explicitly opts in.
+TrustedRouter never retains prompt/output content. Content is sent only when
+the workspace explicitly directs the attested gateway to an external destination.
 """
 
 from __future__ import annotations

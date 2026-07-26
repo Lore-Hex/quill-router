@@ -1125,8 +1125,9 @@ def test_console_routing_credits_settings_and_preferences_show_operational_contr
     assert "Continue to checkout" in credits.text
 
     assert settings.status_code == 200
-    assert "Content storage" in settings.text
-    assert "does not log prompt or completion content" in settings.text
+    assert "Prompt and output handling" in settings.text
+    assert "never logged" in settings.text
+    assert "never logs or stores prompt or output content" in settings.text
 
     assert preferences.status_code == 200
     assert "alice@example.com" in preferences.text

@@ -13,7 +13,7 @@ Define how TrustedRouter handles protected health information (PHI) and electron
 - PHI production traffic is prohibited unless a BAA is executed.
 - PHI routes must be restricted to approved providers or aliases.
 - PHI must not be sent through broad provider aliases unless the alias is configured to meet the customer-approved provider posture.
-- Prompt/output content containing PHI must not be durably stored by TrustedRouter by default.
+- Prompt/output content containing PHI must never be logged or durably stored by TrustedRouter.
 - Content export must remain disabled for PHI unless explicitly approved in writing.
 - Personnel must not ask customers to paste PHI into support channels.
 - Debugging PHI incidents must use request IDs and metadata unless customer counsel approves content review.

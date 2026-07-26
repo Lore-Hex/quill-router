@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from trusted_router.dashboard import PUBLIC_PAGES
 from trusted_router.storage import STORE
 
 
@@ -21,7 +22,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/careers": "Work on attested AI routing",
         "/blog": "TrustedRouter blog",
         "/blog/fusion-evals-open-source": "New SOTA: TrustedRouter Synth beats Fable and Frontier",
-        "/security": "TrustedRouter does not store prompt or output content by default.",
+        "/security": "No prompt or output logs",
         "/eu": "Use the EU gateway and an EU-focused model alias.",
         # SEO landing pages — each targets a high-intent buyer query.
         # The marker is a load-bearing headline from the page so a
@@ -44,7 +45,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/azure-openai-alternative": "Azure OpenAI promises privacy in a contract; TrustedRouter proves it with hardware attestation you can check live.",
         "/deepseek-api-privacy": "DeepSeek V4 on attested infrastructure: your prompts never reach the model vendor.",
         "/glm-5-api": "Run GLM-5 and GLM-5.2 on attested hardware without sending your prompts to the model vendor.",
-        "/gdpr-compliant-llm-api": "An LLM API built for GDPR workflows: attested inference, a signable DPA, and no prompt storage by default.",
+        "/gdpr-compliant-llm-api": "An LLM API built for GDPR workflows: attested inference, a signable DPA, and no prompt or output logs.",
         "/chinese-ai-models-us-hosted": "Run GLM, Qwen, Kimi, and DeepSeek on US-hosted, attested infrastructure that never forwards a prompt to the model vendor.",
         "/minimax-m3-api": "MiniMax M3 on attested hardware, with prompts that never reach the model vendor.",
         "/best-llm-router": "The best LLM router is the one whose privacy claims you can verify with a curl command.",
@@ -57,7 +58,7 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         "/no-log-llm-api": "No prompt logs, enforced by code you can read and attestation you can check.",
         "/anonymous-llm-api": "Fund 220+ model routes from a crypto wallet, no card and no KYC, then verify for yourself that prompts are not stored.",
         "/cline-api-provider": "Your coding agent streams your entire repo through its API provider, so pick one you can verify.",
-        "/sillytavern-api": "Point SillyTavern at an API that stores no prompts by default and proves what it runs.",
+        "/sillytavern-api": "Point SillyTavern at an API that never logs prompts or outputs and proves what it runs.",
         "/aws-bedrock-alternative": "Keep the privacy you chose Bedrock for, without the quota wall.",
         "/llm-document-processing": "You do not need on-prem inference to keep your documents private.",
         "/gpt-oss-120b-api": "gpt-oss-120b, served fast on Cerebras and attested down to the image digest.",
@@ -80,6 +81,40 @@ def test_revenue_pages_are_public(client: TestClient) -> None:
         assert 'property="og:title"' in response.text, f"{path} missing og:title"
         assert 'property="og:image"' in response.text, f"{path} missing og:image"
         assert 'name="twitter:card"' in response.text, f"{path} missing twitter:card"
+
+
+def test_public_pages_never_weaken_content_handling_to_a_default(
+    client: TestClient,
+) -> None:
+    paths = tuple(
+        sorted(
+            {
+                "/",
+                "/privacy",
+                "/legal",
+                "/legal/dpa",
+                "/legal/baa",
+                *(f"/{key}" for key in PUBLIC_PAGES),
+            }
+        )
+    )
+    weak_claims = (
+        "prompt logs by default",
+        "prompt storage by default",
+        "prompt or output content by default",
+        "prompt or output storage by default",
+        "prompts by default",
+        "nothing stored by default",
+        "nothing kept by default",
+        "content storage is opt-in",
+    )
+
+    for path in paths:
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code}"
+        rendered = response.text.lower()
+        for claim in weak_claims:
+            assert claim not in rendered, f"{path} contains weak claim {claim!r}"
 
 
 def test_revenue_pages_support_link_checkers(client: TestClient) -> None:
@@ -252,7 +287,7 @@ def test_synth_docs_publish_current_gateway_shape(client: TestClient) -> None:
     assert "deepseek/deepseek-v4-pro" in response.text
     assert "Final fallback can switch before the first byte" in response.text
     assert (
-        "TrustedRouter stores billing and route metadata, not prompt/output content by default."
+        "TrustedRouter stores billing and route metadata, never prompt/output content."
         in response.text
     )
     assert "OpenAI compatible API" in response.text

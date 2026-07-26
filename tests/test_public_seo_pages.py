@@ -477,7 +477,7 @@ def test_public_privacy_terms_and_support_pages_are_distinct(client: TestClient)
     assert privacy.status_code == 200
     assert "Privacy Policy | TrustedRouter" in privacy.text
     assert "Lore Hex Corp" in privacy.text
-    assert "does not store prompt or output content by default" in privacy.text
+    assert "never logs or stores prompt or output content" in privacy.text
     assert "We do not use customer prompts or outputs to train our own models" in privacy.text
     assert "/legal/subprocessors" in privacy.text
     assert "security@trustedrouter.com" in privacy.text

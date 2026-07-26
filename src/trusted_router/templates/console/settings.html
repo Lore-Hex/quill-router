@@ -10,9 +10,9 @@
   </div>
 </section>
 <section class="panel">
-  <div class="panel-head"><h2>Content storage</h2><span class="pill">{{ 'enabled' if workspace.content_storage_enabled else 'disabled' }}</span></div>
+  <div class="panel-head"><h2>Prompt and output handling</h2><span class="pill">never logged</span></div>
   <div class="panel-body">
-    <p>TrustedRouter does not log prompt or completion content by default. Content storage is opt-in per workspace and currently <b>{{ 'enabled' if workspace.content_storage_enabled else 'disabled' }}</b>.</p>
+    <p>TrustedRouter never logs or stores prompt or output content. A workspace can explicitly send content to its own Broadcast destination, but TrustedRouter does not retain it.</p>
   </div>
 </section>
 {% endblock %}

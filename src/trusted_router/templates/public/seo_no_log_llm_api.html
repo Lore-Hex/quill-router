@@ -4,7 +4,7 @@
   <div class="marketing-copy">
     <span class="eyebrow">No-log LLM API</span>
     <h2>No prompt logs, enforced by code you can read and attestation you can check.</h2>
-    <p>Most no-log claims are a sentence in a privacy policy. TrustedRouter does not store prompt or output content by default. On TEE routes that behavior runs inside a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and a live attestation signed by the CPU vendor's root key is one curl away.</p>
+    <p>Most no-log claims are a sentence in a privacy policy. TrustedRouter never logs or stores prompt or output content. On TEE routes that behavior runs inside a hardware-attested confidential-compute gateway: the source is open, the image digest is published, and a live attestation signed by the CPU vendor's root key is one curl away.</p>
     <p>The API is OpenAI-compatible. Point base_url at {{ api_base_url }} and keep your SDK, your model ids, and your code. You get 220+ model routes across 30+ providers, including Claude, GPT, Gemini, DeepSeek, Kimi, Qwen, and GLM, with automatic rollover when a provider goes down.</p>
     <p><a class="btn primary" href="/security">Check the attestation</a> <a class="btn" href="/chat">Open the playground</a></p>
   </div>
@@ -20,7 +20,7 @@ curl "{{ api_base_url|replace('/v1', '') }}/attestation?nonce=$NONCE"
   <div class="marketing-card">
     <span class="card-label">Default behavior</span>
     <h3>Content is not stored</h3>
-    <p>TrustedRouter does not store prompt or output content by default. Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. The no-storage claim covers what you send and what the model says back.</p>
+    <p>TrustedRouter never logs or stores prompt or output content. Usage metadata is separate: token counts and billing records are kept so your account and spend tracking work. The no-storage claim covers what you send and what the model says back.</p>
   </div>
   <div class="marketing-card">
     <span class="card-label">Privacy tiers</span>

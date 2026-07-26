@@ -23,7 +23,7 @@ The initial report target is Security, Availability, Confidentiality, and Privac
 | TR-VULN-001 | CC7.1, CC7.2 | Vulnerabilities are identified. | Dependency, container, and code scanning are run before release and reviewed. | GitHub Dependabot/code scanning, container scan evidence. |
 | TR-VULN-002 | CC7.4 | Vulnerabilities are remediated. | Critical/high issues are prioritized and tracked to closure or risk acceptance. | Vulnerability tracker, risk acceptance records. |
 | TR-DATA-001 | C1.1, P6.1 | Data is classified. | Data classes and handling requirements are documented. | Data classification policy, storage schema review. |
-| TR-DATA-002 | C1.2, P4.2 | Prompt/output content is not retained by default. | Durable storage paths store metadata only unless explicit observability content export is enabled. | Security tests, storage schemas, broadcast tests. |
+| TR-DATA-002 | C1.2, P4.2 | TrustedRouter never retains prompt/output content. | Durable storage paths store metadata only. Customer-directed observability content is sent to the customer's destination and is not retained by TrustedRouter. | Security tests, storage schemas, broadcast tests. |
 | TR-DATA-003 | C1.1, P5.1 | Customer secrets are encrypted. | BYOK and destination secrets use envelope encryption/KMS and are redacted in responses. | BYOK crypto tests, KMS config, code review. |
 | TR-PRIV-001 | P1.1, P2.1 | Privacy notices are available. | Legal/security/provider pages state data handling and provider boundaries. | Public `/legal`, `/security`, `/providers`. |
 | TR-PRIV-002 | P3.1, P4.1 | Customer instructions are followed. | Routing preferences, provider filters, BYOK config, and content export toggles govern processing. | API tests, routing tests, broadcast tests. |

@@ -43,7 +43,7 @@ TrustedRouter is an OpenAI-compatible AI routing service. Customers use one API 
 4. The gateway authorizes with the control plane using metadata.
 5. The gateway routes to an allowed downstream provider.
 6. The control plane records metadata, credit reservations, settlement, refunds, and activity.
-7. Prompt and output content are not stored by default.
+7. TrustedRouter never logs or stores prompt and output content.
 
 ## Data Types
 
@@ -53,7 +53,7 @@ TrustedRouter is an OpenAI-compatible AI routing service. Customers use one API 
 - Routing metadata: model, provider, usage type, region, token counts, cost, latency, finish reason, request status.
 - BYOK metadata: provider, key hint, encrypted envelope, KMS/envelope reference.
 - Optional broadcast configuration: endpoint, type, redacted headers, encrypted destination secrets.
-- Prompt and output content: transient processing in the gateway/provider path only by default.
+- Prompt and output content: transient processing in the gateway/provider path only; never logged or stored by TrustedRouter.
 
 ## Trust Boundary
 
@@ -61,7 +61,7 @@ TrustedRouter can provide evidence for the router code path and hosted gateway. 
 
 ## Commitments
 
-- No prompt/output durable storage by default.
+- No prompt/output logging or durable storage.
 - No Sentry in the attested prompt gateway.
 - API keys are hashed and never returned after creation.
 - BYOK secrets are envelope encrypted and returned only to the gateway authorization path.
