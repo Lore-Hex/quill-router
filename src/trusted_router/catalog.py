@@ -135,6 +135,7 @@ from trusted_router.catalog_ingest import (  # noqa: F401 - used by import-time 
 # keeps working for every existing caller.
 from trusted_router.catalog_privacy import (  # noqa: F401 - re-exported for back-compat
     endpoint_privacy_tier,
+    endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
     model_provider_policy,
@@ -616,7 +617,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
                 "usage_type": endpoint.usage_type,
                 "upstream_id": endpoint.upstream_id,
                 "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
-                "stores_content": PROVIDERS[endpoint.provider].stores_content,
+                "stores_content": endpoint_stores_content(endpoint),
                 "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
                 "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                 "privacy_tier": endpoint_privacy_tier(endpoint),

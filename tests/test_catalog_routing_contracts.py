@@ -66,6 +66,8 @@ from trusted_router.catalog import (
     auto_candidate_models,
     canonical_orchestration_model_id,
     endpoint_privacy_tier,
+    endpoint_stores_content,
+    endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
     model_eu_focused_provider_available,
@@ -1351,6 +1353,70 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert all(
         provider_privacy_tier(PROVIDERS[endpoint.provider]) >= PRIVACY_TIER_CONFIDENTIAL
         for _model, endpoint in e2e_endpoints
+    )
+    assert "venice" not in {endpoint.provider for _model, endpoint in e2e_endpoints}
+
+
+def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
+    provider = PROVIDERS["venice"]
+    assert provider.stores_content is True
+    assert provider.provider_zero_data_retention is False
+    assert provider.provider_confidential_compute is False
+    assert provider.provider_e2ee is False
+
+    private_models = {
+        "qwen/qwen3-235b-a22b-thinking-2507",
+        "qwen/qwen3.5-9b",
+        "qwen/qwen3.6-27b",
+        "z-ai/glm-4.6",
+        "z-ai/glm-4.7",
+        "z-ai/glm-4.7-flash",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+    anonymized_models = {
+        "qwen/qwen3.5-397b-a17b",
+        "z-ai/glm-5-turbo",
+        "z-ai/glm-5v-turbo",
+    }
+    endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"
+    ]
+    assert {endpoint.model_id for endpoint in endpoints} == private_models | anonymized_models
+
+    for endpoint in endpoints:
+        if endpoint.model_id in private_models:
+            assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
+            assert endpoint_zero_data_retention(endpoint) is True
+            assert endpoint_stores_content(endpoint) is False
+        else:
+            assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
+            assert endpoint_zero_data_retention(endpoint) is False
+            assert endpoint_stores_content(endpoint) is True
+
+    private_shape = model_to_openrouter_shape(MODELS["z-ai/glm-5.2"])
+    private_venice = [
+        endpoint
+        for endpoint in private_shape["trustedrouter"]["endpoints"]
+        if endpoint["provider"] == "venice"
+    ]
+    assert private_venice
+    assert all(endpoint["stores_content"] is False for endpoint in private_venice)
+    assert all(endpoint["provider_zero_data_retention"] is True for endpoint in private_venice)
+    assert all(endpoint["provider_confidential_compute"] is False for endpoint in private_venice)
+    assert all(endpoint["provider_e2ee"] is False for endpoint in private_venice)
+
+    anonymized_shape = model_to_openrouter_shape(MODELS["z-ai/glm-5-turbo"])
+    anonymized_venice = [
+        endpoint
+        for endpoint in anonymized_shape["trustedrouter"]["endpoints"]
+        if endpoint["provider"] == "venice"
+    ]
+    assert anonymized_venice
+    assert all(endpoint["stores_content"] is True for endpoint in anonymized_venice)
+    assert all(
+        endpoint["provider_zero_data_retention"] is False for endpoint in anonymized_venice
     )
 
 

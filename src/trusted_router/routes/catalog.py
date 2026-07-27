@@ -12,6 +12,7 @@ from trusted_router.catalog import (
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
     endpoint_privacy_tier,
+    endpoint_stores_content,
     endpoint_zero_data_retention,
     endpoint_zero_data_retention_scope,
     model_provider_policy,
@@ -171,7 +172,7 @@ def register_catalog_routes(router: APIRouter) -> None:
                     ],
                     "trustedrouter": {
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
-                        "stores_content": PROVIDERS[endpoint.provider].stores_content,
+                        "stores_content": endpoint_stores_content(endpoint),
                         "provider_zero_data_retention": endpoint_zero_data_retention(endpoint),
                         "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                         "privacy_tier": endpoint_privacy_tier(endpoint),

@@ -90,6 +90,30 @@ class ModelProviderPrivacyOverride:
     provider_policy_url: str | None = None
 
 
+# Audited 2026-07-27 against https://api.venice.ai/api/v1/models. Any new
+# Venice route defaults to Standard until its model-level privacy mode is
+# reviewed and added here.
+_VENICE_PRIVATE_MODEL_IDS = frozenset(
+    {
+        "qwen/qwen3-235b-a22b-thinking-2507",
+        "qwen/qwen3.5-9b",
+        "qwen/qwen3.6-27b",
+        "z-ai/glm-4.6",
+        "z-ai/glm-4.7",
+        "z-ai/glm-4.7-flash",
+        "z-ai/glm-5",
+        "z-ai/glm-5.1",
+        "z-ai/glm-5.2",
+    }
+)
+_VENICE_PRIVATE_POLICY = (
+    "Venice's live model catalog marks this exact route private. Venice describes "
+    "Private as contract-enforced zero data retention. This is policy-backed, not "
+    "hardware-verified: the route is not TEE or E2EE and is excluded from "
+    "trustedrouter/e2e."
+)
+
+
 _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOverride] = {
     (
         "anthropic/claude-fable-5",
@@ -117,6 +141,15 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
         ),
     ),
+    **{
+        (model_id, "venice"): ModelProviderPrivacyOverride(
+            privacy_tier=PRIVACY_TIER_ZERO_RETENTION,
+            provider_zero_data_retention=True,
+            provider_policy=_VENICE_PRIVATE_POLICY,
+            provider_policy_url="https://venice.ai/privacy",
+        )
+        for model_id in _VENICE_PRIVATE_MODEL_IDS
+    },
 }
 
 
@@ -441,23 +474,27 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://tinfoil.sh/security-and-privacy-faq",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
-    # Venice.AI — privacy-focused LLM gateway. No-logs, no-censoring
-    # positioning. OpenAI-compatible at api.venice.ai/api/v1.
+    # Venice's privacy posture is model-specific. Its Private routes carry a
+    # policy-backed ZDR claim, while Anonymized routes may be retained by the
+    # downstream model provider. TEE/E2EE require distinct tee-* / e2ee-*
+    # models and a separate attestation/encryption protocol that the current
+    # TrustedRouter Venice adapter does not implement.
     "venice": Provider(
         slug="venice",
         name="Venice",
         supports_prepaid=True,
-        stores_content=False,
-        provider_zero_data_retention=True,
-        provider_confidential_compute=True,
-        provider_e2ee=True,
+        stores_content=True,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
         provider_policy=(
-            "Tracked as confidential — Venice documents no logging or storage of "
-            "prompts/responses plus TEE-isolated, end-to-end-encrypted inference. "
-            "(Caveat: requests Venice proxies to external frontier models inherit "
-            "those providers' policies; TR routes Venice-native open models here.)"
+            "Mixed model-specific posture. TrustedRouter's current Venice routes do "
+            "not use Venice's tee-* or e2ee-* protocol and are not tracked as "
+            "confidential or E2EE. Exact routes marked Private in Venice's live "
+            "catalog qualify as contract-enforced ZDR through endpoint-specific "
+            "records; Anonymized routes do not."
         ),
-        provider_policy_url="https://docs.venice.ai/overview/privacy",
+        provider_policy_url="https://venice.ai/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     # Parasail — serverless inference platform. Hosts Llama, Qwen,
@@ -1677,7 +1714,7 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
     ),
 }
 
-_PROVIDER_DISPLAY_ORDER = ("tinfoil", "venice")
+_PROVIDER_DISPLAY_ORDER = ("tinfoil",)
 
 
 # Legacy compatibility aliases (advisor/synth primitives) — completes

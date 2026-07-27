@@ -228,7 +228,7 @@ def test_dashboard_and_trust_pages_are_real_surfaces(client: TestClient) -> None
     assert providers_json.status_code == 200
     assert providers_json.headers["content-type"].startswith("application/json")
     provider_rows = providers_json.json()["data"]
-    assert [item["id"] for item in provider_rows[:2]] == ["tinfoil", "venice"]
+    assert [item["id"] for item in provider_rows[:2]] == ["tinfoil", "trustedrouter"]
     tinfoil = next(item for item in provider_rows if item["id"] == "tinfoil")
     assert tinfoil["provider_e2ee"] is True
     openai = next(item for item in provider_rows if item["id"] == "openai")

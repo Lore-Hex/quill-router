@@ -1063,7 +1063,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         not provider["provider_zero_data_retention"] or provider["stores_content"] is False
         for provider in providers
     )
-    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "venice"]
+    assert [provider["id"] for provider in providers[:2]] == ["tinfoil", "trustedrouter"]
     assert {
         "anthropic",
         "openai",
@@ -1090,10 +1090,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["together"]["provider_zero_data_retention"] is True
     assert provider_flags["nebius"]["provider_zero_data_retention"] is True
     assert provider_flags["parasail"]["provider_zero_data_retention"] is True
-    assert provider_flags["venice"]["provider_zero_data_retention"] is True
-    # Venice runs TEE + E2EE inference — it's confidential, not merely no-logs.
-    assert provider_flags["venice"]["provider_confidential_compute"] is True
-    assert provider_flags["venice"]["provider_e2ee"] is True
+    # Venice privacy is model-specific. Current TR routes use its ordinary
+    # OpenAI-compatible protocol, never the separate tee-* / e2ee-* protocol.
+    assert provider_flags["venice"]["provider_zero_data_retention"] is False
+    assert provider_flags["venice"]["stores_content"] is True
+    assert provider_flags["venice"]["provider_confidential_compute"] is False
+    assert provider_flags["venice"]["provider_e2ee"] is False
     # DeepInfra is normally memory-only, but reserves limited content logging
     # for debugging/security and therefore must not satisfy strict ZDR routing.
     assert provider_flags["deepinfra"]["provider_zero_data_retention"] is False
@@ -1121,7 +1123,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert providers_without_policy_source == []
     expected_policy_sources = {
         "tinfoil": "https://tinfoil.sh/security-and-privacy-faq",
-        "venice": "https://docs.venice.ai/overview/privacy",
+        "venice": "https://venice.ai/privacy",
         "anthropic": "https://platform.claude.com/docs/en/api/data-retention",
         "cerebras": "https://inference-docs.cerebras.ai/capabilities/prompt-caching",
         "together": "https://docs.together.ai/docs/privacy-and-security",
@@ -1155,8 +1157,8 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "phala",
         "tinfoil",
         "together",
-        "venice",
     }.issubset(zdr_providers)
+    assert "venice" not in zdr_providers
     assert "anthropic" not in zdr_providers
     assert "google-ai-studio" not in zdr_providers
     assert "google-vertex" not in zdr_providers

@@ -297,7 +297,7 @@ def zdr_candidate_models(limit: int = 12) -> list[Model]:
 def e2e_candidate_models(limit: int = 12) -> list[Model]:
     return _privacy_candidate_models(
         min_tier=PRIVACY_TIER_CONFIDENTIAL,
-        preferred_providers=("tinfoil", "venice", "phala", "gmi"),
+        preferred_providers=("tinfoil", "phala"),
         limit=limit,
     )
 
