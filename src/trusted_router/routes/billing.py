@@ -59,6 +59,7 @@ def register_billing_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
+        account = STORE.get_credit_account(workspace_id)
         return JSONResponse(
             {
                 "data": (
@@ -73,6 +74,7 @@ def register_billing_routes(router: APIRouter) -> None:
                         body=body,
                         workspace_id=workspace_id,
                         customer_email=_checkout_customer_email(principal),
+                        customer_id=account.stripe_customer_id if account else None,
                         settings=settings,
                     )
                 )

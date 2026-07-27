@@ -139,6 +139,7 @@ def test_stripe_checkout_webhook_routes_topup_through_typed_direct(
                 "object": {
                     "mode": "payment",
                     "amount_total": 123,
+                    "payment_status": "paid",
                     "customer": "cus_test",
                     "metadata": {"workspace_id": workspace_id},
                 }

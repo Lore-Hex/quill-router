@@ -178,7 +178,13 @@ def test_stripe_webhook_signature_is_required_when_secret_configured(monkeypatch
     event = {
         "id": "evt_signed",
         "type": "checkout.session.completed",
-        "data": {"object": {"amount_total": 321, "metadata": {"workspace_id": workspace_id}}},
+        "data": {
+            "object": {
+                "amount_total": 321,
+                "payment_status": "paid",
+                "metadata": {"workspace_id": workspace_id},
+            }
+        },
     }
     raw_event = json.dumps(event, separators=(",", ":")).encode()
     captured: dict[str, object] = {}

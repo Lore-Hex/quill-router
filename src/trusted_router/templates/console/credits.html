@@ -16,6 +16,7 @@
         <label>Payment method
           <select name="payment_method">
             <option value="auto">Stripe card</option>
+            <option value="ach">Bank account (ACH)</option>
             <option value="stablecoin">Stripe USDC / stablecoin</option>
             {% if paypal_enabled %}
             <option value="paypal">PayPal</option>
@@ -26,7 +27,8 @@
       <button class="btn primary" type="submit">Continue to checkout</button>
       <p class="form-help">
         Stripe shows your credits and the payment processing fee as separate
-        line items before you pay. Only the credit amount is added to your balance.
+        line items before you pay. ACH costs 0.8%, capped at $5, and can take
+        up to four business days. Bank-funded credits appear only after settlement.
       </p>
     </form>
   </div>
@@ -41,7 +43,8 @@
   </div>
   <div class="panel-body">
     <p style="color:var(--muted);font-size:14px;margin:0 0 14px">
-      Save a Stripe card for auto refill. Credit purchases can use Stripe, PayPal, or USDC checkout above.
+      Save a Stripe card for auto refill. One-time credit purchases can use a
+      card, ACH bank account, PayPal, or USDC above.
       {% if payment_method_pending %}
       <br><strong>Stripe setup is pending. Auto-refill will unlock after Stripe confirms the card.</strong>
       {% endif %}
@@ -165,8 +168,14 @@
             {% endif %}
           </td>
           <td style="padding:10px 6px">
-            {% if p.card_brand and p.card_last4 %}
+            {% if p.bank_last4 %}
+              <span>{{ p.bank_name or 'Bank account' }}</span> ····{{ p.bank_last4 }}
+            {% elif p.card_brand and p.card_last4 %}
               <span style="text-transform:capitalize">{{ p.card_brand }}</span> ····{{ p.card_last4 }}
+            {% elif p.payment_method_type == 'ach' %}
+              <span>Bank account (ACH)</span>
+            {% elif p.payment_method_type == 'stablecoin' %}
+              <span>Stablecoin</span>
             {% else %}
               <span style="color:var(--muted)">none</span>
             {% endif %}
@@ -174,6 +183,8 @@
           <td style="padding:10px 6px">
             {% if p.payment_status == 'paid' %}
               <span class="pill good">paid</span>
+            {% elif p.payment_status == 'processing' %}
+              <span class="pill warn">processing</span>
             {% elif p.payment_status == 'unpaid' %}
               <span class="pill warn">unpaid</span>
             {% elif p.status == 'expired' %}
@@ -198,7 +209,8 @@
     </p>
     {% else %}
     <p style="color:var(--muted);font-size:14px;margin:0">
-      No payments yet. Your purchases will show up here within a few seconds of Stripe completing the charge.
+      No payments yet. Card payments appear after completion; ACH credits appear
+      after Stripe confirms bank settlement.
     </p>
     {% endif %}
   </div>

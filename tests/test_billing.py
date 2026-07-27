@@ -36,6 +36,7 @@ def test_stripe_webhook_route_is_idempotent(user_headers: dict[str, str], client
         "data": {
             "object": {
                 "amount_total": 1200,
+                "payment_status": "paid",
                 "metadata": {"workspace_id": workspace_id},
             }
         },
@@ -1015,6 +1016,8 @@ def test_credits_page_renders_payment_history_section(monkeypatch) -> None:
     assert resp.status_code == 200, resp.text[:300]
     assert "Payment history" in resp.text
     assert "No payments yet" in resp.text
+    assert "Bank account (ACH)" in resp.text
+    assert "credits appear" in resp.text
 
 
 def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
@@ -1052,6 +1055,22 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
             "card_brand": "mastercard",
             "card_last4": "8888",
         },
+        {
+            "payment_intent": "pi_ach_processing",
+            "created_at": 1779550000,
+            "amount_cents": 2_521,
+            "credit_amount_cents": 2_500,
+            "processing_fee_cents": 21,
+            "currency": "usd",
+            "status": "processing",
+            "payment_status": "processing",
+            "receipt_url": None,
+            "payment_method_type": "ach",
+            "bank_name": "Test Bank",
+            "bank_last4": "6789",
+            "card_brand": None,
+            "card_last4": None,
+        },
     ]
     monkeypatch.setattr(
         credits_module,
@@ -1073,6 +1092,9 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
     assert "4242" in resp.text
     assert "mastercard" in resp.text.lower()
     assert "8888" in resp.text
+    assert "Test Bank" in resp.text
+    assert "6789" in resp.text
+    assert ">processing<" in resp.text or 'pill warn">processing' in resp.text
     # Receipt links rendered
     assert "https://pay.stripe.com/receipts/test-receipt" in resp.text
     # `paid` status pill

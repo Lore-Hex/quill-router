@@ -20,6 +20,7 @@ class StripeProcessingFee:
     charge_amount_cents: int
     variable_basis_points: int
     fixed_fee_cents: int
+    max_fee_cents: int | None = None
 
     @property
     def credit_amount_microdollars(self) -> int:
@@ -38,7 +39,10 @@ class StripeProcessingFee:
             self.charge_amount_cents * self.variable_basis_points,
             10_000,
         )
-        return variable + self.fixed_fee_cents
+        cost = variable + self.fixed_fee_cents
+        if self.max_fee_cents is not None:
+            return min(cost, self.max_fee_cents)
+        return cost
 
     def checkout_line_items(self) -> list[dict[str, Any]]:
         items = [
@@ -88,7 +92,7 @@ class StripeProcessingFee:
         workspace_id: str,
         payment_method: str,
     ) -> dict[str, str]:
-        return {
+        metadata = {
             "workspace_id": workspace_id,
             "payment_method": payment_method,
             "credit_amount_microdollars": str(self.credit_amount_microdollars),
@@ -97,6 +101,9 @@ class StripeProcessingFee:
             "fee_variable_basis_points": str(self.variable_basis_points),
             "fee_fixed_cents": str(self.fixed_fee_cents),
         }
+        if self.max_fee_cents is not None:
+            metadata["fee_max_cents"] = str(self.max_fee_cents)
+        return metadata
 
 
 def stripe_processing_fee(
@@ -104,6 +111,7 @@ def stripe_processing_fee(
     credit_amount_cents: int,
     variable_basis_points: int,
     fixed_fee_cents: int,
+    max_fee_cents: int | None = None,
 ) -> StripeProcessingFee:
     """Gross up a USD-cent principal so it survives the configured fee.
 
@@ -118,12 +126,21 @@ def stripe_processing_fee(
         raise ValueError("variable_basis_points must be between 0 and 9999")
     if fixed_fee_cents < 0:
         raise ValueError("fixed_fee_cents cannot be negative")
+    if max_fee_cents is not None and max_fee_cents < 0:
+        raise ValueError("max_fee_cents cannot be negative")
 
     denominator = 10_000 - variable_basis_points
-    charge_amount_cents = _ceil_div(
+    uncapped_charge_amount_cents = _ceil_div(
         (credit_amount_cents + fixed_fee_cents) * 10_000,
         denominator,
     )
+    if (
+        max_fee_cents is not None
+        and uncapped_charge_amount_cents - credit_amount_cents > max_fee_cents
+    ):
+        charge_amount_cents = credit_amount_cents + max_fee_cents
+    else:
+        charge_amount_cents = uncapped_charge_amount_cents
     processing_fee_cents = charge_amount_cents - credit_amount_cents
     return StripeProcessingFee(
         credit_amount_cents=credit_amount_cents,
@@ -131,6 +148,7 @@ def stripe_processing_fee(
         charge_amount_cents=charge_amount_cents,
         variable_basis_points=variable_basis_points,
         fixed_fee_cents=fixed_fee_cents,
+        max_fee_cents=max_fee_cents,
     )
 
 
