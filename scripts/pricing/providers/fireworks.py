@@ -38,6 +38,7 @@ MANIFEST_PATH = (
 )
 
 EXPECTED_MODELS = [
+    "moonshotai/kimi-k3",
     "moonshotai/kimi-k2.6",
     "deepseek/deepseek-v4-pro",
     "z-ai/glm-5.2",
@@ -46,6 +47,7 @@ EXPECTED_MODELS = [
 ]
 
 _NATIVE_TO_CANONICAL = {
+    "accounts/fireworks/models/kimi-k3": "moonshotai/kimi-k3",
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p7-code": "moonshotai/kimi-k2.7-code",
     "accounts/fireworks/models/deepseek-v4-pro": "deepseek/deepseek-v4-pro",
@@ -61,6 +63,10 @@ UPSTREAM_ID_MAP = {canonical: native for native, canonical in _NATIVE_TO_CANONIC
 # Fast is an account router rather than a row in /v1/models. It remains an
 # explicit, separately smoke-tested route and is not subject to model pruning.
 UPSTREAM_ID_MAP["z-ai/glm-5.2-fast"] = "accounts/fireworks/routers/glm-5p2-fast"
+# Fireworks can publish and serve a launch model before its authenticated
+# /v1/models response catches up. Keep only explicitly verified exceptions,
+# and only while the first-party pricing page still contains the model.
+VERIFIED_PRICED_LAUNCH_MODELS = frozenset({"moonshotai/kimi-k3"})
 _DISCOVERED_LIVE_MODEL_IDS: set[str] = set()
 
 
@@ -100,10 +106,14 @@ def fetch() -> ProviderPricingResult:
         url=URL,
         expected_models=EXPECTED_MODELS,
     )
-    _DISCOVERED_LIVE_MODEL_IDS = live_model_ids
-    docs_only = sorted(set(result.prices) - live_model_ids)
+    verified_launch_ids = VERIFIED_PRICED_LAUNCH_MODELS.intersection(result.prices)
+    routable_model_ids = live_model_ids | verified_launch_ids
+    _DISCOVERED_LIVE_MODEL_IDS = routable_model_ids
+    docs_only = sorted(set(result.prices) - routable_model_ids)
     result.prices = {
-        model_id: price for model_id, price in result.prices.items() if model_id in live_model_ids
+        model_id: price
+        for model_id, price in result.prices.items()
+        if model_id in routable_model_ids
     }
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
@@ -111,6 +121,12 @@ def fetch() -> ProviderPricingResult:
     if docs_only:
         result.notes.append(
             "official pricing rows not enabled for this Fireworks account: " + ", ".join(docs_only)
+        )
+    launch_ids_missing_from_catalog = sorted(verified_launch_ids - live_model_ids)
+    if launch_ids_missing_from_catalog:
+        result.notes.append(
+            "verified launch models served before /v1/models catalog update: "
+            + ", ".join(launch_ids_missing_from_catalog)
         )
     return result
 

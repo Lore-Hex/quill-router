@@ -643,6 +643,26 @@ def test_fireworks_catalog_exposes_provider_specific_endpoints() -> None:
     }
 
 
+def test_fireworks_catalog_exposes_kimi_k3_with_cached_pricing() -> None:
+    endpoints = endpoints_for_model("moonshotai/kimi-k3")
+    fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
+
+    assert {endpoint.usage_type for endpoint in fireworks} == {"Credits", "BYOK"}
+    assert {endpoint.upstream_id for endpoint in fireworks} == {
+        "accounts/fireworks/models/kimi-k3"
+    }
+    assert {endpoint.prompt_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        3_150_000
+    }
+    assert {endpoint.completion_price_microdollars_per_million_tokens for endpoint in fireworks} == {
+        15_750_000
+    }
+    assert {
+        endpoint.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        for endpoint in fireworks
+    } == {315_000}
+
+
 def test_fireworks_catalog_exposes_glm_52_fast_router() -> None:
     endpoints = endpoints_for_model("z-ai/glm-5.2-fast")
     fireworks = [endpoint for endpoint in endpoints if endpoint.provider == "fireworks"]
