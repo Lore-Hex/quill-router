@@ -52,7 +52,15 @@ cat > /etc/clickhouse-server/users.d/tr-user.xml <<XML
     <users>
         <tr>
             <password>${PASSWORD}</password>
-            <networks><ip>10.0.0.0/8</ip></networks>
+            <networks>
+                <ip>10.0.0.0/8</ip>
+                <!-- Loopback is required, not optional: the ingester runs on
+                     this host and the readiness check below connects over
+                     127.0.0.1, which is NOT inside the VPC range. Omitting it
+                     leaves the server healthy but the user unable to log in. -->
+                <ip>127.0.0.1</ip>
+                <ip>::1</ip>
+            </networks>
             <profile>default</profile>
             <quota>default</quota>
             <access_management>1</access_management>

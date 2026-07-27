@@ -52,6 +52,27 @@ else
     --description "ClickHouse HTTP+native, VPC-internal only"
 fi
 
+# ------------------------------------------------------------------- egress
+# The node has NO external IP, so without Cloud NAT it cannot reach
+# deb.debian.org and the ClickHouse install fails with "Network is
+# unreachable". NAT gives egress only — no inbound path is created, so the
+# security posture is unchanged.
+if gcloud compute routers describe tr-nat-router --region "${ZONE%-*}" --project "$PROJECT" >/dev/null 2>&1; then
+  log "cloud router exists"
+else
+  log "creating cloud router"
+  gcloud compute routers create tr-nat-router --network default \
+    --region "${ZONE%-*}" --project "$PROJECT"
+fi
+if gcloud compute routers nats describe tr-nat --router tr-nat-router --region "${ZONE%-*}" --project "$PROJECT" >/dev/null 2>&1; then
+  log "cloud NAT exists"
+else
+  log "creating cloud NAT (egress only)"
+  gcloud compute routers nats create tr-nat --router tr-nat-router \
+    --region "${ZONE%-*}" --project "$PROJECT" \
+    --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges
+fi
+
 # ---------------------------------------------------------------- startup
 # The startup script lives in its own file rather than a heredoc inside $( ):
 # bash parses quotes inside command substitution, so a single apostrophe in a
