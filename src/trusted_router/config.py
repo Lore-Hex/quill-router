@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     spanner_database_id: str | None = None
     bigtable_instance_id: str | None = None
     bigtable_generation_table: str = "trustedrouter-generations"
+    # ClickHouse analytics mirror (phase 2 of the storage-portability plan).
+    # Empty URL = disabled, which is the default: the sink is a no-op until a
+    # deployment explicitly points it somewhere. Bigtable stays authoritative
+    # while both are compared.
+    clickhouse_url: str = ""
+    clickhouse_user: str = ""
+    clickhouse_password: str = ""
+    clickhouse_benchmark_table: str = "provider_benchmark_samples"
 
     # Starter credit granted exactly once with a new email/OAuth account's
     # first workspace. Wallet-only and secondary workspaces receive no grant.
