@@ -183,6 +183,132 @@ def test_novita_live_discovery_preserves_existing_ids_and_normalizes_new_ids(
     assert kimi["input_modalities"] == ["text", "image", "video"]
 
 
+def test_novita_fetch_uses_authenticated_api_price_when_html_lags(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "novita.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "novita",
+                "price_scale_to_microdollars_per_million_tokens": 100,
+                "models": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(novita, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setenv("NOVITA_API_KEY", "secret")
+    monkeypatch.setattr(
+        novita,
+        "fetch_json",
+        lambda *_args, **_kwargs: {
+            "data": [
+                {
+                    "id": "moonshotai/kimi-k3",
+                    "display_name": "Kimi K3",
+                    "context_size": 1_048_576,
+                    "endpoints": ["chat/completions"],
+                    "input_token_price_per_m": 30_000,
+                    "output_token_price_per_m": 150_000,
+                    "pricing": {
+                        "input_cache_read": {"price_per_m": 3_000},
+                    },
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        novita,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="novita",
+            prices={},
+            source="html",
+            fetched_url=novita.URL,
+        ),
+    )
+    monkeypatch.setattr(novita, "EXPECTED_MODELS", ["moonshotai/kimi-k3"])
+
+    result = novita.fetch()
+
+    price = result.prices["moonshotai/kimi-k3"]
+    assert price.prompt_micro_per_m == 3_000_000
+    assert price.completion_micro_per_m == 15_000_000
+    assert price.tiers[0].prompt_cached_micro_per_m == 300_000
+    assert any("authenticated API pricing" in note for note in result.notes)
+
+    novita.write_provider_manifest(result)
+    row = json.loads(manifest_path.read_text(encoding="utf-8"))["models"][0]
+    assert row["input_token_price_per_m"] == 30_000
+    assert row["output_token_price_per_m"] == 150_000
+    assert row["cached_input_token_price_per_m"] == 3_000
+
+
+def test_novita_fetch_keeps_public_price_and_does_not_promote_old_dark_rows(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    kimi = "moonshotai/kimi-k3"
+    old_dark = "example/old-dark-model"
+    discovered = {
+        kimi: {"id": kimi, "upstream_id": kimi, "status": 1},
+        old_dark: {"id": old_dark, "upstream_id": old_dark, "status": 1},
+    }
+    monkeypatch.setattr(
+        novita,
+        "_live_catalog",
+        lambda: (
+            discovered,
+            {
+                kimi: ModelPrice(
+                    prompt_micro_per_m=9_000_000,
+                    completion_micro_per_m=9_000_000,
+                ),
+                old_dark: ModelPrice(
+                    prompt_micro_per_m=100,
+                    completion_micro_per_m=100,
+                ),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        novita,
+        "fetch_provider",
+        lambda **_kwargs: ProviderPricingResult(
+            slug="novita",
+            prices={
+                kimi: ModelPrice(
+                    prompt_micro_per_m=3_000_000,
+                    completion_micro_per_m=15_000_000,
+                )
+            },
+            source="html",
+            fetched_url=novita.URL,
+        ),
+    )
+    monkeypatch.setattr(novita, "_new_required_price_ids", lambda _rows: frozenset())
+    monkeypatch.setattr(novita, "EXPECTED_MODELS", [kimi])
+
+    result = novita.fetch()
+
+    assert result.prices[kimi].prompt_micro_per_m == 3_000_000
+    assert result.prices[kimi].completion_micro_per_m == 15_000_000
+    assert old_dark not in result.prices
+
+
+def test_novita_api_price_rejects_all_zero_internal_rows() -> None:
+    assert (
+        novita._source_price(
+            {
+                "input_token_price_per_m": 0,
+                "output_token_price_per_m": 0,
+            }
+        )
+        is None
+    )
+
+
 def test_novita_manifest_writer_appends_live_priced_model(
     tmp_path: Path,
     monkeypatch,

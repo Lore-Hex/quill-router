@@ -11,10 +11,12 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from scripts.pricing.base import (
+    ModelPrice,
     ProviderPricingResult,
     fetch_json,
     fetch_provider,
@@ -45,6 +47,7 @@ EXPECTED_MODELS = [
     "tencent/hy3",
 ]
 _DISCOVERED_MANIFEST_ROWS: dict[str, dict[str, Any]] = {}
+_API_PRICE_SCALE_TO_MICRODOLLARS_PER_M = Decimal(100)
 
 
 def _positive_int(value: object) -> int | None:
@@ -113,7 +116,49 @@ def _new_required_price_ids(
     )
 
 
-def _live_model_rows() -> dict[str, dict[str, Any]]:
+def _api_price_per_m(value: object) -> int | None:
+    if isinstance(value, dict):
+        value = value.get("price_per_m")
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        scaled = Decimal(str(value)) * _API_PRICE_SCALE_TO_MICRODOLLARS_PER_M
+    except (InvalidOperation, ValueError):
+        return None
+    if scaled < 0 or scaled != scaled.to_integral_value():
+        return None
+    return int(scaled)
+
+
+def _source_price(source: dict[str, Any]) -> ModelPrice | None:
+    """Parse Novita's account-specific per-million-token price fields."""
+
+    pricing = source.get("pricing")
+    pricing = pricing if isinstance(pricing, dict) else {}
+    prompt = _api_price_per_m(
+        source.get("input_token_price_per_m", pricing.get("prompt"))
+    )
+    completion = _api_price_per_m(
+        source.get("output_token_price_per_m", pricing.get("completion"))
+    )
+    if prompt is None or completion is None:
+        return None
+    if prompt == 0 and completion == 0:
+        return None
+    cached = _api_price_per_m(
+        source.get(
+            "cached_input_token_price_per_m",
+            pricing.get("input_cache_read"),
+        )
+    )
+    return ModelPrice(
+        prompt_micro_per_m=prompt,
+        completion_micro_per_m=completion,
+        prompt_cached_micro_per_m=cached,
+    )
+
+
+def _live_catalog() -> tuple[dict[str, dict[str, Any]], dict[str, ModelPrice]]:
     api_key = os.environ.get("NOVITA_API_KEY")
     if not api_key:
         raise RuntimeError("novita: NOVITA_API_KEY is required")
@@ -127,6 +172,7 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
 
     existing_ids = _existing_native_ids()
     discovered: dict[str, dict[str, Any]] = {}
+    api_prices: dict[str, ModelPrice] = {}
     for source in source_rows:
         if not isinstance(source, dict):
             continue
@@ -170,27 +216,47 @@ def _live_model_rows() -> dict[str, dict[str, Any]]:
             if parsed is not None:
                 row[field] = parsed
         discovered[model_id] = row
+        price = _source_price(source)
+        if price is not None:
+            api_prices[model_id] = price
 
     if not discovered:
         raise RuntimeError("novita: /models returned no supported model ids")
+    return discovered, api_prices
+
+
+def _live_model_rows() -> dict[str, dict[str, Any]]:
+    """Return authenticated discovery rows for focused tests and tooling."""
+
+    discovered, _ = _live_catalog()
     return discovered
 
 
 def fetch() -> ProviderPricingResult:
     global _DISCOVERED_MANIFEST_ROWS  # noqa: PLW0603
 
-    discovered = _live_model_rows()
+    discovered, api_prices = _live_catalog()
     required_price_ids = _new_required_price_ids(discovered)
+    page_expected_models = [
+        model_id for model_id in EXPECTED_MODELS if model_id not in api_prices
+    ]
     result = fetch_provider(
         slug=SLUG,
         url=URL,
-        expected_models=EXPECTED_MODELS,
-        required_models=required_price_ids,
+        expected_models=page_expected_models,
+        required_models=required_price_ids - api_prices.keys(),
     )
     _DISCOVERED_MANIFEST_ROWS = discovered
-    result.prices = {
+    page_prices = {
         model_id: price for model_id, price in result.prices.items() if model_id in discovered
     }
+    api_fallback_ids = required_price_ids | (set(EXPECTED_MODELS) - set(page_prices))
+    api_fallback_prices = {
+        model_id: price
+        for model_id, price in api_prices.items()
+        if model_id in api_fallback_ids
+    }
+    result.prices = api_fallback_prices | page_prices
     errors = validate(result.prices, EXPECTED_MODELS)
     if errors:
         raise RuntimeError("; ".join(errors))
@@ -198,6 +264,11 @@ def fetch() -> ProviderPricingResult:
     result.notes.append(
         f"intersected official prices with {len(discovered)} authenticated live models"
     )
+    if api_fallback_prices:
+        result.notes.append(
+            "used authenticated API pricing for "
+            f"{len(api_fallback_prices)} newly discovered or required live models"
+        )
     return result
 
 
