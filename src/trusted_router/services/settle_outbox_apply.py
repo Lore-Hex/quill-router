@@ -6,14 +6,6 @@ import logging
 from dataclasses import replace
 from typing import Any, cast
 
-from google.api_core.exceptions import (
-    Aborted,
-    DeadlineExceeded,
-    InternalServerError,
-    ResourceExhausted,
-    RetryError,
-    ServiceUnavailable,
-)
 from pydantic import ValidationError
 
 from trusted_router.catalog import PROVIDERS, endpoint_for_id
@@ -21,6 +13,7 @@ from trusted_router.catalog_data import PARASAIL_LIBERTY_2_0_MODEL_ID
 from trusted_router.partner_billing import PARTNER_OPERATOR_COST_SETTLE_FIELD
 from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.storage import STORE, Generation, typed_billing_store
+from trusted_router.storage_errors import transient_store_error_types
 from trusted_router.storage_gcp_authorize import SettleOutcome
 from trusted_router.storage_gcp_codec import (
     generation_workspace_id as _generation_workspace_id,
@@ -35,16 +28,12 @@ logger = logging.getLogger(__name__)
 # whole-backend outage must not burn attempts toward dead); legacy-origin rows
 # map to ERROR (drain backoff). Anything else propagates — an unrecognized
 # exception is a bug, and the drain's generic handler is the right place for it.
-# ResourceExhausted covers Spanner session-pool/admission-control overload.
-# RetryError subclasses GoogleAPIError, not GoogleAPICallError, so list it here.
-_TRANSIENT_STORE_EXCS = (
-    Aborted,
-    DeadlineExceeded,
-    InternalServerError,
-    ResourceExhausted,
-    RetryError,
-    ServiceUnavailable,
-)
+# The concrete exception classes are backend-specific, so `storage_errors`
+# owns that mapping and this module stays free of cloud SDK imports. The set is
+# unchanged: Spanner's Aborted/DeadlineExceeded/InternalServerError/
+# ResourceExhausted (session-pool and admission-control overload)/RetryError/
+# ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
+_TRANSIENT_STORE_EXCS = transient_store_error_types()
 
 
 class ApplyOutcome:

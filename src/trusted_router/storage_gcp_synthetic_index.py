@@ -88,3 +88,29 @@ def _samples_from_rows(rows: Any, family: str) -> list[SyntheticProbeSample]:
             continue
         samples.append(SyntheticProbeSample(**json.loads(cells[0].value.decode("utf-8"))))
     return samples
+
+
+def open_generation_table(settings: Any) -> Any:
+    """Open the Bigtable generation table for admin/backfill tooling.
+
+    Lives here, in the GCP adapter layer, so that operational scripts do not
+    import a cloud SDK themselves. That keeps one architectural rule true
+    without exception: `google.*` is imported only by the storage adapter and
+    the two explicit cloud ports (`key_management`, `storage_errors`), which
+    is what `tests/test_cloud_sdk_boundary.py` enforces.
+
+    This tool is GCP-specific by nature — it rewrites Bigtable rollup rows in
+    place — so the goal is not to make it portable, only to keep the SDK
+    dependency where it belongs.
+    """
+    if not settings.gcp_project_id or not settings.bigtable_instance_id:
+        raise SystemExit("TR_GCP_PROJECT_ID and TR_BIGTABLE_INSTANCE_ID are required")
+    try:
+        from google.cloud import bigtable
+    except ImportError as exc:  # pragma: no cover - dependency exists in prod image.
+        raise SystemExit("google-cloud-bigtable is required") from exc
+    return (
+        bigtable.Client(project=settings.gcp_project_id, admin=True)
+        .instance(settings.bigtable_instance_id)
+        .table(settings.bigtable_generation_table)
+    )

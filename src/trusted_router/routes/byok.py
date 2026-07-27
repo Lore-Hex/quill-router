@@ -5,12 +5,12 @@ from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from google.api_core import exceptions as gcp_exceptions
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep
 from trusted_router.byok_crypto import encrypt_byok_secret
 from trusted_router.catalog import PROVIDERS
 from trusted_router.errors import api_error
+from trusted_router.key_management import KeyAccessDenied, KeyManagementError
 from trusted_router.provider_compat import (
     byok_storage_provider_candidates,
     canonical_byok_provider,
@@ -88,10 +88,10 @@ def register_byok_routes(router: APIRouter) -> None:
                     workspace_id=principal.workspace.id,
                     provider=slug,
                 )
-            except gcp_exceptions.PermissionDenied as exc:
-                # The BYOK envelope DEK is wrapped with the GCP KMS
-                # byok-envelope key, which only the primary control-plane SA
-                # may encrypt with. Return a clean, actionable 503 instead of
+            except KeyAccessDenied as exc:
+                # The BYOK envelope DEK is wrapped with the configured
+                # envelope key, which only the primary control-plane
+                # principal may encrypt with. Return a clean, actionable 503 instead of
                 # an unhandled 500 + KMS stack trace if this endpoint lacks
                 # encrypt permission.
                 log.warning(
@@ -104,8 +104,8 @@ def register_byok_routes(router: APIRouter) -> None:
                     "Register keys through the primary API at https://api.trustedrouter.com.",
                     ErrorType.SERVICE_UNAVAILABLE,
                 ) from exc
-            except gcp_exceptions.GoogleAPICallError as exc:
-                # Any other KMS/RPC failure (transient unavailability, timeout):
+            except KeyManagementError as exc:
+                # Any other key-service failure (unavailability, timeout):
                 # a best-effort retry-able error, not an unhandled 500.
                 log.error(
                     "byok.encrypt_failed",

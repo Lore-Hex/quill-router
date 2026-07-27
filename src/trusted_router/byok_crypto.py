@@ -7,9 +7,9 @@ import secrets
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from google.cloud import kms_v1
 
 from trusted_router.config import Settings
+from trusted_router.key_management import key_wrapper_for
 from trusted_router.storage_models import EncryptedSecretEnvelope
 
 ALGORITHM = "TR-BYOK-ENVELOPE-AES-256-GCM-V1"
@@ -168,16 +168,7 @@ def _wrapping_key(settings: Settings) -> bytes:
 
 
 def _wrap_dek(dek: bytes, dek_nonce: bytes, aad: bytes, settings: Settings) -> bytes:
-    if settings.byok_kms_key_name:
-        response = kms_v1.KeyManagementServiceClient().encrypt(
-            request={
-                "name": settings.byok_kms_key_name,
-                "plaintext": dek,
-                "additional_authenticated_data": aad,
-            }
-        )
-        return bytes(response.ciphertext)
-    return AESGCM(_wrapping_key(settings)).encrypt(dek_nonce, dek, aad)
+    return key_wrapper_for(settings).wrap(dek, nonce=dek_nonce, aad=aad)
 
 
 def _unwrap_dek(
@@ -186,20 +177,13 @@ def _unwrap_dek(
     settings: Settings,
 ) -> bytes:
     encrypted_dek = _unb64(envelope.encrypted_dek)
-    if settings.byok_kms_key_name:
-        response = kms_v1.KeyManagementServiceClient().decrypt(
-            request={
-                "name": settings.byok_kms_key_name,
-                "ciphertext": encrypted_dek,
-                "additional_authenticated_data": aad,
-            }
-        )
-        return bytes(response.plaintext)
-    return AESGCM(_wrapping_key(settings)).decrypt(_unb64(envelope.dek_nonce), encrypted_dek, aad)
+    return key_wrapper_for(settings).unwrap(
+        encrypted_dek, nonce=_unb64(envelope.dek_nonce), aad=aad
+    )
 
 
 def _key_ref(settings: Settings) -> str:
-    return settings.byok_kms_key_name or settings.byok_envelope_key_ref
+    return key_wrapper_for(settings).key_ref
 
 
 def _aad(workspace_id: str, provider: str) -> bytes:

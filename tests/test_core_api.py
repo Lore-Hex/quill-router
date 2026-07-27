@@ -1231,14 +1231,32 @@ def test_byok_provider_config_returns_503_when_kms_encrypt_denied(
     # A management caller can land on a control-plane node whose GCP SA can't
     # encrypt with the byok-envelope KMS key. That must return a clean 503 — never an
     # unhandled 500 + KMS stack trace (prod 2026-06-08).
+    # Fault-inject at the KMS boundary rather than mid-chain: this exercises
+    # the real path (KMS PermissionDenied -> key_management translates it to
+    # KeyAccessDenied -> the route maps that to 503), so a break anywhere along
+    # it fails this test.
     from google.api_core import exceptions as gcp_exceptions
 
-    import trusted_router.routes.byok as byok_routes
+    import trusted_router.byok_crypto as byok_crypto
+    from trusted_router.key_management import GcpKmsKeyWrapper
 
-    def _denied(*_args: object, **_kwargs: object) -> object:
-        raise gcp_exceptions.PermissionDenied("useToEncrypt denied on byok-envelope")
+    class _DeniedKmsClient:
+        def encrypt(self, *, request: dict) -> object:
+            raise gcp_exceptions.PermissionDenied(
+                "useToEncrypt denied on byok-envelope"
+            )
 
-    monkeypatch.setattr(byok_routes, "encrypt_byok_secret", _denied)
+    monkeypatch.setattr(
+        "google.cloud.kms_v1.KeyManagementServiceClient", _DeniedKmsClient
+    )
+    monkeypatch.setattr(
+        byok_crypto,
+        "key_wrapper_for",
+        lambda _settings: GcpKmsKeyWrapper(
+            "projects/p/locations/l/keyRings/r/cryptoKeys/byok"
+        ),
+    )
+
     resp = client.put(
         "/v1/byok/providers/cerebras",
         headers=user_headers,
