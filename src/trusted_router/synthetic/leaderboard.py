@@ -83,6 +83,26 @@ def _median_float(values: Sequence[float]) -> float | None:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _effective_throughput(sample: ProviderBenchmarkSample) -> float | None:
+    """Return a buffering-safe output rate for a long synthetic probe.
+
+    Rows written before the metric correction stored post-first-chunk delivery
+    speed, which can be wildly inflated when an upstream buffers SSE events.
+    All long-probe rows already carry provider-reported output tokens and total
+    elapsed time, so derive the honest end-to-end rate at read time. The stored
+    speed remains a compatibility fallback for older tests or partial rows.
+    """
+    if (
+        sample.output_tokens > 0
+        and sample.elapsed_milliseconds is not None
+        and sample.elapsed_milliseconds > 0
+    ):
+        return sample.output_tokens * 1000 / sample.elapsed_milliseconds
+    if sample.speed_tokens_per_second is not None and sample.speed_tokens_per_second > 0:
+        return sample.speed_tokens_per_second
+    return None
+
+
 @dataclass
 class ProviderModelStats:
     provider: str
@@ -124,7 +144,7 @@ class ProviderModelStats:
             "provider": self.provider,
             "model": self.model,
             "sample_count": self.sample_count,
-            "uptime": round(self.uptime, 4),
+            "uptime": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "throughput_sample_count": self.throughput_sample_count,
@@ -182,7 +202,7 @@ class ProviderStats:
             "provider": self.provider,
             "model_count": self.model_count,
             "sample_count": self.sample_count,
-            "uptime": round(self.uptime, 4),
+            "uptime": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "throughput_sample_count": self.throughput_sample_count,
@@ -229,8 +249,9 @@ def aggregate_leaderboard(
             legacy_tps[key] = []
             sustained_tps[key] = []
         if sample.source == "synthetic_throughput":
-            if sample.status == "success" and sample.speed_tokens_per_second:
-                sustained_tps[key].append(sample.speed_tokens_per_second)
+            effective_tps = _effective_throughput(sample)
+            if sample.status == "success" and effective_tps is not None:
+                sustained_tps[key].append(effective_tps)
                 stats.throughput_sample_count += 1
             if stats.last_seen is None or sample.created_at > stats.last_seen:
                 stats.last_seen = sample.created_at
@@ -267,7 +288,11 @@ def aggregate_leaderboard(
         stats.p95_ttfb_ms = _percentile(ttfb[key], 95)
         stats.p50_tokens_per_second = _median_float(sustained_tps[key] or legacy_tps[key])
 
-    models = [s for s in by_model.values() if s.sample_count >= min_samples]
+    models = [
+        stats
+        for stats in by_model.values()
+        if stats.sample_count >= min_samples or stats.throughput_sample_count >= min_samples
+    ]
     models.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
 
     providers = _aggregate_providers(models)

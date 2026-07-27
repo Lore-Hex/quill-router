@@ -615,9 +615,9 @@ class ProviderBenchmarkSample:
     error_message: str | None = None
     region: str | None = None
     # Internal-only provenance: "organic" (real production traffic),
-    # "synthetic" (short rotation probe), or "synthetic_throughput" (sustained
-    # output benchmark). Public ranking pages use the long probe only for
-    # decode throughput, never provider uptime.
+    # "synthetic" (short rotation probe), or "synthetic_throughput" (long
+    # effective-output benchmark). Public ranking pages use the long probe only
+    # for request-start-to-completion throughput, never provider uptime.
     source: str = "organic"
     # Caller-self-reported app name (Generation.app, from the X-Title / Referer
     # header), used by the /apps directory. Privacy-safe: it's the public title

@@ -17,11 +17,13 @@
 {% block body %}
 <section class="status-page leaderboard-page">
   <div class="status-note">
-    Continuously sampled from TrustedRouter's monitor regions over the {{ snapshot.window_label or "recent live window" }} — time-to-first-token (TTFT),
-    time-to-first-byte (TTFB), throughput, and success rate measured on real streaming
-    requests, not vendor-claimed. Unsupported route and probe-configuration rows are
-    reported separately and do not count as provider downtime. No prompt or output
-    content is ever stored.
+    Continuously sampled from TrustedRouter's monitor regions using a
+    {{ snapshot.window_label or "recent live sample" }}. Time-to-first-token (TTFT),
+    time-to-first-byte (TTFB), effective throughput, and success rate come from real
+    streaming requests, not vendor claims. Effective throughput is provider-reported
+    output tokens divided by complete request time, so buffered delivery cannot inflate
+    the result. Unsupported route and probe-configuration rows are reported separately
+    and do not count as provider downtime. No prompt or output content is ever stored.
   </div>
 
   {% if not snapshot.models %}
@@ -33,8 +35,9 @@
     <div class="status-section-head">
       <div>
         <h2>Providers</h2>
-        <p>Ranked by measured p50 time-to-first-token across all of a provider's models in the {{ snapshot.window_label or "recent live window" }}
-          ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} samples).</p>
+        <p>Ranked by measured p50 time-to-first-token across all of a provider's models
+          ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} availability samples ·
+          {{ snapshot.total_throughput_samples }} throughput samples).</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -42,7 +45,7 @@
         <thead>
           <tr>
             <th>#</th><th>Provider</th><th>Models</th>
-            <th>p50 TTFT</th><th>Throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Samples</th>
+            <th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Availability samples</th>
           </tr>
         </thead>
         <tbody>
@@ -52,8 +55,8 @@
             <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
             <td>{{ p.model_count }}</td>
             <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
-            <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ p.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
+            <td>{% if p.sample_count %}{{ '%.2f'|format(p.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ p.sample_count }}</td>
@@ -68,8 +71,8 @@
     <div class="status-section-head">
       <div>
         <h2>Models</h2>
-        <p>Models sampled in the {{ snapshot.window_label or "recent live window" }}, fastest measured TTFT first.
-          Rows with few samples are marked — more data sharpens the numbers.</p>
+        <p>Models in the current benchmark set, fastest measured TTFT first.
+          Thin availability and throughput measurements are labeled independently.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -78,7 +81,7 @@
           <tr>
             <th>#</th><th>Model</th><th>Provider</th>
             <th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th>
-            <th>Throughput</th><th>Uptime</th><th>Config excluded</th><th>Samples</th>
+            <th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th>
           </tr>
         </thead>
         <tbody>
@@ -86,14 +89,14 @@
           <tr>
             <td>{{ loop.index }}</td>
             <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a>
-              {% if m.sample_count < 20 %}<span class="lb-badge">limited data</span>{% endif %}
+              {% if m.sample_count < 5 %}<span class="lb-badge">limited availability</span>{% endif %}
             </td>
             <td>{{ m.provider }}</td>
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
-            <td>{{ '%.2f'|format(m.uptime * 100) }}%</td>
+            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
+            <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
           </tr>

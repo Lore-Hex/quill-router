@@ -14,6 +14,9 @@ from trusted_router.catalog import providers_for_display
 from trusted_router.storage import STORE
 from trusted_router.storage_models import ProviderBenchmarkSample
 
+PUBLIC_BENCHMARK_SAMPLE_LIMIT = 10_000
+PUBLIC_BENCHMARK_RECENT_MINUTES = 24 * 60
+
 
 def _cutoff_iso(*, recent_minutes: int | None, now: dt.datetime | None = None) -> str | None:
     if recent_minutes is None or recent_minutes <= 0:

@@ -23,6 +23,7 @@ from trusted_router.synthetic.probes import (
     run_synthetic_once,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_INTERVAL_SECONDS,
     choose_throughput_target,
     throughput_candidates,
 )
@@ -42,7 +43,7 @@ _DEFAULT_THROUGHPUT_ROUTE_LIMIT = 200
 _DEFAULT_THROUGHPUT_MAX_TOKENS = 512
 _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
 _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
-_DEFAULT_THROUGHPUT_INTERVAL_SECONDS = 120
+_DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
