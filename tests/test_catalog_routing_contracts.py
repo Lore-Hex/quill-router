@@ -1384,6 +1384,11 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
         endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"
     ]
     assert {endpoint.model_id for endpoint in endpoints} == private_models | anonymized_models
+    assert all(
+        PROVIDERS[endpoint.provider].provider_confidential_compute is False
+        for endpoint in endpoints
+    )
+    assert all(PROVIDERS[endpoint.provider].provider_e2ee is False for endpoint in endpoints)
 
     for endpoint in endpoints:
         if endpoint.model_id in private_models:
