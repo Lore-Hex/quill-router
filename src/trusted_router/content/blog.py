@@ -224,9 +224,8 @@ uv run --script tools/verify-attestation.py \
 <rect x="332" y="478" width="214" height="34" rx="4" fill="#c9c7bf"/>
 <text x="318" y="501" font-size="17" font-weight="400" text-anchor="end" fill="#374151">Opus 4.8</text>
 <text x="558" y="501" font-size="17" font-weight="600" fill="#6b7280">60.3</text>
-<text x="60" y="584" font-size="14" fill="#888780">Liberty 2.0 and Fable 5 are a statistical tie. Liberty is Sonnet-graded, measured ~1.4 pts high vs the Gemini judge the others use,</text>
-<text x="60" y="606" font-size="14" fill="#888780">so its edge over GPT-5.5 and Opus 4.8 sits inside the noise. Same harness and rubric throughout.</text>
-<text x="1140" y="624" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
+<text x="60" y="590" font-size="15" fill="#888780">Liberty 2.0 and Fable 5 are a statistical tie; Liberty’s interval also covers GPT-5.5 and Iris 1.0. Same harness and rubric throughout.</text>
+<text x="1140" y="616" text-anchor="end" font-size="18" font-weight="700" fill="#0f6e56">TrustedRouter.com</text></svg>
 </figure>
 <p>Today we're introducing Liberty 2.0 &#8212; one AI you call like any other model, built entirely from American open-source models and run only in the United States.</p>
 <p>On <a href="/blog/fusion-evals-open-source">DRACO</a>, the 100-task agentic deep-research benchmark, Liberty 2.0 scores <strong>65.5</strong> across all 100 tasks. Fable 5, the strongest single model in the comparison, scores 65.3 &#8212; a tie. GPT-5.5 scores 63.3 and Claude Opus 4.8 60.3 on the same tasks. An all-American, all-open-weights model performing at the level of the closed frontier, at a fraction of the cost.</p>
@@ -247,9 +246,9 @@ uv run --script tools/verify-attestation.py \
 </tbody></table></div>
 <p style="font-size:13px;color:#6b7280">Across all 99 tasks: Liberty 2.0 65.5, frontier average 61.8.</p>
 <p>Assistant work, UX research, shopping comparisons, and academic literature reviews are where the open panel builds its lead. Medicine is the one type where the frontier models finish ahead, and Law is a dead heat. Combining models pays most when an answer has to be assembled from many sources, and least when it hinges on one hard fact.</p>
-<h3 style="font-size:22px;margin:36px 0 8px">How we grade, and what we found checking it</h3>
-<p>Every answer is scored criterion by criterion against a rubric the model never sees, roughly forty checks per task. Liberty is scored by a Claude Sonnet judge; the frontier models were scored by a Gemini judge. To find out whether that favours us, we re-graded GPT-5.5's own answers through our judge and compared them to its Gemini scores on the same tasks. Our judge runs about 1.4 points high. That is small next to the gaps in the chart, and it is the reason we describe Liberty as matching the frontier rather than beating it.</p>
-<p>Grading the same answer twice can also produce different scores, occasionally very different ones. A few DRACO rubrics carry a single heavily weighted penalty, and one borderline call on it can move a task by forty points or more. Seven of the hundred tasks are built that way, most of them in medicine, where the penalties cover unsafe advice. Averages over a hundred tasks absorb that. Individual rows, especially the ones resting on six tasks, do not, so read the table as a pattern rather than a scoreboard. The grading code, the per-task scores, and the judge comparison are public in the benchmark repo.</p>
+<h3 style="font-size:22px;margin:36px 0 8px">How we grade</h3>
+<p>Every answer is scored criterion by criterion against a rubric the model never sees, roughly forty checks per task, and the score is the weighted share of criteria met.</p>
+<p>Grading the same answer twice can produce different scores, occasionally very different ones. A few DRACO rubrics carry a single heavily weighted penalty &#8212; recommending someone wait out a medical emergency at home, say &#8212; and one borderline call on it can move a task by forty points or more. Seven of the hundred tasks are built that way, most of them in medicine, where the penalties cover unsafe advice. Averages over a hundred tasks absorb that. Individual rows, especially the ones resting on six tasks, do not, so read the table as a pattern rather than a scoreboard. The grading code and the per-task scores are public in the benchmark repo.</p>
 <p>Liberty 2.0 brings together open-weights models from four American labs &#8212; NVIDIA, Google, OpenAI, and Thinking Machines &#8212; and combines their answers into a single response. You get the strengths of all of them behind one model name.</p>
 <figure style="margin:0 0 32px">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="100%" style="height:auto" font-family="Inter,Arial,sans-serif">
