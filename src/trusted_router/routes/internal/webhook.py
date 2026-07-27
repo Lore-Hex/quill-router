@@ -73,7 +73,8 @@ def register(router: APIRouter) -> None:
 
         if event_type == "checkout.session.completed":
             obj = event.get("data", {}).get("object", {})
-            workspace_id = obj.get("metadata", {}).get("workspace_id")
+            metadata = obj.get("metadata") or {}
+            workspace_id = metadata.get("workspace_id")
             amount_total = int(obj.get("amount_total") or 0)
             customer_id = obj.get("customer")
             if workspace_id and STORE.get_credit_account(workspace_id) is not None:
@@ -87,13 +88,17 @@ def register(router: APIRouter) -> None:
                             "trial_credit_granted_microdollars": 0,
                         }
                     }
+                amount_microdollars = _checkout_credit_amount_microdollars(
+                    metadata=metadata,
+                    amount_total_cents=amount_total,
+                )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_total * MICRODOLLARS_PER_CENT, event_id
+                    workspace_id, amount_microdollars, event_id
                 )
                 if credited:
                     record_credit_purchase(
                         workspace_id,
-                        amount_microdollars=amount_total * MICRODOLLARS_PER_CENT,
+                        amount_microdollars=amount_microdollars,
                         payment_method="stripe",
                     )
                 # Capture the Stripe customer the first time they pay so
@@ -106,6 +111,7 @@ def register(router: APIRouter) -> None:
                 return {
                     "data": {
                         "credited": credited,
+                        "credited_microdollars": amount_microdollars,
                         "event_id": event_id,
                         # Kept for response compatibility. Starter credit is
                         # granted atomically at account creation, never here.
@@ -175,7 +181,10 @@ def register(router: APIRouter) -> None:
                 and isinstance(workspace_id, str)
                 and isinstance(amount_microdollars_raw, str)
             ):
-                amount_microdollars = int(amount_microdollars_raw)
+                amount_microdollars = _auto_refill_credit_amount_microdollars(
+                    metadata=metadata,
+                    payment_intent_amount_cents=obj.get("amount"),
+                )
                 credited = STORE.credit_workspace_typed_direct(
                     workspace_id, amount_microdollars, event_id
                 )
@@ -265,3 +274,88 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _checkout_credit_amount_microdollars(
+    *,
+    metadata: dict[str, Any],
+    amount_total_cents: int,
+) -> int:
+    """Return credit principal, excluding the separately charged fee.
+
+    Sessions created before fee pass-through have no principal metadata and
+    retain the legacy amount_total behavior. New sessions fail closed if the
+    signed Stripe event contains malformed or impossible principal metadata.
+    """
+    raw = metadata.get("credit_amount_microdollars")
+    if raw is None:
+        return amount_total_cents * MICRODOLLARS_PER_CENT
+    processing_fee_raw = metadata.get("processing_fee_cents")
+    charge_amount_raw = metadata.get("charge_amount_cents")
+    if (
+        not isinstance(raw, str)
+        or not isinstance(processing_fee_raw, str)
+        or not isinstance(charge_amount_raw, str)
+    ):
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST)
+    try:
+        amount_microdollars = int(raw)
+        processing_fee_cents = int(processing_fee_raw)
+        charge_amount_cents = int(charge_amount_raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST) from exc
+    if (
+        amount_microdollars <= 0
+        or amount_microdollars % MICRODOLLARS_PER_CENT
+        or processing_fee_cents < 0
+        or charge_amount_cents != amount_total_cents
+        or amount_microdollars // MICRODOLLARS_PER_CENT + processing_fee_cents
+        != amount_total_cents
+    ):
+        raise api_error(400, "Invalid Stripe credit amount", ErrorType.BAD_REQUEST)
+    return amount_microdollars
+
+
+def _auto_refill_credit_amount_microdollars(
+    *,
+    metadata: dict[str, Any],
+    payment_intent_amount_cents: Any,
+) -> int:
+    raw = metadata.get("amount_microdollars")
+    if not isinstance(raw, str):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    try:
+        amount_microdollars = int(raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST) from exc
+    if amount_microdollars <= 0 or amount_microdollars % MICRODOLLARS_PER_CENT:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+
+    charge_amount_raw = metadata.get("charge_amount_cents")
+    if charge_amount_raw is None:
+        # Legacy PaymentIntents predate explicit fee metadata.
+        return amount_microdollars
+    processing_fee_raw = metadata.get("processing_fee_cents")
+    credit_amount_raw = metadata.get("credit_amount_microdollars")
+    if (
+        not isinstance(charge_amount_raw, str)
+        or not isinstance(processing_fee_raw, str)
+        or not isinstance(credit_amount_raw, str)
+        or not isinstance(payment_intent_amount_cents, int)
+    ):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    try:
+        charge_amount_cents = int(charge_amount_raw)
+        processing_fee_cents = int(processing_fee_raw)
+        credit_amount_microdollars = int(credit_amount_raw)
+    except ValueError as exc:
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST) from exc
+    if (
+        processing_fee_cents < 0
+        or credit_amount_microdollars != amount_microdollars
+        or charge_amount_cents != payment_intent_amount_cents
+        or amount_microdollars // MICRODOLLARS_PER_CENT + processing_fee_cents
+        != charge_amount_cents
+    ):
+        raise api_error(400, "Invalid Stripe refill amount", ErrorType.BAD_REQUEST)
+    return amount_microdollars

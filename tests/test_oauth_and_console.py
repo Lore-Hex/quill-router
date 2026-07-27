@@ -1225,10 +1225,11 @@ def test_console_checkout_redirects_to_stripe_stablecoin_session(monkeypatch) ->
     assert resp.headers["location"] == "https://checkout.stripe.test/session"
     assert captured["payment_method_types"] == ["crypto"]
     assert captured["customer_email"] == "checkout@example.com"
-    assert captured["metadata"] == {
-        "workspace_id": workspace.id,
-        "payment_method": "stablecoin",
-    }
+    assert captured["metadata"]["workspace_id"] == workspace.id
+    assert captured["metadata"]["payment_method"] == "stablecoin"
+    assert captured["metadata"]["credit_amount_microdollars"] == "25000000"
+    assert captured["metadata"]["processing_fee_cents"] == "39"
+    assert captured["metadata"]["charge_amount_cents"] == "2539"
     assert captured["success_url"].endswith("/console/credits?checkout=success")
     assert captured["cancel_url"].endswith("/console/credits?checkout=cancel")
 

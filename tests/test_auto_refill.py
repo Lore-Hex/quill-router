@@ -146,8 +146,9 @@ def test_auto_refill_fires_below_threshold(
     assert outcome.payment_intent_id == "pi_test_abc"
     create.assert_called_once()
     kwargs = create.call_args.kwargs
-    # Convert microdollars to cents: $20 → 2000 cents.
-    assert kwargs["amount"] == 2000
+    # The user receives $20.00 in credits. The card charge separately
+    # includes the grossed-up 2.9% + 30c payment processing fee.
+    assert kwargs["amount"] == 2091
     assert kwargs["currency"] == "usd"
     assert kwargs["customer"] == "cus_test_123"
     assert kwargs["payment_method"] == "pm_test_456"
@@ -155,6 +156,21 @@ def test_auto_refill_fires_below_threshold(
     assert kwargs["confirm"] is True
     assert kwargs["metadata"]["workspace_id"] == configured_workspace
     assert kwargs["metadata"]["auto_refill"] == "true"
+    assert kwargs["metadata"]["amount_microdollars"] == "20000000"
+    assert kwargs["metadata"]["processing_fee_cents"] == "91"
+    assert kwargs["metadata"]["charge_amount_cents"] == "2091"
+    assert kwargs["amount_details"]["line_items"] == [
+        {
+            "product_name": "TrustedRouter credits",
+            "quantity": 1,
+            "unit_cost": 2000,
+        },
+        {
+            "product_name": "Payment processing fee",
+            "quantity": 1,
+            "unit_cost": 91,
+        },
+    ]
     assert "auto-refill" in kwargs.get("idempotency_key", "")
 
     # Status should be pending until the webhook lands.

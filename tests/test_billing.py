@@ -1031,7 +1031,9 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
         {
             "payment_intent": "pi_3TaPnB",
             "created_at": 1779582083,  # 2026-05-24 01:01 UTC
-            "amount_cents": 100,
+            "amount_cents": 134,
+            "credit_amount_cents": 100,
+            "processing_fee_cents": 34,
             "currency": "usd",
             "status": "succeeded",
             "payment_status": "paid",
@@ -1063,6 +1065,8 @@ def test_credits_page_renders_payment_rows_when_present(monkeypatch) -> None:
     assert "Payment history" in resp.text
     # Amount formatted as dollars
     assert "$1.00" in resp.text
+    assert "$0.34 fee" in resp.text
+    assert "$1.34" in resp.text
     assert "$5.00" in resp.text
     # Card brand + last4 displayed
     assert "visa" in resp.text.lower()

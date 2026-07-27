@@ -7,8 +7,9 @@ import stripe
 
 from trusted_router.config import Settings
 from trusted_router.errors import api_error
-from trusted_router.money import dollars_to_cents, dollars_to_microdollars, money_pair
+from trusted_router.money import dollars_to_cents, money_pair
 from trusted_router.schemas import CheckoutRequest
+from trusted_router.services.stripe_fees import stripe_processing_fee
 from trusted_router.storage import STORE
 from trusted_router.types import ErrorType
 
@@ -20,7 +21,6 @@ def create_checkout_session(
     customer_email: str | None,
     settings: Settings,
 ) -> dict[str, Any]:
-    amount_microdollars = dollars_to_microdollars(body.amount)
     workspace = STORE.get_workspace(workspace_id)
     if workspace is None:
         raise api_error(404, "Workspace not found", ErrorType.NOT_FOUND)
@@ -28,32 +28,40 @@ def create_checkout_session(
     success_url = body.success_url or f"https://{settings.trusted_domain}/billing/success"
     cancel_url = body.cancel_url or f"https://{settings.trusted_domain}/billing"
     amount_cents = dollars_to_cents(body.amount)
+    amount_microdollars = amount_cents * 10_000
     stablecoin_requested = body.payment_method in {"stablecoin", "crypto", "usdc"}
     if stablecoin_requested and not settings.stablecoin_checkout_enabled:
         raise api_error(400, "Stablecoin checkout is not enabled", ErrorType.BAD_REQUEST)
+    fee = stripe_processing_fee(
+        credit_amount_cents=amount_cents,
+        variable_basis_points=(
+            settings.stripe_stablecoin_fee_basis_points
+            if stablecoin_requested
+            else settings.stripe_card_fee_basis_points
+        ),
+        fixed_fee_cents=(
+            settings.stripe_stablecoin_fee_fixed_cents
+            if stablecoin_requested
+            else settings.stripe_card_fee_fixed_cents
+        ),
+    )
+    payment_method = "stablecoin" if stablecoin_requested else "card"
+    payment_metadata = fee.metadata(
+        workspace_id=workspace_id,
+        payment_method=payment_method,
+    )
     if settings.stripe_secret_key:
         stripe.api_key = settings.stripe_secret_key
         session_args: dict[str, Any] = {
             "mode": "payment",
             "success_url": success_url,
             "cancel_url": cancel_url,
-            "line_items": [
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {"name": "TrustedRouter credits"},
-                        "unit_amount": amount_cents,
-                    },
-                    "quantity": 1,
-                }
-            ],
-            "metadata": {
-                "workspace_id": workspace_id,
-                "payment_method": "stablecoin" if stablecoin_requested else "auto",
-            },
+            "line_items": fee.checkout_line_items(),
+            "metadata": payment_metadata,
         }
         if stablecoin_requested:
             session_args["payment_method_types"] = ["crypto"]
+            session_args["payment_intent_data"] = {"metadata": payment_metadata}
             if customer_email:
                 session_args["customer_email"] = customer_email
         else:
@@ -64,7 +72,7 @@ def create_checkout_session(
             session_args["customer_creation"] = "always"
             session_args["payment_intent_data"] = {
                 "setup_future_usage": "off_session",
-                "metadata": {"workspace_id": workspace_id},
+                "metadata": payment_metadata,
             }
         session = stripe.checkout.Session.create(**session_args)
         return {
@@ -72,6 +80,8 @@ def create_checkout_session(
             "url": session["url"],
             "workspace_id": workspace_id,
             **money_pair("amount", amount_microdollars),
+            **money_pair("processing_fee", fee.processing_fee_microdollars),
+            **money_pair("total", fee.charge_amount_microdollars),
             "mode": "stripe_stablecoin" if stablecoin_requested else "stripe",
         }
 
@@ -80,6 +90,8 @@ def create_checkout_session(
         "url": f"https://{settings.trusted_domain}/billing/mock-checkout",
         "workspace_id": workspace_id,
         **money_pair("amount", amount_microdollars),
+        **money_pair("processing_fee", fee.processing_fee_microdollars),
+        **money_pair("total", fee.charge_amount_microdollars),
         "mode": "mock_stablecoin" if stablecoin_requested else "mock",
     }
 
@@ -262,6 +274,8 @@ def list_workspace_payments(
           "payment_intent": "pi_...",
           "created_at": <unix ts>,
           "amount_cents": int,
+          "credit_amount_cents": int | None,
+          "processing_fee_cents": int | None,
           "currency": "usd",
           "status": "succeeded" | "processing" | "requires_payment_method" | ...,
           "receipt_url": str | None,
@@ -320,6 +334,14 @@ def list_workspace_payments(
             "payment_intent": pi_data.get("id"),
             "created_at": pi_data.get("created"),
             "amount_cents": int(pi_data.get("amount") or 0),
+            "credit_amount_cents": _metadata_microdollars_to_cents(
+                pi_data.get("metadata"),
+                key="credit_amount_microdollars",
+            ),
+            "processing_fee_cents": _metadata_int(
+                pi_data.get("metadata"),
+                key="processing_fee_cents",
+            ),
             "currency": pi_data.get("currency") or "usd",
             "status": pi_data.get("status"),
             # Display-shaped synonym so the template doesn't need to know
@@ -333,3 +355,23 @@ def list_workspace_payments(
             "card_last4": card_last4,
         })
     return out
+
+
+def _metadata_int(metadata: Any, *, key: str) -> int | None:
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get(key)
+    if not isinstance(raw, str):
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
+def _metadata_microdollars_to_cents(metadata: Any, *, key: str) -> int | None:
+    value = _metadata_int(metadata, key=key)
+    if value is None or value % 10_000:
+        return None
+    return value // 10_000
