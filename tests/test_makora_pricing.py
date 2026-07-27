@@ -286,6 +286,70 @@ def test_makora_provider_updates_supplemental_manifest(tmp_path: Path, monkeypat
     assert raw["generated_at"] != "2026-01-01T00:00:00Z"
 
 
+def test_makora_manifest_writer_allows_normal_upstream_retirement(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    current = "z-ai/glm-5.2"
+    retired = "qwen/qwen3.6-27b"
+    manifest_path = tmp_path / "makora.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "makora",
+                "models": [
+                    {
+                        "id": current,
+                        "upstream_id": "zai-org/GLM-5.2-FP8",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                    {
+                        "id": retired,
+                        "upstream_id": "unsloth/Qwen3.6-27B-NVFP4",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(makora, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(makora, "EXPECTED_MODELS", [current, retired])
+    monkeypatch.setattr(
+        makora,
+        "_DISCOVERED_MANIFEST_ROWS",
+        {
+            current: {
+                "id": current,
+                "upstream_id": "zai-org/GLM-5.2-FP8",
+                "status": 1,
+            }
+        },
+    )
+
+    notes = makora.write_provider_manifest(
+        ProviderPricingResult(
+            slug="makora",
+            prices={
+                current: ModelPrice(
+                    prompt_micro_per_m=1_000_000,
+                    completion_micro_per_m=2_000_000,
+                )
+            },
+            source="api",
+            fetched_url=makora.MODELS_URL,
+        )
+    )
+
+    assert notes == ["makora: refreshed provider_models/makora.json (1 priced rows)"]
+    rows = json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    by_id = {row["id"]: row for row in rows}
+    assert by_id[current]["input_token_price_per_m"] == 1_000_000
+    assert retired in by_id
+
+
 def test_provider_model_manifests_have_hourly_refresh_path() -> None:
     legacy_manual: set[str] = set()
     manifest_slugs = {

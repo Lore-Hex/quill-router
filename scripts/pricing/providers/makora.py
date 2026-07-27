@@ -216,9 +216,6 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
             updated.append(model_id)
         present_rows[model_id] = row
 
-    missing = sorted(set(EXPECTED_MODELS) - set(updated))
-    if missing:
-        raise RuntimeError(f"makora manifest did not update expected model(s): {missing}")
     if not updated:
         raise RuntimeError("makora manifest update touched no rows")
 
