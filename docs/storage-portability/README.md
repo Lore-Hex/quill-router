@@ -7,13 +7,16 @@ Status as of 2026-07-26:
 
 | Phase | State |
 |---|---|
-| 0. Behavioural storage conformance suite | **landed (this branch)** |
-| 1. ClickHouse analytics — local proof on real data | **done, exact match** |
-| 2. ClickHouse in parallel on GCP (dual-write + verify) | next |
-| 3. AWS test cluster (ClickHouse + remote Spanner) | after phase 2 |
-| 4. Leak closures (#1 exceptions, #2 KMS, #4 backfill script) | designed, not landed |
-| 5. Azure | later |
+| 0. Behavioural storage conformance suite | **landed** (#288) |
+| 1. ClickHouse analytics — proof on real data | **done, exact match on 500 routes** |
+| 4. Leak closures — cloud SDKs behind ports | **landed** (#289) |
+| 2. ClickHouse in parallel on GCP (dual-write + verify) | **next** |
+| 3. AWS test cluster (ClickHouse + remote Spanner) | tooling already exists — mostly a re-run |
+| 5. Azure | spike done for attestation; Entra→GCP WIF outstanding |
 | — Postgres/`PostgresStore` port | **deliberately NOT on the path** |
+
+Ordering note: phase 4 landed before phase 2 because it is a pure decoupling
+with no deployment risk, and it is what lets a non-GCP process start at all.
 
 ---
 
@@ -264,16 +267,96 @@ Rollback: flip reads back to Bigtable; dual-write keeps both populated.
 
 Control plane on AWS + ClickHouse on AWS + **Spanner still in GCP**.
 
+**AWS is already built — this is a re-run, not a build.** In
+`quill-cloud-proxy/tools/`:
+
+| Asset | What it does |
+|---|---|
+| `deploy-aws-control-plane.sh` | ECS/Fargate + ALB + ECR + secret wiring |
+| `deploy-aws-nitro.sh` | the enclave on Nitro Enclaves |
+| `sync-secrets-to-aws.sh` | mirrors GCP Secret Manager → AWS |
+| `teardown-aws-control-plane.sh` | tears it down |
+| `aws-nitro-root.pem` | pinned Nitro attestation root |
+
+plus `attestation_aws.go` and `bootstrap_aws.go` in the enclave. Attestation
+already has two backends, which is the hard part of supporting N.
+
+**One wart to fix while you are there:** AWS reaches Spanner via
+`GOOGLE_APPLICATION_CREDENTIALS` pointing at a **long-lived service-account
+key JSON**. GCP Workload Identity Federation supports AWS natively, so that
+key can be replaced with short-lived federated credentials. Do this rather
+than copying the key pattern to a third cloud.
+
 Must-measure before committing:
 
-* Added p50/p95 latency on authorize and settle from AWS → Spanner.
+* Added p50/p95 latency on authorize and settle from AWS → Spanner. Pair the
+  AWS region with the nearest Spanner region (`us-east-1` ↔ `nam6`). If the
+  added TTFB is unacceptable, *that measurement* — not a guess — is what
+  justifies starting a Postgres port.
 * Egress cost per million requests.
 * Behaviour under a cross-cloud network partition — specifically whether the
-  settle-outbox drains correctly when Spanner is briefly unreachable
-  (`storage_errors.is_transient_store_error` is what should be classifying
-  that; see leak #1).
+  settle-outbox drains correctly when Spanner is briefly unreachable.
+  `storage_errors.is_transient_store_error` is what classifies that now.
 
-## Phase 4: leak closures (designed, not landed)
+## Phase 5: Azure — the genuinely new work
+
+Nothing Azure exists in either repo today. The critical path is exactly two
+things; everything else is configuration.
+
+**1. `attestation_azure.go`.** Not optional — attested confidential compute is
+the product, so TR on Azure without it is not TR. The good news is the shape:
+Nitro returns a CBOR/COSE document the verifier parses itself, whereas both
+GCP Confidential Space and Microsoft Azure Attestation return a **signed JWT**
+from a cloud-operated issuer verified against its JWKS. So Azure follows
+`attestation_gcp.go` closely, including the G6 session binding.
+
+A working spike exists on the `azure-attestation` branch of quill-cloud-proxy
+(vet/test/gofmt clean, **not** hardware-verified, **not** to be merged to
+`main` without a go — `main` auto-deploys the enclave). Its one subtle part:
+SEV-SNP gives exactly 64 bytes of caller-controlled `REPORT_DATA`, so the four
+bound inputs are reduced to a single SHA-512 — exactly 64 bytes, no truncation
+and no padding convention — with the pre-image also sent as `runtime_data` so
+a verifier can recompute it and see *what* was bound.
+
+**2. Entra ID → GCP Workload Identity Federation**, so Azure reaches Spanner
+with no key file at all. Strictly better than what AWS does today.
+
+Then: Container Apps (closest ECS-Fargate analog) or AKS with Confidential
+Containers; AMD SEV-SNP VM families (DCasv5/ECasv5); Key Vault plus a
+`sync-secrets-to-azure.sh`; ClickHouse Cloud on Azure or self-hosted on AKS —
+already portable by construction from phase 1.
+
+## Phase 4: leak closures — LANDED (#289)
+
+Application code no longer imports a cloud SDK. Two ports own that knowledge:
+
+* **`storage_errors`** — `StoreConflict` / `StoreUnavailable` plus
+  `transient_store_error_types()` / `conflict_store_error_types()`. The
+  transient set still resolves to exactly the six Google types the outbox
+  parked on, asserted by test.
+* **`key_management`** — a `KeyWrapper` port (`LocalAesKeyWrapper`,
+  `GcpKmsKeyWrapper`) translating KMS failures to `KeyAccessDenied` /
+  `KeyUnavailable`. **Adding AWS KMS or Azure Key Vault is one new class.**
+
+Both import Google **lazily**, so a non-GCP deployment need not install the
+Google libraries at all — previously `import trusted_router.main`
+hard-required `google-api-core`.
+
+`tests/test_cloud_sdk_boundary.py` keeps it true: it walks every module's AST
+and fails if a cloud SDK is imported outside an allowlisted adapter. It draws
+the distinction that matters — **infrastructure** (storage, secrets, key
+wrapping, retry classification) must sit behind a port, while a vendor SDK
+used to call that vendor's own product (`google.auth` for Vertex as an
+upstream LLM provider, `boto3` for SES) is an ordinary integration that works
+from any cloud and is *not* a portability blocker.
+
+**Still outstanding here:** BYOK `unwrap` dispatches on **current settings**,
+not the envelope's stored `key_ref`. Latent today, but a cloud migration or
+key rotation would strand every existing envelope. Fixing it needs a re-wrap
+migration of all DEKs, so it is deliberately separate.
+
+<details>
+<summary>Original phase-4 design notes (superseded by the above)</summary>
 
 1. **GCP exceptions in app code** — `google.api_core.exceptions` is imported
    in `main.py`, `routes/byok.py`, `services/settle_outbox_apply.py` to make
@@ -295,6 +378,8 @@ Must-measure before committing:
 
 (#3, the typed-billing neutral contract, is intentionally deferred — see
 "Known divergence" above.)
+
+</details>
 
 ---
 
