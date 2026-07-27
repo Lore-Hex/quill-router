@@ -94,7 +94,30 @@ stop using it as a warehouse.
 4. Compute the same thing in one SQL statement.
 5. Assert agreement route by route.
 
-Result on **40,000 real rows / 525 routes: EXACT MATCH.**
+Result on **40,000 real rows / 500 routes: EXACT MATCH**, including an
+identical flagged set (the routes that would actually alert).
+
+### What it proves, precisely
+
+It proves that **given the same input rows**, the SQL translation of
+`evaluate_route_health` matches the Python original — same per-route counts,
+same flagged set — under the real rules: 48-hour cutoff, newest-48-per-route,
+synthetic-only, `unsupported` excluded, transient failures excluded,
+`min_samples=6`, `failure_rate>=0.95`. That is the risky part of the port, and
+it is where the NULL bug below lived.
+
+It does **not** prove:
+
+* the full public leaderboard aggregator (`synthetic/leaderboard.py`), which
+  also blends organic traffic, computes exact nearest-rank percentiles and
+  ranks providers. ClickHouse's `quantile()` is *approximate* and has not been
+  reconciled against that exact implementation. Do not swap it in blind.
+* anything about the ingestion path — both sides read one slice.
+
+Because both sides read the same slice, a biased slice would let them agree
+while diverging from production (which reads per-route). The script therefore
+**asserts** that the scan reaches back past the 48h cutoff before comparing;
+if it doesn't, it exits rather than reporting a meaningless match.
 
 Run it:
 
@@ -107,9 +130,13 @@ docker run -d --name tr-clickhouse -p 18123:8123 -p 19000:9000 \
 # contains semicolons)
 # then:
 export GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/tr-ops-local.json
-SCAN_LIMIT=40000 uv run --with google-cloud-bigtable \
-  python clickhouse/prove_leaderboard.py
+uv run --with google-cloud-bigtable python clickhouse/prove_leaderboard.py
 ```
+
+> **This is a local proof harness, not a monitor.** By default it TRUNCATEs
+> the analytics table and rebuilds the materialized view. Never point it at a
+> production ClickHouse. Use `--no-load` to compare against data already
+> present.
 
 ### The bug this proof caught — read this before writing any porting SQL
 
@@ -131,14 +158,33 @@ dead routes we most need to detect. Fix: flatten NULLs first
 tested against the Python original on real data. Reviewing the SQL by eye
 would not have caught this; the aggregate was plausible and wrong.
 
-### What ClickHouse deletes
+### What ClickHouse replaces — and what it does NOT
 
 `route_health_hourly` (an `AggregatingMergeTree` materialized view) maintains
-rollups incrementally as rows arrive. It replaces the entire hand-rolled
-rollup layer — `storage_gcp_synthetic_rollups.py` and
-`synthetic/backfill_rollups.py` — including the scheduled backfill job that
-can fail silently. Aggregate *states* are stored, so one view answers "last
-48h" and "last 90 days" without storing either.
+per-route rollups incrementally as rows arrive, with no scheduled job to fail
+silently. Aggregate *states* are stored, so one view answers "last 48h" and
+"last 90 days" without storing either.
+
+Scope, precisely: it covers the **ProviderBenchmarkSample** dataset
+(provider/model). It is **not** a replacement for
+`synthetic/backfill_rollups.py`, which rolls up a *different* dataset —
+`SyntheticProbeSample`, keyed by component/target/probe_type/region. Retiring
+that job is separate work. (An earlier draft of this document claimed
+otherwise; it was wrong.)
+
+Two traps found the hard way, both now encoded in the schema comments:
+
+1. **The view must repeat route-health's exclusions.** Counting every
+   synthetic row and every error is *not* route health: on a 30.8k-row sample
+   that yields 30832 samples / 1176 failures against the correct 28214 / 59 —
+   a **20x overstatement of failures** that looks entirely plausible.
+2. **`ReplacingMergeTree` does not make ingestion idempotent for the view.**
+   Materialized views run per INSERT BLOCK, before any source-table
+   replacement, so re-running a backfill permanently inflates the aggregates
+   even though the source table collapses its duplicates. Measured: three
+   loads of 30,832 rows left **92,500** samples in the view. Ingestion must be
+   append-once, use `insert_deduplication_token`, or rebuild the view
+   alongside any source reload.
 
 It also makes questions cheap that were previously scripts. The same run
 immediately surfaced that **every `google-ai-studio` Gemini route is at 100%
@@ -198,10 +244,15 @@ before anything depends on it.
    **one synchronous row per generation is a ClickHouse anti-pattern.**
    Dual-write must be best-effort: a ClickHouse failure must never fail an
    inference request.
-3. **Backfill** history from Bigtable (idempotent — `ReplacingMergeTree` keyed
-   on the sort key means re-running is safe).
-4. **Verify continuously.** Run `prove_leaderboard.py`'s comparison as a
-   scheduled job against live data. Divergence is a page.
+3. **Backfill** history from Bigtable. Re-running is safe for the *source
+   table* (`ReplacingMergeTree` collapses duplicates on the sort key) but
+   **not** for the materialized view — see the trap above. Either backfill
+   once, carry an `insert_deduplication_token`, or rebuild the view after any
+   reload.
+4. **Verify continuously** with a comparison job — the *logic* of
+   `prove_leaderboard.py`, but read-only. Do **not** schedule that script
+   itself against production: it truncates by default. Extract the comparison
+   into a job that only reads both stores and alerts on divergence.
 5. **Flip reads** for the leaderboard only — lowest-risk surface: public,
    non-money, self-verifying against Bigtable.
 6. Then flip `usage_series` / activity aggregates, and delete the rollup layer.

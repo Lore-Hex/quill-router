@@ -1,25 +1,43 @@
-"""Proof: the leaderboard/route-health aggregates that TrustedRouter computes
-by scanning Bigtable and json.loads-ing every row in Python can be computed in
-ClickHouse SQL, and the numbers are identical.
+"""Differential proof: route-health evaluation in ClickHouse SQL agrees with
+the Python implementation that runs in production today.
 
-Method
+What this DOES prove
+--------------------
+Given an identical set of input rows, the SQL translation of
+`synthetic/route_health.py` produces the same per-route sample/failure counts
+and the same set of FLAGGED routes as the Python original — including the
+48-hour cutoff, the newest-N-per-route window, the synthetic-only filter, the
+`unsupported` exclusion, the transient-failure exclusion, and the
+min-samples / failure-rate thresholds.
+
+That is the risky part of the migration: the predicate and aggregation logic.
+It is where the NULL-handling bug (see below) lived.
+
+What this does NOT prove
+------------------------
+* It does not exercise the full public leaderboard aggregator
+  (`synthetic/leaderboard.py`), which additionally blends organic traffic,
+  computes exact nearest-rank percentiles, and ranks providers. ClickHouse's
+  `quantile()` is approximate and has NOT been reconciled against that exact
+  implementation.
+* It compares two computations over the SAME slice of rows. It is not a test
+  of the ingestion path.
+
+To keep the first point honest, the script ASSERTS that the scanned slice
+fully covers the evaluation window (see `assert_window_covered`) — otherwise
+both sides could agree perfectly on a biased sample while disagreeing with
+production.
+
+Safety
 ------
-1. Read real ProviderBenchmarkSample rows out of production Bigtable
-   (read-only, the same prefix scan the app uses).
-2. Compute route health in Python EXACTLY the way
-   `synthetic/route_health.py` does today: filter to synthetic, drop
-   `unsupported`, drop transient failures, then failures/samples per route.
-   This is the baseline — the current production answer.
-3. Load the same rows into ClickHouse.
-4. Compute the same thing in one SQL statement.
-5. Assert the two agree, route by route.
-
-A match means the columnar engine reproduces production semantics, so the
-Python scan layer can be retired rather than reimplemented.
+`--load` TRUNCATEs the local analytics table and rebuilds the materialized
+view. This script is a LOCAL PROOF HARNESS. Do not point it at a production
+ClickHouse: use `--no-load` to compare against already-present data.
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
@@ -34,206 +52,314 @@ PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
 TABLE = "trustedrouter-generations"
 FAMILY = "m"
-SCAN_LIMIT = int(os.environ.get("SCAN_LIMIT", "40000"))
 
 CH_URL = os.environ.get("CH_URL", "http://localhost:18123/")
 CH_AUTH = (os.environ.get("CH_USER", "tr"), os.environ.get("CH_PASSWORD", "tr"))
 
-# Mirrors synthetic/route_health.py exactly.
+# These mirror synthetic/route_health.py exactly.
 TRANSIENT_TYPES = {
     "ReadTimeout", "ConnectTimeout", "WriteTimeout", "PoolTimeout",
     "ConnectError", "ReadError", "WriteError", "RemoteProtocolError",
 }
 TRANSIENT_STATUSES = {429, 500, 502, 503, 504, 529}
+SAMPLES_PER_ROUTE_LIMIT = 48
+WINDOW_HOURS = 48
+MIN_SAMPLES = 6
+FAILURE_THRESHOLD = 0.95
+
+SQL_TRANSIENT = """(
+        ifNull(error_status, 0) IN (429,500,502,503,504,529)
+     OR ifNull(error_type, '') IN ('ReadTimeout','ConnectTimeout','WriteTimeout','PoolTimeout',
+                                   'ConnectError','ReadError','WriteError','RemoteProtocolError'))"""
 
 
-def ch(query: str, body: bytes | None = None) -> str:
+def ch(query: str, body: bytes | None = None, params: dict[str, str] | None = None) -> str:
     """Run a ClickHouse statement over the HTTP interface.
 
-    With `body`, the query goes in the querystring and the body carries rows
-    (that is the shape ClickHouse wants for `INSERT ... FORMAT JSONEachRow`).
-    Without it, the statement itself is the body.
+    `params` are bound SERVER-SIDE via ClickHouse's `{name:Type}` placeholders
+    (sent as `param_<name>`), so no value is ever spliced into SQL text.
     """
+    query_params: dict[str, str] = {}
+    if params:
+        query_params.update({f"param_{k}": v for k, v in params.items()})
     if body is not None:
+        query_params["query"] = query
         response = httpx.post(
-            CH_URL, params={"query": query}, content=body, auth=CH_AUTH, timeout=300
+            CH_URL, params=query_params, content=body, auth=CH_AUTH, timeout=300
         )
     else:
-        response = httpx.post(CH_URL, content=query.encode(), auth=CH_AUTH, timeout=300)
+        response = httpx.post(
+            CH_URL, params=query_params or None, content=query.encode(), auth=CH_AUTH, timeout=300
+        )
     response.raise_for_status()
     return response.text
 
 
-def fetch_bigtable_samples() -> list[dict]:
+# --------------------------------------------------------------------------
+# Normalisation — SHARED by both sides.
+# --------------------------------------------------------------------------
+
+
+def normalise(raw: dict) -> dict | None:
+    """Coerce one Bigtable JSON blob into the canonical shape.
+
+    Both the Python baseline and the ClickHouse load consume the output of
+    this function, so a coercion cannot make the two sides disagree by
+    construction. That matters: `error_status` arrives as an int today but a
+    historical string `"429"` would be non-transient to Python's `in {...}`
+    and transient to ClickHouse's UInt16 column — an invisible divergence if
+    each side did its own parsing.
+
+    Returns None for rows that cannot be placed in time; production route
+    health skips those too (`_parse_created_at` returning None).
+    """
+    created = raw.get("created_at") or ""
+    try:
+        parsed = dt.datetime.fromisoformat(created.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    parsed = parsed.astimezone(dt.UTC)
+
+    error_status = raw.get("error_status")
+    if isinstance(error_status, str):
+        error_status = int(error_status) if error_status.isdigit() else None
+    elif error_status is not None:
+        error_status = int(error_status)
+
+    provider = raw.get("provider")
+    model = raw.get("model")
+    if not provider or not model:
+        # Ungrouped rows would land in an empty-string bucket on one side and
+        # a None bucket on the other. Production keys routes by real ids.
+        return None
+
+    return {
+        "id": str(raw.get("id") or ""),
+        "created_at": parsed,
+        "provider": str(provider),
+        "model": str(model),
+        "provider_name": str(raw.get("provider_name") or ""),
+        "status": str(raw.get("status") or ""),
+        "usage_type": str(raw.get("usage_type") or ""),
+        "source": str(raw.get("source") or ""),
+        "streamed": 1 if raw.get("streamed") else 0,
+        "input_tokens": int(raw.get("input_tokens") or 0),
+        "output_tokens": int(raw.get("output_tokens") or 0),
+        "total_cost_microdollars": int(raw.get("total_cost_microdollars") or 0),
+        "speed_tokens_per_second": raw.get("speed_tokens_per_second"),
+        "elapsed_milliseconds": raw.get("elapsed_milliseconds"),
+        "first_token_milliseconds": raw.get("first_token_milliseconds"),
+        "ttfb_milliseconds": raw.get("ttfb_milliseconds"),
+        "finish_reason": raw.get("finish_reason"),
+        "error_type": raw.get("error_type"),
+        "error_status": error_status,
+        "error_message": raw.get("error_message"),
+        "region": raw.get("region"),
+        "app": str(raw.get("app") or ""),
+    }
+
+
+def fetch_bigtable_samples(limit: int) -> list[dict]:
     client = bigtable.Client(project=PROJECT, admin=False)
     table = client.instance(INSTANCE).table(TABLE)
     rs = RowSet()
     rs.add_row_range_with_prefix("benchmark_recent#")
-    rows = []
+    rows: list[dict] = []
     for i, row in enumerate(table.read_rows(row_set=rs)):
-        if i >= SCAN_LIMIT:
+        if i >= limit:
             break
         cells = row.cells.get(FAMILY, {}).get(b"body", [])
         if not cells:
             continue
         try:
-            rows.append(json.loads(cells[0].value.decode("utf-8")))
+            raw = json.loads(cells[0].value.decode("utf-8"))
         except ValueError:
             continue
+        record = normalise(raw)
+        if record is not None:
+            rows.append(record)
     return rows
 
 
-def python_route_health(samples: list[dict]) -> dict[tuple[str, str], tuple[int, int]]:
-    """The current production computation: scan, parse, loop in Python."""
-    acc: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
-    for b in samples:
-        if b.get("source") != "synthetic":
-            continue
-        status = b.get("status")
-        if status == "unsupported" or status not in {"error", "success"}:
-            continue
-        if status == "error" and (
-            b.get("error_status") in TRANSIENT_STATUSES
-            or b.get("error_type") in TRANSIENT_TYPES
-        ):
-            continue
-        key = (b.get("provider"), b.get("model"))
-        acc[key][0] += 1
-        if status == "error":
-            acc[key][1] += 1
-    return {k: (v[0], v[1]) for k, v in acc.items()}
+def assert_window_covered(rows: list[dict], cutoff: dt.datetime) -> None:
+    """The scanned slice must extend back past the evaluation window.
+
+    The Bigtable scan is newest-first ACROSS ALL ROUTES, so a slice that stops
+    inside the window would truncate busy routes and leave sparse ones intact
+    — a biased sample. Both sides would still agree (they read the same
+    slice), so the comparison would look perfect while diverging from what
+    production, which reads per-route, actually sees. Checking coverage is
+    what makes the agreement meaningful.
+    """
+    oldest = min(r["created_at"] for r in rows)
+    if oldest > cutoff:
+        raise SystemExit(
+            f"scan does not cover the {WINDOW_HOURS}h window: oldest row {oldest.isoformat()} "
+            f"is newer than cutoff {cutoff.isoformat()}. Increase --limit."
+        )
+    print(
+        f"  window coverage OK: oldest row {oldest.isoformat()} "
+        f"predates the {WINDOW_HOURS}h cutoff"
+    )
 
 
-def to_ch_row(b: dict) -> dict:
-    created = b.get("created_at", "")
-    try:
-        t = dt.datetime.fromisoformat(created.replace("Z", "+00:00"))
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=dt.UTC)
-        created_fmt = t.astimezone(dt.UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    except ValueError:
-        return {}
+def python_route_health(
+    rows: list[dict], cutoff: dt.datetime
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """Reproduce synthetic/route_health.py evaluate_route_health().
+
+    Order of operations is load-bearing and mirrors production: the store
+    returns the newest `SAMPLES_PER_ROUTE_LIMIT` rows for a route across ALL
+    sources, and only then does the Python loop apply the synthetic / status /
+    transient filters. Filtering before truncating would consider older rows
+    production never sees.
+    """
+    by_route: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for r in rows:
+        by_route[(r["provider"], r["model"])].append(r)
+
+    out: dict[tuple[str, str], tuple[int, int]] = {}
+    for route, route_rows in by_route.items():
+        route_rows.sort(key=lambda r: r["created_at"], reverse=True)
+        newest = route_rows[:SAMPLES_PER_ROUTE_LIMIT]
+
+        samples = failures = 0
+        for r in newest:
+            if r["source"] != "synthetic":
+                continue
+            if r["created_at"] < cutoff:
+                continue
+            status = r["status"]
+            if status == "unsupported" or status not in {"error", "success"}:
+                continue
+            if status == "error" and (
+                r["error_status"] in TRANSIENT_STATUSES
+                or r["error_type"] in TRANSIENT_TYPES
+            ):
+                continue
+            samples += 1
+            if status == "error":
+                failures += 1
+        if samples:
+            out[route] = (samples, failures)
+    return out
+
+
+def sql_route_health(cutoff: dt.datetime) -> dict[tuple[str, str], tuple[int, int]]:
+    """Same evaluation, expressed once in SQL.
+
+    row_number() reproduces "newest N per route", and is computed BEFORE the
+    status/transient filters so the truncation matches production's ordering.
+    """
+    query = f"""
+    WITH ranked AS (
+        SELECT provider, model, status, source, created_at, error_status, error_type,
+               row_number() OVER (PARTITION BY provider, model ORDER BY created_at DESC) AS rn
+        FROM provider_benchmark_samples
+    )
+    SELECT provider, model,
+           count()                   AS samples,
+           countIf(status = 'error') AS failures
+    FROM ranked
+    WHERE rn <= {SAMPLES_PER_ROUTE_LIMIT}
+      AND source = 'synthetic'
+      AND created_at >= toDateTime64('{cutoff.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
+      AND status IN ('error', 'success')
+      AND NOT (status = 'error' AND {SQL_TRANSIENT})
+    GROUP BY provider, model
+    FORMAT JSONEachRow
+    """
+    result: dict[tuple[str, str], tuple[int, int]] = {}
+    for line in ch(query).strip().splitlines():
+        r = json.loads(line)
+        result[(r["provider"], r["model"])] = (int(r["samples"]), int(r["failures"]))
+    return result
+
+
+def flagged(health: dict[tuple[str, str], tuple[int, int]]) -> set[tuple[str, str]]:
+    """Production's actual output: which routes raise an alert."""
     return {
-        "id": str(b.get("id", "")),
-        "created_at": created_fmt,
-        "provider": str(b.get("provider") or ""),
-        "model": str(b.get("model") or ""),
-        "provider_name": str(b.get("provider_name") or ""),
-        "status": str(b.get("status") or ""),
-        "usage_type": str(b.get("usage_type") or ""),
-        "source": str(b.get("source") or ""),
-        "streamed": 1 if b.get("streamed") else 0,
-        "input_tokens": int(b.get("input_tokens") or 0),
-        "output_tokens": int(b.get("output_tokens") or 0),
-        "total_cost_microdollars": int(b.get("total_cost_microdollars") or 0),
-        "speed_tokens_per_second": b.get("speed_tokens_per_second"),
-        "elapsed_milliseconds": b.get("elapsed_milliseconds"),
-        "first_token_milliseconds": b.get("first_token_milliseconds"),
-        "ttfb_milliseconds": b.get("ttfb_milliseconds"),
-        "finish_reason": b.get("finish_reason"),
-        "error_type": b.get("error_type"),
-        "error_status": b.get("error_status"),
-        "error_message": b.get("error_message"),
-        "region": b.get("region"),
-        "app": str(b.get("app") or ""),
+        route
+        for route, (samples, failures) in health.items()
+        if samples >= MIN_SAMPLES and failures / samples >= FAILURE_THRESHOLD
     }
 
 
-SQL_ROUTE_HEALTH = """
-SELECT provider, model,
-       count()                       AS samples,
-       countIf(status = 'error')     AS failures
-FROM provider_benchmark_samples
-WHERE source = 'synthetic'
-  AND status IN ('error', 'success')
-  -- ifNull() is load-bearing. error_status/error_type are Nullable, and in
-  -- SQL's three-valued logic `NULL IN (...)` is NULL, not false. That NULL
-  -- propagates through OR/AND, survives NOT, and WHERE then DROPS the row —
-  -- silently under-counting failures on exactly the routes whose errors carry
-  -- no HTTP status (empty_stream, client-side aborts). Python's
-  -- `None in {...}` is plainly False, so the two disagree unless NULLs are
-  -- flattened first. This cost 6 routes on the first run of this proof.
-  AND NOT (status = 'error' AND (
-        ifNull(error_status, 0) IN (429,500,502,503,504,529)
-     OR ifNull(error_type, '') IN ('ReadTimeout','ConnectTimeout','WriteTimeout','PoolTimeout',
-                       'ConnectError','ReadError','WriteError','RemoteProtocolError')))
-GROUP BY provider, model
-FORMAT JSONEachRow
-"""
+def load(rows: list[dict]) -> None:
+    """Reload the LOCAL proof table.
+
+    The materialized view is dropped and recreated rather than left in place:
+    an MV runs per INSERT BLOCK and does NOT inherit the source table's
+    ReplacingMergeTree collapsing, so reloading without rebuilding it silently
+    doubles every aggregate. Verified the hard way — three loader runs against
+    30,832 source rows left 92,500 samples in the view.
+    """
+    ch("TRUNCATE TABLE provider_benchmark_samples")
+    ch("DROP TABLE IF EXISTS route_health_hourly")
+    payload = "\n".join(
+        json.dumps({**r, "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]})
+        for r in rows
+    ).encode()
+    ch("INSERT INTO provider_benchmark_samples FORMAT JSONEachRow", payload)
 
 
 def main() -> int:
-    print(f"Scanning Bigtable (limit {SCAN_LIMIT})...")
-    samples = fetch_bigtable_samples()
-    print(f"  fetched {len(samples)} rows")
-    if not samples:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=int(os.environ.get("SCAN_LIMIT", "40000")))
+    parser.add_argument(
+        "--no-load",
+        action="store_true",
+        help="compare against data already in ClickHouse (does not truncate)",
+    )
+    args = parser.parse_args()
+
+    print(f"Scanning Bigtable (limit {args.limit})...")
+    rows = fetch_bigtable_samples(args.limit)
+    print(f"  {len(rows)} usable rows")
+    if not rows:
         print("no rows; aborting")
         return 1
 
-    print("Computing route health the CURRENT way (Python scan + json parse)...")
-    baseline = python_route_health(samples)
-    print(f"  {len(baseline)} routes")
+    newest = max(r["created_at"] for r in rows)
+    cutoff = newest - dt.timedelta(hours=WINDOW_HOURS)
+    assert_window_covered(rows, cutoff)
 
-    print("Loading into ClickHouse...")
-    ch("TRUNCATE TABLE provider_benchmark_samples")
-    payload = "\n".join(
-        json.dumps(r) for r in (to_ch_row(b) for b in samples) if r
-    ).encode()
-    ch("INSERT INTO provider_benchmark_samples FORMAT JSONEachRow", payload)
-    loaded = ch("SELECT count() FROM provider_benchmark_samples").strip()
-    print(f"  loaded {loaded} rows")
+    if not args.no_load:
+        print("Loading into ClickHouse (local proof table)...")
+        load(rows)
+        print(f"  loaded {ch('SELECT count() FROM provider_benchmark_samples').strip()} rows")
 
-    print("Computing the SAME thing in SQL...")
-    out = ch(SQL_ROUTE_HEALTH)
-    sql_result = {}
-    for line in out.strip().splitlines():
-        r = json.loads(line)
-        sql_result[(r["provider"], r["model"])] = (int(r["samples"]), int(r["failures"]))
-    print(f"  {len(sql_result)} routes")
+    print("Evaluating route health the CURRENT way (Python)...")
+    baseline = python_route_health(rows, cutoff)
+    print(f"  {len(baseline)} routes, {len(flagged(baseline))} flagged")
 
-    print("\nComparing...")
-    mismatches = []
-    for key in sorted(set(baseline) | set(sql_result), key=lambda k: (k[0] or "", k[1] or "")):
-        py = baseline.get(key)
-        sq = sql_result.get(key)
-        if py != sq:
-            mismatches.append((key, py, sq))
+    print("Evaluating the SAME rules in SQL...")
+    sql_result = sql_route_health(cutoff)
+    print(f"  {len(sql_result)} routes, {len(flagged(sql_result))} flagged")
 
+    mismatches = [
+        (route, baseline.get(route), sql_result.get(route))
+        for route in sorted(set(baseline) | set(sql_result))
+        if baseline.get(route) != sql_result.get(route)
+    ]
     if mismatches:
-        print(f"MISMATCH on {len(mismatches)} route(s):")
-        for key, py, sq in mismatches[:20]:
-            print(f"  {key[0]}/{key[1]}: python={py} sql={sq}")
+        print(f"\nMISMATCH on {len(mismatches)} route(s):")
+        for route, py, sq in mismatches[:20]:
+            print(f"  {route[0]}/{route[1]}: python={py} sql={sq}")
         return 1
 
-    print(f"EXACT MATCH on all {len(baseline)} routes.")
-    print("\nTop failing routes (from SQL, one query, no Python loop):")
-    top = ch("""
-        SELECT provider, model,
-               count() AS samples,
-               round(100 * countIf(status='error') / count(), 1) AS failure_pct,
-               round(quantile(0.95)(elapsed_milliseconds)) AS p95_ms
-        FROM provider_benchmark_samples
-        WHERE source='synthetic' AND status IN ('error','success')
-        GROUP BY provider, model
-        HAVING samples >= 6
-        ORDER BY failure_pct DESC, samples DESC
-        LIMIT 12
-        FORMAT PrettyCompactMonoBlock
-    """)
-    print(top)
+    py_flagged, sql_flagged = flagged(baseline), flagged(sql_result)
+    if py_flagged != sql_flagged:
+        print(f"\nFLAGGED SET MISMATCH: only-python={py_flagged ^ sql_flagged}")
+        return 1
 
-    print("Materialized view (rollups maintained incrementally, no backfill job):")
-    print(ch("""
-        SELECT provider, model,
-               countMerge(samples_state)   AS samples,
-               countIfMerge(failures_state) AS failures,
-               round(quantileMerge(0.95)(p95_elapsed_state)) AS p95_ms
-        FROM route_health_hourly
-        GROUP BY provider, model
-        ORDER BY samples DESC
-        LIMIT 8
-        FORMAT PrettyCompactMonoBlock
-    """))
+    print(f"\nEXACT MATCH: {len(baseline)} routes, identical counts.")
+    print(f"Identical flagged set ({len(py_flagged)} routes would alert):")
+    for provider, model in sorted(py_flagged):
+        samples, failures = baseline[(provider, model)]
+        print(f"  {provider}/{model}: {failures}/{samples}")
     return 0
 
 

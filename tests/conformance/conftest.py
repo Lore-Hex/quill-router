@@ -22,12 +22,24 @@ Backend availability
 emulators today, a Postgres container later) are opt-in: their factory calls
 `pytest.skip()` when the server isn't reachable, so the suite stays green on a
 laptop and gains real cross-backend enforcement in CI. A backend that is
-skipped proves nothing — see `test_backend_coverage.py`.
+skipped proves nothing, which is why `test_memory_backend_is_always_runnable`
+deliberately does NOT depend on the parametrized `store` fixture — a guard
+that can itself be skipped guards nothing.
+
+Test isolation
+--------------
+`InMemoryStore` is constructed fresh per test, so it is isolated for free.
+Server-backed backends are NOT: `SpannerBigtableStore.reset()` explicitly
+refuses to wipe a real database. Tests therefore must not reuse fixed
+identifiers across tests — every id is namespaced with the per-test `unique`
+fixture below, so a shared emulator database stays order-independent and
+uncontaminated between runs.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -109,7 +121,35 @@ def store(request: pytest.FixtureRequest) -> Iterator[Store]:
 
 
 @pytest.fixture
-def workspace_id(store: Store) -> str:
+def unique() -> str:
+    """A per-test identifier namespace.
+
+    Server-backed backends share one database across the whole run and cannot
+    be reset (see "Test isolation" above), so every id a test invents must be
+    unique or tests contaminate each other — e.g. one test consuming event
+    `evt-A` would make the next test's "this event is new" assertion fail
+    purely because of ordering.
+    """
+    return uuid.uuid4().hex[:12]
+
+
+@pytest.fixture
+def user_id(store: Store, unique: str) -> str:
+    """A REAL user, created through the store.
+
+    Tests must not invent dangling foreign keys. Spanner's generic entity
+    table happens to accept a fabricated `user_id`, but a backend with
+    referential integrity (any SQL port with an FK, which is the likely shape
+    of a Postgres backend) would correctly reject it — and would then fail
+    this suite for being correct. Accepting orphaned rows is not a contract we
+    want to freeze in.
+    """
+    user = store.ensure_user(f"conformance-user-{unique}", f"conf-{unique}@example.com")
+    return str(user.id)
+
+
+@pytest.fixture
+def workspace_id(store: Store, user_id: str, unique: str) -> str:
     """A workspace with an explicit ZERO starter credit.
 
     Explicit is load-bearing twice over. The repo-root `auto_credit_test_
@@ -118,8 +158,7 @@ def workspace_id(store: Store) -> str:
     fixture instead of the backend. And a backend-neutral test must not depend
     on any backend's default granting policy.
     """
-    user = store.ensure_user("conformance-user", "conformance@example.com")
-    ws = store.create_workspace(user.id, "conformance", trial_credit_microdollars=0)
+    ws = store.create_workspace(user_id, f"conformance-{unique}", trial_credit_microdollars=0)
     return str(ws.id)
 
 
