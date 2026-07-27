@@ -264,6 +264,14 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
                 "pricing": {"prompt": "0.0000006", "completion": "0.0000024"},
             },
             {
+                "id": "moonshotai/Kimi-K3",
+                "name": "Kimi K3",
+                "created": 1,
+                "context_length": 1048576,
+                "architecture": {"modality": "text->text"},
+                "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+            },
+            {
                 "id": "Qwen/Qwen3-Embedding-8B",
                 "name": "Qwen3-Embedding-8B",
                 "created": 1,
@@ -298,15 +306,26 @@ def test_nebius_fetch_uses_verbose_pricing_and_skips_embeddings(
     assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in result.prices
     assert nebius._DISCOVERED_ROWS[canonical]["id"] == canonical
     assert nebius._DISCOVERED_ROWS[canonical]["upstream_id"] == "nvidia/Nemotron-3-Ultra-550b-a55b"
+    kimi = "moonshotai/kimi-k3"
+    assert result.prices[kimi].completion_micro_per_m == 15_000_000
+    assert "moonshotai/Kimi-K3" not in result.prices
+    assert nebius._DISCOVERED_ROWS[kimi]["upstream_id"] == "moonshotai/Kimi-K3"
+    assert nebius.UPSTREAM_ID_MAP[kimi] == "moonshotai/Kimi-K3"
     assert "Qwen/Qwen3-Embedding-8B" not in result.prices
 
     manifest = tmp_path / "nebius.json"
-    manifest.write_text('{"models": []}\n', encoding="utf-8")
+    manifest.write_text(
+        '{"models": [{"id": "moonshotai/Kimi-K3", '
+        '"upstream_id": "moonshotai/Kimi-K3"}]}\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(nebius, "MANIFEST_PATH", manifest)
 
     nebius.write_provider_manifest(result)
 
     rows = json.loads(manifest.read_text(encoding="utf-8"))["models"]
-    ids = {row["id"] for row in rows}
+    ids = [row["id"] for row in rows]
     assert canonical in ids
     assert "nvidia/Nemotron-3-Ultra-550b-a55b" not in ids
+    assert ids.count(kimi) == 1
+    assert "moonshotai/Kimi-K3" not in ids

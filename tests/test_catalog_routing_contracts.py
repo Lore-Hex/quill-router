@@ -100,6 +100,20 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k3@novita/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@gmi/prepaid" not in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@gmi/byok" in MODEL_ENDPOINTS
+    kimi_k3_routes = {
+        (endpoint.provider, endpoint.usage_type)
+        for endpoint in endpoints_for_model("moonshotai/kimi-k3")
+    }
+    assert {
+        ("kimi", "Credits"),
+        ("siliconflow", "Credits"),
+        ("baseten", "Credits"),
+        ("atlas-cloud", "Credits"),
+        ("novita", "Credits"),
+        ("nebius", "Credits"),
+        ("fireworks", "Credits"),
+        ("gmi", "BYOK"),
+    } <= kimi_k3_routes
     kimi_k3 = MODELS["moonshotai/kimi-k3"]
     assert kimi_k3.context_length == 1_048_576
     assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_150_000
@@ -109,6 +123,22 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
         == "moonshotai/kimi-k3"
+    )
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k3@siliconflow/prepaid"].upstream_id
+        == "moonshotai/kimi-k3"
+    )
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k3@baseten/prepaid"].upstream_id
+        == "moonshotai/Kimi-K3"
+    )
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k3@nebius/prepaid"].upstream_id
+        == "moonshotai/Kimi-K3"
+    )
+    assert (
+        MODEL_ENDPOINTS["moonshotai/kimi-k3@fireworks/prepaid"].upstream_id
+        == "accounts/fireworks/models/kimi-k3"
     )
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k2.7-code-highspeed@kimi/prepaid"].upstream_id

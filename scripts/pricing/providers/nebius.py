@@ -18,6 +18,10 @@ from scripts.pricing.base import (
     ModelPrice,
     ProviderPricingResult,
 )
+from scripts.pricing.model_ids import (
+    mapped_or_canonical_model_id,
+    remember_upstream_id,
+)
 
 SLUG = "nebius"
 URL = "https://api.tokenfactory.nebius.com/v1/models?verbose=true"
@@ -44,7 +48,30 @@ _NATIVE_TO_CANONICAL = {
     # only for upstream requests so refreshes cannot create a duplicate model.
     "nvidia/Nemotron-3-Ultra-550b-a55b": "nvidia/nemotron-3-ultra-550b-a55b",
     "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": "nvidia/nemotron-3-ultra-550b-a55b",
+    "moonshotai/Kimi-K3": "moonshotai/kimi-k3",
 }
+UPSTREAM_ID_MAP: dict[str, str] = {}
+
+
+def _existing_native_ids() -> dict[str, str]:
+    """Preserve legacy public IDs while normalizing newly discovered models."""
+
+    if not MANIFEST_PATH.exists():
+        return {}
+    raw = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    rows = raw.get("models") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    mapped: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        model_id = row.get("id")
+        native_id = row.get("upstream_id") or model_id
+        if not isinstance(model_id, str) or not isinstance(native_id, str):
+            continue
+        mapped[native_id] = model_id
+    return mapped
 
 
 def _dollars_per_token_to_micro_per_m(value: object) -> int | None:
@@ -127,6 +154,8 @@ def fetch() -> ProviderPricingResult:
     rows = payload.get("data") if isinstance(payload, dict) else payload
     if not isinstance(rows, list):
         rows = []
+    canonical_by_native = _existing_native_ids()
+    canonical_by_native.update(_NATIVE_TO_CANONICAL)
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -135,7 +164,10 @@ def fetch() -> ProviderPricingResult:
         upstream_id = row.get("id")
         if not isinstance(upstream_id, str):
             continue
-        model_id = _NATIVE_TO_CANONICAL.get(upstream_id, upstream_id)
+        model_id = mapped_or_canonical_model_id(upstream_id, canonical_by_native)
+        if model_id is None:
+            continue
+        remember_upstream_id(UPSTREAM_ID_MAP, model_id, upstream_id)
         architecture = row.get("architecture")
         architecture = architecture if isinstance(architecture, dict) else {}
         modality = str(architecture.get("modality") or "")
@@ -175,11 +207,25 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         for row in rows
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
+    existing_by_upstream = {
+        row.get("upstream_id", row["id"]): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
     updated: list[str] = []
     appended: list[str] = []
     for model_id, price in sorted(result.prices.items()):
         row = existing.get(model_id)
         discovered = _DISCOVERED_ROWS.get(model_id)
+        if row is None and discovered is not None:
+            upstream_id = discovered.get("upstream_id")
+            if isinstance(upstream_id, str):
+                row = existing_by_upstream.get(upstream_id)
+                if row is not None:
+                    old_id = row["id"]
+                    row["id"] = model_id
+                    existing.pop(old_id, None)
+                    existing[model_id] = row
         if row is None:
             if discovered is None:
                 continue
