@@ -1,25 +1,42 @@
 from __future__ import annotations
 
 from trusted_router.catalog import (
+    MODEL_ENDPOINTS,
     MODELS,
     ModelEndpoint,
     cache_token_prices_microdollars,
     endpoint_for_id,
-    endpoints_for_model,
 )
 from trusted_router.money import token_cost_microdollars
 from trusted_router.routes.helpers import cost_microdollars
 from trusted_router.routes.internal.gateway import _endpoint_cost_microdollars
 
 
-def _gemini_pro_credits_endpoint() -> ModelEndpoint:
-    endpoint = next(
-        endpoint
-        for endpoint in endpoints_for_model("google/gemini-2.5-pro")
-        if endpoint.provider == "google-ai-studio" and endpoint.usage_type == "Credits"
+def _tiered_credits_endpoint() -> ModelEndpoint:
+    """Any google-ai-studio Credits endpoint with tiered pricing.
+
+    Deliberately NOT pinned to a model id. These tests exercise tiered-pricing
+    arithmetic, and the expected values are derived from whichever endpoint is
+    returned, so the specific model is irrelevant to what is being tested.
+    Hardcoding one turns an ordinary vendor retirement into an unrelated test
+    failure — which is exactly what happened when Google retired
+    gemini-2.5-pro on AI Studio and it left the catalog.
+
+    Sorted for determinism so a catalog addition cannot silently change which
+    endpoint the suite runs against.
+    """
+    candidates = sorted(
+        (
+            endpoint
+            for endpoint in MODEL_ENDPOINTS.values()
+            if endpoint.provider == "google-ai-studio"
+            and endpoint.usage_type == "Credits"
+            and len(getattr(endpoint, "price_tiers", ()) or ()) >= 2
+        ),
+        key=lambda endpoint: endpoint.model_id,
     )
-    assert len(endpoint.price_tiers) >= 2
-    return endpoint
+    assert candidates, "catalog has no multi-tier google-ai-studio Credits endpoint"
+    return candidates[0]
 
 
 def _headline_cost(
@@ -73,7 +90,7 @@ def _tier_cost(
 
 
 def test_endpoint_cost_uses_high_tier_for_large_prompt() -> None:
-    endpoint = _gemini_pro_credits_endpoint()
+    endpoint = _tiered_credits_endpoint()
 
     expected = _tier_cost(endpoint, 300_000, 2_000, tier_index=1)
 
@@ -82,7 +99,7 @@ def test_endpoint_cost_uses_high_tier_for_large_prompt() -> None:
 
 
 def test_endpoint_cost_keeps_headline_cost_below_threshold() -> None:
-    endpoint = _gemini_pro_credits_endpoint()
+    endpoint = _tiered_credits_endpoint()
 
     assert _endpoint_cost_microdollars(endpoint, 100_000, 2_000) == _headline_cost(
         endpoint, 100_000, 2_000
@@ -90,7 +107,7 @@ def test_endpoint_cost_keeps_headline_cost_below_threshold() -> None:
 
 
 def test_endpoint_cost_tier_threshold_is_inclusive() -> None:
-    endpoint = _gemini_pro_credits_endpoint()
+    endpoint = _tiered_credits_endpoint()
     threshold = endpoint.price_tiers[0].max_prompt_tokens
     assert threshold is not None
 
@@ -103,7 +120,7 @@ def test_endpoint_cost_tier_threshold_is_inclusive() -> None:
 
 
 def test_endpoint_cost_uses_total_prompt_for_cached_tier_selection() -> None:
-    endpoint = _gemini_pro_credits_endpoint()
+    endpoint = _tiered_credits_endpoint()
 
     expected = _tier_cost(
         endpoint,
@@ -167,7 +184,7 @@ def test_endpoint_cost_flat_and_empty_tiers_match_headline_math_with_cache() -> 
 
 
 def test_endpoint_cost_matches_model_helper_for_multitier_no_cache() -> None:
-    endpoint = _gemini_pro_credits_endpoint()
+    endpoint = _tiered_credits_endpoint()
     model = MODELS[endpoint.model_id]
     assert endpoint.price_tiers == model.price_tiers
     assert (
