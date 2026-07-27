@@ -332,6 +332,19 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "gemini-3.1-flash-lite-preview",
             # route-health 2026-07-18, 100% failure, upstream 404.
             "google/gemma-3n-e4b-it",
+            # Retired by Google 2026-07-26. These read as HTTP 429 on our
+            # existing (grandfathered) AI Studio project, which looks like a
+            # quota problem and counts against public leaderboard uptime. A
+            # probe with a freshly-issued key returns the real cause:
+            # 404 "no longer available to new users" / "no longer available".
+            # The 429 was masking a deprecation, so rotating the key would not
+            # have fixed these — only quarantining them does.
+            "google/gemini-2.5-pro",
+            "gemini-2.5-pro",
+            "google/gemini-2.0-flash-001",
+            "gemini-2.0-flash-001",
+            "google/gemini-2.0-flash-lite-001",
+            "gemini-2.0-flash-lite-001",
         }
     ),
     "google-vertex": frozenset(
