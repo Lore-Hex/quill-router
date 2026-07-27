@@ -1,7 +1,7 @@
 {
   "provider": "cloudflare-workers-ai",
-  "source": "https://api.cloudflare.com/client/v4/accounts/96781cbfaebf2b28d851b9c677dd2e81/ai/models/search?per_page=100",
-  "generated_at": "2026-07-27T21:13:41Z",
+  "source": "https://api.cloudflare.com/client/v4/accounts/2698c706fd4793c818af14adad4e1a39/ai/models/search?per_page=100",
+  "generated_at": "2026-07-27T22:24:50Z",
   "price_scale": "microdollars_per_million",
   "model_count": 27,
   "models": [
@@ -21,8 +21,7 @@
       "status": 1,
       "id": "aisingapore/gemma-sea-lion-v4-27b-it",
       "upstream_id": "@cf/aisingapore/gemma-sea-lion-v4-27b-it",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 128000,
       "input_token_price_per_m": 351000,
       "output_token_price_per_m": 555000
@@ -43,8 +42,7 @@
       "status": 1,
       "id": "deepseek/deepseek-r1-distill-qwen-32b",
       "upstream_id": "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 80000,
       "input_token_price_per_m": 497000,
       "output_token_price_per_m": 4881000
@@ -66,7 +64,7 @@
       "id": "google/gemma-2b-it-lora",
       "upstream_id": "@cf/google/gemma-2b-it-lora",
       "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable_reason": "awaiting-price",
       "context_length": 8192
     },
     {
@@ -85,8 +83,7 @@
       "status": 1,
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "@cf/google/gemma-4-26b-a4b-it",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 256000,
       "input_token_price_per_m": 100000,
       "output_token_price_per_m": 300000
@@ -108,7 +105,7 @@
       "id": "google/gemma-7b-it-lora",
       "upstream_id": "@cf/google/gemma-7b-it-lora",
       "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable_reason": "awaiting-price",
       "context_length": 3500
     },
     {
@@ -127,8 +124,7 @@
       "status": 1,
       "id": "ibm-granite/granite-4.0-h-micro",
       "upstream_id": "@cf/ibm-granite/granite-4.0-h-micro",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 131000,
       "input_token_price_per_m": 17000,
       "output_token_price_per_m": 112000
@@ -150,7 +146,7 @@
       "id": "meta-llama/llama-2-7b-chat-hf-lora",
       "upstream_id": "@cf/meta-llama/llama-2-7b-chat-hf-lora",
       "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable_reason": "awaiting-price",
       "context_length": 8192
     },
     {
@@ -169,8 +165,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.1-8b-instruct-fp8",
       "upstream_id": "@cf/meta/llama-3.1-8b-instruct-fp8",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 32000,
       "input_token_price_per_m": 152000,
       "output_token_price_per_m": 287000
@@ -191,8 +186,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-11b-vision-instruct",
       "upstream_id": "@cf/meta/llama-3.2-11b-vision-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 128000,
       "input_token_price_per_m": 48500,
       "output_token_price_per_m": 676000
@@ -213,8 +207,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-1b-instruct",
       "upstream_id": "@cf/meta/llama-3.2-1b-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 60000,
       "input_token_price_per_m": 27000,
       "output_token_price_per_m": 201000
@@ -235,8 +228,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.2-3b-instruct",
       "upstream_id": "@cf/meta/llama-3.2-3b-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 80000,
       "input_token_price_per_m": 50900,
       "output_token_price_per_m": 335000
@@ -257,8 +249,7 @@
       "status": 1,
       "id": "meta-llama/llama-3.3-70b-instruct-fp8-fast",
       "upstream_id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 24000,
       "input_token_price_per_m": 293000,
       "output_token_price_per_m": 2253000
@@ -279,8 +270,7 @@
       "status": 1,
       "id": "meta-llama/llama-4-scout-17b-16e-instruct",
       "upstream_id": "@cf/meta/llama-4-scout-17b-16e-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 131000,
       "input_token_price_per_m": 270000,
       "output_token_price_per_m": 850000
@@ -301,8 +291,7 @@
       "status": 1,
       "id": "meta-llama/llama-guard-3-8b",
       "upstream_id": "@cf/meta/llama-guard-3-8b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 131072,
       "input_token_price_per_m": 484000,
       "output_token_price_per_m": 30000
@@ -324,7 +313,7 @@
       "id": "mistralai/mistral-7b-instruct-v0.2-lora",
       "upstream_id": "@cf/mistral/mistral-7b-instruct-v0.2-lora",
       "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable_reason": "awaiting-price",
       "context_length": 15000
     },
     {
@@ -343,8 +332,7 @@
       "status": 1,
       "id": "mistralai/mistral-small-3.1-24b-instruct",
       "upstream_id": "@cf/mistralai/mistral-small-3.1-24b-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 128000,
       "input_token_price_per_m": 351000,
       "output_token_price_per_m": 555000
@@ -365,8 +353,7 @@
       "status": 1,
       "id": "moonshotai/kimi-k2.6",
       "upstream_id": "@cf/moonshotai/kimi-k2.6",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
@@ -388,8 +375,7 @@
       "status": 1,
       "id": "moonshotai/kimi-k2.7-code",
       "upstream_id": "@cf/moonshotai/kimi-k2.7-code",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 262144,
       "input_token_price_per_m": 950000,
       "output_token_price_per_m": 4000000,
@@ -419,8 +405,7 @@
         "tools",
         "vision"
       ],
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
@@ -441,8 +426,7 @@
       "status": 1,
       "id": "nvidia/nemotron-3-120b-a12b",
       "upstream_id": "@cf/nvidia/nemotron-3-120b-a12b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 256000,
       "input_token_price_per_m": 500000,
       "output_token_price_per_m": 1500000
@@ -463,8 +447,7 @@
       "status": 1,
       "id": "openai/gpt-oss-120b",
       "upstream_id": "@cf/openai/gpt-oss-120b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 128000,
       "input_token_price_per_m": 350000,
       "output_token_price_per_m": 750000
@@ -485,8 +468,7 @@
       "status": 1,
       "id": "openai/gpt-oss-20b",
       "upstream_id": "@cf/openai/gpt-oss-20b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 128000,
       "input_token_price_per_m": 200000,
       "output_token_price_per_m": 300000
@@ -507,8 +489,7 @@
       "status": 1,
       "id": "qwen/qwen2.5-coder-32b-instruct",
       "upstream_id": "@cf/qwen/qwen2.5-coder-32b-instruct",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 32768,
       "input_token_price_per_m": 660000,
       "output_token_price_per_m": 1000000
@@ -529,8 +510,7 @@
       "status": 1,
       "id": "qwen/qwen3-30b-a3b-fp8",
       "upstream_id": "@cf/qwen/qwen3-30b-a3b-fp8",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 32768,
       "input_token_price_per_m": 50900,
       "output_token_price_per_m": 335000
@@ -551,8 +531,7 @@
       "status": 1,
       "id": "qwen/qwq-32b",
       "upstream_id": "@cf/qwen/qwq-32b",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 24000,
       "input_token_price_per_m": 660000,
       "output_token_price_per_m": 1000000
@@ -573,8 +552,7 @@
       "status": 1,
       "id": "z-ai/glm-4.7-flash",
       "upstream_id": "@cf/zai-org/glm-4.7-flash",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 131072,
       "input_token_price_per_m": 60500,
       "output_token_price_per_m": 400000
@@ -595,8 +573,7 @@
       "status": 1,
       "id": "z-ai/glm-5.2",
       "upstream_id": "@cf/zai-org/glm-5.2",
-      "routable": false,
-      "routable_reason": "account-unfunded",
+      "routable": true,
       "context_length": 262144,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,

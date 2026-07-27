@@ -65,14 +65,15 @@ def test_cloudflare_pricing_parses_input_cache_and_output_units() -> None:
     )
 
 
-def test_cloudflare_committed_manifest_is_fail_closed_until_funded() -> None:
+def test_cloudflare_committed_manifest_exposes_only_funded_priced_routes() -> None:
     manifest = json.loads(cloudflare_workers_ai.MANIFEST_PATH.read_text(encoding="utf-8"))
     rows = manifest["models"]
 
     assert rows
-    assert all(row.get("routable") is False for row in rows)
+    assert any(row.get("routable") is True for row in rows)
     assert all(
-        row.get("routable_reason") in {"account-unfunded", "awaiting-price"}
+        row.get("routable") is True
+        or row.get("routable_reason") == "awaiting-price"
         for row in rows
     )
     assert all(
@@ -83,6 +84,7 @@ def test_cloudflare_committed_manifest_is_fail_closed_until_funded() -> None:
     kimi_k3 = next(row for row in rows if row["id"] == "moonshotai/kimi-k3")
     assert kimi_k3["upstream_id"] == "moonshotai/kimi-k3"
     assert kimi_k3["context_length"] == 1_048_576
+    assert kimi_k3["routable"] is True
 
 
 def test_discovered_writer_never_routes_a_new_unpriced_model(tmp_path: Path) -> None:
@@ -133,7 +135,22 @@ def test_new_provider_manifests_create_only_eligible_routes() -> None:
 
     assert any(endpoint.provider == "chutes" for endpoint in endpoints)
     assert any(endpoint.provider == "digitalocean" for endpoint in endpoints)
-    assert not any(endpoint.provider == "cloudflare-workers-ai" for endpoint in endpoints)
+    cloudflare = [
+        endpoint
+        for endpoint in endpoints
+        if endpoint.provider == "cloudflare-workers-ai"
+    ]
+    assert cloudflare
+    assert any(
+        endpoint.model_id == "moonshotai/kimi-k3"
+        and endpoint.upstream_id == "moonshotai/kimi-k3"
+        for endpoint in cloudflare
+    )
+    assert all(
+        endpoint.prompt_price_microdollars_per_million_tokens > 0
+        and endpoint.completion_price_microdollars_per_million_tokens > 0
+        for endpoint in cloudflare
+    )
 
 
 def test_chutes_manifest_contains_only_confidential_compute_rows() -> None:

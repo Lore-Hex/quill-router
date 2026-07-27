@@ -57,6 +57,14 @@ def test_hourly_kimi_discovery_has_narrow_secret_access_wiring() -> None:
     assert "no project-wide Secret" in workflow
 
 
+def test_hourly_cloudflare_discovery_uses_funded_account() -> None:
+    workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text()
+
+    assert "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID=2698c706fd4793c818af14adad4e1a39" in workflow
+    assert "TR_CLOUDFLARE_WORKERS_AI_ROUTABLE=1" in workflow
+    assert "96781cbfaebf2b28d851b9c677dd2e81" not in workflow
+
+
 def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -> None:
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/refresh-prices.yml").read_text(

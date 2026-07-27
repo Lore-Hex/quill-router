@@ -121,6 +121,13 @@ def write_discovered_chat_manifest(
         else:
             row = dict(existing)
         row.update(discovered)
+        if discovered.get("routable") is True:
+            # An explicit healthy signal from the provider adapter supersedes
+            # machine-owned holds such as account-unfunded. Without removing
+            # the stale reason, a funded account remains disabled forever even
+            # after the adapter sets routable=true.
+            row.pop("routable_reason", None)
+            row.pop("unresolved_since", None)
 
         price = result.prices.get(model_id)
         if price is not None:

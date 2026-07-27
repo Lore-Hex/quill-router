@@ -178,10 +178,6 @@ def fetch() -> ProviderPricingResult:
     account_enabled = os.environ.get("TR_CLOUDFLARE_WORKERS_AI_ROUTABLE") == "1"
     discovered = {model_id: dict(row) for model_id, row in _EARLY_ACCESS_MODELS.items()}
     prices = dict(_EARLY_ACCESS_PRICES)
-    if not account_enabled:
-        for row in discovered.values():
-            row["routable"] = False
-            row["routable_reason"] = "account-unfunded"
     for source in source_rows:
         if not isinstance(source, dict):
             continue
@@ -202,9 +198,6 @@ def fetch() -> ProviderPricingResult:
             "upstream_id": native_id,
             "display_name": str(source.get("name") or model_id),
         }
-        if not account_enabled:
-            row["routable"] = False
-            row["routable_reason"] = "account-unfunded"
         context = _positive_int(
             properties.get("context_window")
             or properties.get("context_length")
@@ -216,6 +209,16 @@ def fetch() -> ProviderPricingResult:
         price = _model_price(properties)
         if price is not None:
             prices[model_id] = price
+
+    for model_id, row in discovered.items():
+        if account_enabled and model_id in prices:
+            row["routable"] = True
+            row.pop("routable_reason", None)
+        else:
+            row["routable"] = False
+            row["routable_reason"] = (
+                "awaiting-price" if account_enabled else "account-unfunded"
+            )
 
     for model_id, row in _EARLY_ACCESS_MODELS.items():
         remember_upstream_id(UPSTREAM_ID_MAP, model_id, str(row["upstream_id"]))
