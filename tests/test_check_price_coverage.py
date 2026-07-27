@@ -106,6 +106,13 @@ def test_baseten_discovery_maps_glm_fast_native_id() -> None:
     assert check_price_coverage._baseten_model_id("zai-org/GLM-5.2-Fast") == "z-ai/glm-5.2-fast"
 
 
+def test_fireworks_discovery_maps_kimi_k3_native_id() -> None:
+    assert (
+        check_price_coverage._fireworks_model_id("accounts/fireworks/models/kimi-k3")
+        == "moonshotai/kimi-k3"
+    )
+
+
 def test_novita_discovery_ignores_internal_aliases_but_catches_public_families() -> None:
     assert check_price_coverage._novita_model_id("ai_infer_test_1") is None
     assert check_price_coverage._novita_model_id("bunny") is None

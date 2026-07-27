@@ -85,6 +85,7 @@ def _novita_model_id(native_id: str) -> str | None:
 
 
 _FIREWORKS_MODEL_IDS = {
+    "accounts/fireworks/models/kimi-k3": "moonshotai/kimi-k3",
     "accounts/fireworks/models/kimi-k2p6": "moonshotai/kimi-k2.6",
     "accounts/fireworks/models/kimi-k2p5": "moonshotai/kimi-k2.5",
     "accounts/fireworks/models/kimi-k2p7-code": "moonshotai/kimi-k2.7-code",
