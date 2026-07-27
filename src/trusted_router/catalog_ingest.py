@@ -215,6 +215,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "gpt-5.2-chat",
             "openai/gpt-5.2-codex",
             "gpt-5.2-codex",
+            # Confirmed 2026-07-26: 11/11 synthetic failures, HTTP 400
+            # "router not found" — same phantom as its siblings. It was held
+            # back from the original sweep because it had no samples yet.
+            "openai/gpt-5.1-codex-max",
+            "gpt-5.1-codex-max",
             "openai/gpt-5.3-codex",
             "gpt-5.3-codex",
             "openai/o1",
