@@ -1,6 +1,8 @@
-"""/internal/stripe/webhook — handles four Stripe event types:
+"""/internal/stripe/webhook handles Stripe billing events:
 
-* checkout.session.completed (payment, prepaid credit add)
+* checkout.session.completed (immediate payment or delayed-payment pending state)
+* checkout.session.async_payment_succeeded (delayed prepaid credit add)
+* checkout.session.async_payment_failed (delayed payment failure)
 * checkout.session.completed mode=setup (saved-card capture)
 * setup_intent.succeeded (saved-card capture from PaymentIntent flow)
 * payment_intent.succeeded (auto-refill credit add)
@@ -71,14 +73,18 @@ def register(router: APIRouter) -> None:
         event_id = str(event.get("id") or uuid.uuid4())
         event_type = event.get("type")
 
-        if event_type == "checkout.session.completed":
+        if event_type in {
+            "checkout.session.completed",
+            "checkout.session.async_payment_succeeded",
+            "checkout.session.async_payment_failed",
+        }:
             obj = event.get("data", {}).get("object", {})
             metadata = obj.get("metadata") or {}
             workspace_id = metadata.get("workspace_id")
             amount_total = int(obj.get("amount_total") or 0)
             customer_id = obj.get("customer")
             if workspace_id and STORE.get_credit_account(workspace_id) is not None:
-                if obj.get("mode") == "setup":
+                if event_type == "checkout.session.completed" and obj.get("mode") == "setup":
                     if isinstance(customer_id, str):
                         STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
                     return {
@@ -88,25 +94,55 @@ def register(router: APIRouter) -> None:
                             "trial_credit_granted_microdollars": 0,
                         }
                     }
+                if event_type == "checkout.session.async_payment_failed":
+                    return {
+                        "data": {
+                            "credited": False,
+                            "payment_failed": True,
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
+                if (
+                    event_type == "checkout.session.completed"
+                    and obj.get("payment_status") != "paid"
+                ):
+                    return {
+                        "data": {
+                            "credited": False,
+                            "payment_pending": True,
+                            "payment_status": obj.get("payment_status") or "unpaid",
+                            "event_id": event_id,
+                            "trial_credit_granted_microdollars": 0,
+                        }
+                    }
                 amount_microdollars = _checkout_credit_amount_microdollars(
                     metadata=metadata,
                     amount_total_cents=amount_total,
                 )
+                payment_method = str(metadata.get("payment_method") or "stripe")
+                credit_event_id = _checkout_credit_event_id(
+                    event_id=event_id,
+                    checkout_session=obj,
+                    payment_method=payment_method,
+                )
                 credited = STORE.credit_workspace_typed_direct(
-                    workspace_id, amount_microdollars, event_id
+                    workspace_id, amount_microdollars, credit_event_id
                 )
                 if credited:
                     record_credit_purchase(
                         workspace_id,
                         amount_microdollars=amount_microdollars,
-                        payment_method="stripe",
+                        payment_method=(
+                            "stripe_ach" if payment_method == "ach" else "stripe"
+                        ),
                     )
                 # Capture the Stripe customer the first time they pay so
                 # auto-refill can use it later. The default payment method
                 # arrives separately in `setup_intent.succeeded` (or via the
                 # PaymentIntent's `payment_method` if Checkout was set up
                 # with `setup_future_usage`).
-                if isinstance(customer_id, str):
+                if isinstance(customer_id, str) and payment_method != "ach":
                     STORE.set_stripe_customer(workspace_id, customer_id=customer_id)
                 return {
                     "data": {
@@ -206,7 +242,11 @@ def register(router: APIRouter) -> None:
                         payment_method_id=payment_method,
                     )
                 return {"data": {"credited": credited, "event_id": event_id, "auto_refill": True}}
-            if isinstance(workspace_id, str) and STORE.get_credit_account(workspace_id) is not None:
+            if (
+                metadata.get("payment_method") in {None, "auto", "card"}
+                and isinstance(workspace_id, str)
+                and STORE.get_credit_account(workspace_id) is not None
+            ):
                 payment_method = obj.get("payment_method")
                 customer_id = obj.get("customer")
                 if isinstance(payment_method, str) and isinstance(customer_id, str):
@@ -274,6 +314,26 @@ def register(router: APIRouter) -> None:
                 }
 
         return {"data": {"ignored": True, "event_id": event_id}}
+
+
+def _checkout_credit_event_id(
+    *,
+    event_id: str,
+    checkout_session: dict[str, Any],
+    payment_method: str,
+) -> str:
+    """Deduplicate ACH fulfillment across completed and async events.
+
+    Card events historically used the Stripe event id, so that key remains
+    unchanged. ACH is new and can safely key fulfillment to the PaymentIntent
+    or Checkout Session instead.
+    """
+    if payment_method != "ach":
+        return event_id
+    payment_id = checkout_session.get("payment_intent") or checkout_session.get("id")
+    if isinstance(payment_id, str) and payment_id:
+        return f"stripe_checkout:{payment_id}"
+    return event_id
 
 
 def _checkout_credit_amount_microdollars(

@@ -19,6 +19,7 @@ def create_checkout_session(
     body: CheckoutRequest,
     workspace_id: str,
     customer_email: str | None,
+    customer_id: str | None,
     settings: Settings,
 ) -> dict[str, Any]:
     workspace = STORE.get_workspace(workspace_id)
@@ -30,22 +31,30 @@ def create_checkout_session(
     amount_cents = dollars_to_cents(body.amount)
     amount_microdollars = amount_cents * 10_000
     stablecoin_requested = body.payment_method in {"stablecoin", "crypto", "usdc"}
+    ach_requested = body.payment_method in {"ach", "bank", "us_bank_account"}
     if stablecoin_requested and not settings.stablecoin_checkout_enabled:
         raise api_error(400, "Stablecoin checkout is not enabled", ErrorType.BAD_REQUEST)
+    if ach_requested:
+        fee_basis_points = settings.stripe_ach_fee_basis_points
+        fee_fixed_cents = settings.stripe_ach_fee_fixed_cents
+        fee_max_cents: int | None = settings.stripe_ach_fee_max_cents
+        payment_method = "ach"
+    elif stablecoin_requested:
+        fee_basis_points = settings.stripe_stablecoin_fee_basis_points
+        fee_fixed_cents = settings.stripe_stablecoin_fee_fixed_cents
+        fee_max_cents = None
+        payment_method = "stablecoin"
+    else:
+        fee_basis_points = settings.stripe_card_fee_basis_points
+        fee_fixed_cents = settings.stripe_card_fee_fixed_cents
+        fee_max_cents = None
+        payment_method = "card"
     fee = stripe_processing_fee(
         credit_amount_cents=amount_cents,
-        variable_basis_points=(
-            settings.stripe_stablecoin_fee_basis_points
-            if stablecoin_requested
-            else settings.stripe_card_fee_basis_points
-        ),
-        fixed_fee_cents=(
-            settings.stripe_stablecoin_fee_fixed_cents
-            if stablecoin_requested
-            else settings.stripe_card_fee_fixed_cents
-        ),
+        variable_basis_points=fee_basis_points,
+        fixed_fee_cents=fee_fixed_cents,
+        max_fee_cents=fee_max_cents,
     )
-    payment_method = "stablecoin" if stablecoin_requested else "card"
     payment_metadata = fee.metadata(
         workspace_id=workspace_id,
         payment_method=payment_method,
@@ -65,16 +74,33 @@ def create_checkout_session(
             if customer_email:
                 session_args["customer_email"] = customer_email
         else:
-            # Capture the customer + payment method on the card path so
-            # auto-refill can charge off-session later. Crypto checkouts
-            # don't support `setup_future_usage`, so we only set this on
-            # the card path.
-            session_args["customer_creation"] = "always"
-            session_args["payment_intent_data"] = {
-                "setup_future_usage": "off_session",
-                "metadata": payment_metadata,
-            }
+            if customer_id:
+                session_args["customer"] = customer_id
+            else:
+                session_args["customer_creation"] = "always"
+                if customer_email:
+                    session_args["customer_email"] = customer_email
+            if ach_requested:
+                session_args["payment_method_types"] = ["us_bank_account"]
+                session_args["payment_method_options"] = {
+                    "us_bank_account": {"verification_method": "automatic"}
+                }
+                # ACH is a one-time top-up. Saved-card auto refill remains
+                # card-only because bank debits settle asynchronously.
+                session_args["payment_intent_data"] = {"metadata": payment_metadata}
+            else:
+                session_args["payment_intent_data"] = {
+                    "setup_future_usage": "off_session",
+                    "metadata": payment_metadata,
+                }
         session = stripe.checkout.Session.create(**session_args)
+        mode = (
+            "stripe_stablecoin"
+            if stablecoin_requested
+            else "stripe_ach"
+            if ach_requested
+            else "stripe"
+        )
         return {
             "id": session["id"],
             "url": session["url"],
@@ -82,9 +108,16 @@ def create_checkout_session(
             **money_pair("amount", amount_microdollars),
             **money_pair("processing_fee", fee.processing_fee_microdollars),
             **money_pair("total", fee.charge_amount_microdollars),
-            "mode": "stripe_stablecoin" if stablecoin_requested else "stripe",
+            "mode": mode,
         }
 
+    mock_mode = (
+        "mock_stablecoin"
+        if stablecoin_requested
+        else "mock_ach"
+        if ach_requested
+        else "mock"
+    )
     return {
         "id": f"cs_test_{uuid.uuid4().hex}",
         "url": f"https://{settings.trusted_domain}/billing/mock-checkout",
@@ -92,7 +125,7 @@ def create_checkout_session(
         **money_pair("amount", amount_microdollars),
         **money_pair("processing_fee", fee.processing_fee_microdollars),
         **money_pair("total", fee.charge_amount_microdollars),
-        "mode": "mock_stablecoin" if stablecoin_requested else "mock",
+        "mode": mock_mode,
     }
 
 
@@ -266,7 +299,7 @@ def list_workspace_payments(
     Why PaymentIntent search (not checkout.Session): Stripe's Search API
     is only enabled on certain resources — PaymentIntent yes, Charge yes,
     checkout.Session NO. Our `create_checkout_session()` stamps
-    `payment_intent_data.metadata.workspace_id` on every card-mode
+    `payment_intent_data.metadata.workspace_id` on every Stripe
     checkout, so the resulting PaymentIntent IS searchable by workspace.
 
     Returns up to `limit` rows newest-first, each with the shape:
@@ -279,8 +312,11 @@ def list_workspace_payments(
           "currency": "usd",
           "status": "succeeded" | "processing" | "requires_payment_method" | ...,
           "receipt_url": str | None,
+          "payment_method_type": "card" | "ach" | "stablecoin" | None,
           "card_brand": "visa" | "mastercard" | ... | None,
           "card_last4": "4242" | None,
+          "bank_name": str | None,
+          "bank_last4": "6789" | None,
         }
 
     Failures (Stripe API down, missing key) return an empty list rather
@@ -321,25 +357,32 @@ def list_workspace_payments(
             charge = None
         card_brand: str | None = None
         card_last4: str | None = None
+        bank_name: str | None = None
+        bank_last4: str | None = None
         receipt_url: str | None = None
         if isinstance(charge, dict):
             receipt_url = charge.get("receipt_url")
             pmd = charge.get("payment_method_details") or {}
             card = pmd.get("card") if isinstance(pmd, dict) else None
+            bank = pmd.get("us_bank_account") if isinstance(pmd, dict) else None
             if isinstance(card, dict):
                 card_brand = card.get("brand")
                 card_last4 = card.get("last4")
+            if isinstance(bank, dict):
+                bank_name = bank.get("bank_name")
+                bank_last4 = bank.get("last4")
+        metadata = pi_data.get("metadata")
         # PaymentIntent.amount is in cents already.
         out.append({
             "payment_intent": pi_data.get("id"),
             "created_at": pi_data.get("created"),
             "amount_cents": int(pi_data.get("amount") or 0),
             "credit_amount_cents": _metadata_microdollars_to_cents(
-                pi_data.get("metadata"),
+                metadata,
                 key="credit_amount_microdollars",
             ),
             "processing_fee_cents": _metadata_int(
-                pi_data.get("metadata"),
+                metadata,
                 key="processing_fee_cents",
             ),
             "currency": pi_data.get("currency") or "usd",
@@ -351,8 +394,13 @@ def list_workspace_payments(
                 "paid" if pi_data.get("status") == "succeeded" else pi_data.get("status")
             ),
             "receipt_url": receipt_url,
+            "payment_method_type": (
+                metadata.get("payment_method") if isinstance(metadata, dict) else None
+            ),
             "card_brand": card_brand,
             "card_last4": card_last4,
+            "bank_name": bank_name,
+            "bank_last4": bank_last4,
         })
     return out
 

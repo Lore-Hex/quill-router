@@ -44,7 +44,16 @@ class CheckoutRequest(_Lenient):
     workspace_id: str | None = None
     success_url: str | None = None
     cancel_url: str | None = None
-    payment_method: Literal["auto", "stablecoin", "crypto", "usdc", "paypal"] = "auto"
+    payment_method: Literal[
+        "auto",
+        "ach",
+        "bank",
+        "us_bank_account",
+        "stablecoin",
+        "crypto",
+        "usdc",
+        "paypal",
+    ] = "auto"
 
     @field_validator("amount")
     @classmethod

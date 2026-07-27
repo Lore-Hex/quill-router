@@ -114,6 +114,7 @@ def register(app: FastAPI) -> None:
             )
         except ValidationError:
             return RedirectResponse(url="/console/credits?error=invalid_checkout", status_code=303)
+        credit = STORE.get_credit_account(ctx.workspace.id)
         try:
             data = (
                 create_paypal_checkout_session(
@@ -127,6 +128,7 @@ def register(app: FastAPI) -> None:
                     body=body,
                     workspace_id=ctx.workspace.id,
                     customer_email=ctx.user.email if ctx.user.email and "@" in ctx.user.email else None,
+                    customer_id=credit.stripe_customer_id if credit else None,
                     settings=settings,
                 )
             )

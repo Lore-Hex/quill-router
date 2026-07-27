@@ -472,10 +472,18 @@ wires the current GCP trust metadata into the trust page.
 `POST /v1/billing/checkout` creates a Stripe Checkout session when
 `TR_STRIPE_SECRET_KEY` is configured and otherwise returns a deterministic local
 mock response. Stripe webhooks credit workspaces idempotently using the
-workspace ID in Checkout metadata. `POST /v1/billing/portal` follows the same
+workspace ID in Checkout metadata. Card payments settle immediately. ACH
+payments use `{"payment_method":"ach"}` and are credited only after Stripe sends
+`checkout.session.async_payment_succeeded`; Checkout completion while the debit
+is processing never grants credits. `POST /v1/billing/portal` follows the same
 Stripe-or-mock pattern for billing management.
 
 For stablecoin checkout, send `{"payment_method":"stablecoin"}`. When
 `TR_STABLECOIN_CHECKOUT_ENABLED=true`, the Checkout session is created with
 Stripe's `crypto` payment method and still credits the workspace from the signed
 `checkout.session.completed` webhook.
+
+ACH uses Stripe Checkout's `us_bank_account` payment method. The default
+processing schedule is 0.8% capped at $5 and can be overridden with
+`TR_STRIPE_ACH_FEE_BASIS_POINTS`, `TR_STRIPE_ACH_FEE_FIXED_CENTS`, and
+`TR_STRIPE_ACH_FEE_MAX_CENTS`. Saved-card auto refill remains card-only.

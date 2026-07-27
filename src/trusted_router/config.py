@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     stripe_card_fee_fixed_cents: int = 30
     stripe_stablecoin_fee_basis_points: int = 150
     stripe_stablecoin_fee_fixed_cents: int = 0
+    stripe_ach_fee_basis_points: int = 80
+    stripe_ach_fee_fixed_cents: int = 0
+    stripe_ach_fee_max_cents: int = 500
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
@@ -260,6 +263,7 @@ class Settings(BaseSettings):
                 "TR_STRIPE_STABLECOIN_FEE_BASIS_POINTS",
                 self.stripe_stablecoin_fee_basis_points,
             ),
+            ("TR_STRIPE_ACH_FEE_BASIS_POINTS", self.stripe_ach_fee_basis_points),
         ):
             if not 0 <= value < 10_000:
                 raise ValueError(f"{name} must be between 0 and 9999")
@@ -269,6 +273,8 @@ class Settings(BaseSettings):
                 "TR_STRIPE_STABLECOIN_FEE_FIXED_CENTS",
                 self.stripe_stablecoin_fee_fixed_cents,
             ),
+            ("TR_STRIPE_ACH_FEE_FIXED_CENTS", self.stripe_ach_fee_fixed_cents),
+            ("TR_STRIPE_ACH_FEE_MAX_CENTS", self.stripe_ach_fee_max_cents),
         ):
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")

@@ -356,6 +356,7 @@ def test_stripe_purchase_attribution_follows_ledger_idempotency(
         "data": {
             "object": {
                 "amount_total": 2500,
+                "payment_status": "paid",
                 "metadata": {"workspace_id": workspace_id},
             }
         },
