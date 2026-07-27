@@ -179,6 +179,21 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
     # open-weight catalog plus the six openai models it actually serves
     # (gpt-4.1-mini, gpt-5.4-mini, gpt-5.5, gpt-5.6-luna, gpt-5.6-sol,
     # gpt-5.6-terra) remain routable.
+    # Parasail retired Mistral Small 3.2 on 2026-07-24. The evidence is a
+    # clean boundary rather than a failure rate: the route's last success was
+    # 2026-07-24 08:16 UTC and EVERY subsequent probe (14 of them, through
+    # 2026-07-26) returned an upstream 404. A model that works and then stops,
+    # with no interleaving, is a retirement; a flaky one alternates.
+    # Provider-scoped, and deliberately narrow: parasail's other routes are
+    # healthy (gemma-3-27b-it 34/34, gpt-oss-120b 24/24,
+    # llama-4-maverick 24/24), so this is one model going away, not a provider
+    # outage.
+    "parasail": frozenset(
+        {
+            "mistralai/mistral-small-3.2-24b-instruct",
+            "mistral-small-3.2-24b-instruct",
+        }
+    ),
     "atlas-cloud": frozenset(
         {
             "openai/gpt-4.1",
