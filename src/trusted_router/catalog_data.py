@@ -90,9 +90,12 @@ class ModelProviderPrivacyOverride:
     provider_policy_url: str | None = None
 
 
-# Audited 2026-07-27 against https://api.venice.ai/api/v1/models. Any new
-# Venice route defaults to Standard until its model-level privacy mode is
-# reviewed and added here.
+# Audited 2026-07-27 against Venice's live catalog and attestation evidence.
+# Venice's labels are not accepted as hardware proof: no current route exposes
+# a client-verifiable chain from the live TLS key through immutable source and
+# hardware measurements to committed model weights. Any new Venice route
+# therefore defaults to Standard. The model-level list below records only
+# Venice's separate, policy-backed "Private" retention claim.
 _VENICE_PRIVATE_MODEL_IDS = frozenset(
     {
         "qwen/qwen3-235b-a22b-thinking-2507",
@@ -109,8 +112,9 @@ _VENICE_PRIVATE_MODEL_IDS = frozenset(
 _VENICE_PRIVATE_POLICY = (
     "Venice's live model catalog marks this exact route private. Venice describes "
     "Private as contract-enforced zero data retention. This is policy-backed, not "
-    "hardware-verified: the route is not TEE or E2EE and is excluded from "
-    "trustedrouter/e2e."
+    "hardware-verified. TrustedRouter cannot verify a complete chain from the live "
+    "endpoint to immutable source and model weights, so the route is not tracked as "
+    "TEE or E2EE and is excluded from trustedrouter/e2e."
 )
 
 
@@ -476,9 +480,9 @@ PROVIDERS: dict[str, Provider] = {
     ),
     # Venice's privacy posture is model-specific. Its Private routes carry a
     # policy-backed ZDR claim, while Anonymized routes may be retained by the
-    # downstream model provider. TEE/E2EE require distinct tee-* / e2ee-*
-    # models and a separate attestation/encryption protocol that the current
-    # TrustedRouter Venice adapter does not implement.
+    # downstream model provider. Venice does not currently provide the complete
+    # independently verifiable source/hardware/model-weight chain required for
+    # TrustedRouter to classify any Venice route as TEE or E2EE.
     "venice": Provider(
         slug="venice",
         name="Venice",
@@ -488,11 +492,12 @@ PROVIDERS: dict[str, Provider] = {
         provider_confidential_compute=False,
         provider_e2ee=False,
         provider_policy=(
-            "Mixed model-specific posture. TrustedRouter's current Venice routes do "
-            "not use Venice's tee-* or e2ee-* protocol and are not tracked as "
-            "confidential or E2EE. Exact routes marked Private in Venice's live "
-            "catalog qualify as contract-enforced ZDR through endpoint-specific "
-            "records; Anonymized routes do not."
+            "Mixed model-specific posture. TrustedRouter cannot independently verify "
+            "a complete chain from a live Venice endpoint through immutable source and "
+            "hardware measurements to committed model weights. Venice is therefore "
+            "not tracked as confidential or E2EE. Exact routes marked Private in "
+            "Venice's live catalog qualify only as policy-backed ZDR through "
+            "endpoint-specific records; Anonymized routes do not."
         ),
         provider_policy_url="https://venice.ai/privacy",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
