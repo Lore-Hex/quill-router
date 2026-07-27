@@ -33,8 +33,11 @@ class _FakeKmsClient:
 
 def test_byok_envelope_uses_kms_wrap_without_plaintext_in_envelope(monkeypatch) -> None:
     _FakeKmsClient.calls.clear()
+    # Patch at the SDK itself rather than at an importing module: the KMS
+    # client is now constructed inside the key_management port, and pinning the
+    # patch to the source keeps this test robust to where it is imported.
     monkeypatch.setattr(
-        "trusted_router.byok_crypto.kms_v1.KeyManagementServiceClient",
+        "google.cloud.kms_v1.KeyManagementServiceClient",
         _FakeKmsClient,
     )
     key_name = "projects/test/locations/us-central1/keyRings/tr/cryptoKeys/byok"

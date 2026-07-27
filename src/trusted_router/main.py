@@ -17,7 +17,6 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from google.api_core.exceptions import Aborted
 
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
@@ -49,6 +48,7 @@ from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
 from trusted_router.sentry_config import init_sentry
 from trusted_router.storage import configure_store, create_store
+from trusted_router.storage_errors import conflict_store_error_types
 from trusted_router.types import ErrorType
 
 
@@ -110,10 +110,10 @@ def create_app(
         message = first.get("msg") or "Invalid request body"
         return error_response(400, f"{loc}: {message}", ErrorType.BAD_REQUEST)
 
-    @app.exception_handler(Aborted)
-    async def aborted_exception_handler(_request: Request, exc: Aborted) -> Response:
-        # A Spanner transaction exhausted its retry budget under contention. This is
-        # transient, so signal the caller to retry rather than surfacing a 500.
+    async def aborted_exception_handler(_request: Request, _exc: Exception) -> Response:
+        # A storage transaction exhausted its retry budget under contention.
+        # This is transient, so signal the caller to retry rather than
+        # surfacing a 500.
         response = error_response(
             503,
             "The request was aborted due to transient database contention; retry.",
@@ -121,6 +121,14 @@ def create_app(
         )
         response.headers["Retry-After"] = "1"
         return response
+
+    # Registered per concrete type rather than via a decorator: Starlette
+    # dispatches exception handlers by class, and which classes represent
+    # "a concurrent writer won" is backend-specific (Spanner's Aborted today,
+    # a serialization failure on a SQL backend). storage_errors owns that
+    # mapping so this module never imports a cloud SDK.
+    for conflict_type in conflict_store_error_types():
+        app.add_exception_handler(conflict_type, aborted_exception_handler)
 
     register_public_routes(app, settings)
     api = _make_api_router(settings)
