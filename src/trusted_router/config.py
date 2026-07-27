@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     internal_gateway_token: str | None = None
     stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
+    # Standard US Stripe processing schedules. These are grossed up against
+    # the complete charge so the requested credit principal remains intact.
+    # They are explicit config because negotiated Stripe pricing can differ.
+    stripe_card_fee_basis_points: int = 290
+    stripe_card_fee_fixed_cents: int = 30
+    stripe_stablecoin_fee_basis_points: int = 150
+    stripe_stablecoin_fee_fixed_cents: int = 0
     paypal_client_id: str | None = None
     paypal_client_secret: str | None = None
     paypal_webhook_id: str | None = None
@@ -247,6 +254,24 @@ class Settings(BaseSettings):
         environment = self.environment.lower()
         if self.signup_trial_credit_microdollars < 0:
             raise ValueError("TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS cannot be negative")
+        for name, value in (
+            ("TR_STRIPE_CARD_FEE_BASIS_POINTS", self.stripe_card_fee_basis_points),
+            (
+                "TR_STRIPE_STABLECOIN_FEE_BASIS_POINTS",
+                self.stripe_stablecoin_fee_basis_points,
+            ),
+        ):
+            if not 0 <= value < 10_000:
+                raise ValueError(f"{name} must be between 0 and 9999")
+        for name, value in (
+            ("TR_STRIPE_CARD_FEE_FIXED_CENTS", self.stripe_card_fee_fixed_cents),
+            (
+                "TR_STRIPE_STABLECOIN_FEE_FIXED_CENTS",
+                self.stripe_stablecoin_fee_fixed_cents,
+            ),
+        ):
+            if value < 0:
+                raise ValueError(f"{name} cannot be negative")
         if not 1 <= self.google_ads_conversion_feed_retention_days <= 90:
             raise ValueError(
                 "TR_GOOGLE_ADS_CONVERSION_FEED_RETENTION_DAYS must be between 1 and 90"

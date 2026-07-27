@@ -54,6 +54,8 @@ class CheckoutRequest(_Lenient):
             raise ValueError("amount must be at least 1")
         if microdollars > MAX_CHECKOUT_DOLLARS * MICRODOLLARS_PER_DOLLAR:
             raise ValueError(f"amount must be at most {MAX_CHECKOUT_DOLLARS}")
+        if microdollars % MICRODOLLARS_PER_CENT != 0:
+            raise ValueError("amount must be exactly representable in cents")
         return Decimal(str(value))
 
 
