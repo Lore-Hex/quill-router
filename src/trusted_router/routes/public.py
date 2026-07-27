@@ -24,7 +24,11 @@ from starlette.types import Scope
 
 from trusted_router.ai_iq import ai_iq_catalog_payload
 from trusted_router.apps import aggregate_apps
-from trusted_router.benchmark_samples import public_benchmark_samples
+from trusted_router.benchmark_samples import (
+    PUBLIC_BENCHMARK_RECENT_MINUTES,
+    PUBLIC_BENCHMARK_SAMPLE_LIMIT,
+    public_benchmark_samples,
+)
 from trusted_router.catalog import (
     META_MODEL_IDS,
     MODELS,
@@ -107,9 +111,10 @@ STATUS_RESPONSE_CACHE_SECONDS = 60
 STATUS_RESPONSE_STALE_SECONDS = 600
 STATUS_HISTORY_CACHE_SECONDS = 300
 STATUS_HISTORY_STALE_SECONDS = 1_800
-LEADERBOARD_SAMPLE_LIMIT = 5_000
+LEADERBOARD_SAMPLE_LIMIT = PUBLIC_BENCHMARK_SAMPLE_LIMIT
 LEADERBOARD_MIN_SAMPLES = 1
-LEADERBOARD_RECENT_WINDOW_MINUTES = 180
+LEADERBOARD_RECENT_WINDOW_MINUTES = PUBLIC_BENCHMARK_RECENT_MINUTES
+LEADERBOARD_SNAPSHOT_CACHE_SECONDS = 300
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
 LEADERBOARD_RESPONSE_STALE_SECONDS = 0
 CHOOSE_PAGE_CACHE_SECONDS = 300
@@ -1233,7 +1238,7 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     now = time.monotonic()
     if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
         cached_at, payload = _LEADERBOARD_CACHE
-        if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
+        if now - cached_at < LEADERBOARD_SNAPSHOT_CACHE_SECONDS:
             return payload
     samples = public_benchmark_samples(
         limit=LEADERBOARD_SAMPLE_LIMIT,
@@ -1241,7 +1246,9 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     )
     payload = aggregate_leaderboard(samples, min_samples=LEADERBOARD_MIN_SAMPLES)
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
-    payload["window_label"] = f"{LEADERBOARD_SAMPLE_LIMIT:,}-sample benchmark set"
+    payload["sample_window_count"] = len(samples)
+    payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
+    payload["window_label"] = f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -1378,7 +1385,11 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
     # router health), but surfaced here so provider errors are visible.
     leaderboard = _leaderboard_snapshot(settings)
     provider_health = sorted(
-        leaderboard.get("providers", []),
+        (
+            provider
+            for provider in leaderboard.get("providers", [])
+            if provider.get("sample_count", 0) > 0
+        ),
         key=lambda p: (-p.get("error_rate", 0.0), p.get("provider", "")),
     )
     return render_template(

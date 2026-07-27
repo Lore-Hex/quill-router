@@ -1841,6 +1841,10 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
     assert '"*/2 * * * *"' in body
+    assert 'throughput_scheduler_name="${throughput_job_name}-every-minute"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"' in body
+    assert '"* * * * *"' in body
+    assert "legacy_throughput_scheduler_name" in body
 
 
 class _FakeCell:

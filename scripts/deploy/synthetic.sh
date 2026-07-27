@@ -92,6 +92,7 @@ upsert_scheduler() {
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
       --quiet >/dev/null; then
       log "WARN: failed to update synthetic scheduler ${scheduler_name}; leaving existing schedule in place"
+      return 1
     fi
   else
     log "creating synthetic scheduler ${scheduler_name}"
@@ -103,6 +104,7 @@ upsert_scheduler() {
       --oauth-service-account-email "$RUN_SERVICE_ACCOUNT" \
       --quiet >/dev/null; then
       log "WARN: failed to create synthetic scheduler ${scheduler_name}; deploy the job exists but is not scheduled"
+      return 1
     fi
   fi
 }
@@ -153,7 +155,8 @@ done
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
-throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+throughput_scheduler_name="${throughput_job_name}-every-minute"
+legacy_throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
 throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
@@ -166,7 +169,7 @@ throughput_env_vars=(
   "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
   "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
   "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
-  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
+  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
@@ -189,4 +192,16 @@ upsert_scheduler \
   "$throughput_scheduler_name" \
   "$throughput_job_name" \
   "$throughput_region" \
-  "*/2 * * * *"
+  "* * * * *"
+
+# Avoid double-sampling after the cadence change. Delete the legacy scheduler
+# only after the replacement scheduler was created or updated successfully.
+if gc scheduler jobs describe \
+  "$legacy_throughput_scheduler_name" \
+  --location "$throughput_region" >/dev/null 2>&1; then
+  log "deleting legacy throughput scheduler ${legacy_throughput_scheduler_name}"
+  gc scheduler jobs delete \
+    "$legacy_throughput_scheduler_name" \
+    --location "$throughput_region" \
+    --quiet >/dev/null
+fi

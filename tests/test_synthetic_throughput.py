@@ -17,6 +17,7 @@ from trusted_router.synthetic.probes import (
     rotation_candidates,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_INTERVAL_SECONDS,
     choose_throughput_target,
     projected_monthly_cost_microdollars,
     throughput_candidates,
@@ -62,6 +63,7 @@ def test_throughput_round_robin_visits_every_route_once_per_cycle() -> None:
     assert choose_throughput_target([]) is None
     with pytest.raises(ValueError, match="interval_seconds"):
         choose_throughput_target(candidates, interval_seconds=0)
+    assert THROUGHPUT_INTERVAL_SECONDS == 60
 
 
 def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
@@ -69,11 +71,11 @@ def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
     projected = projected_monthly_cost_microdollars(candidates)
 
     assert projected > 0
-    assert projected <= 75_000_000
+    assert projected <= 150_000_000
 
 
 @pytest.mark.asyncio
-async def test_throughput_probe_measures_decode_speed_after_first_token() -> None:
+async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
     captured: list[dict[str, Any]] = []
     chunks = [
         b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
@@ -121,13 +123,58 @@ async def test_throughput_probe_measures_decode_speed_after_first_token() -> Non
     assert sample.output_tokens == 251
     assert sample.first_token_milliseconds == 200
     assert sample.ttfb_milliseconds == 100
-    assert sample.speed_tokens_per_second == 500.0
+    assert sample.elapsed_milliseconds == 1000
+    assert sample.speed_tokens_per_second == 251.0
     assert sample.total_cost_microdollars > 0
     assert sample.finish_reason == "length"
     assert captured[0]["max_tokens"] == 512
     assert captured[0]["stream_options"] == {"include_usage": True}
     assert captured[0]["provider"] == {"only": ["cerebras"]}
     assert captured[0]["metadata"]["trustedrouter_probe"] == "throughput"
+
+
+@pytest.mark.asyncio
+async def test_throughput_probe_accepts_buffered_sse_without_inflating_speed() -> None:
+    chunks = [
+        (
+            b'data: {"choices":[{"delta":{"content":"benchmark benchmark"}}]}\n\n'
+            b'data: {"choices":[{"delta":{},"finish_reason":"length"}],'
+            b'"usage":{"prompt_tokens":20,"completion_tokens":200}}\n\n'
+            b"data: [DONE]\n\n"
+        )
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={
+                "x-trustedrouter-provider": "cerebras",
+                "x-trustedrouter-served-model": "cerebras/gpt-oss-120b",
+            },
+            stream=_ChunkStream(chunks),
+        )
+
+    clock = iter([0.0, 0.25, 5.0])
+    target = SyntheticTarget(
+        "throughput",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_throughput_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="cerebras",
+            model="cerebras/gpt-oss-120b",
+            clock=lambda: next(clock),
+        )
+
+    assert sample.status == "success"
+    assert sample.first_token_milliseconds == 250
+    assert sample.elapsed_milliseconds == 5000
+    assert sample.speed_tokens_per_second == 40.0
 
 
 @pytest.mark.asyncio

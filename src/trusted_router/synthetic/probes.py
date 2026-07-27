@@ -1053,12 +1053,15 @@ async def provider_throughput_probe(
     total_timeout_seconds: float | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> ProviderBenchmarkSample:
-    """Measure sustained output speed after the first streamed token.
+    """Measure effective output throughput from request start to completion.
 
     Unlike the tiny PONG rotation probe, this requires provider-reported final
-    usage and enough output tokens for a stable sample. It records metadata
-    only. The response bytes are discarded inside this function and are never
-    returned to the control plane ingest payload.
+    usage and enough output tokens for a stable sample. Measuring the complete
+    request makes the result insensitive to HTTP/SSE buffering: a provider
+    cannot appear artificially fast because many token events arrived in one
+    network chunk. It records metadata only. The response bytes are discarded
+    inside this function and are never returned to the control plane ingest
+    payload.
     """
     if max_tokens <= 1:
         raise ValueError("max_tokens must be greater than one")
@@ -1136,12 +1139,10 @@ async def provider_throughput_probe(
 
     usage = observation.usage
     first_token_ms = observation.first_token_milliseconds
-    last_token_ms = observation.last_token_milliseconds
     if (
         usage.output_tokens < minimum_output_tokens
         or first_token_ms is None
-        or last_token_ms is None
-        or last_token_ms <= first_token_ms
+        or observation.elapsed_milliseconds <= 0
     ):
         sample = _rotation_error_sample(
             served_provider,
@@ -1159,8 +1160,7 @@ async def provider_throughput_probe(
         sample.finish_reason = observation.finish_reason or "insufficient_sample"
         return sample
 
-    decode_milliseconds = last_token_ms - first_token_ms
-    speed_tokens_per_second = max(1, usage.output_tokens - 1) * 1000 / decode_milliseconds
+    speed_tokens_per_second = usage.output_tokens * 1000 / observation.elapsed_milliseconds
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
         model=served_model,

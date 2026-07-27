@@ -15,6 +15,7 @@ from trusted_router.synthetic.probes import rotation_candidates
 _RECENT_MODEL_COUNT = 24
 _RECENT_MODEL_BONUS = 5_000
 _RECENT_MODEL_STEP = 50
+THROUGHPUT_INTERVAL_SECONDS = 60
 
 
 def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
@@ -71,7 +72,7 @@ def choose_throughput_target(
     candidates: list[tuple[str, str]],
     *,
     now_epoch_seconds: float | None = None,
-    interval_seconds: int = 120,
+    interval_seconds: int = THROUGHPUT_INTERVAL_SECONDS,
 ) -> tuple[str, str] | None:
     """Choose one route by scheduler time slot, giving exact round-robin coverage."""
     if not candidates:
@@ -88,7 +89,7 @@ def projected_monthly_cost_microdollars(
     *,
     input_tokens: int = 64,
     output_tokens: int = 512,
-    interval_seconds: int = 120,
+    interval_seconds: int = THROUGHPUT_INTERVAL_SECONDS,
     days: int = 30,
 ) -> int:
     """Conservative full-cap monthly spend for the scheduled route rotation."""

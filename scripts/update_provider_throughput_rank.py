@@ -21,6 +21,7 @@ import httpx
 LEADERBOARD_URL: Final = "https://trustedrouter.com/leaderboard"
 ROUTING_PATH: Final = Path("src/trusted_router/routing.py")
 MIN_SAMPLES: Final = 25
+MIN_THROUGHPUT_SAMPLES: Final = 5
 MIN_UPTIME: Final = 0.95
 SECONDARY_START: Final = 20
 SECONDARY_PROVIDERS: Final = (
@@ -51,6 +52,7 @@ SECONDARY_PROVIDERS: Final = (
 class ProviderLeaderboardRow:
     provider: str
     throughput_tokens_per_second: float | None
+    throughput_samples: int
     uptime: float
     samples: int
     p50_ttft_ms: int | None
@@ -112,6 +114,7 @@ def parse_provider_rows(html: str) -> list[ProviderLeaderboardRow]:
             ProviderLeaderboardRow(
                 provider=row[1].strip().lower(),
                 throughput_tokens_per_second=_parse_throughput(row[4]),
+                throughput_samples=_parse_throughput_samples(row[4]),
                 uptime=_parse_percent(row[5]),
                 samples=_parse_int(row[8]),
                 p50_ttft_ms=_parse_milliseconds(row[3]),
@@ -124,6 +127,7 @@ def measured_rank(
     rows: list[ProviderLeaderboardRow],
     *,
     min_samples: int = MIN_SAMPLES,
+    min_throughput_samples: int = MIN_THROUGHPUT_SAMPLES,
     min_uptime: float = MIN_UPTIME,
 ) -> list[str]:
     eligible = [
@@ -131,6 +135,7 @@ def measured_rank(
         for row in rows
         if row.throughput_tokens_per_second is not None
         and row.throughput_tokens_per_second > 0
+        and row.throughput_samples >= min_throughput_samples
         and row.samples >= min_samples
         and row.uptime >= min_uptime
     ]
@@ -151,7 +156,9 @@ def build_rank_block(measured: list[str], *, generated_date: dt.date | None = No
         ranks.setdefault(provider, len(ranks))
     for provider in SECONDARY_PROVIDERS:
         if provider not in ranks:
-            ranks[provider] = SECONDARY_START + len([p for p in ranks if ranks[p] >= SECONDARY_START])
+            ranks[provider] = SECONDARY_START + len(
+                [p for p in ranks if ranks[p] >= SECONDARY_START]
+            )
     ranks["trustedrouter"] = 99
 
     lines = [
@@ -160,8 +167,9 @@ def build_rank_block(measured: list[str], *, generated_date: dt.date | None = No
         "#",
         f"# Generated from the public /leaderboard provider table on {generated.isoformat()} with:",
         "#   python scripts/update_provider_throughput_rank.py --write",
-        "# The generator admits only providers with enough samples, >=95% measured uptime,",
-        "# and positive p50 output tokens/second. Providers without reliable token/s data",
+        "# The generator admits only providers with enough availability and throughput",
+        "# samples, >=95% measured uptime, and positive effective output tokens/second.",
+        "# Providers without reliable token/s data",
         "# keep conservative secondary ranks so they do not beat measured fast routes.",
         "_THROUGHPUT_RANK = {",
     ]
@@ -193,6 +201,11 @@ def replace_rank_block(source: str, new_block: str) -> str:
 def _parse_throughput(value: str) -> float | None:
     match = re.search(r"(\d+(?:\.\d+)?)\s*tok/s", value)
     return float(match.group(1)) if match else None
+
+
+def _parse_throughput_samples(value: str) -> int:
+    match = re.search(r"\bn=(\d+)\b", value)
+    return int(match.group(1)) if match else 0
 
 
 def _parse_percent(value: str) -> float:

@@ -16,6 +16,8 @@ def _sample(
     ttft: int | None = None,
     ttfb: int | None = None,
     tps: float | None = None,
+    output_tokens: int = 0,
+    elapsed_milliseconds: int | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
     source: str = "organic",
@@ -32,6 +34,8 @@ def _sample(
         first_token_milliseconds=ttft,
         ttfb_milliseconds=ttfb,
         speed_tokens_per_second=tps,
+        output_tokens=output_tokens,
+        elapsed_milliseconds=elapsed_milliseconds,
         error_type=error_type,
         error_status=error_status,
         source=source,
@@ -151,6 +155,49 @@ def test_sustained_throughput_replaces_legacy_speed_without_affecting_uptime() -
     assert provider["p50_tokens_per_second"] == 500.0
     assert result["total_samples"] == 2
     assert result["total_throughput_samples"] == 2
+
+
+def test_sustained_throughput_recomputes_legacy_buffered_rows() -> None:
+    samples = [
+        _sample(provider="p", model="p/m", ttft=100),
+        _sample(
+            provider="p",
+            model="p/m",
+            tps=5000.0,
+            output_tokens=200,
+            elapsed_milliseconds=10_000,
+            source="synthetic_throughput",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+
+    assert result["models"][0]["p50_tokens_per_second"] == 20.0
+    assert result["providers"][0]["p50_tokens_per_second"] == 20.0
+
+
+def test_throughput_only_route_is_visible_without_claiming_availability() -> None:
+    result = aggregate_leaderboard(
+        [
+            _sample(
+                provider="p",
+                model="p/throughput-only",
+                tps=4000.0,
+                output_tokens=240,
+                elapsed_milliseconds=6000,
+                source="synthetic_throughput",
+            )
+        ]
+    )
+
+    model = result["models"][0]
+    assert model["model"] == "p/throughput-only"
+    assert model["sample_count"] == 0
+    assert model["uptime"] is None
+    assert model["throughput_sample_count"] == 1
+    assert model["p50_tokens_per_second"] == 40.0
+    assert result["providers"][0]["sample_count"] == 0
+    assert result["providers"][0]["uptime"] is None
 
 
 def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:

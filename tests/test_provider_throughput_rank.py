@@ -14,15 +14,15 @@ LEADERBOARD_HTML = """
   <thead>
     <tr>
       <th>#</th><th>Provider</th><th>Models</th><th>p50 TTFT</th>
-      <th>Throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Samples</th>
+      <th>Effective throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Availability samples</th>
     </tr>
   </thead>
   <tbody>
-    <tr><td>1</td><td>deepseek</td><td>2</td><td>3521 ms</td><td>53 tok/s</td><td>100.00%</td><td>—</td><td>—</td><td>111</td></tr>
-    <tr><td>2</td><td>baseten</td><td>11</td><td>3349 ms</td><td>55 tok/s</td><td>98.40%</td><td>—</td><td>—</td><td>125</td></tr>
-    <tr><td>3</td><td>novita</td><td>27</td><td>3534 ms</td><td>9 tok/s</td><td>92.11%</td><td>provider_error 8%</td><td>—</td><td>38</td></tr>
+    <tr><td>1</td><td>deepseek</td><td>2</td><td>3521 ms</td><td>53 tok/s n=12</td><td>100.00%</td><td>—</td><td>—</td><td>111</td></tr>
+    <tr><td>2</td><td>baseten</td><td>11</td><td>3349 ms</td><td>55 tok/s n=18</td><td>98.40%</td><td>—</td><td>—</td><td>125</td></tr>
+    <tr><td>3</td><td>novita</td><td>27</td><td>3534 ms</td><td>9 tok/s n=3</td><td>92.11%</td><td>provider_error 8%</td><td>—</td><td>38</td></tr>
     <tr><td>4</td><td>openai</td><td>11</td><td>2579 ms</td><td>—</td><td>100.00%</td><td>—</td><td>—</td><td>44</td></tr>
-    <tr><td>5</td><td>crusoe</td><td>12</td><td>2888 ms</td><td>2 tok/s</td><td>100.00%</td><td>—</td><td>—</td><td>24</td></tr>
+    <tr><td>5</td><td>crusoe</td><td>12</td><td>2888 ms</td><td>2 tok/s n=2</td><td>100.00%</td><td>—</td><td>—</td><td>24</td></tr>
   </tbody>
 </table>
 """
@@ -33,6 +33,7 @@ def test_parse_provider_rows_from_public_leaderboard_table() -> None:
 
     assert rows[0].provider == "deepseek"
     assert rows[0].throughput_tokens_per_second == 53
+    assert rows[0].throughput_samples == 12
     assert rows[0].uptime == 1.0
     assert rows[0].samples == 111
     assert rows[0].p50_ttft_ms == 3521
@@ -43,6 +44,7 @@ def test_measured_rank_uses_positive_throughput_with_sample_and_uptime_guards() 
     rows = parse_provider_rows(LEADERBOARD_HTML)
 
     assert measured_rank(rows) == ["baseten", "deepseek"]
+    assert measured_rank(rows, min_throughput_samples=13) == ["baseten"]
 
 
 def test_build_rank_block_places_measured_providers_before_secondary_priors() -> None:
