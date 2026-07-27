@@ -490,7 +490,7 @@ def _requested_model_ids(
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
             )
         elif stripped == E2E_MODEL_ID:
-            overrides["order"] = "tinfoil,venice,phala"
+            overrides["order"] = "tinfoil,phala"
         elif stripped == EU_MODEL_ID:
             provider_order = ",".join(EU_FOCUSED_PROVIDER_ORDER)
             overrides["order"] = provider_order

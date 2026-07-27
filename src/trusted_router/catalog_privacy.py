@@ -63,6 +63,11 @@ def endpoint_privacy_tier(endpoint: ModelEndpoint) -> int:
     return provider_privacy_tier(provider)
 
 
+def endpoint_stores_content(endpoint: ModelEndpoint) -> bool:
+    """Return the retention posture for this exact provider/model route."""
+    return endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE
+
+
 def endpoint_zero_data_retention(endpoint: ModelEndpoint) -> bool | None:
     """Return the ZDR guarantee that applies to this exact credential path."""
     override = _model_provider_privacy_override(endpoint.model_id, endpoint.provider)
