@@ -253,7 +253,10 @@ def sql_route_health(cutoff: dt.datetime) -> dict[tuple[str, str], tuple[int, in
     row_number() reproduces "newest N per route", and is computed BEFORE the
     status/transient filters so the truncation matches production's ordering.
     """
-    query = f"""
+    # Values are bound server-side via ClickHouse `{name:Type}` placeholders —
+    # nothing is spliced into SQL text. The transient predicate is a fixed
+    # fragment shared with the schema, not caller input.
+    query = """
     WITH ranked AS (
         SELECT provider, model, status, source, created_at, error_status, error_type,
                row_number() OVER (PARTITION BY provider, model ORDER BY created_at DESC) AS rn
@@ -263,16 +266,23 @@ def sql_route_health(cutoff: dt.datetime) -> dict[tuple[str, str], tuple[int, in
            count()                   AS samples,
            countIf(status = 'error') AS failures
     FROM ranked
-    WHERE rn <= {SAMPLES_PER_ROUTE_LIMIT}
+    WHERE rn <= {route_limit:UInt32}
       AND source = 'synthetic'
-      AND created_at >= toDateTime64('{cutoff.strftime('%Y-%m-%d %H:%M:%S')}', 3, 'UTC')
+      AND created_at >= {cutoff:DateTime64(3, 'UTC')}
       AND status IN ('error', 'success')
-      AND NOT (status = 'error' AND {SQL_TRANSIENT})
+      AND NOT (status = 'error' AND (
+            ifNull(error_status, 0) IN (429,500,502,503,504,529)
+         OR ifNull(error_type, '') IN ('ReadTimeout','ConnectTimeout','WriteTimeout','PoolTimeout',
+                                       'ConnectError','ReadError','WriteError','RemoteProtocolError')))
     GROUP BY provider, model
     FORMAT JSONEachRow
     """
+    params = {
+        "route_limit": str(SAMPLES_PER_ROUTE_LIMIT),
+        "cutoff": cutoff.strftime("%Y-%m-%d %H:%M:%S"),
+    }
     result: dict[tuple[str, str], tuple[int, int]] = {}
-    for line in ch(query).strip().splitlines():
+    for line in ch(query, params=params).strip().splitlines():
         r = json.loads(line)
         result[(r["provider"], r["model"])] = (int(r["samples"]), int(r["failures"]))
     return result
@@ -329,7 +339,8 @@ def main() -> int:
     if not args.no_load:
         print("Loading into ClickHouse (local proof table)...")
         load(rows)
-        print(f"  loaded {ch('SELECT count() FROM provider_benchmark_samples').strip()} rows")
+        loaded = ch("SELECT count() FROM provider_benchmark_samples").strip()
+        print(f"  loaded {loaded} rows")
 
     print("Evaluating route health the CURRENT way (Python)...")
     baseline = python_route_health(rows, cutoff)
