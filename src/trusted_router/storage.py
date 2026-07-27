@@ -5,6 +5,7 @@ import threading
 import uuid
 from typing import Any, cast
 
+from trusted_router.analytics_sink import AnalyticsSink, NullAnalyticsSink
 from trusted_router.money import DEFAULT_SIGNUP_CREDIT_MICRODOLLARS
 from trusted_router.storage_attribution import InMemoryAcquisitionAttribution
 from trusted_router.storage_auth_sessions import InMemoryAuthSessions
@@ -1172,6 +1173,11 @@ class InMemoryStore:
         return self.email_blocks.record_message_once(message_id)
 
 
+#: Analytics mirror. No-op until the app factory installs a real one, so
+#: importing this module never starts a background thread (tests, CLIs).
+_ANALYTICS_SINK: AnalyticsSink = NullAnalyticsSink()
+
+
 class _StoreProxy:
     """Singleton that forwards method calls to the active backend.
 
@@ -1210,6 +1216,24 @@ class _StoreProxy:
             raise TypeError("in_memory_target is only valid for the InMemoryStore backend")
         return target
 
+    def record_provider_benchmark(self, sample: Any) -> None:
+        """Write to the authoritative store, then mirror to analytics.
+
+        Defined explicitly rather than falling through `__getattr__` because
+        this is the single chokepoint every caller already routes through, so
+        the fan-out cannot miss a call site. It is deliberately NOT a wrapper
+        object around the store: `typed_billing_store()` unwraps this proxy to
+        do its capability check, and an extra layer it did not know about
+        would make that check read False and silently route typed billing down
+        the legacy path.
+
+        The store write is authoritative and its exceptions propagate. The
+        analytics mirror is best-effort and, by the sink's contract, cannot
+        raise.
+        """
+        self.target.record_provider_benchmark(sample)
+        _ANALYTICS_SINK.record_benchmark_sample(sample)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self.target, name)
 
@@ -1241,6 +1265,12 @@ def typed_billing_store(store: Any = None) -> TypedBillingStore | None:
     if isinstance(target, _StoreProxy):
         target = target.target
     return target if isinstance(target, TypedBillingStore) else None
+
+
+def configure_analytics_sink(sink: AnalyticsSink) -> None:
+    """Install the analytics mirror. Called once from the app factory."""
+    global _ANALYTICS_SINK
+    _ANALYTICS_SINK = sink
 
 
 def create_store(settings: Any) -> Store:

@@ -18,6 +18,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 
+from trusted_router.analytics_sink import create_analytics_sink
 from trusted_router.axiom_config import init_axiom
 from trusted_router.catalog import validate_auto_model_order
 from trusted_router.config import Settings, get_settings
@@ -47,7 +48,11 @@ from trusted_router.routes.signup import register_signup_routes
 from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
 from trusted_router.sentry_config import init_sentry
-from trusted_router.storage import configure_store, create_store
+from trusted_router.storage import (
+    configure_analytics_sink,
+    configure_store,
+    create_store,
+)
 from trusted_router.storage_errors import conflict_store_error_types
 from trusted_router.types import ErrorType
 
@@ -62,6 +67,8 @@ def create_app(
     validate_auto_model_order(settings.auto_model_order)
     if configure_store_arg:
         configure_store(create_store(settings))
+        # No-op unless TR_CLICKHOUSE_URL is set; Bigtable stays authoritative.
+        configure_analytics_sink(create_analytics_sink(settings))
     if init_observability:
         init_sentry(settings)
         init_axiom(settings)

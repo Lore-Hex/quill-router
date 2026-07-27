@@ -297,17 +297,41 @@ def flagged(health: dict[tuple[str, str], tuple[int, int]]) -> set[tuple[str, st
     }
 
 
-def load(rows: list[dict]) -> None:
-    """Reload the LOCAL proof table.
+def _materialized_view_ddl() -> str:
+    """The CREATE MATERIALIZED VIEW statement, read from the schema file.
 
-    The materialized view is dropped and recreated rather than left in place:
-    an MV runs per INSERT BLOCK and does NOT inherit the source table's
-    ReplacingMergeTree collapsing, so reloading without rebuilding it silently
+    Read rather than duplicated so the view rebuilt here can never drift from
+    the one a real deployment applies.
+    """
+    schema_path = os.path.join(os.path.dirname(__file__), "001_provider_benchmark_samples.sql")
+    with open(schema_path) as handle:
+        raw = handle.read()
+    # Strip full-line comments before splitting: the prose contains semicolons.
+    code = "\n".join(line for line in raw.splitlines() if not line.strip().startswith("--"))
+    for statement in (s.strip() for s in code.split(";")):
+        if statement.upper().startswith("CREATE MATERIALIZED VIEW"):
+            return statement
+    raise SystemExit("no CREATE MATERIALIZED VIEW found in the schema file")
+
+
+def load(rows: list[dict]) -> None:
+    """Reload the LOCAL proof table, rebuilding the materialized view with it.
+
+    The view is dropped and RECREATED rather than left in place: an MV runs
+    per INSERT BLOCK and does NOT inherit the source table's
+    ReplacingMergeTree collapsing, so reloading without rebuilding silently
     doubles every aggregate. Verified the hard way — three loader runs against
     30,832 source rows left 92,500 samples in the view.
+
+    Order matters and is easy to get wrong in the other direction: the view
+    must be recreated BEFORE the insert. A materialized view only observes
+    rows inserted after it exists, so recreating it afterwards would leave a
+    permanently empty view — which is exactly the bug an earlier version of
+    this function shipped (it dropped the view and never brought it back).
     """
     ch("TRUNCATE TABLE provider_benchmark_samples")
     ch("DROP TABLE IF EXISTS route_health_hourly")
+    ch(_materialized_view_ddl())
     payload = "\n".join(
         json.dumps({**r, "created_at": r["created_at"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]})
         for r in rows
