@@ -2,9 +2,9 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-07-27T20:10:28Z",
+  "generated_at": "2026-07-27T21:13:41Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 14,
+  "model_count": 16,
   "models": [
     {
       "id": "openai/gpt-oss-120b",
@@ -430,6 +430,68 @@
       "input_token_price_per_m": 3000000,
       "output_token_price_per_m": 15000000,
       "cached_input_token_price_per_m": 300000
+    },
+    {
+      "display_name": "Mercury 2",
+      "title": "inception/mercury-2",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "inception/mercury-2",
+      "upstream_id": "inception/mercury-2",
+      "context_length": 8192,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "SID-1",
+      "title": "sid/sid-1",
+      "model_type": "chat",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "sid/sid-1",
+      "upstream_id": "sid/sid-1",
+      "context_length": 32768,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
     }
   ]
 }
