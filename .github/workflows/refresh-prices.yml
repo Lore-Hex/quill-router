@@ -160,7 +160,8 @@ jobs:
             echo "::add-mask::${KEY}"
             echo "${env}=${KEY}" >> "$GITHUB_ENV"
           done
-          echo "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID=96781cbfaebf2b28d851b9c677dd2e81" >> "$GITHUB_ENV"
+          echo "CLOUDFLARE_WORKERS_AI_ACCOUNT_ID=2698c706fd4793c818af14adad4e1a39" >> "$GITHUB_ENV"
+          echo "TR_CLOUDFLARE_WORKERS_AI_ROUTABLE=1" >> "$GITHUB_ENV"
 
       - name: Snapshot existing pricing file
         run: cp src/trusted_router/data/openrouter_snapshot.json /tmp/before.json
