@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-07-27T15:44:32Z",
+  "generated_at": "2026-07-27T18:50:30Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11,
   "models": [
@@ -95,7 +95,7 @@
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "google/gemma-4-26B-A4B",
       "display_name": "google/gemma-4-26B-A4B",
-      "context_length": 1000000,
+      "context_length": 262144,
       "endpoints": [
         "chat/completions"
       ],
@@ -278,7 +278,8 @@
       "status": 1,
       "features": [
         "tools"
-      ]
+      ],
+      "missing_since": "2026-07-27"
     },
     {
       "id": "qwen/qwen3.6-27b",
@@ -316,7 +317,8 @@
       "features": [
         "tools",
         "reasoning"
-      ]
+      ],
+      "missing_since": "2026-07-27"
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
@@ -356,13 +358,14 @@
       "features": [
         "tools",
         "reasoning"
-      ]
+      ],
+      "missing_since": "2026-07-27"
     },
     {
       "id": "z-ai/glm-5.2-nvfp4",
       "upstream_id": "zai-org/GLM-5.2-NVFP4",
       "display_name": "zai-org/GLM-5.2-NVFP4",
-      "context_length": 1048576,
+      "context_length": 980000,
       "endpoints": [
         "chat/completions"
       ],
@@ -419,7 +422,8 @@
       "context_length": 131072,
       "input_token_price_per_m": 128600,
       "output_token_price_per_m": 453300,
-      "cached_input_token_price_per_m": 96475
+      "cached_input_token_price_per_m": 96475,
+      "missing_since": "2026-07-27"
     }
   ]
 }
