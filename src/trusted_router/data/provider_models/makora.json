@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-07-27T18:50:30Z",
+  "generated_at": "2026-07-27T20:10:28Z",
   "price_scale": "microdollars_per_million",
   "model_count": 11,
   "models": [
@@ -95,7 +95,7 @@
       "id": "google/gemma-4-26b-a4b-it",
       "upstream_id": "google/gemma-4-26B-A4B",
       "display_name": "google/gemma-4-26B-A4B",
-      "context_length": 262144,
+      "context_length": 1000000,
       "endpoints": [
         "chat/completions"
       ],
@@ -279,7 +279,9 @@
       "features": [
         "tools"
       ],
-      "missing_since": "2026-07-27"
+      "missing_since": "2026-07-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.6-27b",
@@ -318,7 +320,9 @@
         "tools",
         "reasoning"
       ],
-      "missing_since": "2026-07-27"
+      "missing_since": "2026-07-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "qwen/qwen3.6-35b-a3b",
@@ -359,13 +363,15 @@
         "tools",
         "reasoning"
       ],
-      "missing_since": "2026-07-27"
+      "missing_since": "2026-07-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "id": "z-ai/glm-5.2-nvfp4",
       "upstream_id": "zai-org/GLM-5.2-NVFP4",
       "display_name": "zai-org/GLM-5.2-NVFP4",
-      "context_length": 980000,
+      "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
@@ -423,7 +429,9 @@
       "input_token_price_per_m": 128600,
       "output_token_price_per_m": 453300,
       "cached_input_token_price_per_m": 96475,
-      "missing_since": "2026-07-27"
+      "missing_since": "2026-07-27",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     }
   ]
 }
