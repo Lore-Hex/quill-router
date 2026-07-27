@@ -53,9 +53,7 @@ class StoreUnavailable(StoreError):
 
 
 @lru_cache(maxsize=1)
-def _google_error_types() -> tuple[
-    tuple[type[BaseException], ...], tuple[type[BaseException], ...]
-]:
+def _google_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Exception], ...]]:
     """`(transient, conflict)` types contributed by the GCP backend.
 
     Empty when the Google libraries are not installed, which is the expected
@@ -77,7 +75,7 @@ def _google_error_types() -> tuple[
     # ResourceExhausted covers Spanner session-pool / admission-control
     # overload. RetryError subclasses GoogleAPIError rather than
     # GoogleAPICallError, so it must be listed explicitly.
-    transient: tuple[type[BaseException], ...] = (
+    transient: tuple[type[Exception], ...] = (
         Aborted,
         DeadlineExceeded,
         InternalServerError,
@@ -88,12 +86,12 @@ def _google_error_types() -> tuple[
     # Aborted is both transient AND a conflict: it is the one member of the set
     # meaning "a concurrent writer won" rather than "the backend is unwell",
     # and callers that retry immediately key off exactly that distinction.
-    conflict: tuple[type[BaseException], ...] = (Aborted,)
+    conflict: tuple[type[Exception], ...] = (Aborted,)
     return (transient, conflict)
 
 
 @lru_cache(maxsize=1)
-def transient_store_error_types() -> tuple[type[BaseException], ...]:
+def transient_store_error_types() -> tuple[type[Exception], ...]:
     """Types meaning "the write did not land; try again later".
 
     Returned as a tuple so it can be used directly in an `except` clause,
@@ -104,7 +102,7 @@ def transient_store_error_types() -> tuple[type[BaseException], ...]:
 
 
 @lru_cache(maxsize=1)
-def conflict_store_error_types() -> tuple[type[BaseException], ...]:
+def conflict_store_error_types() -> tuple[type[Exception], ...]:
     """Types meaning "a concurrent writer aborted this; replaying may work"."""
     _, google_conflict = _google_error_types()
     return (StoreConflict, *google_conflict)

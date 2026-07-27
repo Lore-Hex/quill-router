@@ -106,7 +106,7 @@ class GcpKmsKeyWrapper:
         return kms_v1.KeyManagementServiceClient()
 
     def wrap(self, dek: bytes, *, nonce: bytes, aad: bytes) -> bytes:
-        with _translated_kms_errors():
+        try:
             response = self._client().encrypt(
                 request={
                     "name": self._key_name,
@@ -114,10 +114,12 @@ class GcpKmsKeyWrapper:
                     "additional_authenticated_data": aad,
                 }
             )
-            return bytes(response.ciphertext)
+        except Exception as exc:
+            raise _translate_kms_error(exc) from exc
+        return bytes(response.ciphertext)
 
     def unwrap(self, wrapped: bytes, *, nonce: bytes, aad: bytes) -> bytes:
-        with _translated_kms_errors():
+        try:
             response = self._client().decrypt(
                 request={
                     "name": self._key_name,
@@ -125,32 +127,30 @@ class GcpKmsKeyWrapper:
                     "additional_authenticated_data": aad,
                 }
             )
-            return bytes(response.plaintext)
+        except Exception as exc:
+            raise _translate_kms_error(exc) from exc
+        return bytes(response.plaintext)
 
 
-class _translated_kms_errors:
-    """Map Google KMS exceptions onto the neutral taxonomy.
+def _translate_kms_error(exc: Exception) -> Exception:
+    """Map a Google KMS exception onto the neutral taxonomy.
 
-    A context manager rather than a decorator so the lazy import of the Google
-    exception types stays inside the call, keeping module import free of any
-    cloud SDK.
+    Returns the original exception unchanged when it is not a recognised KMS
+    failure, so genuine bugs keep their own type and traceback instead of being
+    laundered into a misleading "key unavailable".
+
+    The Google exception types are imported here rather than at module scope so
+    that importing this module never pulls in a cloud SDK.
     """
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, exc_type, exc, _tb) -> bool:  # type: ignore[no-untyped-def]
-        if exc is None:
-            return False
-        try:
-            from google.api_core import exceptions as gcp_exceptions
-        except ImportError:  # pragma: no cover - only without GCP deps
-            return False
-        if isinstance(exc, gcp_exceptions.PermissionDenied):
-            raise KeyAccessDenied(str(exc)) from exc
-        if isinstance(exc, gcp_exceptions.GoogleAPICallError):
-            raise KeyUnavailable(str(exc)) from exc
-        return False
+    try:
+        from google.api_core import exceptions as gcp_exceptions
+    except ImportError:  # pragma: no cover - only without GCP deps
+        return exc
+    if isinstance(exc, gcp_exceptions.PermissionDenied):
+        return KeyAccessDenied(str(exc))
+    if isinstance(exc, gcp_exceptions.GoogleAPICallError):
+        return KeyUnavailable(str(exc))
+    return exc
 
 
 def key_wrapper_for(settings: Settings) -> KeyWrapper:
