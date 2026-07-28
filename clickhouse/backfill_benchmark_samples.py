@@ -47,7 +47,9 @@ def ch(sql: str, stdin: bytes | None = None) -> str:
         "clickhouse-client", "--user", "tr", "--password", password,
         "--database", CH_DB, "--query", sql,
     ]
-    result = subprocess.run(cmd, input=stdin, capture_output=True, check=False)
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, callers pass literal SQL
+        cmd, input=stdin, capture_output=True, check=False
+    )
     if result.returncode != 0:
         raise SystemExit(f"clickhouse error: {result.stderr.decode()[:400]}")
     return result.stdout.decode()
@@ -156,7 +158,7 @@ def main() -> int:
     # read high until merges catch up.
     print("\nday          bigtable   clickhouse   delta")
     ch_rows = ch(
-        f"SELECT toDate(created_at) AS d, count() FROM {CH_TABLE} FINAL "
+        f"SELECT toDate(created_at) AS d, count() FROM {CH_TABLE} FINAL "  # noqa: S608 - module constant
         "GROUP BY d ORDER BY d DESC FORMAT TSV"
     )
     ch_days = {line.split("\t")[0]: int(line.split("\t")[1])
