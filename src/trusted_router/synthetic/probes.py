@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import json
 import random
 import secrets
@@ -26,6 +27,16 @@ from trusted_router.storage_models import (
 from trusted_router.types import UsageType
 
 DEFAULT_SYNTHETIC_BILLING_CONCURRENCY = 2
+IMAGE_GENERATION_MODEL = "google/gemini-3.1-flash-image-preview"
+IMAGE_GENERATION_PROVIDER = "google-ai-studio"
+_IMAGE_CANARY_PROMPT = (
+    "Generate and return an actual square image now, not a textual description. "
+    "Show one solid red circle centered on a white background."
+)
+_MAX_IMAGE_DATA_URL_CHARACTERS = 32 * 1024 * 1024
+_MIN_VALID_IMAGE_BYTES = 1024
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_PNG_END = b"\x00\x00\x00\x00IEND\xaeB`\x82"
 
 
 @dataclass(frozen=True)
@@ -426,6 +437,186 @@ async def responses_pong_probe(
             model=model,
             output_match=False,
         )
+
+
+async def image_generation_probe(
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    api_key: str,
+    model: str = IMAGE_GENERATION_MODEL,
+    provider: str = IMAGE_GENERATION_PROVIDER,
+) -> SyntheticProbeSample:
+    """Generate and validate one image without retaining its content."""
+    url = _api_url(target.api_base_url, "/chat/completions")
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": _IMAGE_CANARY_PROMPT}],
+        "provider": {"only": [provider], "allow_fallbacks": False},
+        "max_tokens": 2048,
+        "metadata": {
+            "trustedrouter_synthetic": "true",
+            "probe": "image_generation",
+        },
+    }
+    started = time.perf_counter()
+    try:
+        response = await client.post(url, json=body, headers=_auth_headers(api_key))
+        latency_ms = _elapsed_ms(started)
+        payload = _json_object(response)
+        valid_image = response.status_code == 200 and _has_valid_generated_image(payload)
+        metadata = _completion_metadata(payload)
+        return _sample(
+            "image_generation",
+            target,
+            monitor_region,
+            url,
+            status="up" if valid_image else "down",
+            latency_milliseconds=latency_ms,
+            ttfb_milliseconds=latency_ms,
+            http_status=response.status_code,
+            error_type=None
+            if valid_image
+            else (
+                "invalid_image_payload"
+                if response.status_code == 200
+                else "image_generation_http_error"
+            ),
+            provider=provider,
+            model=model,
+            selected_provider=metadata["selected_provider"],
+            selected_model=metadata["selected_model"],
+            generation_id=metadata["generation_id"],
+            cost_microdollars=metadata["cost_microdollars"],
+            output_match=valid_image,
+        )
+    except httpx.HTTPError as exc:
+        return _sample(
+            "image_generation",
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=_elapsed_ms(started),
+            error_type=exc.__class__.__name__,
+            provider=provider,
+            model=model,
+            output_match=False,
+        )
+
+
+def _json_object(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _has_valid_generated_image(payload: dict[str, Any]) -> bool:
+    return any(_valid_image_data_url(value) for value in _generated_image_data_urls(payload))
+
+
+def _generated_image_data_urls(payload: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        message = choices[0].get("message")
+        if isinstance(message, dict):
+            urls.extend(_content_image_data_urls(message.get("content")))
+            urls.extend(_content_image_data_urls(message.get("images")))
+    urls.extend(_content_image_data_urls(payload.get("images")))
+    return urls
+
+
+def _content_image_data_urls(content: Any) -> list[str]:
+    if isinstance(content, str):
+        return [content] if content.startswith("data:image/") else []
+    if isinstance(content, dict):
+        image_url = content.get("image_url")
+        if isinstance(image_url, str):
+            return [image_url]
+        if isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
+            return [str(image_url["url"])]
+        for key in ("url", "data"):
+            value = content.get(key)
+            if isinstance(value, str) and value.startswith("data:image/"):
+                return [value]
+        return []
+    if not isinstance(content, list):
+        return []
+    return [url for part in content for url in _content_image_data_urls(part)]
+
+
+def _valid_image_data_url(value: str) -> bool:
+    if len(value) > _MAX_IMAGE_DATA_URL_CHARACTERS or "," not in value:
+        return False
+    header, encoded = value.split(",", 1)
+    header_lower = header.lower()
+    if ";base64" not in header_lower:
+        return False
+    if header_lower not in {
+        "data:image/jpeg;base64",
+        "data:image/jpg;base64",
+        "data:image/png;base64",
+    }:
+        return False
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    if len(image) < _MIN_VALID_IMAGE_BYTES:
+        return False
+    if header_lower in {"data:image/jpeg;base64", "data:image/jpg;base64"}:
+        return image.startswith(b"\xff\xd8\xff") and image.endswith(b"\xff\xd9")
+    return image.startswith(_PNG_SIGNATURE) and image.endswith(_PNG_END)
+
+
+def _completion_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    trustedrouter = payload.get("trustedrouter")
+    if not isinstance(trustedrouter, dict):
+        trustedrouter = {}
+    routing = trustedrouter.get("routing")
+    if not isinstance(routing, dict):
+        routing = {}
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    provider_usage = usage.get("provider_usage")
+    if not isinstance(provider_usage, dict):
+        provider_usage = {}
+    raw_cost = usage.get("total_cost_microdollars") or usage.get("cost_microdollars")
+    if raw_cost is None:
+        raw_cost = provider_usage.get("total_cost_microdollars") or provider_usage.get(
+            "cost_microdollars"
+        )
+    try:
+        cost_microdollars = int(raw_cost or 0)
+    except (TypeError, ValueError):
+        cost_microdollars = 0
+    return {
+        "selected_provider": _optional_metadata_string(
+            routing.get("selected_provider")
+            or provider_usage.get("selected_provider")
+            or payload.get("provider")
+        ),
+        "selected_model": _optional_metadata_string(
+            routing.get("selected_model")
+            or provider_usage.get("selected_model")
+            or payload.get("model")
+        ),
+        "generation_id": _optional_metadata_string(
+            provider_usage.get("generation_id")
+            or trustedrouter.get("generation_id")
+            or payload.get("id")
+        ),
+        "cost_microdollars": cost_microdollars,
+    }
+
+
+def _optional_metadata_string(value: Any) -> str | None:
+    return str(value) if value not in (None, "") else None
 
 
 async def gateway_billing_probe(

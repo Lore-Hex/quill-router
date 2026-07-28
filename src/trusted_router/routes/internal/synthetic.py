@@ -18,7 +18,11 @@ from trusted_router.synthetic.probes import (
     gateway_fallback_probe,
     run_synthetic_once,
 )
-from trusted_router.synthetic.route_health import evaluate_route_health, report_route_health
+from trusted_router.synthetic.route_health import (
+    evaluate_route_health,
+    report_image_generation_failures,
+    report_route_health,
+)
 from trusted_router.types import ErrorType
 
 
@@ -44,6 +48,7 @@ def register(router: APIRouter) -> None:
         # Offload the blocking storage writes so a slow write never stalls the
         # shared event loop; still awaited so `recorded` stays truthful.
         await run_in_threadpool(_record_probe_samples, samples)
+        await run_in_threadpool(report_image_generation_failures, samples)
         return {"data": {"recorded": len(samples)}}
 
     @router.post("/internal/synthetic/benchmark")

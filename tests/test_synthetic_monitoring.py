@@ -46,6 +46,8 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.probes import (
+    IMAGE_GENERATION_MODEL,
+    IMAGE_GENERATION_PROVIDER,
     SyntheticTarget,
     _rotation_max_tokens,
     _rotation_omits_temperature,
@@ -54,6 +56,7 @@ from trusted_router.synthetic.probes import (
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
+    image_generation_probe,
     openai_chat_pong_probe,
     provider_rotation_probe,
     responses_pong_probe,
@@ -69,6 +72,7 @@ from trusted_router.synthetic.rollups import (
 from trusted_router.synthetic.route_health import (
     RouteHealthFlag,
     evaluate_route_health,
+    report_image_generation_failures,
     report_route_health,
 )
 from trusted_router.synthetic.status import history_payload, status_snapshot
@@ -883,6 +887,60 @@ def test_status_components_group_regions_and_control_plane() -> None:
     assert snapshot["overall_status"] == "routing_degraded"
 
 
+def test_status_tracks_image_generation_without_changing_slo_classes() -> None:
+    now = utcnow()
+    image_sample = _sample(
+        id="syn_image",
+        target="canonical",
+        target_region="us-central1",
+        monitor_region="us-central1",
+        probe_type="image_generation",
+        status="up",
+        created_at=(now - dt.timedelta(minutes=1)).isoformat().replace("+00:00", "Z"),
+        model=IMAGE_GENERATION_MODEL,
+        provider=IMAGE_GENERATION_PROVIDER,
+        latency_milliseconds=12_000,
+    )
+
+    snapshot = status_snapshot([image_sample], now=now)
+    components = {component["id"]: component for component in snapshot["components"]}
+
+    assert components["image_generation"]["status"] == "up"
+    assert components["image_generation"]["sample_count_24h"] == 1
+    assert all(
+        slo["windows"]["24h"]["sample_count"] == 0
+        for slo in snapshot["slo_classes"].values()
+    )
+
+
+def test_image_generation_component_stays_current_between_six_hour_checks() -> None:
+    now = utcnow()
+    image_sample = _sample(
+        id="syn_image_between_checks",
+        target="canonical",
+        probe_type="image_generation",
+        status="up",
+        created_at=(now - dt.timedelta(hours=6, minutes=30))
+        .isoformat()
+        .replace("+00:00", "Z"),
+    )
+
+    snapshot = status_snapshot([image_sample], now=now)
+    component = next(
+        row for row in snapshot["components"] if row["id"] == "image_generation"
+    )
+
+    assert component["status"] == "up"
+    stale_snapshot = status_snapshot(
+        [image_sample],
+        now=now + dt.timedelta(minutes=31),
+    )
+    stale_component = next(
+        row for row in stale_snapshot["components"] if row["id"] == "image_generation"
+    )
+    assert stale_component["status"] == "unknown"
+
+
 def test_status_component_current_uses_latest_sample_per_probe() -> None:
     now = utcnow()
     samples = [
@@ -1109,6 +1167,136 @@ async def test_synthetic_http_probes_parse_success_shapes() -> None:
     assert chat.output_match is True
     assert responses.status == "up"
     assert responses.output_match is True
+
+
+@pytest.mark.asyncio
+async def test_image_generation_probe_validates_binary_and_records_only_metadata() -> None:
+    image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
+    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    requests: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-image",
+                "model": IMAGE_GENERATION_MODEL,
+                "choices": [{"message": {"content": data_url}}],
+                "trustedrouter": {
+                    "routing": {
+                        "selected_provider": IMAGE_GENERATION_PROVIDER,
+                        "selected_model": IMAGE_GENERATION_MODEL,
+                    }
+                },
+                "usage": {
+                    "cost_microdollars": 88_207,
+                    "provider_usage": {"generation_id": "gen-image"},
+                },
+            },
+        )
+
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await image_generation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+        )
+
+    assert sample.status == "up"
+    assert sample.output_match is True
+    assert sample.selected_provider == IMAGE_GENERATION_PROVIDER
+    assert sample.selected_model == IMAGE_GENERATION_MODEL
+    assert sample.generation_id == "gen-image"
+    assert sample.cost_microdollars == 88_207
+    assert requests == [
+        {
+            "model": IMAGE_GENERATION_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Generate and return an actual square image now, not a textual "
+                        "description. Show one solid red circle centered on a white "
+                        "background."
+                    ),
+                }
+            ],
+            "provider": {
+                "only": [IMAGE_GENERATION_PROVIDER],
+                "allow_fallbacks": False,
+            },
+            "max_tokens": 2048,
+            "metadata": {
+                "trustedrouter_synthetic": "true",
+                "probe": "image_generation",
+            },
+        }
+    ]
+    public = json.dumps(sample.public_dict())
+    assert "solid red circle" not in public
+    assert data_url not in public
+    assert "base64" not in public
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "expected_error"),
+    [
+        ("plain text instead of an image", "invalid_image_payload"),
+        ("data:image/jpeg;base64,not-base64!", "invalid_image_payload"),
+        (
+            "data:image/jpeg;base64,"
+            + base64.b64encode(b"\xff\xd8\xff" + b"\x00" * 2048).decode(),
+            "invalid_image_payload",
+        ),
+    ],
+)
+async def test_image_generation_probe_rejects_missing_or_invalid_images(
+    content: str,
+    expected_error: str,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": content}}]},
+        )
+
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await image_generation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+        )
+
+    assert sample.status == "down"
+    assert sample.output_match is False
+    assert sample.error_type == expected_error
+
+
+@pytest.mark.asyncio
+async def test_image_generation_probe_does_not_copy_provider_error_body() -> None:
+    provider_error_marker = "provider response body must not be retained"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502, json={"error": {"message": provider_error_marker}})
+
+    target = SyntheticTarget("canonical", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await image_generation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+        )
+
+    assert sample.status == "down"
+    assert sample.error_type == "image_generation_http_error"
+    assert provider_error_marker not in json.dumps(sample.public_dict())
 
 
 @pytest.mark.asyncio
@@ -1471,9 +1659,12 @@ def _sample(
     target_region: str | None = "us-central1",
     monitor_region: str = "us-central1",
     model: str | None = None,
+    provider: str | None = None,
     output_match: bool | None = None,
     created_at: str | None = None,
     latency_milliseconds: int | None = None,
+    error_type: str | None = None,
+    http_status: int | None = None,
 ) -> SyntheticProbeSample:
     return SyntheticProbeSample(
         id=id,
@@ -1484,8 +1675,11 @@ def _sample(
         target_region=target_region,
         status=status,
         model=model,
+        provider=provider,
         output_match=output_match,
         latency_milliseconds=latency_milliseconds,
+        error_type=error_type,
+        http_status=http_status,
         created_at=created_at or iso_now(),
     )
 
@@ -1960,6 +2154,76 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_START_DELAY_SECONDS=45"' in body
     assert '"${throughput_job_name}-every-minute"' in body
     assert '"${throughput_job_name}-every-two-minutes"' in body
+    assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
+    assert '"TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"' in body
+    assert '"TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"' in body
+    assert '--args="-m,trusted_router.synthetic.image_generation"' in body
+    assert '"17 */6 * * *"' in body
+
+
+@pytest.mark.asyncio
+async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import image_generation as image_job
+
+    image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
+    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    seen_paths: list[str] = []
+    ingested: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-image",
+                    "model": IMAGE_GENERATION_MODEL,
+                    "choices": [{"message": {"content": data_url}}],
+                    "trustedrouter": {
+                        "routing": {"selected_provider": IMAGE_GENERATION_PROVIDER}
+                    },
+                    "usage": {"provider_usage": {"generation_id": "gen-image-job"}},
+                },
+            )
+        if request.url.path == "/v1/internal/synthetic/samples":
+            ingested.append(json.loads(request.content))
+            return httpx.Response(200, json={"data": {"recorded": 1}})
+        return httpx.Response(404)
+
+    settings = Settings(
+        environment="test",
+        api_base_url="https://api.trustedrouter.com/v1",
+        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        synthetic_monitor_api_key="sk-tr-test",
+    )
+    real_async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+        return real_async_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(image_job, "get_settings", lambda: settings)
+    monkeypatch.setattr(image_job.httpx, "AsyncClient", client_factory)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_INGEST_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/samples",
+    )
+
+    result = await image_job.run()
+
+    assert result == 0
+    assert seen_paths == ["/v1/chat/completions", "/v1/internal/synthetic/samples"]
+    assert len(ingested) == 1
+    sample = ingested[0]["samples"][0]
+    assert sample["probe_type"] == "image_generation"
+    assert sample["status"] == "up"
+    assert data_url not in json.dumps(ingested)
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "up"
+    assert output["generation_id"] == "gen-image-job"
 
 
 class _FakeCell:
@@ -2829,6 +3093,80 @@ def test_report_route_health_uses_one_sentry_fingerprint_per_route(
         "route_model": "model-a",
         "failure_rate": "1.0000",
     }
+
+
+def test_image_generation_failure_alert_is_fingerprinted_and_metadata_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sentry_sdk
+
+    class CapturedScope:
+        def __init__(self) -> None:
+            self.fingerprint: list[str] = []
+            self.tags: dict[str, str] = {}
+
+        def set_tag(self, key: str, value: str) -> None:
+            self.tags[key] = value
+
+    class ScopeManager:
+        def __init__(self, scope: CapturedScope) -> None:
+            self.scope = scope
+
+        def __enter__(self) -> CapturedScope:
+            return self.scope
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+    scopes: list[CapturedScope] = []
+    captured: list[tuple[str, str]] = []
+
+    def push_scope() -> ScopeManager:
+        scope = CapturedScope()
+        scopes.append(scope)
+        return ScopeManager(scope)
+
+    def capture_message(message: str, *, level: str) -> None:
+        captured.append((message, level))
+
+    monkeypatch.setattr(sentry_sdk, "push_scope", push_scope)
+    monkeypatch.setattr(sentry_sdk, "capture_message", capture_message)
+    failed = _sample(
+        id="syn_image_failed",
+        probe_type="image_generation",
+        status="down",
+        provider=IMAGE_GENERATION_PROVIDER,
+        model=IMAGE_GENERATION_MODEL,
+        error_type="invalid_image_payload",
+        http_status=200,
+    )
+    healthy = _sample(
+        id="syn_image_healthy",
+        probe_type="image_generation",
+        status="up",
+        provider=IMAGE_GENERATION_PROVIDER,
+        model=IMAGE_GENERATION_MODEL,
+    )
+
+    report_image_generation_failures([healthy, failed])
+
+    assert captured == [
+        (
+            (
+                "image-generation-canary: google-ai-studio/"
+                "google/gemini-3.1-flash-image-preview failed "
+                "(invalid_image_payload, HTTP 200)"
+            ),
+            "error",
+        )
+    ]
+    assert scopes[0].fingerprint == [
+        "image-generation-canary",
+        IMAGE_GENERATION_PROVIDER,
+        IMAGE_GENERATION_MODEL,
+    ]
+    assert "prompt" not in json.dumps(scopes[0].tags).lower()
+    assert "output" not in json.dumps(scopes[0].tags).lower()
 
 
 def test_internal_route_health_reports_flags_and_requires_token(

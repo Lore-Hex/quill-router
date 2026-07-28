@@ -18,6 +18,7 @@ from trusted_router.synthetic.components import (
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
 CURRENT_SAMPLE_TTL_SECONDS = 5 * 60
+IMAGE_GENERATION_SAMPLE_TTL_SECONDS = 7 * 60 * 60
 STATUS_HISTORY_HOURS = 48
 # Uptime thresholds for per-bucket coloring. Single-sample blips
 # shouldn't paint a whole hour red; tune the cutoffs to roughly match
@@ -797,8 +798,16 @@ def _latest_recent_component_samples(
         key = (sample.monitor_region, sample.target, sample.probe_type)
         if key not in latest:
             latest[key] = sample
-    cutoff = now - dt.timedelta(seconds=CURRENT_SAMPLE_TTL_SECONDS)
-    return [sample for sample in latest.values() if _parse_time(sample.created_at) >= cutoff]
+    return [
+        sample
+        for sample in latest.values()
+        if (now - _parse_time(sample.created_at)).total_seconds()
+        <= (
+            IMAGE_GENERATION_SAMPLE_TTL_SECONDS
+            if sample.probe_type == "image_generation"
+            else CURRENT_SAMPLE_TTL_SECONDS
+        )
+    ]
 
 
 def _component_history(

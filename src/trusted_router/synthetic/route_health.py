@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
+from trusted_router.storage_models import SyntheticProbeSample
 from trusted_router.store_protocol import Store
 from trusted_router.synthetic.probes import rotation_candidates
 
@@ -140,6 +141,36 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
             scope.set_tag("route_provider", flag.provider)
             scope.set_tag("route_model", flag.model)
             scope.set_tag("failure_rate", f"{flag.failure_rate:.4f}")
+            sentry_sdk.capture_message(message, level="error")
+
+
+def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> None:
+    """Report image-route failures without carrying generated content."""
+    failures = [
+        sample
+        for sample in samples
+        if sample.probe_type == "image_generation" and sample.status != "up"
+    ]
+    if not failures:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+
+    for sample in failures:
+        provider = sample.selected_provider or sample.provider or "unknown"
+        model = sample.selected_model or sample.model or "unknown"
+        error_type = sample.error_type or "unknown"
+        message = (
+            f"image-generation-canary: {provider}/{model} failed "
+            f"({error_type}, HTTP {sample.http_status or 'none'})"
+        )
+        with sentry_sdk.push_scope() as scope:
+            scope.fingerprint = ["image-generation-canary", provider, model]
+            scope.set_tag("route_provider", provider)
+            scope.set_tag("route_model", model)
+            scope.set_tag("probe_error_type", error_type)
             sentry_sdk.capture_message(message, level="error")
 
 
