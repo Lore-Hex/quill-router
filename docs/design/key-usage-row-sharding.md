@@ -58,6 +58,12 @@ Keys with an exact lifetime cap stay at one row. Reverse with `--shards 1`
 before any typed-to-JSON rollback or shard-zero repair; those older tools now
 refuse sharded state.
 
+The operator retains legacy reservation rows for audit but does not let
+pre-cutover debris block typed-ledger maintenance forever. Unsettled legacy
+rows newer than 24 hours, or with malformed timestamps, block the operation.
+Older rows are counted and reported as stale while the authoritative typed
+hold set must still be completely drained.
+
 Lifetime usage, BYOK usage, and current daily/weekly/monthly usage are preserved
 as exact global sums. Stale window epochs are discarded because they already
 read as zero under normal lazy-reset semantics.

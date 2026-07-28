@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from typing import Any
 
@@ -26,7 +27,7 @@ from trusted_router.storage_gcp_key_shard_admin import (
     inspect_key_usage_reshard,
     reshard_key_usage,
 )
-from trusted_router.storage_models import CreditAccount, Workspace
+from trusted_router.storage_models import CreditAccount, Reservation, Workspace
 
 
 def _seed(*, key_shards: int = 4) -> tuple[Any, Any, Any]:
@@ -443,6 +444,29 @@ def test_key_usage_operator_refuses_lifetime_capped_or_undrained_key() -> None:
     undrained = reshard_key_usage(store, key.hash, 4, apply=True)
     assert not undrained.ready
     assert any("open typed reservations" in reason for reason in undrained.reasons)
+
+
+def test_key_reshard_ignores_but_reports_retained_stale_legacy_hold() -> None:
+    store, _database, key = _seed(key_shards=1)
+    store._write_entity(
+        "reservation",
+        "legacy-stale-key",
+        Reservation(
+            id="legacy-stale-key",
+            workspace_id=key.workspace_id,
+            key_hash=key.hash,
+            amount_microdollars=1,
+            created_at=(
+                dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+            ).isoformat(),
+        ),
+    )
+
+    result = reshard_key_usage(store, key.hash, 4, apply=True)
+
+    assert result.ready and result.applied
+    assert result.legacy_open_reservations == 0
+    assert result.stale_legacy_reservations_ignored == 1
 
 
 def test_key_usage_operator_status_is_idempotent_after_split() -> None:

@@ -12,7 +12,10 @@ from trusted_router.storage_gcp_counters import (
     distribute_credit_amount,
     key_usage_shard_count,
 )
-from trusted_router.storage_models import ApiKey, Reservation, Workspace, iso_now
+from trusted_router.storage_gcp_legacy_reservations import (
+    legacy_reservation_snapshot,
+)
+from trusted_router.storage_models import ApiKey, Workspace, iso_now
 
 _KEY_RESHARD_COLUMNS = (
     "key_hash",
@@ -47,6 +50,7 @@ class KeyUsageReshardResult:
     reserved_micro: int | None = None
     typed_open_reservations: int = 0
     legacy_open_reservations: int = 0
+    stale_legacy_reservations_ignored: int = 0
     reasons: list[str] = field(default_factory=list)
     applied: bool = False
 
@@ -119,11 +123,9 @@ def inspect_key_usage_reshard(
     result.current_shard_count = current_count
     rows, typed_open = _typed_key_state(store, key_hash, current_count)
     result.typed_open_reservations = typed_open
-    result.legacy_open_reservations = sum(
-        1
-        for reservation in store._list_entities("reservation", cls=Reservation)
-        if reservation.key_hash == key_hash and not reservation.settled
-    )
+    legacy = legacy_reservation_snapshot(store)
+    result.legacy_open_reservations = legacy.live_by_key.get(key_hash, 0)
+    result.stale_legacy_reservations_ignored = legacy.stale_by_key.get(key_hash, 0)
     if [int(row[0]) for row in rows] != list(range(current_count)):
         result.reasons.append("configured typed key usage shard set is incomplete")
         return result

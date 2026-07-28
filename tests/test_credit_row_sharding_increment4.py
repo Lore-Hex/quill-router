@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
 import pytest
@@ -177,6 +178,29 @@ def test_reshard_refuses_any_undrained_hold(
     assert any("drain" in reason for reason in result.reasons)
     assert _rows(database) == before
     assert store.get_credit_account("ws-reshard").shard_count == 1
+
+
+def test_reshard_ignores_but_reports_retained_stale_legacy_holds() -> None:
+    store, _database = _seed(shard_credits=[100], shard_usage=[20])
+    store._write_entity(
+        "reservation",
+        "legacy-stale",
+        Reservation(
+            id="legacy-stale",
+            workspace_id="ws-reshard",
+            key_hash="key",
+            amount_microdollars=1,
+            created_at=(
+                dt.datetime.now(dt.UTC) - dt.timedelta(days=2)
+            ).isoformat(),
+        ),
+    )
+
+    result = reshard_credit_account(store, "ws-reshard", 4, apply=True)
+
+    assert result.ready and result.applied
+    assert result.legacy_open_reservations == 0
+    assert result.stale_legacy_reservations_ignored == 1
 
 
 def test_reshard_refuses_incomplete_rows_and_uses_typed_totals() -> None:

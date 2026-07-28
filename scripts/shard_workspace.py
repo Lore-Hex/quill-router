@@ -86,6 +86,11 @@ def _print_status(status: CreditReshardResult) -> None:
         "  open reservations: "
         f"typed={status.typed_open_reservations} legacy={status.legacy_open_reservations}"
     )
+    if status.stale_legacy_reservations_ignored:
+        print(
+            "  retained stale legacy reservations ignored: "
+            f"{status.stale_legacy_reservations_ignored}"
+        )
     for reason in status.reasons:
         print(f"  BLOCKED: {reason}")
 
@@ -97,6 +102,11 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
         f"applied={status.applied} usage={status.usage_micro} "
         f"byok_usage={status.byok_usage_micro} reserved={status.reserved_micro}"
     )
+    if status.stale_legacy_reservations_ignored:
+        print(
+            "    retained stale legacy reservations ignored: "
+            f"{status.stale_legacy_reservations_ignored}"
+        )
     for reason in status.reasons:
         print(f"    BLOCKED: {reason}")
 

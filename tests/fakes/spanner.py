@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -1038,6 +1039,34 @@ def _execute_sql(
                 grp = (rec["key_hash"], rec.get("key_shard", 0))
                 ksums[grp] = ksums.get(grp, 0) + (rec.get("key_reserved_micro") or 0)
         return [[kh, shard, total] for (kh, shard), total in ksums.items()]
+    if "legacy_reshard_guard" in sql:
+        cutoff = params["cutoff"]
+        grouped: dict[tuple[str | None, str | None], list[int]] = {}
+        for (row_kind, _entity_id), row in db.rows.items():
+            if row_kind != "reservation":
+                continue
+            body = json.loads(row.body)
+            if body.get("settled") is not False:
+                continue
+            key = (body.get("workspace_id"), body.get("key_hash"))
+            counts = grouped.setdefault(key, [0, 0])
+            raw_created = body.get("created_at")
+            try:
+                created = dt.datetime.fromisoformat(
+                    str(raw_created).replace("Z", "+00:00")
+                )
+                if created.tzinfo is None:
+                    raise ValueError("naive timestamp")
+            except (TypeError, ValueError):
+                counts[0] += 1
+                continue
+            counts[0 if created >= cutoff else 1] += 1
+        return [
+            [workspace_id, key_hash, counts[0], counts[1]]
+            for (workspace_id, key_hash), counts in sorted(
+                grouped.items(), key=lambda item: repr(item[0])
+            )
+        ]
     # tr_reservation reads (idempotency replay + by-id for settle/reaper).
     if "FROM tr_reservation WHERE idempotency_scope=@scope" in sql:
         scope = params["scope"]
