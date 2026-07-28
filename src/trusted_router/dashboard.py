@@ -52,6 +52,7 @@ from trusted_router.content.legal import (
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
+from trusted_router.provider_contract import PROVIDER_CATALOG_EXAMPLE
 from trusted_router.regions import configured_regions, region_map_payload
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -1209,9 +1210,9 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         template="public/provider_apply.html",
         title="List Your Models on TrustedRouter",
         description=(
-            "Give TrustedRouter a dedicated API key, an inference API base URL, "
-            "a machine-readable model catalog, and a pricing API. We will validate, "
-            "list, monitor, and keep your routes current automatically."
+            "Give TrustedRouter a dedicated API key and one OpenAI-compatible API "
+            "base URL implementing our exact model catalog contract. We will "
+            "validate, list, monitor, and keep your routes current automatically."
         ),
         faq_items=(
             (
@@ -1220,7 +1221,7 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
             (
                 "Why do you require model and pricing APIs?",
-                "TrustedRouter refreshes provider catalogs automatically. Machine-readable model availability and pricing let us add launches, update prices, and remove retired routes without relying on stale web pages or manual email updates.",
+                "TrustedRouter refreshes provider catalogs automatically. The canonical GET /v1/models response includes availability, capabilities, pricing, and lifecycle in one document, so a separate pricing API is not required.",
             ),
             (
                 "What kind of API key should we send?",
@@ -1570,6 +1571,10 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
             google_enabled=settings.google_oauth_enabled,
             github_enabled=settings.github_oauth_enabled,
             static_version=_static_version(settings),
+            provider_catalog_example_json=json.dumps(
+                PROVIDER_CATALOG_EXAMPLE,
+                indent=2,
+            ),
         )
     )
 
