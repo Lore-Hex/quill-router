@@ -597,6 +597,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         ("xiaomi", "xiaomi/mimo-v2-pro"),
         ("friendli", "meta-llama/llama-3.3-70b-instruct"),
         ("google-ai-studio", "google/gemini-3.1-flash-lite-preview"),
+        ("google-ai-studio", "google/gemini-2.5-flash-lite"),
         ("google-vertex", "google/gemini-3.1-flash-lite-preview"),
         ("novita", "baidu/ernie-4.5-vl-28b-a3b"),
         ("novita", "meta-llama/llama-3-70b-instruct"),
@@ -646,6 +647,12 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
     # Residue quarantine is provider-scoped: healthy siblings survive.
     assert "z-ai/glm-5@zai/prepaid" in MODEL_ENDPOINTS
     assert "deepseek/deepseek-v4-pro@deepseek/prepaid" in MODEL_ENDPOINTS
+    assert [
+        endpoint
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.model_id == "google/gemini-2.5-flash-lite"
+        and endpoint.provider != "google-ai-studio"
+    ], "provider-scoped AI Studio retirement must preserve healthy routes"
 
 
 def test_anthropic_opus_41_drops_prepaid_but_keeps_byok_until_retirement() -> None:

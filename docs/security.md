@@ -37,6 +37,25 @@ BYOK key produces a different cache key and forces a new KMS unwrap. Deleting a
 BYOK key stops returning an envelope in `/internal/gateway/authorize`, so stale
 cache entries are no longer reachable and expire by TTL.
 
+Operators can prove the full production contract with the explicit,
+destructive smoke:
+
+```bash
+set -a
+source ~/.quill_cloud_keys.private
+set +a
+TR_BYOK_PROD_SMOKE=1 uv run python scripts/smoke_byok_prod.py
+unset CEREBRAS_API_KEY TR_BYOK_PROD_SMOKE
+```
+
+The smoke creates an isolated workspace, uploads a Cerebras key, verifies two
+provider-forced attested calls across an envelope rotation, checks BYOK
+settlement and an unchanged prepaid balance, deletes the provider credential,
+and proves subsequent BYOK authorization fails closed. It never prints the
+provider key. The BYOK row and inference key are deleted and the disposable
+workspace is soft-deleted in a `finally` block. Run it manually for security
+releases, not on every deploy, because it creates durable signup audit metadata.
+
 ## API Keys
 
 API keys are verified with a per-key random salt and SHA-256 digest. The public
