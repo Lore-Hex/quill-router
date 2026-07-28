@@ -137,16 +137,16 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     expected_cached_prompt_price = _customer_price(
         int(kimi_k3_row["cached_input_token_price_per_m"])
     )
+    kimi_k3_endpoints = endpoints_for_model("moonshotai/kimi-k3")
     assert kimi_k3.context_length == 1_048_576
-    assert kimi_k3.prompt_price_microdollars_per_million_tokens == expected_prompt_price
-    assert (
-        kimi_k3.completion_price_microdollars_per_million_tokens
-        == expected_completion_price
-    )
-    assert (
-        kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
-        == expected_cached_prompt_price
-    )
+    assert kimi_k3.prompt_price_microdollars_per_million_tokens in {
+        endpoint.prompt_price_microdollars_per_million_tokens
+        for endpoint in kimi_k3_endpoints
+    }
+    assert kimi_k3.completion_price_microdollars_per_million_tokens in {
+        endpoint.completion_price_microdollars_per_million_tokens
+        for endpoint in kimi_k3_endpoints
+    }
     kimi_k3_direct = MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"]
     assert kimi_k3_direct.upstream_id == "kimi-k3"
     assert (
@@ -156,6 +156,10 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert (
         kimi_k3_direct.completion_price_microdollars_per_million_tokens
         == expected_completion_price
+    )
+    assert (
+        kimi_k3_direct.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        == expected_cached_prompt_price
     )
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
