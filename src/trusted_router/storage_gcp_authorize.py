@@ -76,6 +76,7 @@ def check_key_window_limits(
     key_hash: str,
     estimate: int,
     window_limits: dict[str, int],
+    shard_count: int = 1,
     idempotency_scope: str | None = None,
     idempotency_fingerprint: str | None = None,
 ) -> str | None:
@@ -92,11 +93,15 @@ def check_key_window_limits(
     must REPLAY, never 429 — so an existing same-fingerprint reservation makes
     this check a pass-through (the in-txn idempotency read stays the final
     authority). A missing typed row also passes through: reserve_key's in-txn
-    classification fail-closes it as KEY_MISSING.
+    classification fail-closes it as KEY_MISSING. When the configured set has
+    multiple rows, usage is summed over every row and an incomplete set fails
+    closed.
 
     The CALLER must omit windows that don't apply (e.g. a BYOK request on a key
     that excludes BYOK from its caps).
     """
+    if shard_count < 1:
+        raise ValueError("shard_count must be positive")
     pt = param_types
     with database.snapshot(multi_use=True) as snapshot:
         if idempotency_scope is not None:
@@ -106,24 +111,38 @@ def check_key_window_limits(
                 and existing["idempotency_fingerprint"] == idempotency_fingerprint
             ):
                 return None  # replayable — let the transaction replay it
-        rows = list(snapshot.execute_sql(
-            "SELECT day_usage, day_start, week_usage, week_start, "
-            "month_usage, month_start FROM tr_key_limit "
-            "WHERE key_hash=@kh AND shard=0",
-            params={"kh": key_hash},
-            param_types={"kh": pt.STRING},
-        ))
+        rows = list(
+            snapshot.execute_sql(
+                "SELECT shard, day_usage, day_start, week_usage, week_start, "
+                "month_usage, month_start FROM tr_key_limit "
+                "WHERE key_hash=@kh AND shard>=0 AND shard<@shard_count "
+                "ORDER BY shard",
+                params={"kh": key_hash, "shard_count": shard_count},
+                param_types={"kh": pt.STRING, "shard_count": pt.INT64},
+            )
+        )
     if not rows:
         return None  # no typed row -> reserve_key fail-closes as KEY_MISSING
+    if [int(row[0]) for row in rows] != list(range(shard_count)):
+        raise RuntimeError("configured tr_key_limit usage shard set is incomplete")
     floors = window_floors(utcnow())
-    day_u, day_s, week_u, week_s, month_u, month_s = rows[0]
     # Pre-DDL rows read NULL usage; a NULL/stale start means the window rolled
     # over (or never started) = zero spend this window.
     current = {
-        "daily": int(day_u or 0) if day_s is not None and day_s >= floors["daily"] else 0,
-        "weekly": int(week_u or 0) if week_s is not None and week_s >= floors["weekly"] else 0,
-        "monthly": (
-            int(month_u or 0) if month_s is not None and month_s >= floors["monthly"] else 0
+        "daily": sum(
+            int(row[1] or 0)
+            for row in rows
+            if row[2] is not None and row[2] >= floors["daily"]
+        ),
+        "weekly": sum(
+            int(row[3] or 0)
+            for row in rows
+            if row[4] is not None and row[4] >= floors["weekly"]
+        ),
+        "monthly": sum(
+            int(row[5] or 0)
+            for row in rows
+            if row[6] is not None and row[6] >= floors["monthly"]
         ),
     }
     for window in ("daily", "weekly", "monthly"):

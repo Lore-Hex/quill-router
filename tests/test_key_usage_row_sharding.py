@@ -11,6 +11,7 @@ from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
     SettleOutcome,
     authorize_atomic,
+    check_key_window_limits,
     settle_atomic,
 )
 from trusted_router.storage_gcp_counter_reconcile import (
@@ -97,21 +98,23 @@ def _auth_body(authorization_id: str, reservation_id: str) -> str:
     )
 
 
-def test_key_usage_shards_default_and_fail_closed_for_capped_keys() -> None:
+def test_key_usage_shards_default_and_fail_closed_for_lifetime_caps() -> None:
     assert key_usage_shard_count({}) == 1
     assert key_usage_shard_count({"usage_shard_count": 16}) == 16
     with pytest.raises(ValueError, match="positive integer"):
         key_usage_shard_count({"usage_shard_count": 0})
     with pytest.raises(ValueError, match="must not exceed"):
         key_usage_shard_count({"usage_shard_count": 65})
-    with pytest.raises(ValueError, match="only uncapped"):
+    with pytest.raises(ValueError, match="exact lifetime limit"):
         key_usage_shard_count(
             {"usage_shard_count": 2, "limit_microdollars": 1_000_000}
         )
-    with pytest.raises(ValueError, match="only uncapped"):
+    assert (
         key_usage_shard_count(
             {"usage_shard_count": 2, "limit_daily_microdollars": 1_000_000}
         )
+        == 2
+    )
 
 
 def test_sharded_key_metadata_update_does_not_clobber_typed_counters() -> None:
@@ -255,8 +258,119 @@ def test_adding_a_limit_to_sharded_key_is_rejected_atomically() -> None:
     assert persisted.usage_shard_count == 4
 
 
+def test_adding_window_limits_to_sharded_key_preserves_usage_rows() -> None:
+    store, database, key = _seed(key_shards=4)
+    rows = database.typed[KEY_LIMIT_TABLE]
+    rows[(key.hash, 2)]["usage"] = 123
+    rows[(key.hash, 2)]["day_usage"] = 45
+    rows[(key.hash, 2)]["day_start"] = window_floors(utcnow())["daily"]
+
+    updated = store.api_keys.update(
+        key.hash,
+        {
+            "limit_daily_microdollars": 1_000_000,
+            "limit_weekly_microdollars": 4_000_000,
+        },
+    )
+
+    assert updated is not None
+    assert updated.usage_shard_count == 4
+    for shard in range(4):
+        assert rows[(key.hash, shard)]["day_limit_micro"] == 1_000_000
+        assert rows[(key.hash, shard)]["week_limit_micro"] == 4_000_000
+    assert rows[(key.hash, 2)]["usage"] == 123
+    assert rows[(key.hash, 2)]["day_usage"] == 45
+
+
+def test_window_limit_check_sums_all_usage_shards_and_fails_closed() -> None:
+    store, database, key = _seed(key_shards=4)
+    floors = window_floors(utcnow())
+    rows = database.typed[KEY_LIMIT_TABLE]
+    for shard, usage in enumerate((200, 250, 300, 150)):
+        rows[(key.hash, shard)]["day_usage"] = usage
+        rows[(key.hash, shard)]["day_start"] = floors["daily"]
+
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=101,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+        == "daily"
+    )
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=100,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+        is None
+    )
+
+    rows.pop((key.hash, 3))
+    with pytest.raises(RuntimeError, match="usage shard set is incomplete"):
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 1_000},
+            shard_count=4,
+        )
+    with pytest.raises(ValueError, match="shard_count must be positive"):
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 1_000},
+            shard_count=0,
+        )
+
+
+def test_typed_gateway_authorize_applies_window_limit_across_shards() -> None:
+    store, database, key = _seed(key_shards=4)
+    floors = window_floors(utcnow())
+    rows = database.typed[KEY_LIMIT_TABLE]
+    for shard in range(4):
+        rows[(key.hash, shard)]["day_usage"] = 250
+        rows[(key.hash, shard)]["day_start"] = floors["daily"]
+
+    outcome, authorization = store.authorize_gateway_typed(
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=1,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        model_id="test/model",
+        provider="test",
+        requested_model_id="test/model",
+        candidate_model_ids=["test/model"],
+        region="test",
+        endpoint_id="test-endpoint",
+        candidate_endpoint_ids=["test-endpoint"],
+        idempotency_key="window-shard-limit",
+        idempotency_fingerprint="same-body",
+        key_usage_shards=4,
+        window_limits={"daily": 1_000},
+    )
+
+    assert outcome == f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:daily"
+    assert authorization is None
+
+
 def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     store, database, key = _seed(key_shards=1)
+    key.limit_daily_microdollars = 1_000_000
+    key.limit_weekly_microdollars = 4_000_000
+    key.limit_monthly_microdollars = 10_000_000
+    store._write_entity("api_key", key.hash, key)
     floors = window_floors(utcnow())
     row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
     row.update(
@@ -283,6 +397,9 @@ def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     assert sum(row["week_usage"] for row in rows) == 23
     assert sum(row["month_usage"] for row in rows) == 29
     assert all(row["reserved"] == 0 for row in rows)
+    assert all(row["day_limit_micro"] == 1_000_000 for row in rows)
+    assert all(row["week_limit_micro"] == 4_000_000 for row in rows)
+    assert all(row["month_limit_micro"] == 10_000_000 for row in rows)
 
     unshard = reshard_key_usage(store, key.hash, 1, apply=True)
 
@@ -303,14 +420,17 @@ def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     assert persisted.byok_usage_microdollars == 37
 
 
-def test_key_usage_operator_refuses_capped_or_undrained_key() -> None:
+def test_key_usage_operator_refuses_lifetime_capped_or_undrained_key() -> None:
     store, database, key = _seed(key_shards=1)
     key.limit_microdollars = 1_000_000
     store._write_entity("api_key", key.hash, key)
 
     capped = reshard_key_usage(store, key.hash, 4, apply=True)
     assert not capped.ready
-    assert "capped API key must remain on one usage shard" in capped.reasons
+    assert (
+        "API key with an exact lifetime limit must remain on one usage shard"
+        in capped.reasons
+    )
 
     key.limit_microdollars = None
     store._write_entity("api_key", key.hash, key)

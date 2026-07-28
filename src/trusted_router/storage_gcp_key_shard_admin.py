@@ -55,15 +55,6 @@ class KeyUsageReshardResult:
         return not self.reasons
 
 
-def _limits(key: ApiKey) -> tuple[int | None, int | None, int | None, int | None]:
-    return (
-        key.limit_microdollars,
-        key.limit_daily_microdollars,
-        key.limit_weekly_microdollars,
-        key.limit_monthly_microdollars,
-    )
-
-
 def _typed_key_state(
     store: Any,
     key_hash: str,
@@ -115,8 +106,10 @@ def inspect_key_usage_reshard(
         result.reasons.append("workspace not found")
     elif not workspace.billing_paused:
         result.reasons.append("workspace not billing-paused")
-    if target_count > 1 and any(limit is not None for limit in _limits(key)):
-        result.reasons.append("capped API key must remain on one usage shard")
+    if target_count > 1 and key.limit_microdollars is not None:
+        result.reasons.append(
+            "API key with an exact lifetime limit must remain on one usage shard"
+        )
 
     try:
         current_count = key_usage_shard_count(key)
@@ -183,7 +176,7 @@ def reshard_key_usage(
         )
         if workspace is None or not workspace.billing_paused:
             return None
-        if target_count > 1 and any(limit is not None for limit in _limits(key)):
+        if target_count > 1 and key.limit_microdollars is not None:
             return None
         current_count = key_usage_shard_count(key)
         rows = list(
@@ -242,14 +235,14 @@ def reshard_key_usage(
                 (
                     key_hash,
                     shard,
-                    None,
+                    key.limit_microdollars,
                     usage_parts[shard],
                     byok_parts[shard],
                     0,
                     key.include_byok_in_limit,
-                    None,
-                    None,
-                    None,
+                    key.limit_daily_microdollars,
+                    key.limit_weekly_microdollars,
+                    key.limit_monthly_microdollars,
                     day_parts[shard],
                     floors["daily"],
                     week_parts[shard],

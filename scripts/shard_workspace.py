@@ -1,4 +1,4 @@
-"""Safely split or consolidate a workspace's credit and uncapped key rows.
+"""Safely split or consolidate workspace credit and key-usage rows.
 
 The operation is intentionally two phase so a failed verification can never
 silently resume billing:
@@ -12,8 +12,10 @@ silently resume billing:
   # Verify the committed shape + global billing invariants, then unpause.
   python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 
-Eligible uncapped API-key usage rows are split to the same count; capped keys
-remain on one exact row. Reverse with the same commands and ``--shards 1``.
+Eligible API-key usage rows are split to the same count; keys with an exact
+lifetime cap remain on one row. Approximate daily/weekly/monthly windows sum
+usage across the configured rows. Reverse with the same commands and
+``--shards 1``.
 Without ``--apply`` every command is read-only. A failed prepare/finish always
 leaves the workspace paused.
 """
@@ -100,16 +102,7 @@ def _print_key_status(status: KeyUsageReshardResult) -> None:
 
 
 def _key_target(key: ApiKey, requested_shards: int) -> int:
-    has_limit = any(
-        value is not None
-        for value in (
-            key.limit_microdollars,
-            key.limit_daily_microdollars,
-            key.limit_weekly_microdollars,
-            key.limit_monthly_microdollars,
-        )
-    )
-    return 1 if has_limit else requested_shards
+    return 1 if key.limit_microdollars is not None else requested_shards
 
 
 def _prepare_keys(store: Any, workspace_id: str, requested_shards: int) -> bool:
@@ -117,7 +110,9 @@ def _prepare_keys(store: Any, workspace_id: str, requested_shards: int) -> bool:
     for key in store.api_keys.list_for_workspace(workspace_id):
         target = _key_target(key, requested_shards)
         if target != requested_shards:
-            print(f"  key {key.hash}: capped; keeping exact usage_shards=1")
+            print(
+                f"  key {key.hash}: exact lifetime cap; keeping usage_shards=1"
+            )
         status = reshard_key_usage(store, key.hash, target, apply=True)
         _print_key_status(status)
         clean = clean and status.ready

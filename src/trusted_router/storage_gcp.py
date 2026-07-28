@@ -1344,6 +1344,7 @@ class SpannerBigtableStore:
                 key_hash=key_hash,
                 estimate=estimate,
                 window_limits=window_limits,
+                shard_count=key_counter_shards,
                 idempotency_scope=scope,
                 idempotency_fingerprint=idempotency_fingerprint,
             )

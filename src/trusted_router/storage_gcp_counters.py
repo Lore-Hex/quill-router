@@ -73,10 +73,10 @@ def credit_shard_count(value: Any) -> int:
 def key_usage_shard_count(value: Any) -> int:
     """Return and validate an API key's usage-counter shard count.
 
-    Only fully uncapped keys may fan usage writes across rows. Partitioning
-    spend limits needs separate sub-budget/rebalance semantics; accepting such
-    a mixed configuration here could weaken a hard user budget, so it fails
-    closed instead.
+    An exact lifetime spend limit must remain on one row because authorize
+    reserves against that row atomically. Daily/weekly/monthly limits are
+    intentionally approximate snapshot checks; their usage can be summed over
+    shards without changing that contract.
     """
     raw = _field(value, "usage_shard_count", 1)
     if isinstance(raw, bool):
@@ -88,16 +88,10 @@ def key_usage_shard_count(value: Any) -> int:
         raise ValueError(
             f"key usage_shard_count must not exceed {MAX_KEY_USAGE_SHARDS}"
         )
-    if count > 1 and any(
-        _field(value, field_name, None) is not None
-        for field_name in (
-            "limit_microdollars",
-            "limit_daily_microdollars",
-            "limit_weekly_microdollars",
-            "limit_monthly_microdollars",
+    if count > 1 and _field(value, "limit_microdollars", None) is not None:
+        raise ValueError(
+            "API keys with an exact lifetime limit must use one usage shard"
         )
-    ):
-        raise ValueError("only uncapped API keys may use sharded usage counters")
     return count
 
 

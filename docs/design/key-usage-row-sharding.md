@@ -1,4 +1,4 @@
-# Uncapped API-key usage-row sharding
+# API-key usage-row sharding
 
 Date: 2026-07-11
 
@@ -12,22 +12,20 @@ fake Spanner retry budget on the one API-key row.
 
 The table and reservation schema already support `(key_hash, shard)` and
 `key_shard`. We use those fields to spread usage writes for high-throughput,
-fully uncapped keys.
+keys without an exact lifetime cap.
 
 ## Scope and hard safety boundary
 
-`ApiKey.usage_shard_count` defaults to 1. A value above 1 is valid only when all
-of these are unset:
+`ApiKey.usage_shard_count` defaults to 1. A value above 1 is invalid when an
+exact lifetime spend limit is configured. That cap reserves headroom inside the
+same transaction and therefore remains byte-identical on shard zero.
 
-- lifetime spend limit
-- daily spend limit
-- weekly spend limit
-- monthly spend limit
-
-Capped keys remain byte-identical on shard zero. Code, management routes, the
-mirror, and the operator all fail closed if a sharded key acquires a limit.
-This deliberately avoids claiming that an unimplemented partitioned key budget
-is exact.
+Daily, weekly, and monthly limits are already approximate, lock-free snapshot
+checks. For sharded keys, the check reads the configured shard set and sums the
+current window usage before applying the same approximate decision. A missing
+configured shard fails closed. Settle records usage on the reservation's
+randomly selected shard. This removes the hot row without claiming an exact
+partitioned lifetime budget.
 
 ## Request lifecycle
 
@@ -35,8 +33,8 @@ is exact.
    typed authorize path. There is no extra hot-path database read.
 2. TrustedRouter randomizes all key usage shards outside the Spanner retry
    callback.
-3. An uncapped row returns `KEY_NO_HOLD`; authorize records the selected
-   `key_shard` on `tr_reservation`.
+3. A row without a lifetime cap returns `KEY_NO_HOLD`; authorize records the
+   selected `key_shard` on `tr_reservation`.
 4. Settle/refund books against exactly that recorded row.
 5. Idempotent replay returns the originally committed key shard.
 
@@ -56,8 +54,9 @@ python scripts/shard_workspace.py finish --workspace WS --shards 16 --apply
 Prepare pauses the workspace, refuses open typed or legacy requests, atomically
 partitions each ledger, verifies it, runs the invariant audit, and leaves the
 workspace paused. Finish re-verifies credit and key row sets before unpausing.
-Capped keys stay at one row. Reverse with `--shards 1` before any typed-to-JSON
-rollback or shard-zero repair; those older tools now refuse sharded state.
+Keys with an exact lifetime cap stay at one row. Reverse with `--shards 1`
+before any typed-to-JSON rollback or shard-zero repair; those older tools now
+refuse sharded state.
 
 Lifetime usage, BYOK usage, and current daily/weekly/monthly usage are preserved
 as exact global sums. Stale window epochs are discarded because they already
