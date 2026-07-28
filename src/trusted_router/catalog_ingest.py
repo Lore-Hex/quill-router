@@ -365,6 +365,11 @@ _PROVIDER_DEPRECATED_UPSTREAM_MODELS: dict[str, frozenset[str]] = {
             "gemini-2.0-flash-001",
             "google/gemini-2.0-flash-lite-001",
             "gemini-2.0-flash-lite-001",
+            # Verified with a newly uploaded BYOK key on 2026-07-28: the
+            # generateContent API returns 404 "no longer available to new
+            # users". Keep reseller and Vertex routes for this model intact.
+            "google/gemini-2.5-flash-lite",
+            "gemini-2.5-flash-lite",
         }
     ),
     "google-vertex": frozenset(
