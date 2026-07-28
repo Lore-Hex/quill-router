@@ -13,7 +13,7 @@
   </div>
   <div class="public-hero-metrics" aria-label="Provider integration requirements">
     <div><strong>1</strong><span>dedicated API key</span></div>
-    <div><strong>3</strong><span>machine-readable URLs</span></div>
+    <div><strong>1</strong><span>canonical catalog endpoint</span></div>
     <div><strong>Hourly</strong><span>catalog refresh</span></div>
   </div>
 </section>
@@ -22,8 +22,8 @@
 {% block body %}
 <section class="public-proof-strip" aria-label="Provider onboarding flow">
   <div><strong>Connect</strong><span>Send a restricted key and API base URL.</span></div>
-  <div><strong>Discover</strong><span>Expose live models through a catalog endpoint.</span></div>
-  <div><strong>Price</strong><span>Publish exact rates through a pricing API.</span></div>
+  <div><strong>Implement</strong><span>Copy the canonical catalog response exactly.</span></div>
+  <div><strong>Publish</strong><span>Expose models, prices, and lifecycle together.</span></div>
   <div><strong>Verify</strong><span>We test, monitor, and list working routes.</span></div>
 </section>
 
@@ -34,9 +34,10 @@
     <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. Include a technical contact who can answer routing and pricing questions.</p>
     <ul class="check-list">
       <li><strong>Dedicated API key.</strong> A revocable production key scoped to inference and model discovery.</li>
-      <li><strong>Inference API URL.</strong> The HTTPS base URL used to call your models, plus authentication and API documentation.</li>
-      <li><strong>Models API URL.</strong> A machine-readable endpoint such as <code>GET /v1/models</code> with stable model IDs and current availability.</li>
-      <li><strong>Pricing API URL.</strong> A machine-readable endpoint with exact input, output, cache, and other billable rates.</li>
+      <li><strong>OpenAI-compatible base URL.</strong> One HTTPS base such as <code>https://api.provider.com/v1</code>.</li>
+      <li><strong>Bearer authentication.</strong> Accept <code>Authorization: Bearer PROVIDER_API_KEY</code> for discovery and inference.</li>
+      <li><strong>Canonical catalog.</strong> Serve the exact response below from <code>GET /v1/models</code>.</li>
+      <li><strong>Chat inference.</strong> Serve OpenAI-compatible requests from <code>POST /v1/chat/completions</code>.</li>
     </ul>
     <p class="small-copy">Never send an account password, owner credential, billing credential, or unrestricted administrative key.</p>
   </div>
@@ -47,17 +48,68 @@ Technical contact:
 
 API base URL:
 API documentation:
-Authentication format:
 Dedicated API key:
 
-Models API URL:
-Pricing API URL:
-
-Supported features:
 Regions:
 Retention policy URL:
 Confidential compute URL:
 Deprecation feed or contact:</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="canonical-contract-heading">
+  <div class="marketing-copy">
+    <span class="eyebrow">Canonical contract v1</span>
+    <h2 id="canonical-contract-heading">Copy this output exactly.</h2>
+    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put availability, capabilities, prices, and lifecycle in each model row.</p>
+    <ul class="check-list">
+      <li><strong>Use exact decimal strings.</strong> Every price is USD per one million tokens. Use <code>"0.50"</code>, never a JSON float.</li>
+      <li><strong>Use <code>null</code> when a cache rate does not apply.</strong> Do not omit required fields.</li>
+      <li><strong>Use lowercase stable IDs.</strong> The format is <code>provider/model-name</code>. Never recycle an ID for a different model.</li>
+      <li><strong>Use UTC timestamps.</strong> Lifecycle timestamps use RFC 3339, for example <code>2026-08-05T00:00:00Z</code>.</li>
+      <li><strong>Use one row per billable tier.</strong> If rates or capabilities differ, publish a distinct stable model ID for that tier.</li>
+    </ul>
+    <p><a href="/providers/apply/catalog.schema.json">Download the JSON Schema</a> and validate the response before emailing us.</p>
+  </div>
+  <div class="copy-terminal" aria-label="Canonical provider catalog response">
+    <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
+    <pre><code>{{ provider_catalog_example_json }}</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-labelledby="validation-heading">
+  <div class="copy-terminal" aria-label="Provider contract validation requests">
+    <div class="code-head"><span>Two required requests</span><span>curl</span></div>
+    <pre><code>export PROVIDER_API_BASE="https://api.provider.com/v1"
+export PROVIDER_API_KEY="replace-me"
+
+curl --fail --silent --show-error \
+  "$PROVIDER_API_BASE/models" \
+  -H "Authorization: Bearer $PROVIDER_API_KEY"
+
+curl --fail --silent --show-error \
+  "$PROVIDER_API_BASE/chat/completions" \
+  -H "Authorization: Bearer $PROVIDER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "acme/atlas-70b",
+    "messages": [{"role": "user", "content": "Reply PONG"}],
+    "max_tokens": 8,
+    "stream": false
+  }'</code></pre>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Acceptance check</span>
+    <h2 id="validation-heading">These two calls must work.</h2>
+    <p>The catalog request must match the published schema. The chat request must return a normal OpenAI chat completion with nonzero token usage.</p>
+    <ul class="check-list">
+      <li>HTTP <code>200</code> with <code>Content-Type: application/json</code></li>
+      <li><code>choices[0].message.content</code> contains <code>PONG</code></li>
+      <li><code>usage.prompt_tokens</code>, <code>usage.completion_tokens</code>, and <code>usage.total_tokens</code> are integers</li>
+      <li>The response <code>model</code> identifies the model that actually ran</li>
+    </ul>
+    <p class="small-copy">If your API cannot implement this contract, email the same address with the incompatibility. Do not invent a second format.</p>
+    <p class="small-copy">Contract v1 covers chat-capable models. Include embeddings, image generation, audio, or other APIs in the email and we will map them separately.</p>
   </div>
 </section>
 
@@ -79,14 +131,14 @@ Deprecation feed or contact:</code></pre>
     <div class="marketing-card">
       <span class="card-label">Catalog</span>
       <h3>A live models endpoint.</h3>
-      <p>Return stable model IDs, availability, context length, maximum output, modalities, and capabilities. Include pagination when needed.</p>
+      <p>Return the canonical unpaginated response above. TrustedRouter reads every model from the single document.</p>
       <code>GET /v1/models</code>
     </div>
     <div class="marketing-card">
       <span class="card-label">Pricing</span>
-      <h3>An exact pricing endpoint.</h3>
-      <p>Return currency, units, input and output rates, cache read and write rates, minimum charges, tiers, and effective timestamps as exact decimals.</p>
-      <code>GET /v1/pricing</code>
+      <h3>Prices live with each model.</h3>
+      <p>Publish input, output, cache, and minimum request rates in each model row. No separate pricing endpoint is required.</p>
+      <code>pricing.unit = "per_1m_tokens"</code>
     </div>
   </div>
 </section>
