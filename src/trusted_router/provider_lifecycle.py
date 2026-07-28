@@ -16,6 +16,7 @@ BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
 TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
+CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT = datetime(2026, 7, 28, 18, 0, tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,15 @@ class _Retirement:
 
 
 _RETIREMENTS = (
+    # Crusoe announced that Nemotron 3 Ultra retires from its Serverless
+    # offering at 2026-07-28 11:00 PT, which is 2026-07-28 18:00 UTC.
+    # Other providers serving Nemotron 3 Ultra are unaffected.
+    _Retirement(
+        provider="crusoe",
+        model_ids=frozenset({"nvidia/nemotron-3-ultra-550b"}),
+        upstream_ids=frozenset({"nvidia/NVIDIA-Nemotron-3-Ultra-550B"}),
+        effective_at=CRUSOE_NEMOTRON_3_ULTRA_RETIREMENT_AT,
+    ),
     # Baseten announced that these Model API routes become inactive at
     # 2026-07-24 17:00 PT, which is 2026-07-25 00:00 UTC. Dedicated
     # deployments and other providers serving the same checkpoints are
