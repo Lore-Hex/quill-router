@@ -25,7 +25,6 @@ SLUG = "tinfoil"
 URL = "https://inference.tinfoil.sh/v1/models"
 
 EXPECTED_MODELS = [
-    "moonshotai/kimi-k2.6",
     "z-ai/glm-5.2",
     "google/gemma-4-31b-it",
 ]
@@ -37,6 +36,10 @@ EXPECTED_MODELS = [
 _NATIVE_TO_OR_ID = {
     "kimi-k2-6": "moonshotai/kimi-k2.6",
     "kimi-k2-7-code": "moonshotai/kimi-k2.7-code",
+    # Kimi K3 is announced but not live on Tinfoil yet. Mapping its expected
+    # native ID makes the hourly feed discover it automatically without
+    # treating it as required or advertising it before the provider does.
+    "kimi-k3": "moonshotai/kimi-k3",
     "glm-5-1": "z-ai/glm-5.1",
     "glm-5-2": "z-ai/glm-5.2",
     "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
