@@ -25,6 +25,8 @@ from trusted_router.storage_models import (
 )
 from trusted_router.types import UsageType
 
+DEFAULT_SYNTHETIC_BILLING_CONCURRENCY = 2
+
 
 @dataclass(frozen=True)
 class SyntheticTarget:
@@ -87,10 +89,12 @@ async def run_synthetic_once(
     *,
     monitor_region: str | None = None,
     api_key: str | None = None,
+    billing_semaphore: asyncio.Semaphore | None = None,
 ) -> list[SyntheticProbeSample]:
     region = monitor_region or settings.synthetic_monitor_region or choose_region(settings)
     key = api_key or settings.synthetic_monitor_api_key
     timeout = httpx.Timeout(settings.synthetic_monitor_timeout_seconds)
+    limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     samples: list[SyntheticProbeSample] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
         target_results = await asyncio.gather(
@@ -101,6 +105,7 @@ async def run_synthetic_once(
                     monitor_region=region,
                     api_key=key,
                     model=settings.synthetic_monitor_model,
+                    billing_semaphore=limiter,
                 )
                 for target in configured_targets(settings)
             ]
@@ -117,6 +122,7 @@ async def _run_target_synthetic_probes(
     monitor_region: str,
     api_key: str | None,
     model: str,
+    billing_semaphore: asyncio.Semaphore,
 ) -> list[SyntheticProbeSample]:
     probes = [
         tls_health_probe(client, target, monitor_region=monitor_region),
@@ -133,14 +139,18 @@ async def _run_target_synthetic_probes(
     if api_key:
         probes.extend(
             [
-                openai_chat_pong_probe(
+                _run_billing_probe(
+                    billing_semaphore,
+                    openai_chat_pong_probe,
                     client,
                     target,
                     monitor_region=monitor_region,
                     api_key=api_key,
                     model=model,
                 ),
-                responses_pong_probe(
+                _run_billing_probe(
+                    billing_semaphore,
+                    responses_pong_probe,
                     client,
                     target,
                     monitor_region=monitor_region,
@@ -150,6 +160,16 @@ async def _run_target_synthetic_probes(
             ]
         )
     return list(await asyncio.gather(*probes))
+
+
+async def _run_billing_probe(
+    semaphore: asyncio.Semaphore,
+    probe: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> SyntheticProbeSample:
+    async with semaphore:
+        return await probe(*args, **kwargs)
 
 
 async def tls_health_probe(

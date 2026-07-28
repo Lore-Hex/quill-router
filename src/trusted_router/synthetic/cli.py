@@ -7,12 +7,14 @@ import random
 import sys
 import time
 from dataclasses import asdict
+from typing import Any
 
 import httpx
 
 from trusted_router.config import Settings, get_settings
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.synthetic.probes import (
+    DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
     SyntheticTarget,
     choose_rotation_target,
     gateway_billing_probe,
@@ -61,12 +63,15 @@ async def _one_probe_pass(
     internal_token: str | None,
     api_key: str | None,
     timeout: httpx.Timeout,
+    billing_semaphore: asyncio.Semaphore | None = None,
 ) -> list[SyntheticProbeSample]:
+    limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     synthetic_task = asyncio.create_task(
         run_synthetic_once(
             settings,
             monitor_region=monitor_region,
             api_key=api_key,
+            billing_semaphore=limiter,
         )
     )
     if not (api_key and internal_token):
@@ -77,26 +82,28 @@ async def _one_probe_pass(
     # router-core failures.
     gateway_samples: list[SyntheticProbeSample] = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        gateway_samples.extend(
-            await gateway_billing_probe(
-                client,
-                control_plane_base_url=control_plane,
-                monitor_region=monitor_region,
-                api_key=api_key,
-                internal_token=internal_token,
-                model=settings.synthetic_monitor_model,
+        async with limiter:
+            gateway_samples.extend(
+                await gateway_billing_probe(
+                    client,
+                    control_plane_base_url=control_plane,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    internal_token=internal_token,
+                    model=settings.synthetic_monitor_model,
+                )
             )
-        )
-        gateway_samples.extend(
-            await gateway_fallback_probe(
-                client,
-                control_plane_base_url=control_plane,
-                monitor_region=monitor_region,
-                api_key=api_key,
-                internal_token=internal_token,
-                model=settings.synthetic_monitor_model,
+        async with limiter:
+            gateway_samples.extend(
+                await gateway_fallback_probe(
+                    client,
+                    control_plane_base_url=control_plane,
+                    monitor_region=monitor_region,
+                    api_key=api_key,
+                    internal_token=internal_token,
+                    model=settings.synthetic_monitor_model,
+                )
             )
-        )
     synthetic_samples = await synthetic_task
     return [*synthetic_samples, *gateway_samples]
 
@@ -119,7 +126,9 @@ async def _probe_and_rotation_pass(
     throughput_minimum_output_tokens: int = _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS,
     throughput_timeout_seconds: float = _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS,
     throughput_interval_seconds: int = _DEFAULT_THROUGHPUT_INTERVAL_SECONDS,
+    billing_concurrency: int = DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
 ) -> tuple[list[SyntheticProbeSample], list[ProviderBenchmarkSample]]:
+    billing_semaphore = asyncio.Semaphore(max(1, billing_concurrency))
     probe_task = asyncio.create_task(
         _one_probe_pass(
             settings=settings,
@@ -128,6 +137,7 @@ async def _probe_and_rotation_pass(
             internal_token=internal_token,
             api_key=api_key,
             timeout=timeout,
+            billing_semaphore=billing_semaphore,
         )
     )
     benchmark_tasks: list[asyncio.Task[list[ProviderBenchmarkSample]]] = []
@@ -141,6 +151,7 @@ async def _probe_and_rotation_pass(
                     timeout=timeout,
                     count=rotation_per_pass,
                     rng=rotation_rng,
+                    billing_semaphore=billing_semaphore,
                 )
             )
         )
@@ -177,9 +188,11 @@ async def _rotation_pass(
     timeout: httpx.Timeout,
     count: int,
     rng: random.Random,
+    billing_semaphore: asyncio.Semaphore | None = None,
 ) -> list[ProviderBenchmarkSample]:
     pool = rotation_candidates()
     target = SyntheticTarget("rotation", settings.api_base_url, monitor_region)
+    limiter = billing_semaphore or asyncio.Semaphore(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY)
     probes = []
     async with httpx.AsyncClient(timeout=timeout) as client:
         for _ in range(max(0, count)):
@@ -188,7 +201,8 @@ async def _rotation_pass(
                 break
             provider, model = picked
             probes.append(
-                provider_rotation_probe(
+                _run_rotation_probe(
+                    limiter,
                     client,
                     target,
                     monitor_region=monitor_region,
@@ -200,6 +214,16 @@ async def _rotation_pass(
         if not probes:
             return []
         return list(await asyncio.gather(*probes))
+
+
+async def _run_rotation_probe(
+    semaphore: asyncio.Semaphore,
+    client: httpx.AsyncClient,
+    target: SyntheticTarget,
+    **kwargs: Any,
+) -> ProviderBenchmarkSample:
+    async with semaphore:
+        return await provider_rotation_probe(client, target, **kwargs)
 
 
 async def _throughput_pass(
@@ -351,9 +375,24 @@ async def run() -> int:
             )
         ),
     )
+    billing_concurrency = max(
+        1,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_BILLING_CONCURRENCY",
+                str(DEFAULT_SYNTHETIC_BILLING_CONCURRENCY),
+            )
+        ),
+    )
+    start_delay_seconds = max(
+        0.0,
+        float(os.environ.get("TR_SYNTHETIC_START_DELAY_SECONDS", "0")),
+    )
 
     all_samples: list[SyntheticProbeSample] = []
     benchmark_samples: list[ProviderBenchmarkSample] = []
+    if start_delay_seconds:
+        await asyncio.sleep(start_delay_seconds)
     if throughput_only:
         if not throughput_enabled:
             print(
@@ -405,6 +444,7 @@ async def run() -> int:
                 throughput_minimum_output_tokens=throughput_minimum_output_tokens,
                 throughput_timeout_seconds=throughput_timeout_seconds,
                 throughput_interval_seconds=throughput_interval_seconds,
+                billing_concurrency=billing_concurrency,
             )
             all_samples.extend(pass_samples)
             benchmark_samples.extend(pass_benchmark_samples)

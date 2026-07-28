@@ -111,6 +111,7 @@ upsert_scheduler() {
 
 SYNTHETIC_MONITOR_REGIONS="${TR_SYNTHETIC_MONITOR_REGIONS:-us-central1,europe-west4}"
 IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
+monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
@@ -118,6 +119,8 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   env_vars=(
     "${BASE_ENV_VARS[@]}"
     "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}"
+    "TR_SYNTHETIC_BILLING_CONCURRENCY=2"
+    "TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"
     # Short random provider/model probes feed uptime and TTFT. Sustained
     # throughput is deliberately disabled in these health jobs.
     "TR_SYNTHETIC_ROTATION_ENABLED=true"
@@ -148,6 +151,7 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   # timeout. 2 CPU / 1Gi keeps the concurrent regional probes bounded.
 
   upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/2 * * * *"
+  monitor_index=$((monitor_index + 1))
 done
 
 # Sustained-output benchmark: one deterministic top-200 route per tick. This
@@ -155,11 +159,16 @@ done
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
-throughput_scheduler_name="${throughput_job_name}-every-minute"
-legacy_throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+legacy_throughput_scheduler_names=(
+  "${throughput_job_name}-every-minute"
+  "${throughput_job_name}-every-five-minutes"
+)
 throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
+  "TR_SYNTHETIC_BILLING_CONCURRENCY=1"
+  "TR_SYNTHETIC_START_DELAY_SECONDS=45"
   "TR_SYNTHETIC_ROTATION_ENABLED=false"
   "TR_SYNTHETIC_ROTATION_PER_PASS=0"
   "TR_SYNTHETIC_THROUGHPUT_ENABLED=true"
@@ -169,7 +178,7 @@ throughput_env_vars=(
   "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
   "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
   "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
-  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"
+  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
@@ -192,16 +201,18 @@ upsert_scheduler \
   "$throughput_scheduler_name" \
   "$throughput_job_name" \
   "$throughput_region" \
-  "* * * * *"
+  "*/2 * * * *"
 
-# Avoid double-sampling after the cadence change. Delete the legacy scheduler
-# only after the replacement scheduler was created or updated successfully.
-if gc scheduler jobs describe \
-  "$legacy_throughput_scheduler_name" \
-  --location "$throughput_region" >/dev/null 2>&1; then
-  log "deleting legacy throughput scheduler ${legacy_throughput_scheduler_name}"
-  gc scheduler jobs delete \
+# Avoid double-sampling after cadence changes. Delete every historical
+# throughput scheduler only after the canonical scheduler is healthy.
+for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}"; do
+  if gc scheduler jobs describe \
     "$legacy_throughput_scheduler_name" \
-    --location "$throughput_region" \
-    --quiet >/dev/null
-fi
+    --location "$throughput_region" >/dev/null 2>&1; then
+    log "deleting legacy throughput scheduler ${legacy_throughput_scheduler_name}"
+    gc scheduler jobs delete \
+      "$legacy_throughput_scheduler_name" \
+      --location "$throughput_region" \
+      --quiet >/dev/null
+  fi
+done
