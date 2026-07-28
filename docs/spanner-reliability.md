@@ -28,6 +28,30 @@ bash scripts/deploy/spanner_reliability.sh --apply
 Set `TR_DR_BILLING_ACCOUNT` on the first run if the DR project does not exist.
 Without `--apply`, the script prints the intended changes.
 
+Customer-facing billing-path alerts are managed separately so they can be
+reconciled without touching Spanner capacity or backup resources:
+
+```bash
+bash scripts/deploy/gateway_reliability.sh --apply
+```
+
+These policies deliberately trigger before the broad Spanner contention
+policy:
+
+- Any `5xx` from `/internal/gateway/authorize`, `settle`, or `refund` opens an
+  incident immediately.
+- Successful billing calls taking at least 10 seconds are counted. More than
+  two per minute for three consecutive minutes opens one incident.
+- More than 10 Spanner aborts per minute for three consecutive minutes opens
+  one early-pressure incident. The main contention policy remains at 100 per
+  minute for 10 minutes.
+
+Every condition reduces all regions and revisions into one time series. The
+log-based `5xx` policy rate-limits notifications to one every 30 minutes and
+auto-closes after 30 quiet minutes. Metric policies do not renotify while an
+incident remains open. The alerts use status, latency, path, and aggregate
+transaction metadata only; they never inspect or export prompts or outputs.
+
 ## Alert response
 
 ### High CPU
@@ -48,6 +72,19 @@ raising capacity again.
 Separate Spanner server latency from network and application latency. Inspect
 the `method`, `status`, and serving-region labels. `ABORTED` is tracked by the
 contention policy; unexpected statuses are tracked by the API-failure policy.
+
+For a gateway billing-path incident:
+
+1. Query Cloud Run request logs for the affected internal gateway path and
+   note status, latency, service region, and request ID.
+2. Check `SPANNER_SYS.TXN_STATS_TOP_MINUTE` and
+   `SPANNER_SYS.LOCK_STATS_TOP_MINUTE`. Decode hot row keys and determine
+   whether one workspace or API key dominates.
+3. Run the typed billing invariant audit before changing counters.
+4. Verify shard distribution. Use the guarded online split for an eligible
+   hot workspace; never delete or rewrite live reservations.
+5. Confirm post-fix requests settle across multiple shards, no new `5xx`
+   appears, and the invariant audit remains clean.
 
 ### Backup workflow
 
