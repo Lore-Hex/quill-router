@@ -1,21 +1,23 @@
 """The container entrypoint is the only cross-cloud credential seam.
 
-It runs on AWS and Azure test networks where there is no GCP metadata server,
-so a mistake here is a deployment that either cannot reach Spanner at all or —
-worse — reaches it with a long-lived key that the whole Workload Identity
-Federation design exists to eliminate. Shell is untested by default in this
-repo, so these tests execute the real script.
+It runs on AWS and Azure, where there is no GCP metadata server, so a mistake
+here is a deployment that either cannot reach Google APIs at all or — worse —
+reaches them with a long-lived key that the whole Workload Identity Federation
+design exists to eliminate. Shell is untested by default in this repo, so these
+tests execute the real script.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
 
 ENTRYPOINT = Path(__file__).resolve().parents[1] / "scripts" / "entrypoint.sh"
+BASH = shutil.which("bash") or "/bin/bash"
 
 # A realistic keyless config: it names the pool/provider/service account and
 # points at the *local* cloud's metadata for proof. No key material.
@@ -23,7 +25,7 @@ AWS_WIF_CONFIG = {
     "type": "external_account",
     "audience": (
         "//iam.googleapis.com/projects/44325983244/locations/global/"
-        "workloadIdentityPools/multicloud/providers/aws"
+        "workloadIdentityPools/multicloud/providers/aws-workloads"
     ),
     "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
     "token_url": "https://sts.googleapis.com/v1/token",
@@ -39,8 +41,8 @@ AWS_WIF_CONFIG = {
 def _run(env: dict[str, str], *argv: str) -> subprocess.CompletedProcess[str]:
     """Run the entrypoint with a harmless command in place of uvicorn."""
     child_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
-    return subprocess.run(  # noqa: S603,S607 - test-owned argv, bash resolved from PATH
-        ["bash", str(ENTRYPOINT), *argv],
+    return subprocess.run(  # noqa: S603 - test-owned argv, no shell
+        [BASH, str(ENTRYPOINT), *argv],
         env=child_env,
         capture_output=True,
         text=True,
