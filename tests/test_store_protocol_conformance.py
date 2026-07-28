@@ -1,10 +1,9 @@
 """Storage backend Protocol conformance.
 
-The `Store` Protocol is the contract route code talks to. Both
-`InMemoryStore` and `SpannerBigtableStore` must implement every method
-declared on it. Adding a method to the Protocol without implementing it
-in both backends would silently break in production for the unaffected
-backend the moment that method gets called.
+The `Store` Protocol is the contract route code talks to. Every backend must
+implement every method declared on it. Adding a method to the Protocol without
+implementing it across backends would silently break in production for the
+unaffected backend the moment that method gets called.
 
 The runtime `isinstance(_, Store)` check is light — Protocols are
 structural — but combined with mypy on the `Store` type alias it makes
@@ -60,29 +59,54 @@ def test_in_memory_store_class_declares_every_protocol_method() -> None:
     assert not missing, f"InMemoryStore is missing Protocol members: {missing}"
 
 
+def test_postgres_store_class_declares_every_protocol_method() -> None:
+    """Incremental backends still declare the whole Protocol surface.
+
+    Methods outside the current increment may raise a named
+    NotImplementedError, but a missing method or drifted signature is never
+    allowed to reach production as an AttributeError.
+    """
+    from trusted_router.storage_postgres import PostgresStore
+
+    protocol_members = _public_method_names(Store)
+    missing = [
+        name for name in protocol_members if not hasattr(PostgresStore, name)
+    ]
+    assert not missing, f"PostgresStore is missing Protocol members: {missing}"
+
+
 def test_protocol_methods_have_consistent_signatures_across_backends() -> None:
     """Each method's parameter list (excluding `self`) must match between
-    the two backends. mypy enforces this at type-check time; this is a
+    all backends. mypy enforces this at type-check time; this is a
     runtime tripwire for the case where someone added a kwarg to one
     backend and forgot the other, and the test runner doesn't happen to
     exercise that exact call site."""
     from trusted_router.storage_gcp import SpannerBigtableStore
+    from trusted_router.storage_postgres import PostgresStore
 
     diffs: list[str] = []
+    backend_classes = {
+        "spanner": SpannerBigtableStore,
+        "postgres": PostgresStore,
+    }
     for name in _public_method_names(Store):
         if name == "reset":
             # Spanner's reset deliberately raises — its signature
             # matches but the behavior differs.
             continue
-        try:
-            in_mem = inspect.signature(getattr(InMemoryStore, name))
-            spanner = inspect.signature(getattr(SpannerBigtableStore, name))
-        except (ValueError, TypeError):
-            continue  # builtins / wrappers we can't inspect
-        in_mem_params = _named_params(in_mem)
-        spanner_params = _named_params(spanner)
-        if in_mem_params != spanner_params:
-            diffs.append(f"{name}: in_memory={in_mem_params} vs spanner={spanner_params}")
+        for backend_name, backend_class in backend_classes.items():
+            try:
+                in_mem = inspect.signature(getattr(InMemoryStore, name))
+                backend = inspect.signature(getattr(backend_class, name))
+            except (ValueError, TypeError):
+                continue  # builtins / wrappers we can't inspect
+            in_mem_params = _named_params(in_mem)
+            backend_params = _named_params(backend)
+            if in_mem_params != backend_params:
+                diffs.append(
+                    f"{name}: in_memory={in_mem_params} "
+                    f"vs {backend_name}={backend_params}"
+                )
     assert not diffs, "Backend signatures drifted:\n" + "\n".join(diffs)
 
 

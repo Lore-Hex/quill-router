@@ -91,6 +91,28 @@ def _google_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Excep
 
 
 @lru_cache(maxsize=1)
+def _postgres_error_types() -> tuple[tuple[type[Exception], ...], tuple[type[Exception], ...]]:
+    """``(transient, conflict)`` types contributed by psycopg.
+
+    Psycopg is optional for non-Postgres deployments, so this follows the
+    Google adapter's lazy-import boundary.
+    """
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover - only hit without Postgres deps
+        return ((), ())
+
+    transient: tuple[type[Exception], ...] = (
+        psycopg.InterfaceError,
+        psycopg.OperationalError,
+    )
+    conflict: tuple[type[Exception], ...] = (
+        psycopg.errors.SerializationFailure,
+    )
+    return (transient, conflict)
+
+
+@lru_cache(maxsize=1)
 def transient_store_error_types() -> tuple[type[Exception], ...]:
     """Types meaning "the write did not land; try again later".
 
@@ -98,14 +120,21 @@ def transient_store_error_types() -> tuple[type[Exception], ...]:
     which is how the settle-outbox drain consumes it.
     """
     google_transient, _ = _google_error_types()
-    return (StoreConflict, StoreUnavailable, *google_transient)
+    postgres_transient, _ = _postgres_error_types()
+    return (
+        StoreConflict,
+        StoreUnavailable,
+        *google_transient,
+        *postgres_transient,
+    )
 
 
 @lru_cache(maxsize=1)
 def conflict_store_error_types() -> tuple[type[Exception], ...]:
     """Types meaning "a concurrent writer aborted this; replaying may work"."""
     _, google_conflict = _google_error_types()
-    return (StoreConflict, *google_conflict)
+    _, postgres_conflict = _postgres_error_types()
+    return (StoreConflict, *google_conflict, *postgres_conflict)
 
 
 def is_transient_store_error(exc: BaseException) -> bool:
