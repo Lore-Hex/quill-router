@@ -3326,8 +3326,31 @@
       "input_token_price_per_m": 2000000,
       "output_token_price_per_m": 10000000,
       "cached_input_token_price_per_m": 200000
+    },
+    {
+      "display_name": "Claude Opus 5 CC Max",
+      "title": "anthropic/claude-opus-5-ccmax",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "anthropic/claude-opus-5-ccmax",
+      "upstream_id": "anthropic/claude-opus-5-ccmax",
+      "context_length": 1000000,
+      "max_output_tokens": 128000,
+      "input_token_price_per_m": 5000000,
+      "output_token_price_per_m": 25000000,
+      "cached_input_token_price_per_m": 500000
     }
   ],
-  "generated_at": "2026-07-28T08:37:44Z",
-  "model_count": 121
+  "generated_at": "2026-07-28T23:27:33Z",
+  "model_count": 122
 }

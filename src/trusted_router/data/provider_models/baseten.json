@@ -2,7 +2,7 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-07-28T08:37:44Z",
+  "generated_at": "2026-07-28T23:27:33Z",
   "price_scale": "microdollars_per_million",
   "model_count": 16,
   "models": [
@@ -284,7 +284,7 @@
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/GLM-5.2",
       "display_name": "GLM 5.2",
-      "context_length": 524288,
+      "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
