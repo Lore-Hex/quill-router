@@ -39,7 +39,7 @@
     <div class="status-section-head">
       <div>
         <h2>{{ heading }}</h2>
-        <p>Latency is broken out by target, probe, monitor region, and target region. Detailed component bars below show the last 48 hourly buckets.</p>
+        <p>Router Core latency and availability are broken out by target, probe, monitor region, and target region. Control Plane and upstream providers are never blended into this history.</p>
       </div>
       <span class="component-status status-{{ rollup.overall_status|replace('_', '-') }}">{{ rollup.overall_status|replace('_', ' ') }}</span>
     </div>
@@ -140,7 +140,7 @@
     <div class="status-section-head">
       <div>
         <h2>{% if window == "monthly" %}Monthly rollups{% else %}Daily rollups{% endif %}</h2>
-        <p>Precomputed reliability history from compact rollup records, retained for long-term public status reporting.</p>
+        <p>Precomputed Router Core reliability from compact rollup records. Control Plane and upstream providers have separate measurements.</p>
       </div>
       <div class="status-legend" aria-label="Rollup legend">
         <span><i class="history-day status-up"></i>Operational</span>

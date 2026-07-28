@@ -99,6 +99,14 @@ class PostgresStore:
         """Close the connection pool."""
         self._pool.close()
 
+    def readiness_check(self) -> None:
+        """Verify the billing database without permitting an unbounded wait."""
+
+        with self._pool.connection(timeout=3.0) as conn:
+            with conn.transaction():
+                conn.execute("SET LOCAL statement_timeout = '3s'")
+                conn.execute("SELECT 1 FROM tr_credit_balance LIMIT 1").fetchone()
+
     def apply_schema(self) -> None:
         """Apply the package-owned schema idempotently."""
         schema = Path(__file__).with_name("storage_postgres_schema.sql").read_text()

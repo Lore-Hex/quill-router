@@ -11,9 +11,10 @@ from trusted_router.synthetic.components import (
     COMPONENT_DEFINITIONS,
     SLO_DEFINITIONS,
     component_name,
+    component_probe_types,
+    rollup_slo_class_ids,
     sample_component_ids,
     sample_slo_class_ids,
-    slo_probe_types,
 )
 from trusted_router.synthetic.rollups import merge_rollups, new_rollup_for_sample
 
@@ -62,24 +63,47 @@ def status_snapshot(
     precomputed_rollups = rollups or []
     ordered = sorted(samples, key=lambda sample: sample.created_at, reverse=True)
     freshness = _monitor_freshness(ordered, now=now)
-    current = _current_status(ordered, now=now)
-    five_minute = _window_rollup(ordered, now=now, seconds=WINDOW_SECONDS["5m"])
-    twenty_four_hour = _window_rollup_with_rollup_backfill(
-        ordered,
-        precomputed_rollups,
+    router_core_samples = [
+        sample for sample in ordered if ROUTER_CORE_SLO_ID in sample_slo_class_ids(sample)
+    ]
+    current = _current_status(router_core_samples, now=now)
+    router_core_rollups = [
+        rollup
+        for rollup in precomputed_rollups
+        if ROUTER_CORE_SLO_ID in rollup_slo_class_ids(rollup)
+    ]
+    five_minute = _scoped_window(
+        router_core_samples,
+        router_core_rollups,
+        now=now,
+        seconds=WINDOW_SECONDS["5m"],
+    )
+    twenty_four_hour = _scoped_window(
+        router_core_samples,
+        router_core_rollups,
         now=now,
         seconds=WINDOW_SECONDS["24h"],
     )
-    forty_eight_hour = _window_rollup_with_rollup_backfill(
-        ordered,
-        precomputed_rollups,
+    forty_eight_hour = _scoped_window(
+        router_core_samples,
+        router_core_rollups,
         now=now,
         seconds=WINDOW_SECONDS["48h"],
     )
-    daily = _rollup_history(precomputed_rollups, period="day") or _daily_rollups(ordered)
-    monthly = _rollup_history(precomputed_rollups, period="month")
+    daily = _rollup_history(router_core_rollups, period="day") or _daily_rollups(
+        router_core_samples
+    )
+    monthly = _monthly_history(router_core_rollups)
     components = _components(ordered, now=now, rollups=precomputed_rollups)
     slo_classes = _slo_classes(ordered, precomputed_rollups, now=now)
+    slo_history = {
+        str(definition["id"]): _slo_long_term_history(
+            ordered,
+            precomputed_rollups,
+            slo_id=str(definition["id"]),
+        )
+        for definition in SLO_DEFINITIONS
+    }
     router_core_status = str(slo_classes.get(ROUTER_CORE_SLO_ID, {}).get("status") or "unknown")
     overall_status = router_core_status
     return {
@@ -92,9 +116,11 @@ def status_snapshot(
         "headline_metrics": _headline_metrics(ordered, now=now),
         "current": current,
         "slo_classes": slo_classes,
+        "slo_history": slo_history,
         "burn_rate_alerts": _burn_rate_alerts(slo_classes),
         "components": components,
         "recent_events": _recent_events(ordered, now=now),
+        "history_scope": ROUTER_CORE_SLO_ID,
         "windows": {
             "5m": five_minute,
             "24h": twenty_four_hour,
@@ -180,17 +206,26 @@ def history_payload(
     rollups: list[SyntheticRollup] | None = None,
 ) -> dict[str, Any]:
     precomputed_rollups = rollups or []
+    snapshot = status_snapshot(samples, rollups=precomputed_rollups)
     if window == "daily":
         return {
             "window": "daily",
-            "data": _rollup_history(precomputed_rollups, period="day") or _daily_rollups(samples),
+            "scope": ROUTER_CORE_SLO_ID,
+            "data": snapshot["daily"],
         }
     if window == "monthly":
-        return {"window": "monthly", "data": _monthly_history(precomputed_rollups)}
-    snapshot = status_snapshot(samples, rollups=precomputed_rollups)
+        return {
+            "window": "monthly",
+            "scope": ROUTER_CORE_SLO_ID,
+            "data": snapshot["monthly"],
+        }
     if window in snapshot["windows"]:
-        return {"window": window, "data": snapshot["windows"][window]}
-    return {"window": window, "data": {}}
+        return {
+            "window": window,
+            "scope": ROUTER_CORE_SLO_ID,
+            "data": snapshot["windows"][window],
+        }
+    return {"window": window, "scope": ROUTER_CORE_SLO_ID, "data": {}}
 
 
 def _current_status(
@@ -335,6 +370,42 @@ def _window_rollup_with_rollup_backfill(
     return _rollup_from_rollups(combined_rollups)
 
 
+def _scoped_window(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+    seconds: int,
+) -> dict[str, Any]:
+    detail = _window_rollup_with_rollup_backfill(
+        samples,
+        rollups,
+        now=now,
+        seconds=seconds,
+    )
+    metrics = _slo_window(samples, rollups, now=now, seconds=seconds)
+    return {**detail, **metrics}
+
+
+def _slo_long_term_history(
+    samples: list[SyntheticProbeSample],
+    rollups: list[SyntheticRollup],
+    *,
+    slo_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    scoped_samples = [
+        sample for sample in samples if slo_id in sample_slo_class_ids(sample)
+    ]
+    scoped_rollups = [
+        rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
+    ]
+    return {
+        "daily": _rollup_history(scoped_rollups, period="day")
+        or _daily_rollups(scoped_samples),
+        "monthly": _monthly_history(scoped_rollups),
+    }
+
+
 def _hour_rollups_in_window(
     rollups: list[SyntheticRollup],
     *,
@@ -390,12 +461,13 @@ def _slo_classes(
     for definition in SLO_DEFINITIONS:
         slo_id = str(definition["id"])
         slo_samples = [sample for sample in samples if slo_id in sample_slo_class_ids(sample)]
-        slo_rollups = [rollup for rollup in rollups if rollup.probe_type in slo_probe_types(slo_id)]
+        slo_rollups = [
+            rollup for rollup in rollups if slo_id in rollup_slo_class_ids(rollup)
+        ]
         current = _slo_current(slo_samples, now=now)
         windows = {
             name: _slo_window(slo_samples, slo_rollups, now=now, seconds=seconds)
             for name, seconds in WINDOW_SECONDS.items()
-            if name in SLO_BURN_WINDOWS
         }
         rows[slo_id] = {
             **definition,
@@ -570,7 +642,10 @@ def _components(
             sample for sample in samples if component_id in sample_component_ids(sample)
         ]
         component_rollups = [
-            rollup for rollup in precomputed_rollups if rollup.component == component_id
+            rollup
+            for rollup in precomputed_rollups
+            if rollup.component == component_id
+            and rollup.probe_type in component_probe_types(component_id)
         ]
         component_hour_rollups = [rollup for rollup in component_rollups if rollup.period == "hour"]
         day_rollups = _hour_rollups_in_window(
@@ -1020,6 +1095,8 @@ def _recent_events(
     events = []
     for sample in samples:
         if _parse_time(sample.created_at) < cutoff or sample.status == "up":
+            continue
+        if not sample_component_ids(sample) and not sample_slo_class_ids(sample):
             continue
         component_names = [
             str(definition["name"])

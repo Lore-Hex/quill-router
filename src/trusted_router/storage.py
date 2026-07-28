@@ -119,6 +119,9 @@ class InMemoryStore:
             self.verification_tokens.reset()
             self.email_blocks.reset()
 
+    def readiness_check(self) -> None:
+        """The in-memory backend has no external serving dependency."""
+
     def ensure_user(
         self,
         user_id: str,

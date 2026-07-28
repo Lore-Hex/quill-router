@@ -117,6 +117,9 @@ STATUS_HISTORY_CACHE_SECONDS = 300
 STATUS_HISTORY_STALE_SECONDS = 1_800
 LEADERBOARD_SAMPLE_LIMIT = PUBLIC_BENCHMARK_SAMPLE_LIMIT
 LEADERBOARD_MIN_SAMPLES = 1
+LEADERBOARD_MODEL_RANK_MIN_SAMPLES = 10
+LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES = 30
+LEADERBOARD_RANK_MIN_TTFT_SAMPLES = 3
 LEADERBOARD_RECENT_WINDOW_MINUTES = PUBLIC_BENCHMARK_RECENT_MINUTES
 LEADERBOARD_SNAPSHOT_CACHE_SECONDS = 300
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
@@ -1307,7 +1310,18 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         limit=LEADERBOARD_SAMPLE_LIMIT,
         recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
     )
-    payload = aggregate_leaderboard(samples, min_samples=LEADERBOARD_MIN_SAMPLES)
+    payload = aggregate_leaderboard(
+        samples,
+        min_samples=LEADERBOARD_MIN_SAMPLES,
+        model_rank_min_samples=LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+        provider_rank_min_samples=LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+        rank_min_ttft_samples=LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+    )
+    payload["rank_minimums"] = {
+        "model_availability_samples": LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+        "provider_availability_samples": LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+        "ttft_samples": LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+    }
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     payload["sample_window_count"] = len(samples)
     payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT

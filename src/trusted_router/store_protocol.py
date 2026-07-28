@@ -48,6 +48,7 @@ class Store(Protocol):
 
     # Lifecycle ---------------------------------------------------------------
     def reset(self) -> None: ...
+    def readiness_check(self) -> None: ...
 
     # Users + workspaces ------------------------------------------------------
     def ensure_user(
