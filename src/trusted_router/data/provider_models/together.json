@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-07-28T05:49:08Z",
+  "generated_at": "2026-07-28T08:37:44Z",
   "model_count": 19,
   "models": [
     {
@@ -146,7 +146,9 @@
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
       "cached_input_token_price_per_m": 60000,
-      "missing_since": "2026-07-28"
+      "missing_since": "2026-07-28",
+      "routable": false,
+      "routable_reason": "delisted-upstream"
     },
     {
       "display_name": "MiniMax M3",
