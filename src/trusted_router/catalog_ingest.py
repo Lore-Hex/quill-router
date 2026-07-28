@@ -98,6 +98,7 @@ _AUTHORITATIVE_PROVIDER_MANIFEST_SLUGS = frozenset(
         "kimi",
         "novita",
         "phala",
+        "telnyx",
         "together",
         "wafer",
     }
@@ -678,6 +679,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "parasail",
         "friendli",
         "baseten",
+        "telnyx",
         "thinkingmachines",
         "wafer",
         "crusoe",

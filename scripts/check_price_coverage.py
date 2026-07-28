@@ -127,6 +127,29 @@ def _baseten_model_id(native_id: str) -> str | None:
     return _BASETEN_MODEL_IDS.get(value, _identity_model_id(value))
 
 
+_TELNYX_MODEL_IDS = {
+    "google/gemma-2b-it": "google/gemma-2b-it",
+    "meta-llama/Llama-3.3-70B-Instruct": "meta-llama/llama-3.3-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-70B-Instruct": "meta-llama/llama-3.1-70b-instruct",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": "meta-llama/llama-3.1-8b-instruct",
+    "MiniMaxAI/MiniMax-M2.7": "minimax/minimax-m2.7",
+    "MiniMaxAI/MiniMax-M3-MXFP8": "minimax/minimax-m3",
+    "moonshotai/Kimi-K2.5": "moonshotai/kimi-k2.5",
+    "moonshotai/Kimi-K2.6": "moonshotai/kimi-k2.6",
+    "moonshotai/Kimi-K3": "moonshotai/kimi-k3",
+    "Qwen/Qwen3-235B-A22B": "qwen/qwen3-235b-a22b",
+    "zai-org/GLM-5.1-FP8": "z-ai/glm-5.1",
+    "zai-org/GLM-5.2": "z-ai/glm-5.2",
+}
+
+
+def _telnyx_model_id(native_id: str) -> str | None:
+    value = native_id.strip()
+    if not value:
+        return None
+    return _TELNYX_MODEL_IDS.get(value) or canonicalize_native_model_id(value)
+
+
 _WAFER_MODEL_IDS = {
     "GLM-5.1": "z-ai/glm-5.1",
     "GLM-5.2": "z-ai/glm-5.2",
@@ -286,6 +309,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         "https://inference.baseten.co/v1/models",
         ("BASETEN_API_KEY",),
         _baseten_model_id,
+    ),
+    (
+        "telnyx",
+        "https://api.telnyx.com/v2/ai/openai/models",
+        ("TELNYX_API_KEY",),
+        _telnyx_model_id,
     ),
     (
         "wafer",

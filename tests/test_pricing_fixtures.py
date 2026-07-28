@@ -90,6 +90,11 @@ PARSER_CASES: list[tuple[str, set[str], tuple[float, float]]] = [
     ),
     ("streamlake", {"kwaipilot/kat-coder-pro-v2.5"}, (0.01, 20.0)),
     ("thinkingmachines", {"thinkingmachines/inkling"}, (0.5, 20.0)),
+    (
+        "telnyx",
+        {"moonshotai/kimi-k2.6", "z-ai/glm-5.2", "minimax/minimax-m3"},
+        (0.05, 20.0),
+    ),
     ("venice", {"z-ai/glm-4.6"}, (0.0, 10.0)),
     ("voyage", {"voyage/voyage-4-large"}, (0.0, 100.0)),
     ("xiaomi", {"xiaomi/mimo-v2.5-pro"}, (0.001, 5.0)),
