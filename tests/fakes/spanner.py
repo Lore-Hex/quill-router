@@ -1070,6 +1070,29 @@ def _execute_sql(
         return [[rec.get(c) for c in cols]]
     # Typed key-limit point-read (reserve_key 0-row classification). Honors the
     # WHERE, so it must precede the full-scan branch below.
+    compact_sql = sql.replace(" ", "")
+    if (
+        "FROM tr_key_limit WHERE key_hash=@kh" in sql
+        and "shard<@shard_count" in compact_sql
+    ):
+        items = [
+            (pk, rec)
+            for pk, rec in db.typed.get("tr_key_limit", {}).items()
+            if rec.get("key_hash") == params["kh"]
+            and 0 <= int(rec.get("shard", 0)) < int(params["shard_count"])
+        ]
+        items.sort(key=lambda item: int(item[1].get("shard", 0)))
+        recs = [
+            txn._typed_current("tr_key_limit", pk)
+            if txn is not None
+            else dict(rec)
+            for pk, rec in items
+        ]
+        cols = [
+            c.strip()
+            for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(c) for c in cols] for rec in recs if rec is not None]
     if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
         # `shard` may be a literal 0 in the SQL (window/typed-usage point reads)
         # rather than a bound param (reserve_key classification).

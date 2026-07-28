@@ -127,9 +127,9 @@ class ApiKey:
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
     reserved_microdollars: int = 0
-    # Independent usage-counter rows for a high-throughput UNCAPPED key. Keys
-    # with any lifetime/window spend limit must remain at one shard so their
-    # hard cap keeps its existing exact semantics.
+    # Independent usage-counter rows for a high-throughput key. Keys with an
+    # exact lifetime spend limit remain at one shard. Fixed-window limits are
+    # approximate snapshot checks and may sum usage across shards.
     usage_shard_count: int = 1
     tags: dict[str, str] = field(default_factory=dict)
 
