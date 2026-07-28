@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,6 +60,21 @@ def test_parser_requires_exactly_one_target() -> None:
     )
     assert parsed.owner_email == "owner@example.com"
     assert parsed.workspace is None
+    assert parsed.preserve_open_holds is False
+
+    online = parser.parse_args(
+        [
+            "online-split",
+            "--workspace",
+            "ws",
+            "--shards",
+            "16",
+            "--preserve-open-holds",
+            "--apply",
+        ]
+    )
+    assert online.preserve_open_holds is True
+    assert online.handler is shard_workspace.run_online_split
 
     with pytest.raises(SystemExit):
         parser.parse_args(["status", "--shards", "16"])
@@ -74,3 +90,50 @@ def test_parser_requires_exactly_one_target() -> None:
                 "16",
             ]
         )
+
+
+def test_online_split_requires_explicit_hold_preservation() -> None:
+    args = argparse.Namespace(preserve_open_holds=False)
+
+    assert shard_workspace.run_online_split(object(), args) == 2
+
+
+def test_online_split_preflights_then_prepares_and_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    store = SimpleNamespace(
+        api_keys=SimpleNamespace(list_for_workspace=lambda _workspace: [])
+    )
+    args = argparse.Namespace(
+        workspace="ws",
+        shards=16,
+        preserve_open_holds=True,
+        apply=True,
+    )
+    monkeypatch.setattr(
+        shard_workspace,
+        "inspect_credit_reshard",
+        lambda *_args, **_kwargs: calls.append("inspect"),
+    )
+    monkeypatch.setattr(
+        shard_workspace,
+        "audit_typed_invariants",
+        lambda _store: SimpleNamespace(
+            clean=True,
+            summary=lambda: "CLEAN",
+        ),
+    )
+    monkeypatch.setattr(
+        shard_workspace,
+        "run_prepare",
+        lambda _store, _args: calls.append("prepare") or 0,
+    )
+    monkeypatch.setattr(
+        shard_workspace,
+        "run_finish",
+        lambda _store, _args: calls.append("finish") or 0,
+    )
+
+    assert shard_workspace.run_online_split(store, args) == 0
+    assert calls == ["inspect", "prepare", "finish"]

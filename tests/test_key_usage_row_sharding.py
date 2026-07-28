@@ -23,6 +23,7 @@ from trusted_router.storage_gcp_counters import (
     KEY_LIMIT_TABLE,
     key_usage_shard_count,
 )
+from trusted_router.storage_gcp_credit_shard_admin import reshard_credit_account
 from trusted_router.storage_gcp_key_shard_admin import (
     inspect_key_usage_reshard,
     reshard_key_usage,
@@ -419,6 +420,106 @@ def test_key_usage_operator_split_and_unshard_preserve_all_usage() -> None:
     assert persisted.usage_shard_count == 1
     assert persisted.usage_microdollars == 101
     assert persisted.byok_usage_microdollars == 37
+
+
+def test_online_credit_and_key_split_preserve_then_settle_live_request() -> None:
+    store, database, key = _seed(key_shards=1)
+    authorized = authorize_atomic(
+        store._database,
+        store._param_types,
+        workspace_id=key.workspace_id,
+        key_hash=key.hash,
+        estimate=1_000,
+        has_credit_candidate=True,
+        reservation_usage_type="Credits",
+        idempotency_scope="online-reshard-live",
+        idempotency_fingerprint="same-body",
+        expires_at="2026-12-01T00:00:00Z",
+        build_auth_body=_auth_body,
+        credit_shard_candidates=(0,),
+        key_shard_candidates=(0,),
+    )
+    assert authorized["outcome"] == AuthorizeOutcome.ACCEPTED
+    reservation_id = authorized["reservation_id"]
+
+    credit_split = reshard_credit_account(
+        store,
+        key.workspace_id,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+    key_split = reshard_key_usage(
+        store,
+        key.hash,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert credit_split.ready and credit_split.applied
+    assert key_split.ready and key_split.applied
+    credit_rows = database.typed[CREDIT_BALANCE_TABLE]
+    key_rows = database.typed[KEY_LIMIT_TABLE]
+    assert [credit_rows[(key.workspace_id, shard)]["reserved"] for shard in range(4)] == [
+        1_000,
+        0,
+        0,
+        0,
+    ]
+    assert [key_rows[(key.hash, shard)]["reserved"] for shard in range(4)] == [
+        0,
+        0,
+        0,
+        0,
+    ]
+
+    settled = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=reservation_id,
+        actual_micro=900,
+        settled_usage_type="Credits",
+        success=True,
+    )
+
+    assert settled["outcome"] == SettleOutcome.SETTLED
+    assert sum(row["reserved"] for row in credit_rows.values()) == 0
+    assert sum(row["total_usage"] for row in credit_rows.values()) == 900
+    assert sum(row["usage"] for row in key_rows.values()) == 900
+    assert database.reservations[reservation_id]["settled"] is True
+
+
+def test_online_key_split_keeps_history_and_windows_on_existing_shard() -> None:
+    store, database, key = _seed(key_shards=1)
+    floors = window_floors(utcnow())
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row.update(
+        usage=101,
+        byok_usage=37,
+        day_usage=19,
+        day_start=floors["daily"],
+        week_usage=23,
+        week_start=floors["weekly"],
+        month_usage=29,
+        month_start=floors["monthly"],
+    )
+
+    split = reshard_key_usage(
+        store,
+        key.hash,
+        4,
+        apply=True,
+        preserve_open_holds=True,
+    )
+
+    assert split.ready and split.applied
+    rows = [database.typed[KEY_LIMIT_TABLE][(key.hash, shard)] for shard in range(4)]
+    assert [row["usage"] for row in rows] == [101, 0, 0, 0]
+    assert [row["byok_usage"] for row in rows] == [37, 0, 0, 0]
+    assert [row["day_usage"] for row in rows] == [19, 0, 0, 0]
+    assert [row["week_usage"] for row in rows] == [23, 0, 0, 0]
+    assert [row["month_usage"] for row in rows] == [29, 0, 0, 0]
 
 
 def test_key_usage_operator_refuses_lifetime_capped_or_undrained_key() -> None:
