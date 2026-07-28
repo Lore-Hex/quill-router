@@ -562,11 +562,12 @@ def test_privacy_meta_models_expand_to_expected_provider_pools() -> None:
     assert eu_shape["trustedrouter"]["auto_candidates"]
 
 
-def test_uncontracted_closed_providers_are_not_marked_zdr() -> None:
+def test_closed_provider_zdr_claims_are_route_scoped() -> None:
     """Keep public ZDR claims fail-closed for major closed providers.
 
-    If Amazon/Bedrock or Google/Vertex are added as explicit providers later,
-    they should remain outside trustedrouter/zdr until reviewed again.
+    Amazon/Bedrock, Anthropic, and Google AI Studio remain outside
+    trustedrouter/zdr until reviewed again. The managed Vertex account is
+    contractually ZDR, but only its prepaid credential path may qualify.
     """
     provider_slugs_requiring_reverification = {
         "amazon",
@@ -574,14 +575,29 @@ def test_uncontracted_closed_providers_are_not_marked_zdr() -> None:
         "aws",
         "bedrock",
         "google-ai-studio",
-        "google-vertex",
     }
     configured = provider_slugs_requiring_reverification & set(PROVIDERS)
 
-    assert {"anthropic", "google-ai-studio", "google-vertex"} <= configured
+    assert {"anthropic", "google-ai-studio"} <= configured
     for provider in sorted(configured):
         assert PROVIDERS[provider].provider_zero_data_retention is not True
         assert provider_privacy_tier(PROVIDERS[provider]) < PRIVACY_TIER_ZERO_RETENTION
+
+    vertex = PROVIDERS["google-vertex"]
+    assert vertex.provider_zero_data_retention is False
+    assert vertex.prepaid_zero_data_retention is True
+    assert vertex.prepaid_zero_data_retention_effective_on == "2026-07-28"
+    assert provider_privacy_tier(vertex) < PRIVACY_TIER_ZERO_RETENTION
+    vertex_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "google-vertex"
+    ]
+    assert vertex_endpoints
+    assert all(endpoint.usage_type == "Credits" for endpoint in vertex_endpoints)
+    assert all(
+        endpoint_privacy_tier(endpoint) == PRIVACY_TIER_ZERO_RETENTION
+        for endpoint in vertex_endpoints
+    )
+    assert all(endpoint_zero_data_retention(endpoint) is True for endpoint in vertex_endpoints)
 
     # OpenAI's guarantee is deliberately narrower: it belongs to
     # TrustedRouter's managed prepaid account, starts on July 28, and is not
@@ -1349,9 +1365,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert "google-ai-studio" not in {
         endpoint.provider for _model, endpoint in zdr_endpoints
     }
-    assert "google-vertex" not in {
-        endpoint.provider for _model, endpoint in zdr_endpoints
-    }
+    assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "openai" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION

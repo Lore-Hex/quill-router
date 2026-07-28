@@ -670,6 +670,18 @@ def test_provider_detail_page_links_served_models(client: TestClient) -> None:
     assert "Policy source" in response.text
 
 
+def test_vertex_provider_page_scopes_zdr_to_managed_prepaid_routes(
+    client: TestClient,
+) -> None:
+    response = client.get("/providers/google-vertex")
+
+    assert response.status_code == 200
+    assert "No logs (prepaid)" in response.text
+    assert "prepaid only" in response.text
+    assert "contractual Zero Data Retention" in response.text
+    assert "Google AI Studio is classified separately" in response.text
+
+
 def test_provider_detail_links_indexable_performance_page(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

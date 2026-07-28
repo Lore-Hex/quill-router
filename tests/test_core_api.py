@@ -1107,13 +1107,26 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["google-ai-studio"]["provider_zero_data_retention"] is False
     assert provider_flags["google-ai-studio"]["supports_byok"] is True
     assert provider_flags["google-vertex"]["provider_zero_data_retention"] is False
+    assert provider_flags["google-vertex"]["prepaid_zero_data_retention"] is True
+    assert provider_flags["google-vertex"][
+        "prepaid_zero_data_retention_effective_on"
+    ] == ("2026-07-28")
+    assert (
+        provider_flags["google-vertex"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
     assert provider_flags["google-vertex"]["supports_byok"] is False
     assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
     assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
     assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
     assert "customer BYOK" in provider_flags["openai"]["provider_policy"]
     assert "Not currently marked ZDR" in provider_flags["google-ai-studio"]["provider_policy"]
-    assert "Not currently marked ZDR" in provider_flags["google-vertex"]["provider_policy"]
+    assert "contractual Zero Data Retention" in provider_flags["google-vertex"][
+        "provider_policy"
+    ]
+    assert "Google AI Studio is classified separately" in provider_flags["google-vertex"][
+        "provider_policy"
+    ]
     # GMI runs VPC isolation, NOT an attested TEE — must NOT claim confidential.
     assert provider_flags["gmi"]["provider_confidential_compute"] is None
     assert provider_flags["deepseek"]["provider_zero_data_retention"] is False
@@ -1162,10 +1175,17 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert "venice" not in zdr_providers
     assert "anthropic" not in zdr_providers
     assert "google-ai-studio" not in zdr_providers
-    assert "google-vertex" not in zdr_providers
+    assert "google-vertex" in zdr_providers
     assert "openai" not in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
+    vertex_zdr = [item for item in zdr if item["provider"] == "google-vertex"]
+    assert vertex_zdr
+    assert all(item["prepaid_zero_data_retention"] is True for item in vertex_zdr)
+    assert all(
+        item["zero_data_retention_scope"] == "trustedrouter_prepaid"
+        for item in vertex_zdr
+    )
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200
     assert credits.json()["data"]["total_credits"] >= 0
