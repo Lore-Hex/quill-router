@@ -183,8 +183,25 @@ def init_sentry(settings: Settings) -> None:
             # INFO is Axiom-only by design; Sentry logs stay WARNING+ so chatty
             # INFO can never crowd out error events in the floodgate.
             LoggingIntegration(level=None, event_level=None, sentry_logs_level=logging.WARNING),
-            StarletteIntegration(transaction_style="endpoint"),
-            FastApiIntegration(transaction_style="endpoint"),
+            # 405 is reported alongside 5xx. The SDK default is 5xx only, which
+            # is why a console form that POSTed to a GET-only route returned
+            # "Method Not Allowed" to users indefinitely and never raised an
+            # alert: Starlette answers 405 from the router without an exception
+            # for Sentry to catch.
+            #
+            # 405 is worth the exception to "don't alert on 4xx" because it is
+            # never a client mistake we can't fix — it means a path exists but
+            # not for that method, i.e. our own form or client targets a route
+            # we did not implement. Low volume, high signal. Other 4xx stay
+            # unreported: 401/402/404 are routine and would drown the signal.
+            StarletteIntegration(
+                transaction_style="endpoint",
+                failed_request_status_codes={405, *range(500, 600)},
+            ),
+            FastApiIntegration(
+                transaction_style="endpoint",
+                failed_request_status_codes={405, *range(500, 600)},
+            ),
         ],
         # cast over Sentry's TypedDict event/log signatures — the scrubbers
         # operate on whatever shape Sentry hands them, and we don't want to

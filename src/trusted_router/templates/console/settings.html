@@ -3,10 +3,17 @@
 <section class="panel">
   <div class="panel-head"><h2>Workspace settings</h2></div>
   <div class="panel-body">
+    {% if saved %}<p class="notice ok">Workspace name saved.</p>{% endif %}
+    {% if error == 'name' %}<p class="notice bad">Enter a workspace name.</p>
+    {% elif error == 'too_long' %}<p class="notice bad">Workspace name is too long (120 characters max).</p>
+    {% elif error == 'forbidden' %}<p class="notice bad">Only workspace owners and admins can rename a workspace.</p>
+    {% elif error == 'missing' %}<p class="notice bad">That workspace no longer exists.</p>
+    {% elif error == 'workspace' %}<p class="notice bad">Select a workspace first.</p>{% endif %}
     <form class="form" method="post" action="/console/settings">
-      <label>Workspace name<input name="name" value="{{ workspace.name }}" maxlength="120"></label>
-      <button class="btn primary" type="submit">Save</button>
+      <label>Workspace name<input name="name" value="{{ workspace.name }}" maxlength="120" {{ '' if can_manage else 'disabled' }}></label>
+      <button class="btn primary" type="submit" {{ '' if can_manage else 'disabled' }}>Save</button>
     </form>
+    {% if not can_manage %}<p class="muted">Only workspace owners and admins can rename a workspace.</p>{% endif %}
   </div>
 </section>
 <section class="panel">

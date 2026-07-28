@@ -288,6 +288,12 @@ input, select { width:100%; border:1px solid var(--line); border-radius:7px; pad
 .checkbox-row input[type="checkbox"] { width:auto; min-width:16px; height:16px; min-height:16px; margin:0; padding:0; accent-color:var(--blue); }
 .notice { border:1px solid var(--good-border); background:var(--good-bg); color:var(--green); border-radius:8px; padding:12px; font-size:13px; line-height:1.45; }
 .notice.warn { border-color:var(--warn-border); background:var(--warn-bg); color:var(--amber); }
+/* `.notice` alone is the success tint, so an unstyled `.notice.bad` rendered
+   every console error message in green — actively telling users a failed
+   action succeeded. Templates have used `notice bad`/`notice ok` all along;
+   these are the rules they were missing. */
+.notice.ok { border-color:var(--good-border); background:var(--good-bg); color:var(--green); }
+.notice.bad { border-color:var(--danger-border); background:var(--danger-bg); color:var(--red); }
 .notice[hidden] { display:none; }
 .auth-grid { display:grid; grid-template-columns:minmax(240px,1fr) minmax(220px,.8fr) minmax(180px,.7fr) auto; gap:10px; align-items:end; }
 .auth-actions { display:flex; gap:8px; flex-wrap:wrap; }
