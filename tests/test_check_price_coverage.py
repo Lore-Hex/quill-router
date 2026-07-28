@@ -28,6 +28,8 @@ def _known_provider_model_payload(url: str, _env_names: tuple[str, ...]) -> dict
         return {"data": [{"id": "meta-llama-3.3-70b-instruct"}]}
     if "inference.baseten.co" in url:
         return {"data": [{"id": "zai-org/GLM-5.2"}]}
+    if "api.telnyx.com" in url:
+        return {"data": [{"id": "moonshotai/Kimi-K3"}]}
     if "pass.wafer.ai" in url:
         return {"data": [{"id": "GLM-5.2"}]}
     if "api.inference.crusoecloud.com" in url:

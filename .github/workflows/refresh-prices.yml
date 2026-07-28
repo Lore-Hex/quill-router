@@ -144,6 +144,7 @@ jobs:
                       CRUSOE_API_KEY:trustedrouter-crusoe-api-key \
                       FRIENDLI_API_KEY:trustedrouter-friendli-api-key \
                       BASETEN_API_KEY:trustedrouter-baseten-api-key \
+                      TELNYX_API_KEY:trustedrouter-telnyx-api-key \
                       WAFER_API_KEY:trustedrouter-wafer-api-key \
                       ALIBABA_API_KEY:trustedrouter-alibaba-api-key \
                       MAKORA_API_KEY:trustedrouter-makora-api-key \

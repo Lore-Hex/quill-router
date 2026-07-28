@@ -407,6 +407,19 @@ async def test_openai_compatible_adapter_forwards_provider_specific_controls(
         ),
         (
             Model(
+                id="moonshotai/kimi-k3",
+                name="Kimi K3 on Telnyx",
+                provider="telnyx",
+                context_length=1_000_000,
+                upstream_id="moonshotai/Kimi-K3",
+            ),
+            "TELNYX_API_KEY",
+            "telnyx-value",
+            "https://api.telnyx.com/v2/ai/openai/chat/completions",
+            "moonshotai/Kimi-K3",
+        ),
+        (
+            Model(
                 id="thinkingmachines/inkling",
                 name="Inkling 256K on Tinker",
                 provider="thinkingmachines",

@@ -59,6 +59,8 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
     "xiaomi": (("XIAOMI_API_KEY",), "https://api.xiaomimimo.com/v1"),
     # Baseten Model APIs — OpenAI-compatible chat completions.
     "baseten": (("BASETEN_API_KEY",), "https://inference.baseten.co/v1"),
+    # Telnyx Inference — OpenAI-compatible chat completions.
+    "telnyx": (("TELNYX_API_KEY",), "https://api.telnyx.com/v2/ai/openai"),
     # Thinking Machines Lab Tinker OpenAI-compatible sampler.
     "thinkingmachines": (
         ("THINKING_MACHINES_API_KEY", "TINKER_API_KEY"),

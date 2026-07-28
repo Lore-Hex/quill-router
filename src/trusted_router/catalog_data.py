@@ -588,6 +588,21 @@ PROVIDERS: dict[str, Provider] = {
         provider_policy_url="https://docs.baseten.co/inference/overview",
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
+    # Telnyx Inference — OpenAI-compatible chat completions at
+    # api.telnyx.com/v2/ai/openai. The authenticated model feed is joined
+    # hourly with Telnyx's current pricing page and public x402 catalog.
+    "telnyx": Provider(
+        slug="telnyx",
+        name="Telnyx",
+        supports_prepaid=True,
+        provider_policy=(
+            "No provider-ZDR or confidential-compute claim is tracked here. "
+            "Telnyx's privacy policy is linked for users who need to review "
+            "inference data handling."
+        ),
+        provider_policy_url="https://telnyx.com/privacy-policy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # Wafer — OpenAI-compatible serverless API at pass.wafer.ai/v1. Wafer
     # supports request-scoped ZDR with `Wafer-ZDR: required`; providers.py's
     # live-provider allowlist sends that header on Wafer routes. The provider
@@ -909,6 +924,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "deepinfra",
         "friendli",
         "baseten",
+        "telnyx",
         "thinkingmachines",
         "wafer",
         "crusoe",

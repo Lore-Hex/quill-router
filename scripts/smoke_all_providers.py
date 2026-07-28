@@ -51,6 +51,7 @@ PROBES: list[tuple[str, str]] = [
     ("tinfoil", "moonshotai/kimi-k2.6"),
     ("venice", "z-ai/glm-4.6"),
     ("baseten", "z-ai/glm-5.2"),
+    ("telnyx", "moonshotai/kimi-k3"),
     ("wafer", "z-ai/glm-5.2"),
     ("crusoe", "deepseek/deepseek-v4-flash"),
 ]
