@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from trusted_router.storage_models import SyntheticProbeSample
+from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
 
-API_PROBES = {"tls_health", "attestation_nonce", "openai_sdk_pong", "responses_pong"}
-ROUTER_CORE_PROBES = {
-    "tls_health",
-    "attestation_nonce",
-    "gateway_authorize_settle",
-    "provider_fallback",
-}
+REGIONAL_GATEWAY_PROBES = {"tls_health", "attestation_nonce"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
 IMAGE_GENERATION_PROBES = {"image_generation"}
 
-SLO_PROBES: dict[str, set[str]] = {
-    "router_core": ROUTER_CORE_PROBES,
-    "control_plane": CONTROL_PLANE_PROBES,
+COMPONENT_PROBES: dict[str, set[str]] = {
+    "canonical_api": REGIONAL_GATEWAY_PROBES,
+    "us_central1_regional_api": REGIONAL_GATEWAY_PROBES,
+    "us_east4_regional_api": REGIONAL_GATEWAY_PROBES,
+    "eu_regional_api": REGIONAL_GATEWAY_PROBES,
+    "attestation": {"attestation_nonce"},
+    "billing_settlement": {"gateway_authorize_settle"},
+    "provider_fallback": {"provider_fallback"},
+    "image_generation": IMAGE_GENERATION_PROBES,
 }
 
 SLO_DEFINITIONS: tuple[dict[str, str], ...] = (
@@ -39,22 +39,22 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
     {
         "id": "canonical_api",
         "name": "Canonical API",
-        "description": "api.trustedrouter.com chat, Responses, TLS, and attestation checks.",
+        "description": "api.trustedrouter.com attested TLS reachability and trust checks.",
     },
     {
         "id": "us_central1_regional_api",
         "name": "US Central Regional API",
-        "description": "api-us-central1.quillrouter.com regional attested gateway checks.",
+        "description": "US Central attested TLS reachability and trust checks.",
     },
     {
         "id": "us_east4_regional_api",
         "name": "US East Regional API",
-        "description": "api-us-east4.quillrouter.com regional attested gateway checks.",
+        "description": "US East attested TLS reachability and trust checks.",
     },
     {
         "id": "eu_regional_api",
         "name": "EU Regional API",
-        "description": "api-europe-west4.quillrouter.com regional attested gateway checks.",
+        "description": "EU attested TLS reachability and trust checks.",
     },
     {
         "id": "attestation",
@@ -81,13 +81,13 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
 
 def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
     ids: list[str] = []
-    if sample.target == "canonical" and sample.probe_type in API_PROBES:
+    if sample.target == "canonical" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("canonical_api")
-    if sample.target == "us-central1" and sample.probe_type in API_PROBES:
+    if sample.target == "us-central1" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("us_central1_regional_api")
-    if sample.target == "us-east4" and sample.probe_type in API_PROBES:
+    if sample.target == "us-east4" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("us_east4_regional_api")
-    if sample.target == "europe-west4" and sample.probe_type in API_PROBES:
+    if sample.target == "europe-west4" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("eu_regional_api")
     if sample.probe_type == "attestation_nonce":
         ids.append("attestation")
@@ -101,13 +101,44 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
 
 
 def sample_slo_class_ids(sample: SyntheticProbeSample) -> list[str]:
-    return [
-        slo_id for slo_id, probe_types in SLO_PROBES.items() if sample.probe_type in probe_types
-    ]
+    return _slo_class_ids(probe_type=sample.probe_type, target=sample.target)
 
 
-def slo_probe_types(slo_id: str) -> set[str]:
-    return set(SLO_PROBES.get(slo_id, set()))
+def rollup_slo_class_ids(rollup: SyntheticRollup) -> list[str]:
+    ids = _slo_class_ids(probe_type=rollup.probe_type, target=rollup.target)
+    if "router_core" not in ids:
+        return ids
+    # Samples can feed more than one public display component. Select exactly
+    # one component for each Router Core dimension so SLO rollups never count
+    # the same underlying probe twice.
+    expected_component = {
+        "tls_health": "canonical_api",
+        "attestation_nonce": "canonical_api",
+        "gateway_authorize_settle": "billing_settlement",
+        "provider_fallback": "provider_fallback",
+    }.get(rollup.probe_type)
+    if rollup.component != expected_component:
+        ids.remove("router_core")
+    return ids
+
+
+def _slo_class_ids(*, probe_type: str, target: str) -> list[str]:
+    ids: list[str] = []
+    if (
+        (target == "canonical" and probe_type in REGIONAL_GATEWAY_PROBES)
+        or (
+            target == "control-plane"
+            and probe_type in {"gateway_authorize_settle", "provider_fallback"}
+        )
+    ):
+        ids.append("router_core")
+    if probe_type in CONTROL_PLANE_PROBES:
+        ids.append("control_plane")
+    return ids
+
+
+def component_probe_types(component_id: str) -> set[str]:
+    return set(COMPONENT_PROBES.get(component_id, set()))
 
 
 def component_name(component_id: str) -> str:

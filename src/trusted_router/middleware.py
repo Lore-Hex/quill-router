@@ -61,12 +61,14 @@ STATUS_HOST_EXACT_PATHS = frozenset(
         "/favicon.ico",
         "/health",
         "/healthz",
+        "/ready",
         "/og.png",
         "/robots.txt",
         "/status",
         "/status.json",
         "/v1/health",
         "/v1/healthz",
+        "/v1/ready",
     }
 )
 STATUS_HOST_PATH_PREFIXES = ("/static/", "/status/")
@@ -279,7 +281,9 @@ def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | 
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
-    if path in {"/health", "/v1/health"} or path.startswith(("/docs", "/openapi.json")):
+    if path in {"/health", "/v1/health", "/ready", "/v1/ready"} or path.startswith(
+        ("/docs", "/openapi.json")
+    ):
         return None
 
     bearer = get_authorization_bearer(request)
@@ -401,6 +405,7 @@ def _is_public_html_response(path: str, response: Response) -> bool:
         "/v1",
         "/static",
         "/health",
+        "/ready",
         "/openapi",
     )
     if path.startswith(excluded) or path.endswith("_oauth_callback"):

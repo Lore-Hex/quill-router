@@ -21,4 +21,20 @@ def test_prod_smoke_checks_each_control_plane_region_directly() -> None:
         "for region in us-central1 us-east4 europe-west4 southamerica-east1; do"
         in workflow
     )
+    assert 'check_url "ready_${region}" "${service_url}/ready"' in workflow
     assert 'check_url "status_${region}" "${service_url}/status.json"' in workflow
+
+
+def test_warm_secondary_regions_roll_sequentially() -> None:
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    start = workflow.index(
+        "- name: Roll secondary warm regions sequentially (europe-west4, then us-east4)"
+    )
+    end = workflow.index("- name: Deploy cold regions", start)
+    rollout = workflow[start:end]
+
+    assert "regions=(europe-west4 us-east4)" in rollout
+    assert 'for region in "${regions[@]}"; do' in rollout
+    assert 'deploy_secondary "${region}"' in rollout
+    assert "pids=(" not in rollout
+    assert " &" not in rollout

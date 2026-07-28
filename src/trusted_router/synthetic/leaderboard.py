@@ -111,7 +111,10 @@ class ProviderModelStats:
     success_count: int = 0
     error_count: int = 0
     excluded_count: int = 0
+    ttft_sample_count: int = 0
     throughput_sample_count: int = 0
+    rank: int | None = None
+    rank_eligible: bool = False
     p50_ttft_ms: int | None = None
     p95_ttft_ms: int | None = None
     p50_ttfb_ms: int | None = None
@@ -147,7 +150,10 @@ class ProviderModelStats:
             "uptime": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
+            "ttft_sample_count": self.ttft_sample_count,
             "throughput_sample_count": self.throughput_sample_count,
+            "rank": self.rank,
+            "rank_eligible": self.rank_eligible,
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -173,7 +179,10 @@ class ProviderStats:
     success_count: int = 0
     error_count: int = 0
     excluded_count: int = 0
+    ttft_sample_count: int = 0
     throughput_sample_count: int = 0
+    rank: int | None = None
+    rank_eligible: bool = False
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
     errors: Counter[str] = field(default_factory=Counter)
@@ -205,7 +214,10 @@ class ProviderStats:
             "uptime": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
+            "ttft_sample_count": self.ttft_sample_count,
             "throughput_sample_count": self.throughput_sample_count,
+            "rank": self.rank,
+            "rank_eligible": self.rank_eligible,
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -225,7 +237,12 @@ def _sort_key(p50_ttft_ms: int | None) -> tuple[int, int]:
 
 
 def aggregate_leaderboard(
-    samples: Iterable[ProviderBenchmarkSample], *, min_samples: int = 1
+    samples: Iterable[ProviderBenchmarkSample],
+    *,
+    min_samples: int = 1,
+    model_rank_min_samples: int = 1,
+    provider_rank_min_samples: int = 1,
+    rank_min_ttft_samples: int = 1,
 ) -> dict[str, Any]:
     """Aggregate samples into ranked per-model and per-provider stats.
 
@@ -235,7 +252,6 @@ def aggregate_leaderboard(
     by_model: dict[tuple[str, str], ProviderModelStats] = {}
     ttft: dict[tuple[str, str], list[int]] = {}
     ttfb: dict[tuple[str, str], list[int]] = {}
-    legacy_tps: dict[tuple[str, str], list[float]] = {}
     sustained_tps: dict[tuple[str, str], list[float]] = {}
 
     for sample in samples:
@@ -246,7 +262,6 @@ def aggregate_leaderboard(
             by_model[key] = stats
             ttft[key] = []
             ttfb[key] = []
-            legacy_tps[key] = []
             sustained_tps[key] = []
         if sample.source == "synthetic_throughput":
             effective_tps = _effective_throughput(sample)
@@ -276,26 +291,45 @@ def aggregate_leaderboard(
             ttft[key].append(sample.first_token_milliseconds)
         if sample.ttfb_milliseconds is not None:
             ttfb[key].append(sample.ttfb_milliseconds)
-        if sample.speed_tokens_per_second:
-            legacy_tps[key].append(sample.speed_tokens_per_second)
         if stats.last_seen is None or sample.created_at > stats.last_seen:
             stats.last_seen = sample.created_at
 
     for key, stats in by_model.items():
+        stats.ttft_sample_count = len(ttft[key])
         stats.p50_ttft_ms = _percentile(ttft[key], 50)
         stats.p95_ttft_ms = _percentile(ttft[key], 95)
         stats.p50_ttfb_ms = _percentile(ttfb[key], 50)
         stats.p95_ttfb_ms = _percentile(ttfb[key], 95)
-        stats.p50_tokens_per_second = _median_float(sustained_tps[key] or legacy_tps[key])
+        stats.p50_tokens_per_second = _median_float(sustained_tps[key])
+        stats.rank_eligible = (
+            stats.sample_count >= model_rank_min_samples
+            and stats.ttft_sample_count >= rank_min_ttft_samples
+        )
 
     models = [
         stats
         for stats in by_model.values()
         if stats.sample_count >= min_samples or stats.throughput_sample_count >= min_samples
     ]
-    models.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
+    models.sort(
+        key=lambda stats: (
+            0 if stats.rank_eligible else 1,
+            *_sort_key(stats.p50_ttft_ms),
+            stats.model,
+            stats.provider,
+        )
+    )
+    next_rank = 1
+    for stats in models:
+        if stats.rank_eligible:
+            stats.rank = next_rank
+            next_rank += 1
 
-    providers = _aggregate_providers(models)
+    providers = _aggregate_providers(
+        models,
+        provider_rank_min_samples=provider_rank_min_samples,
+        rank_min_ttft_samples=rank_min_ttft_samples,
+    )
     return {
         "models": [s.as_dict() for s in models],
         "providers": [s.as_dict() for s in providers],
@@ -307,36 +341,61 @@ def aggregate_leaderboard(
     }
 
 
-def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[ProviderStats]:
+def _aggregate_providers(
+    model_stats: list[ProviderModelStats],
+    *,
+    provider_rank_min_samples: int,
+    rank_min_ttft_samples: int,
+) -> list[ProviderStats]:
     by_provider: dict[str, ProviderStats] = {}
     ttft: dict[str, list[int]] = {}
     tps: dict[str, list[float]] = {}
-    for stats in model_stats:
-        agg = by_provider.get(stats.provider)
+    for model_stat in model_stats:
+        agg = by_provider.get(model_stat.provider)
         if agg is None:
-            agg = ProviderStats(provider=stats.provider)
-            by_provider[stats.provider] = agg
-            ttft[stats.provider] = []
-            tps[stats.provider] = []
+            agg = ProviderStats(provider=model_stat.provider)
+            by_provider[model_stat.provider] = agg
+            ttft[model_stat.provider] = []
+            tps[model_stat.provider] = []
         agg.model_count += 1
-        agg.sample_count += stats.sample_count
-        agg.success_count += stats.success_count
-        agg.error_count += stats.error_count
-        agg.excluded_count += stats.excluded_count
-        agg.throughput_sample_count += stats.throughput_sample_count
-        agg.errors.update(stats.errors)
-        agg.excluded_reasons.update(stats.excluded_reasons)
+        agg.sample_count += model_stat.sample_count
+        agg.success_count += model_stat.success_count
+        agg.error_count += model_stat.error_count
+        agg.excluded_count += model_stat.excluded_count
+        agg.ttft_sample_count += model_stat.ttft_sample_count
+        agg.throughput_sample_count += model_stat.throughput_sample_count
+        agg.errors.update(model_stat.errors)
+        agg.excluded_reasons.update(model_stat.excluded_reasons)
         # Weight each model's p50 by its sample count for the provider median.
-        if stats.p50_ttft_ms is not None:
-            ttft[stats.provider].extend([stats.p50_ttft_ms] * stats.sample_count)
-        if stats.p50_tokens_per_second is not None:
-            weight = stats.throughput_sample_count or stats.sample_count
-            tps[stats.provider].extend([stats.p50_tokens_per_second] * weight)
+        if model_stat.p50_ttft_ms is not None:
+            ttft[model_stat.provider].extend(
+                [model_stat.p50_ttft_ms] * model_stat.sample_count
+            )
+        if model_stat.p50_tokens_per_second is not None:
+            weight = model_stat.throughput_sample_count
+            tps[model_stat.provider].extend(
+                [model_stat.p50_tokens_per_second] * weight
+            )
     providers = list(by_provider.values())
     for agg in providers:
         agg.p50_ttft_ms = _percentile(ttft[agg.provider], 50)
         agg.p50_tokens_per_second = _median_float(tps[agg.provider])
-    providers.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
+        agg.rank_eligible = (
+            agg.sample_count >= provider_rank_min_samples
+            and agg.ttft_sample_count >= rank_min_ttft_samples
+        )
+    providers.sort(
+        key=lambda stats: (
+            0 if stats.rank_eligible else 1,
+            *_sort_key(stats.p50_ttft_ms),
+            stats.provider,
+        )
+    )
+    next_rank = 1
+    for provider_stat in providers:
+        if provider_stat.rank_eligible:
+            provider_stat.rank = next_rank
+            next_rank += 1
     return providers
 
 

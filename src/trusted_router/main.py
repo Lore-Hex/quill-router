@@ -49,6 +49,7 @@ from trusted_router.routes.wallet_oauth import register_wallet_oauth_routes
 from trusted_router.routes.workspaces import register_workspace_routes
 from trusted_router.sentry_config import init_sentry
 from trusted_router.storage import (
+    STORE,
     configure_analytics_sink,
     configure_store,
     create_store,
@@ -165,6 +166,27 @@ def _make_api_router(settings: Settings) -> APIRouter:
     @router.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @router.get("/ready")
+    def ready() -> Response:
+        try:
+            STORE.readiness_check()
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "checks": {"billing_store": "unavailable"},
+                },
+                headers={"Retry-After": "5"},
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ready",
+                "checks": {"billing_store": "ready"},
+            },
+        )
 
     @router.get("/coverage/openrouter")
     async def coverage() -> dict[str, Any]:

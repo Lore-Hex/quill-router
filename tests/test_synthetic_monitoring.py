@@ -332,9 +332,7 @@ def test_status_history_browser_requests_render_48h_visual_page(client: TestClie
     assert history.status_code == 200
     assert history.headers["content-type"].startswith("text/html")
     assert "48 hour status history" in history.text
-    assert (
-        "Latency is broken out by target, probe, monitor region, and target region" in history.text
-    )
+    assert "Router Core latency and availability are broken out" in history.text
     assert "48 hour component timeline" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
@@ -358,7 +356,7 @@ def test_status_history_browser_requests_render_monthly_visual_page(client: Test
     assert history.headers["content-type"].startswith("text/html")
     assert "Monthly status history" in history.text
     assert "Monthly rollups" in history.text
-    assert "Precomputed reliability history" in history.text
+    assert "Precomputed Router Core reliability" in history.text
     assert "Latency breakdown" in history.text
     assert "View JSON" in history.text
     assert "reply exactly PONG" not in history.text
@@ -434,7 +432,7 @@ def test_public_status_snapshot_uses_live_samples_plus_precomputed_rollups(
     assert all(call["since"] for call in rollup_calls)
     assert all("until" not in call for call in rollup_calls)
     assert payload["windows"]["5m"]["sample_count"] == 1
-    assert payload["windows"]["48h"]["sample_count"] == 2
+    assert payload["windows"]["48h"]["sample_count"] == 1
     assert payload["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 31
 
 
@@ -562,21 +560,22 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["overall_status"] == "up"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
-    assert snapshot["windows"]["5m"]["sample_count"] == 3
-    assert snapshot["windows"]["24h"]["sample_count"] == 4
-    assert snapshot["windows"]["48h"]["sample_count"] == 4
-    assert sum(row["sample_count"] for row in snapshot["daily"]) == 4
+    assert snapshot["history_scope"] == "router_core"
+    assert snapshot["windows"]["5m"]["sample_count"] == 1
+    assert snapshot["windows"]["24h"]["sample_count"] == 1
+    assert snapshot["windows"]["48h"]["sample_count"] == 1
+    assert sum(row["sample_count"] for row in snapshot["daily"]) == 1
     assert snapshot["headline_metrics"]["gateway_overhead_p50_milliseconds"] == 25
     assert snapshot["headline_metrics"]["gateway_overhead_scope"] == "in_region"
     canonical = next(
         component for component in snapshot["components"] if component["id"] == "canonical_api"
     )
-    assert canonical["status"] == "down"
-    assert canonical["uptime_24h_percent"] == pytest.approx(50.0)
+    assert canonical["status"] == "up"
+    assert canonical["uptime_24h_percent"] == pytest.approx(100.0)
     assert canonical["p50_latency_milliseconds"] == 25
-    assert canonical["end_to_end_p50_latency_milliseconds"] == 120
+    assert canonical["end_to_end_p50_latency_milliseconds"] == 25
     assert len(canonical["history"]) == 48
-    assert snapshot["recent_events"][0]["component"] == "Canonical API"
+    assert snapshot["recent_events"] == []
 
 
 def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
@@ -626,10 +625,66 @@ def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
     assert snapshot["slo_classes"]["router_core"]["windows"]["5m"]["bad_count"] == 0
     assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
+    assert {
+        row["probe_type"] for row in snapshot["current"]["checks"]
+    } == {
+        "tls_health",
+        "gateway_authorize_settle",
+        "provider_fallback",
+    }
     assert all(
         alert["slo_class"] != "provider_effective"
         for alert in snapshot["burn_rate_alerts"]
     )
+    canonical = next(
+        row for row in snapshot["components"] if row["id"] == "canonical_api"
+    )
+    assert canonical["status"] == "up"
+    assert canonical["sample_count_24h"] == 1
+    assert snapshot["windows"]["5m"]["sample_count"] == 3
+    assert all(
+        event["probe_type"] not in {"openai_sdk_pong", "responses_pong"}
+        for event in snapshot["recent_events"]
+    )
+
+
+def test_regional_gateway_maintenance_never_reduces_global_router_core_slo() -> None:
+    now = utcnow()
+    samples = [
+        _sample(
+            id="syn_canonical_up",
+            probe_type="tls_health",
+            status="up",
+            created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_eu_tls_down",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="tls_health",
+            status="down",
+            created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
+        ),
+        _sample(
+            id="syn_eu_attestation_down",
+            target="europe-west4",
+            target_region="europe-west4",
+            probe_type="attestation_nonce",
+            status="trust_degraded",
+            created_at=(now - dt.timedelta(seconds=12)).isoformat().replace("+00:00", "Z"),
+        ),
+    ]
+
+    snapshot = status_snapshot(samples, now=now)
+
+    router_core = snapshot["slo_classes"]["router_core"]
+    assert router_core["status"] == "up"
+    assert router_core["windows"]["5m"]["sample_count"] == 1
+    assert router_core["windows"]["5m"]["uptime_percent"] == 100.0
+    eu_component = next(
+        row for row in snapshot["components"] if row["id"] == "eu_regional_api"
+    )
+    assert eu_component["status"] == "trust_degraded"
 
 
 def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
@@ -818,6 +873,62 @@ def test_status_uses_hourly_rollups_for_48h_history_when_raw_samples_are_recent_
     assert sum(bucket["sample_count"] for bucket in canonical["history"]) == 2
 
 
+def test_historical_provider_pong_rollups_never_blend_into_router_core() -> None:
+    now = utcnow()
+    tls = _sample(
+        id="syn_router_tls",
+        probe_type="tls_health",
+        status="up",
+        created_at=(now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=25,
+    )
+    provider_pong = _sample(
+        id="syn_provider_pong",
+        probe_type="openai_sdk_pong",
+        status="down",
+        created_at=(now - dt.timedelta(hours=2, seconds=1))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        error_type="provider_error",
+    )
+    rollups = _rollups_for_samples([tls])
+    rollups.extend(
+        new_rollup_for_sample(
+            provider_pong,
+            period=period,
+            component="canonical_api",
+        )
+        for period in ("hour", "day", "month")
+    )
+
+    snapshot = status_snapshot([], rollups=rollups, now=now)
+
+    assert snapshot["windows"]["24h"]["sample_count"] == 1
+    assert snapshot["windows"]["24h"]["uptime_percent"] == 100.0
+    canonical = next(
+        row for row in snapshot["components"] if row["id"] == "canonical_api"
+    )
+    assert canonical["sample_count_24h"] == 1
+    assert sum(bucket["sample_count"] for bucket in canonical["history"]) == 1
+
+
+def test_historical_attestation_rollup_counts_once_in_router_core() -> None:
+    now = utcnow()
+    attestation = _sample(
+        id="syn_attestation_once",
+        probe_type="attestation_nonce",
+        status="up",
+        created_at=(now - dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        latency_milliseconds=40,
+    )
+
+    snapshot = status_snapshot([], rollups=_rollups_for_samples([attestation]), now=now)
+
+    assert snapshot["windows"]["24h"]["sample_count"] == 1
+    assert snapshot["windows"]["24h"]["uptime_percent"] == 100.0
+    assert sum(row["sample_count"] for row in snapshot["daily"]) == 1
+
+
 def test_status_history_fills_missing_rollup_hours_from_raw_samples() -> None:
     now = utcnow()
     recent = _sample(
@@ -853,7 +964,7 @@ def test_status_components_group_regions_and_control_plane() -> None:
     samples = [
         _sample(
             id="syn_canonical",
-            probe_type="responses_pong",
+            probe_type="tls_health",
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),
@@ -861,7 +972,7 @@ def test_status_components_group_regions_and_control_plane() -> None:
             id="syn_eu",
             target="europe-west4",
             target_region="europe-west4",
-            probe_type="openai_sdk_pong",
+            probe_type="tls_health",
             status="up",
             created_at=(now - dt.timedelta(seconds=11)).isoformat().replace("+00:00", "Z"),
         ),
@@ -954,7 +1065,7 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
             id="syn_old_down_1",
             target="europe-west4",
             target_region="europe-west4",
-            probe_type="openai_sdk_pong",
+            probe_type="tls_health",
             status="down",
             created_at=(now - dt.timedelta(minutes=2)).isoformat().replace("+00:00", "Z"),
         ),
@@ -962,7 +1073,7 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
             id="syn_old_down_2",
             target="europe-west4",
             target_region="europe-west4",
-            probe_type="openai_sdk_pong",
+            probe_type="tls_health",
             status="down",
             created_at=(now - dt.timedelta(minutes=2, seconds=10))
             .isoformat()
@@ -972,7 +1083,7 @@ def test_status_component_current_uses_latest_sample_per_probe() -> None:
             id="syn_latest_up",
             target="europe-west4",
             target_region="europe-west4",
-            probe_type="openai_sdk_pong",
+            probe_type="tls_health",
             status="up",
             created_at=(now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
         ),

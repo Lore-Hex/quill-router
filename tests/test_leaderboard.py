@@ -58,7 +58,9 @@ def test_aggregate_computes_per_model_metrics() -> None:
     assert model["error_rate"] == 0.25
     assert model["p50_ttft_ms"] == 200  # median of [100,200,300]
     assert model["p50_ttfb_ms"] == 120
-    assert model["p50_tokens_per_second"] == 300.0  # median of [280,300,320]
+    # Short request speed is not a sustained-throughput measurement.
+    assert model["p50_tokens_per_second"] is None
+    assert model["throughput_sample_count"] == 0
     assert result["total_samples"] == 4
 
 
@@ -198,6 +200,54 @@ def test_throughput_only_route_is_visible_without_claiming_availability() -> Non
     assert model["p50_tokens_per_second"] == 40.0
     assert result["providers"][0]["sample_count"] == 0
     assert result["providers"][0]["uptime"] is None
+
+
+def test_thin_rows_stay_visible_but_do_not_receive_ranks() -> None:
+    samples = [
+        _sample(provider="thin", model="thin/fast", ttft=10),
+        *[
+            _sample(
+                provider="qualified",
+                model="qualified/model",
+                ttft=100 + index,
+                created_at=f"2026-06-04T00:00:{index:02d}Z",
+            )
+            for index in range(10)
+        ],
+    ]
+
+    result = aggregate_leaderboard(
+        samples,
+        model_rank_min_samples=10,
+        provider_rank_min_samples=10,
+        rank_min_ttft_samples=3,
+    )
+
+    assert [row["model"] for row in result["models"]] == [
+        "qualified/model",
+        "thin/fast",
+    ]
+    assert result["models"][0]["rank"] == 1
+    assert result["models"][0]["rank_eligible"] is True
+    assert result["models"][1]["rank"] is None
+    assert result["models"][1]["rank_eligible"] is False
+    assert result["providers"][0]["provider"] == "qualified"
+    assert result["providers"][0]["rank"] == 1
+    assert result["providers"][1]["provider"] == "thin"
+    assert result["providers"][1]["rank"] is None
+
+
+def test_legacy_short_request_speed_never_creates_zero_sample_throughput() -> None:
+    result = aggregate_leaderboard(
+        [_sample(provider="p", model="p/m", ttft=50, tps=9999.0)]
+    )
+
+    model = result["models"][0]
+    provider = result["providers"][0]
+    assert model["throughput_sample_count"] == 0
+    assert model["p50_tokens_per_second"] is None
+    assert provider["throughput_sample_count"] == 0
+    assert provider["p50_tokens_per_second"] is None
 
 
 def test_public_benchmark_samples_reads_each_provider(monkeypatch) -> None:

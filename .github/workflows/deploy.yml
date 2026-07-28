@@ -265,10 +265,8 @@ jobs:
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
       # secondary warm regions if us-central1 stays up. A bad change
-      # reaches at most one region before the secondaries start. Once
-      # the primary canary is green, europe-west4 and us-east4 roll in
-      # parallel with independent rollback. Final 10-min watch catches
-      # issues that surface after warm regions are converged.
+      # reaches at most one region at a time: europe-west4 and us-east4
+      # roll sequentially, each with independent staged traffic and rollback.
       #
       # Hotfix mode (workflow_dispatch input `hotfix: true`): the
       # watchdogs skip baseline + use --skip-baseline so a sick prod
@@ -381,7 +379,7 @@ jobs:
           echo "europe-west4 NEVER received the bad image; safe."
           exit 1
 
-      - name: Roll secondary warm regions in parallel (europe-west4 + us-east4)
+      - name: Roll secondary warm regions sequentially (europe-west4, then us-east4)
         env:
           IMAGE_TAG: ${{ needs.build-image.outputs.sha }}
           PREV_EU: ${{ steps.prev.outputs.europe_west4_revision }}
@@ -390,9 +388,6 @@ jobs:
           TR_WATCHDOG_SLO_CLASS: control_plane
         run: |
           set -euo pipefail
-
-          log_dir="$(mktemp -d)"
-          echo "secondary rollout logs: ${log_dir}"
 
           previous_revision() {
             case "$1" in
@@ -446,32 +441,15 @@ jobs:
           }
 
           regions=(europe-west4 us-east4)
-          pids=()
           for region in "${regions[@]}"; do
-            (
-              set -euo pipefail
-              deploy_secondary "${region}"
-            ) >"${log_dir}/${region}.log" 2>&1 &
-            pids+=("$!")
-          done
-
-          failed=0
-          for i in "${!regions[@]}"; do
-            region="${regions[$i]}"
-            pid="${pids[$i]}"
-            if ! wait "${pid}"; then
-              echo "::error::${region} rollout failed"
-              failed=1
+            echo "::group::${region} sequential rollout"
+            if ! deploy_secondary "${region}"; then
+              echo "::endgroup::"
+              echo "::error::${region} rollout failed; no later warm region was touched."
+              exit 1
             fi
-            echo "::group::${region} rollout log"
-            cat "${log_dir}/${region}.log"
             echo "::endgroup::"
           done
-
-          if [ "${failed}" -ne 0 ]; then
-            echo "one or more secondary warm regions failed; us-central1 keeps the new release; cold regions have NOT received it."
-            exit 1
-          fi
 
       - name: Deploy cold regions (no canary, scale-to-zero)
         # Stage 3.5 cold region: southamerica-east1. min-instances=0
@@ -506,7 +484,7 @@ jobs:
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1, then
-      # europe-west4 + us-east4 in parallel, each with its own 3-min
+      # europe-west4, then us-east4, each with its own 3-min
       # watchdog AFTER the staged_traffic 10/50/100 ramp). The prior cross-
       # region watchdog at this point caused recurring spurious
       # rollbacks: by the time it ran, earlier regions had finished
@@ -542,6 +520,7 @@ jobs:
 
           check_url homepage https://trustedrouter.com/
           check_url health https://trustedrouter.com/health
+          check_url ready https://trustedrouter.com/ready
           check_url regions https://trustedrouter.com/v1/regions
           check_url status_json https://trustedrouter.com/status.json
           check_url status_host https://status.trustedrouter.com/status.json
@@ -553,6 +532,7 @@ jobs:
             service_url=$(gcloud run services describe "${SERVICE}" \
               --project="${PROJECT_ID}" --region="${region}" \
               --format='value(status.url)')
+            check_url "ready_${region}" "${service_url}/ready"
             check_url "status_${region}" "${service_url}/status.json"
           done
 
@@ -573,4 +553,4 @@ jobs:
           count=$(curl -fsS --max-time 15 https://trustedrouter.com/v1/models \
             | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
           [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
-          echo "smoke ok: homepage, health, regions, status, and $count catalog models"
+          echo "smoke ok: homepage, liveness, readiness, regions, status, and $count catalog models"

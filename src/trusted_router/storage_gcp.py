@@ -261,6 +261,17 @@ class SpannerBigtableStore:
         self.verification_tokens = SpannerVerificationTokens(io)
         self.email_blocks = SpannerEmailBlocks(io)
 
+    def readiness_check(self) -> None:
+        """Verify the strongly consistent billing store within a hard deadline."""
+
+        with self._database.snapshot() as snapshot:
+            list(
+                snapshot.execute_sql(
+                    "SELECT 1 FROM tr_credit_balance LIMIT 1",
+                    timeout=3.0,
+                )
+            )
+
     def reset(self) -> None:
         raise RuntimeError("refusing to reset production Spanner/Bigtable store")
 

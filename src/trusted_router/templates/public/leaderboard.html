@@ -37,7 +37,8 @@
         <h2>Providers</h2>
         <p>Ranked by measured p50 time-to-first-token across all of a provider's models
           ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} availability samples ·
-          {{ snapshot.total_throughput_samples }} throughput samples).</p>
+          {{ snapshot.total_throughput_samples }} sustained throughput samples). Providers below the
+          evidence floor remain visible as warming, but do not receive a rank.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -51,11 +52,13 @@
         <tbody>
           {% for p in snapshot.providers %}
           <tr>
-            <td>{{ loop.index }}</td>
-            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
+            <td>{% if p.rank is not none %}{{ p.rank }}{% else %}—{% endif %}</td>
+            <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a>
+              {% if not p.rank_eligible %}<span class="lb-badge">warming</span>{% endif %}
+            </td>
             <td>{{ p.model_count }}</td>
             <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ p.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
+            <td>{% if p.p50_tokens_per_second is not none and p.throughput_sample_count %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ p.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
             <td>{% if p.sample_count %}{{ '%.2f'|format(p.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
@@ -71,8 +74,8 @@
     <div class="status-section-head">
       <div>
         <h2>Models</h2>
-        <p>Models in the current benchmark set, fastest measured TTFT first.
-          Thin availability and throughput measurements are labeled independently.</p>
+        <p>Qualified models are ranked by measured p50 TTFT. Thin availability and
+          throughput measurements stay visible below the ranked set as warming.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -87,15 +90,15 @@
         <tbody>
           {% for m in snapshot.models %}
           <tr>
-            <td>{{ loop.index }}</td>
+            <td>{% if m.rank is not none %}{{ m.rank }}{% else %}—{% endif %}</td>
             <td><a href="/models/{{ m.model }}/performance">{{ m.model }}</a>
-              {% if m.sample_count < 5 %}<span class="lb-badge">limited availability</span>{% endif %}
+              {% if not m.rank_eligible %}<span class="lb-badge">warming</span>{% endif %}
             </td>
             <td>{{ m.provider }}</td>
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none and m.throughput_sample_count %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
             <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
