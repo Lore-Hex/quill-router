@@ -19,11 +19,13 @@
   <div class="status-note">
     Continuously sampled from TrustedRouter's monitor regions using a
     {{ snapshot.window_label or "recent live sample" }}. Time-to-first-token (TTFT),
-    time-to-first-byte (TTFB), effective throughput, and success rate come from real
-    streaming requests, not vendor claims. Effective throughput is provider-reported
-    output tokens divided by complete request time, so buffered delivery cannot inflate
-    the result. Unsupported route and probe-configuration rows are reported separately
-    and do not count as provider downtime. No prompt or output content is ever stored.
+    time-to-first-byte (TTFB), effective visible throughput, and pinned route success
+    come from real streaming requests, not vendor claims. Pinned route success measures
+    the exact provider and model requested, without fallback. Effective throughput uses
+    provider-reported visible completion tokens divided by complete request time.
+    Reported reasoning tokens are separated, and samples that exceed the requested
+    completion-token cap are rejected. Unsupported routes and probe-configuration rows are
+    reported separately. No prompt or output content is ever stored.
   </div>
 
   {% if not snapshot.models %}
@@ -34,10 +36,46 @@
   <section class="status-section">
     <div class="status-section-head">
       <div>
+        <h2>Measurement summary</h2>
+        <p>Direct route reliability and automatic rollover are measured separately.</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead><tr><th>Measure</th><th>Result</th><th>Attempts</th><th>Scope</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Pinned route success</td>
+            <td>{% if snapshot.route_success_rate is not none %}{{ '%.2f'|format(snapshot.route_success_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{{ snapshot.total_samples }}</td>
+            <td>Exact provider and model, without fallback</td>
+          </tr>
+          <tr>
+            <td>Fallback-adjusted success</td>
+            <td>{% if snapshot.fallback_adjusted_success and snapshot.fallback_adjusted_success.success_rate is not none %}{{ '%.2f'|format(snapshot.fallback_adjusted_success.success_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{{ snapshot.fallback_adjusted_success.sample_count if snapshot.fallback_adjusted_success else 0 }}</td>
+            <td>24-hour monitor requests after TrustedRouter automatic rollover</td>
+          </tr>
+          <tr>
+            <td>Throughput probe completion</td>
+            <td>{% if snapshot.throughput_completion_rate is not none %}{{ '%.1f'|format(snapshot.throughput_completion_rate * 100) }}%{% else %}—{% endif %}</td>
+            <td>{{ snapshot.total_throughput_samples }}/{{ snapshot.total_throughput_attempts }}</td>
+            <td>{{ snapshot.throughput_confidence }} confidence · {% if snapshot.throughput_timeout_rate is not none %}{{ '%.1f'|format(snapshot.throughput_timeout_rate * 100) }}% timed out{% else %}no timeout data{% endif %}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
         <h2>Providers</h2>
         <p>Ranked by measured p50 time-to-first-token across all of a provider's models
-          ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} availability samples ·
-          {{ snapshot.total_throughput_samples }} throughput samples).</p>
+          ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} pinned route attempts ·
+          {{ snapshot.total_throughput_samples }}/{{ snapshot.total_throughput_attempts }} completed throughput probes).
+          Provider rows combine different model mixes, so use the matched-model table for
+          direct provider comparisons.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
@@ -45,7 +83,7 @@
         <thead>
           <tr>
             <th>#</th><th>Provider</th><th>Models</th>
-            <th>p50 TTFT</th><th>Effective throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Availability samples</th>
+            <th>p50 TTFT</th><th>Effective throughput</th><th>Pinned route success</th><th>Errors</th><th>Config excluded</th><th>Route attempts</th>
           </tr>
         </thead>
         <tbody>
@@ -55,8 +93,13 @@
             <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
             <td>{{ p.model_count }}</td>
             <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ p.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
-            <td>{% if p.sample_count %}{{ '%.2f'|format(p.uptime * 100) }}%{% else %}—{% endif %}</td>
+            <td>
+              {% if p.p50_tokens_per_second is not none %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}
+              {% if p.throughput_attempt_count %}<span class="lb-sample-count">n={{ p.throughput_success_count }}/{{ p.throughput_attempt_count }}</span>
+              <span class="lb-badge">{{ p.throughput_confidence }}</span>
+              <div class="lb-sample-count">{{ '%.0f'|format(p.throughput_completion_rate * 100) }}% complete · {{ '%.0f'|format(p.throughput_timeout_rate * 100) }}% timeout{% if p.top_throughput_error %} · {{ p.top_throughput_error }}{% endif %}</div>{% endif %}
+            </td>
+            <td>{% if p.route_success_rate is not none %}{{ '%.2f'|format(p.route_success_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ p.sample_count }}</td>
@@ -66,6 +109,44 @@
       </table>
     </div>
   </section>
+
+  {% if snapshot.same_model_comparisons %}
+  <section class="status-section">
+    <div class="status-section-head">
+      <div>
+        <h2>Matched-model provider comparisons</h2>
+        <p>The model and probe request are held constant, so provider differences are
+          directly comparable. Models with the broadest provider coverage and most
+          measurements appear first.</p>
+      </div>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th>Model</th><th>Provider</th><th>p50 TTFT</th><th>Effective throughput</th>
+            <th>Probe completion</th><th>Pinned route success</th><th>Route attempts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for comparison in snapshot.same_model_comparisons %}
+            {% for row in comparison.rows %}
+            <tr>
+              <td><a href="/models/{{ comparison.model }}/performance">{{ comparison.model }}</a></td>
+              <td><a href="/providers/{{ row.provider }}">{{ row.provider }}</a></td>
+              <td>{% if row.p50_ttft_ms is not none %}{{ row.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
+              <td>{% if row.p50_tokens_per_second is not none %}{{ '%.0f'|format(row.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
+              <td>{% if row.throughput_attempt_count %}{{ '%.0f'|format(row.throughput_completion_rate * 100) }}% <span class="lb-sample-count">n={{ row.throughput_success_count }}/{{ row.throughput_attempt_count }}</span> <span class="lb-badge">{{ row.throughput_confidence }}</span>{% else %}—{% endif %}</td>
+              <td>{% if row.route_success_rate is not none %}{{ '%.2f'|format(row.route_success_rate * 100) }}%{% else %}—{% endif %}</td>
+              <td>{{ row.route_attempt_count }}</td>
+            </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
 
   <section class="status-section">
     <div class="status-section-head">
@@ -81,7 +162,7 @@
           <tr>
             <th>#</th><th>Model</th><th>Provider</th>
             <th>p50 TTFT</th><th>p95 TTFT</th><th>p50 TTFB</th>
-            <th>Effective throughput</th><th>Uptime</th><th>Config excluded</th><th>Availability samples</th>
+            <th>Effective throughput</th><th>Pinned route success</th><th>Config excluded</th><th>Route attempts</th>
           </tr>
         </thead>
         <tbody>
@@ -95,8 +176,13 @@
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
-            <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
+            <td>
+              {% if m.p50_tokens_per_second is not none %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}
+              {% if m.throughput_attempt_count %}<span class="lb-sample-count">n={{ m.throughput_success_count }}/{{ m.throughput_attempt_count }}</span>
+              <span class="lb-badge">{{ m.throughput_confidence }}</span>
+              <div class="lb-sample-count">{{ '%.0f'|format(m.throughput_completion_rate * 100) }}% complete · {{ '%.0f'|format(m.throughput_timeout_rate * 100) }}% timeout{% if m.top_throughput_error %} · {{ m.top_throughput_error }}{% endif %}</div>{% endif %}
+            </td>
+            <td>{% if m.route_success_rate is not none %}{{ '%.2f'|format(m.route_success_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>
           </tr>

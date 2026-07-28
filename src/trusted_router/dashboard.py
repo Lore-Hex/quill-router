@@ -1915,7 +1915,7 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
             heading="Provider & model performance",
             description=(
                 "Measured time-to-first-token, time-to-first-byte, effective throughput, and "
-                "uptime for every LLM provider and model TrustedRouter routes to — "
+                "pinned route success for every LLM provider and model TrustedRouter routes to — "
                 "continuously sampled, not vendor-claimed."
             ),
             page_kind="leaderboard",
@@ -1926,7 +1926,8 @@ def public_leaderboard_html(settings: Settings, snapshot: dict[str, object]) -> 
                     name="TrustedRouter LLM provider and model speed leaderboard",
                     description=(
                         "Metadata-only measurements for provider TTFT, TTFB, effective throughput, "
-                        "success rate, and excluded probe configuration rows."
+                        "pinned route success, fallback-adjusted success, throughput completion, "
+                        "and excluded probe configuration rows."
                     ),
                     url=f"https://{settings.trusted_domain}/leaderboard",
                     keywords=("LLM latency", "provider benchmarks", "time to first token"),
@@ -2140,7 +2141,8 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
             title=f"{provider.name} Performance | TrustedRouter",
             heading=f"{provider.name} performance",
             description=(
-                f"Measured TTFT, TTFB, effective throughput, uptime, and sampled model routes for {provider.name}."
+                f"Measured TTFT, TTFB, effective throughput, pinned route success, "
+                f"and sampled model routes for {provider.name}."
             ),
             provider=_provider_detail_view(
                 provider,
@@ -2163,7 +2165,8 @@ def public_provider_performance_html(settings: Settings, provider_slug: str) -> 
                 _dataset_node(
                     name=f"{provider.name} TrustedRouter performance measurements",
                     description=(
-                        f"Measured latency, effective throughput, and uptime for {provider.name} routes "
+                        f"Measured latency, effective throughput, and pinned route success for "
+                        f"{provider.name} routes "
                         "through TrustedRouter."
                     ),
                     url=f"https://{settings.trusted_domain}{site_path}",
@@ -3190,7 +3193,7 @@ def _model_section_json_ld(
             _dataset_node(
                 name=f"{model.name} TrustedRouter performance measurements",
                 description=(
-                    f"Measured TTFT, TTFB, throughput, and uptime for {model.name} "
+                    f"Measured TTFT, TTFB, throughput, and pinned route success for {model.name} "
                     f"across TrustedRouter provider routes. Current sample count: {sample_count}."
                 ),
                 url=section_url,

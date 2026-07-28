@@ -14,13 +14,13 @@ LEADERBOARD_HTML = """
   <thead>
     <tr>
       <th>#</th><th>Provider</th><th>Models</th><th>p50 TTFT</th>
-      <th>Effective throughput</th><th>Uptime</th><th>Errors</th><th>Config excluded</th><th>Availability samples</th>
+      <th>Effective throughput</th><th>Pinned route success</th><th>Errors</th><th>Config excluded</th><th>Route attempts</th>
     </tr>
   </thead>
   <tbody>
-    <tr><td>1</td><td>deepseek</td><td>2</td><td>3521 ms</td><td>53 tok/s n=12</td><td>100.00%</td><td>—</td><td>—</td><td>111</td></tr>
-    <tr><td>2</td><td>baseten</td><td>11</td><td>3349 ms</td><td>55 tok/s n=18</td><td>98.40%</td><td>—</td><td>—</td><td>125</td></tr>
-    <tr><td>3</td><td>novita</td><td>27</td><td>3534 ms</td><td>9 tok/s n=3</td><td>92.11%</td><td>provider_error 8%</td><td>—</td><td>38</td></tr>
+    <tr><td>1</td><td>deepseek</td><td>2</td><td>3521 ms</td><td>53 tok/s n=12/15 medium 80% complete</td><td>100.00%</td><td>—</td><td>—</td><td>111</td></tr>
+    <tr><td>2</td><td>baseten</td><td>11</td><td>3349 ms</td><td>55 tok/s n=18/20 high 90% complete</td><td>98.40%</td><td>—</td><td>—</td><td>125</td></tr>
+    <tr><td>3</td><td>novita</td><td>27</td><td>3534 ms</td><td>9 tok/s n=3/10 medium 30% complete</td><td>92.11%</td><td>provider_error 8%</td><td>—</td><td>38</td></tr>
     <tr><td>4</td><td>openai</td><td>11</td><td>2579 ms</td><td>—</td><td>100.00%</td><td>—</td><td>—</td><td>44</td></tr>
     <tr><td>5</td><td>crusoe</td><td>12</td><td>2888 ms</td><td>2 tok/s n=2</td><td>100.00%</td><td>—</td><td>—</td><td>24</td></tr>
   </tbody>
@@ -34,6 +34,9 @@ def test_parse_provider_rows_from_public_leaderboard_table() -> None:
     assert rows[0].provider == "deepseek"
     assert rows[0].throughput_tokens_per_second == 53
     assert rows[0].throughput_samples == 12
+    assert rows[0].throughput_attempts == 15
+    assert rows[0].throughput_completion_rate == 0.8
+    assert rows[0].throughput_confidence == "medium"
     assert rows[0].uptime == 1.0
     assert rows[0].samples == 111
     assert rows[0].p50_ttft_ms == 3521

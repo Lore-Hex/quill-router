@@ -500,6 +500,11 @@ def test_gcp_provider_benchmark_round_trips_ttfb_and_source() -> None:
         elapsed_milliseconds=300,
         first_token_milliseconds=180,
         ttfb_milliseconds=120,
+        output_tokens=512,
+        visible_output_tokens=128,
+        reasoning_tokens=384,
+        requested_output_tokens=512,
+        synthetic_slot=1234,
         source="synthetic",
         created_at="2026-05-02T12:00:00Z",
     )
@@ -514,6 +519,11 @@ def test_gcp_provider_benchmark_round_trips_ttfb_and_source() -> None:
     # survive the serialize/deserialize round trip, as does the internal source.
     assert rows[0].ttfb_milliseconds == 120
     assert rows[0].first_token_milliseconds == 180
+    assert rows[0].output_tokens == 512
+    assert rows[0].visible_output_tokens == 128
+    assert rows[0].reasoning_tokens == 384
+    assert rows[0].requested_output_tokens == 512
+    assert rows[0].synthetic_slot == 1234
     assert rows[0].source == "synthetic"
 
 
@@ -550,6 +560,7 @@ def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> No
         app="TestApp",
         tokens_prompt=10,
         tokens_completion=5,
+        reasoning_tokens=2,
         total_cost_microdollars=100,
         usage_type="Credits",
         speed_tokens_per_second=20.0,
@@ -567,6 +578,9 @@ def test_provider_benchmark_from_generation_carries_ttfb_default_organic() -> No
 
     assert sample.ttfb_milliseconds == 90
     assert sample.first_token_milliseconds == 140
+    assert sample.output_tokens == 5
+    assert sample.reasoning_tokens == 2
+    assert sample.visible_output_tokens == 3
     # Organic production traffic is the default provenance.
     assert sample.source == "organic"
 

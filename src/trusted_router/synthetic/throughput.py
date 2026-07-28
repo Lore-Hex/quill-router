@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import time
 from collections import defaultdict
@@ -16,6 +17,7 @@ _RECENT_MODEL_COUNT = 24
 _RECENT_MODEL_BONUS = 5_000
 _RECENT_MODEL_STEP = 50
 THROUGHPUT_INTERVAL_SECONDS = 60
+THROUGHPUT_BATCH_SIZE = 5
 
 
 def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
@@ -65,7 +67,79 @@ def throughput_candidates(*, limit: int = 200) -> list[tuple[str, str]]:
             selected.append(route)
         if len(selected) >= limit:
             break
-    return selected[:limit]
+    # Selection uses importance, recency, price, and provider breadth. Once the
+    # set is chosen, use a stable provider round robin so routine price
+    # refreshes do not reshuffle every route's slot and one five-probe batch
+    # does not burst against a single provider.
+    by_provider: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for route in selected[:limit]:
+        by_provider[route[0]].append(route)
+    for provider_routes in by_provider.values():
+        provider_routes.sort()
+    ordered: list[tuple[str, str]] = []
+    for index in range(max(len(routes) for routes in by_provider.values())):
+        for provider in sorted(by_provider):
+            provider_routes = by_provider[provider]
+            if index < len(provider_routes):
+                ordered.append(provider_routes[index])
+    return ordered
+
+
+def throughput_slot(
+    *,
+    now_epoch_seconds: float | None = None,
+    interval_seconds: int = THROUGHPUT_INTERVAL_SECONDS,
+) -> int:
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be positive")
+    now = time.time() if now_epoch_seconds is None else now_epoch_seconds
+    return int(now // interval_seconds)
+
+
+def throughput_slots_for_batch(
+    *,
+    now_epoch_seconds: float | None = None,
+    interval_seconds: int = THROUGHPUT_INTERVAL_SECONDS,
+    batch_size: int = THROUGHPUT_BATCH_SIZE,
+) -> list[int]:
+    """Return the minute slots owned by the current deterministic batch.
+
+    Cloud Scheduler can retry or overlap Cloud Run Job executions. Grouping
+    five logical minute slots into one five-minute execution makes each batch
+    bounded, while deterministic sample identities make retries overwrite the
+    same Bigtable rows instead of inflating sample counts.
+    """
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    current_slot = throughput_slot(
+        now_epoch_seconds=now_epoch_seconds,
+        interval_seconds=interval_seconds,
+    )
+    last_slot = current_slot - (current_slot % batch_size)
+    first_slot = max(last_slot - batch_size + 1, 0)
+    return list(range(first_slot, last_slot + 1))
+
+
+def throughput_sample_identity(
+    slot: int,
+    provider: str,
+    model: str,
+    *,
+    interval_seconds: int = THROUGHPUT_INTERVAL_SECONDS,
+) -> tuple[str, str]:
+    """Return a stable sample id and timestamp for one route/slot."""
+    if slot < 0:
+        raise ValueError("slot must be non-negative")
+    if interval_seconds <= 0:
+        raise ValueError("interval_seconds must be positive")
+    route_digest = hashlib.sha256(f"{provider}\0{model}".encode()).hexdigest()[:16]
+    created_at = (
+        dt.datetime.fromtimestamp(slot * interval_seconds, tz=dt.UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    return f"bench-throughput-{slot}-{route_digest}", created_at
 
 
 def choose_throughput_target(
@@ -77,10 +151,10 @@ def choose_throughput_target(
     """Choose one route by scheduler time slot, giving exact round-robin coverage."""
     if not candidates:
         return None
-    if interval_seconds <= 0:
-        raise ValueError("interval_seconds must be positive")
-    now = time.time() if now_epoch_seconds is None else now_epoch_seconds
-    slot = int(now // interval_seconds)
+    slot = throughput_slot(
+        now_epoch_seconds=now_epoch_seconds,
+        interval_seconds=interval_seconds,
+    )
     return candidates[slot % len(candidates)]
 
 

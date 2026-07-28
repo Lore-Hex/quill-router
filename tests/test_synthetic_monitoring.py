@@ -47,6 +47,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
 from trusted_router.synthetic.probes import (
     SyntheticTarget,
+    _rotation_error_type,
     _rotation_max_tokens,
     _rotation_omits_temperature,
     _sse_line_error,
@@ -1841,10 +1842,12 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
     assert '"*/2 * * * *"' in body
-    assert 'throughput_scheduler_name="${throughput_job_name}-every-minute"' in body
+    assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"' in body
-    assert '"* * * * *"' in body
-    assert "legacy_throughput_scheduler_name" in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_BATCH_SIZE=5"' in body
+    assert '"*/5 * * * *"' in body
+    assert '"${throughput_job_name}-every-minute"' in body
+    assert "legacy_throughput_scheduler_names" in body
 
 
 class _FakeCell:
@@ -1998,6 +2001,47 @@ def test_sse_line_error_detects_openai_error_frames() -> None:
     ) == ("unsupported_route", 404, "model does not exist")
     assert _sse_line_error('data: {"choices":[{"delta":{"content":"PONG"}}]}') is None
     assert _sse_line_error("data: [DONE]") is None
+
+
+def test_rotation_error_classifier_does_not_hide_transient_unavailable() -> None:
+    assert (
+        _rotation_error_type(
+            "provider_error",
+            503,
+            "The model is temporarily UNAVAILABLE due to high demand",
+        )
+        == "provider_error"
+    )
+    assert (
+        _rotation_error_type(
+            "model_not_available",
+            503,
+            "Provider capacity is temporarily unavailable",
+        )
+        == "model_not_available"
+    )
+
+
+def test_rotation_error_classifier_prioritizes_probe_parameter_errors() -> None:
+    assert (
+        _rotation_error_type(
+            "provider_error",
+            400,
+            "Model does not support MaxTokens; use MaxCompletionTokens",
+        )
+        == "probe_config_error"
+    )
+
+
+def test_rotation_error_classifier_marks_entitlement_drift_for_review() -> None:
+    assert (
+        _rotation_error_type(
+            "provider_error",
+            502,
+            "Unable to verify model access for this deployment",
+        )
+        == "route_configuration_error"
+    )
 
 
 def test_sse_line_finish_reason_detects_length_stop() -> None:
@@ -2367,6 +2411,11 @@ def test_internal_benchmark_ingest_records_sample() -> None:
                 "status": "success",
                 "usage_type": "Credits",
                 "streamed": True,
+                "output_tokens": 512,
+                "visible_output_tokens": 128,
+                "reasoning_tokens": 384,
+                "requested_output_tokens": 512,
+                "synthetic_slot": 1234,
                 "elapsed_milliseconds": 300,
                 "first_token_milliseconds": 150,
                 "ttfb_milliseconds": 90,
@@ -2389,6 +2438,11 @@ def test_internal_benchmark_ingest_records_sample() -> None:
     matched = [row for row in rows if row.id == "bench-ingest-test-1"]
     assert matched, "ingested benchmark sample not found in store"
     assert matched[0].ttfb_milliseconds == 90
+    assert matched[0].output_tokens == 512
+    assert matched[0].visible_output_tokens == 128
+    assert matched[0].reasoning_tokens == 384
+    assert matched[0].requested_output_tokens == 512
+    assert matched[0].synthetic_slot == 1234
     stored_message = str(matched[0].error_message)
     assert len(stored_message) <= 300
     assert "SK-LIVE-abcd1234" not in stored_message

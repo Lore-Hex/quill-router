@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trusted_router.config import Settings
@@ -7,6 +8,7 @@ from trusted_router.main import create_app
 from trusted_router.routes.public import (
     LEADERBOARD_RECENT_WINDOW_MINUTES,
     LEADERBOARD_SAMPLE_LIMIT,
+    _leaderboard_snapshot,
     _status_page_html,
 )
 from trusted_router.storage import STORE, ProviderBenchmarkSample
@@ -91,7 +93,9 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "p50 TTFT" in body  # table header
     assert "Effective throughput" in body
     assert "200 tok/s" in body
-    assert "n=1" in body
+    assert "n=1/1" in body
+    assert "Pinned route success" in body
+    assert "Throughput probe completion" in body
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
 
@@ -106,7 +110,21 @@ def test_leaderboard_page_separates_config_exclusions_from_errors() -> None:
     assert resp.status_code == 200
     assert "Config excluded" in resp.text
     assert "unsupported_route" in resp.text
-    assert "Unsupported route and probe-configuration rows" in resp.text
+    assert "Unsupported routes and probe-configuration rows" in resp.text
+
+
+def test_leaderboard_page_renders_matched_model_provider_comparison() -> None:
+    client = TestClient(create_app(_settings(), init_observability=False))
+    _seed("fast-provider", "publisher/shared-model", ttft=100, ttfb=70)
+    _seed("slow-provider", "publisher/shared-model", ttft=300, ttfb=220)
+
+    response = client.get("/leaderboard")
+
+    assert response.status_code == 200
+    assert "Matched-model provider comparisons" in response.text
+    assert "The model and probe request are held constant" in response.text
+    assert "fast-provider" in response.text
+    assert "slow-provider" in response.text
 
 
 def test_leaderboard_in_sitemap() -> None:
@@ -119,6 +137,47 @@ def test_leaderboard_in_sitemap() -> None:
 def test_leaderboard_uses_a_bounded_full_day_sample_window() -> None:
     assert LEADERBOARD_SAMPLE_LIMIT == 10_000
     assert LEADERBOARD_RECENT_WINDOW_MINUTES == 24 * 60
+
+
+def test_leaderboard_keeps_fallback_adjusted_success_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sample = ProviderBenchmarkSample(
+        id="bench-direct-failure",
+        model="publisher/model",
+        provider="provider",
+        provider_name="Provider",
+        status="error",
+        usage_type="Credits",
+        streamed=True,
+        error_type="provider_error",
+        error_status=503,
+    )
+    monkeypatch.setattr(
+        "trusted_router.routes.public.public_benchmark_samples",
+        lambda **_kwargs: [sample],
+    )
+    monkeypatch.setattr(
+        "trusted_router.routes.public._status_snapshot",
+        lambda _settings: {
+            "slo_classes": {
+                "provider_effective": {
+                    "windows": {
+                        "24h": {
+                            "uptime_percent": 99.5,
+                            "sample_count": 200,
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    snapshot = _leaderboard_snapshot(_settings())
+
+    assert snapshot["route_success_rate"] == 0.0
+    assert snapshot["fallback_adjusted_success"]["success_rate"] == 0.995
+    assert snapshot["fallback_adjusted_success"]["sample_count"] == 200
 
 
 def test_status_page_surfaces_upstream_provider_errors() -> None:

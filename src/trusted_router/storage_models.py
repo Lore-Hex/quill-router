@@ -601,6 +601,16 @@ class ProviderBenchmarkSample:
     streamed: bool
     input_tokens: int = 0
     output_tokens: int = 0
+    # Throughput probes keep billed completion tokens separate from the
+    # provider-reported visible and reasoning portions. Older rows leave these
+    # at zero and continue to use output_tokens as their compatibility value.
+    visible_output_tokens: int = 0
+    reasoning_tokens: int = 0
+    requested_output_tokens: int = 0
+    # Stable scheduler minute used to make retrying a synthetic probe
+    # idempotent. The deterministic id and created_at derived from this slot
+    # produce identical Bigtable row keys on duplicate Cloud Run executions.
+    synthetic_slot: int | None = None
     total_cost_microdollars: int = 0
     speed_tokens_per_second: float | None = None
     elapsed_milliseconds: int | None = None
@@ -643,6 +653,11 @@ class ProviderBenchmarkSample:
             streamed=generation.streamed,
             input_tokens=generation.tokens_prompt,
             output_tokens=generation.tokens_completion,
+            visible_output_tokens=max(
+                generation.tokens_completion - generation.reasoning_tokens,
+                0,
+            ),
+            reasoning_tokens=generation.reasoning_tokens,
             total_cost_microdollars=generation.total_cost_microdollars,
             speed_tokens_per_second=generation.speed_tokens_per_second,
             elapsed_milliseconds=generation.elapsed_milliseconds,

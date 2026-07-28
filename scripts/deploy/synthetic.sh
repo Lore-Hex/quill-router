@@ -150,13 +150,17 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/2 * * * *"
 done
 
-# Sustained-output benchmark: one deterministic top-200 route per tick. This
-# has a separate Cloud Run Job so a slow 512-token stream cannot delay or
-# overlap TLS, attestation, billing, fallback, or short provider probes.
+# Sustained-output benchmark: five deterministic logical minute slots per
+# five-minute tick. Stable sample IDs/timestamps make scheduler retries
+# idempotent, while concurrent probes preserve the one-route-per-minute spend
+# and coverage cadence without overlapping Cloud Run executions.
 throughput_region="us-central1"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
-throughput_scheduler_name="${throughput_job_name}-every-minute"
-legacy_throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
+legacy_throughput_scheduler_names=(
+  "${throughput_job_name}-every-minute"
+  "${throughput_job_name}-every-two-minutes"
+)
 throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
@@ -170,6 +174,7 @@ throughput_env_vars=(
   "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
   "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
   "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"
+  "TR_SYNTHETIC_THROUGHPUT_BATCH_SIZE=5"
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
@@ -192,16 +197,18 @@ upsert_scheduler \
   "$throughput_scheduler_name" \
   "$throughput_job_name" \
   "$throughput_region" \
-  "* * * * *"
+  "*/5 * * * *"
 
 # Avoid double-sampling after the cadence change. Delete the legacy scheduler
 # only after the replacement scheduler was created or updated successfully.
-if gc scheduler jobs describe \
-  "$legacy_throughput_scheduler_name" \
-  --location "$throughput_region" >/dev/null 2>&1; then
-  log "deleting legacy throughput scheduler ${legacy_throughput_scheduler_name}"
-  gc scheduler jobs delete \
+for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}"; do
+  if gc scheduler jobs describe \
     "$legacy_throughput_scheduler_name" \
-    --location "$throughput_region" \
-    --quiet >/dev/null
-fi
+    --location "$throughput_region" >/dev/null 2>&1; then
+    log "deleting legacy throughput scheduler ${legacy_throughput_scheduler_name}"
+    gc scheduler jobs delete \
+      "$legacy_throughput_scheduler_name" \
+      --location "$throughput_region" \
+      --quiet >/dev/null
+  fi
+done

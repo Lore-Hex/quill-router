@@ -17,10 +17,13 @@ from trusted_router.synthetic.probes import (
     rotation_candidates,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_BATCH_SIZE,
     THROUGHPUT_INTERVAL_SECONDS,
     choose_throughput_target,
     projected_monthly_cost_microdollars,
     throughput_candidates,
+    throughput_sample_identity,
+    throughput_slots_for_batch,
 )
 
 
@@ -42,6 +45,7 @@ def test_top_200_throughput_routes_are_deterministic_and_provider_complete() -> 
     assert len(first) == 200
     assert len(first) == len(set(first))
     assert {provider for provider, _ in first} == set(pool)
+    assert {provider for provider, _ in first[: len(pool)]} == set(pool)
     assert ("anthropic", "anthropic/claude-opus-5") in first
     assert any(model == "moonshotai/kimi-k3" for _, model in first)
     assert any(model == "z-ai/glm-5.2" for _, model in first)
@@ -64,6 +68,102 @@ def test_throughput_round_robin_visits_every_route_once_per_cycle() -> None:
     with pytest.raises(ValueError, match="interval_seconds"):
         choose_throughput_target(candidates, interval_seconds=0)
     assert THROUGHPUT_INTERVAL_SECONDS == 60
+
+
+def test_throughput_batches_own_stable_minute_slots_and_sample_identities() -> None:
+    slots = throughput_slots_for_batch(
+        now_epoch_seconds=1_800.0,
+        interval_seconds=60,
+        batch_size=5,
+    )
+    assert slots == [26, 27, 28, 29, 30]
+    assert throughput_slots_for_batch(
+        now_epoch_seconds=2_099.0,
+        interval_seconds=60,
+        batch_size=5,
+    ) == slots
+    assert throughput_slots_for_batch(
+        now_epoch_seconds=2_100.0,
+        interval_seconds=60,
+        batch_size=5,
+    ) == [31, 32, 33, 34, 35]
+    assert THROUGHPUT_BATCH_SIZE == 5
+
+    first = throughput_sample_identity(30, "provider", "publisher/model")
+    retried = throughput_sample_identity(30, "provider", "publisher/model")
+    other_route = throughput_sample_identity(30, "other", "publisher/model")
+
+    assert first == retried
+    assert first[0].startswith("bench-throughput-30-")
+    assert first[1] == "1970-01-01T00:30:00Z"
+    assert first != other_route
+
+    with pytest.raises(ValueError, match="batch_size"):
+        throughput_slots_for_batch(batch_size=0)
+    with pytest.raises(ValueError, match="slot"):
+        throughput_sample_identity(-1, "provider", "model")
+
+
+@pytest.mark.asyncio
+async def test_throughput_pass_retries_have_identical_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidates = [("a", "publisher/a"), ("b", "publisher/b")]
+
+    async def fake_probe(
+        _client: httpx.AsyncClient,
+        _target: SyntheticTarget,
+        *,
+        provider: str,
+        model: str,
+        **_kwargs: Any,
+    ) -> ProviderBenchmarkSample:
+        return ProviderBenchmarkSample(
+            id="temporary",
+            model=model,
+            provider=provider,
+            provider_name=provider,
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            output_tokens=128,
+            visible_output_tokens=128,
+            requested_output_tokens=512,
+            elapsed_milliseconds=1000,
+            source="synthetic_throughput",
+        )
+
+    monkeypatch.setattr(cli_module, "throughput_candidates", lambda **_kwargs: candidates)
+    monkeypatch.setattr(cli_module, "provider_throughput_probe", fake_probe)
+    settings = Settings(environment="test", sentry_dsn=None)
+    kwargs = {
+        "settings": settings,
+        "monitor_region": "us-central1",
+        "api_key": "sk-test",
+        "route_limit": 200,
+        "max_tokens": 512,
+        "minimum_output_tokens": 128,
+        "timeout_seconds": 1.0,
+        "interval_seconds": 60,
+        "batch_size": 5,
+        "now_epoch_seconds": 1_800.0,
+    }
+
+    first = await cli_module._throughput_pass(**kwargs)
+    retry = await cli_module._throughput_pass(**kwargs)
+
+    assert len(first) == 5
+    assert [(row.id, row.created_at) for row in first] == [
+        (row.id, row.created_at) for row in retry
+    ]
+    assert [row.synthetic_slot for row in first] == [26, 27, 28, 29, 30]
+    assert [(row.provider, row.model) for row in first] == [
+        ("a", "publisher/a"),
+        ("b", "publisher/b"),
+        ("a", "publisher/a"),
+        ("b", "publisher/b"),
+        ("a", "publisher/a"),
+    ]
 
 
 def test_top_200_monthly_full_cap_cost_stays_inside_reviewed_budget() -> None:
@@ -121,6 +221,9 @@ async def test_throughput_probe_measures_effective_end_to_end_speed() -> None:
     assert sample.source == "synthetic_throughput"
     assert sample.input_tokens == 19
     assert sample.output_tokens == 251
+    assert sample.visible_output_tokens == 251
+    assert sample.reasoning_tokens == 0
+    assert sample.requested_output_tokens == 512
     assert sample.first_token_milliseconds == 200
     assert sample.ttfb_milliseconds == 100
     assert sample.elapsed_milliseconds == 1000
@@ -175,6 +278,83 @@ async def test_throughput_probe_accepts_buffered_sse_without_inflating_speed() -
     assert sample.first_token_milliseconds == 250
     assert sample.elapsed_milliseconds == 5000
     assert sample.speed_tokens_per_second == 40.0
+
+
+@pytest.mark.asyncio
+async def test_throughput_probe_excludes_reasoning_from_visible_speed() -> None:
+    chunks = [
+        b'data: {"choices":[{"delta":{"content":"benchmark"}}]}\n\n',
+        (
+            b'data: {"choices":[{"delta":{},"finish_reason":"length"}],'
+            b'"usage":{"prompt_tokens":20,"completion_tokens":512,'
+            b'"completion_tokens_details":{"reasoning_tokens":384}}}\n\n'
+        ),
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_ChunkStream(chunks))
+
+    clock = iter([0.0, 0.1, 1.0, 2.0])
+    target = SyntheticTarget(
+        "throughput",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_throughput_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="reasoner",
+            model="publisher/reasoner",
+            minimum_output_tokens=128,
+            clock=lambda: next(clock),
+        )
+
+    assert sample.status == "success"
+    assert sample.output_tokens == 512
+    assert sample.reasoning_tokens == 384
+    assert sample.visible_output_tokens == 128
+    assert sample.speed_tokens_per_second == 64.0
+
+
+@pytest.mark.asyncio
+async def test_throughput_probe_rejects_usage_beyond_requested_visible_cap() -> None:
+    chunks = [
+        b'data: {"choices":[{"delta":{"content":"benchmark"}}]}\n\n',
+        (
+            b'data: {"choices":[{"delta":{},"finish_reason":"length"}],'
+            b'"usage":{"prompt_tokens":20,"completion_tokens":3017}}\n\n'
+        ),
+    ]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_ChunkStream(chunks))
+
+    clock = iter([0.0, 0.1, 1.0, 2.0])
+    target = SyntheticTarget(
+        "throughput",
+        "https://api.trustedrouter.com/v1",
+        "us-central1",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_throughput_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="provider",
+            model="publisher/model",
+            clock=lambda: next(clock),
+        )
+
+    assert sample.status == "unsupported"
+    assert sample.error_type == "invalid_token_accounting"
+    assert sample.output_tokens == 3017
+    assert sample.visible_output_tokens == 3017
+    assert sample.requested_output_tokens == 512
+    assert sample.speed_tokens_per_second is None
 
 
 @pytest.mark.asyncio

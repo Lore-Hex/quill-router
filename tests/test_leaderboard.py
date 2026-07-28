@@ -17,6 +17,9 @@ def _sample(
     ttfb: int | None = None,
     tps: float | None = None,
     output_tokens: int = 0,
+    visible_output_tokens: int = 0,
+    reasoning_tokens: int = 0,
+    requested_output_tokens: int = 0,
     elapsed_milliseconds: int | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
@@ -35,6 +38,9 @@ def _sample(
         ttfb_milliseconds=ttfb,
         speed_tokens_per_second=tps,
         output_tokens=output_tokens,
+        visible_output_tokens=visible_output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        requested_output_tokens=requested_output_tokens,
         elapsed_milliseconds=elapsed_milliseconds,
         error_type=error_type,
         error_status=error_status,
@@ -147,14 +153,23 @@ def test_sustained_throughput_replaces_legacy_speed_without_affecting_uptime() -
 
     assert model["sample_count"] == 2
     assert model["throughput_sample_count"] == 2
+    assert model["throughput_attempt_count"] == 3
+    assert model["throughput_completion_rate"] == round(2 / 3, 4)
+    assert model["throughput_timeout_rate"] == round(1 / 3, 4)
+    assert model["throughput_confidence"] == "low"
+    assert model["top_throughput_error"] == "ReadTimeout"
     assert model["uptime"] == 0.5
     assert model["p50_tokens_per_second"] == 500.0
     assert provider["sample_count"] == 2
     assert provider["throughput_sample_count"] == 2
+    assert provider["throughput_attempt_count"] == 3
+    assert provider["throughput_completion_rate"] == round(2 / 3, 4)
     assert provider["uptime"] == 0.5
     assert provider["p50_tokens_per_second"] == 500.0
     assert result["total_samples"] == 2
     assert result["total_throughput_samples"] == 2
+    assert result["total_throughput_attempts"] == 3
+    assert result["throughput_completion_rate"] == round(2 / 3, 4)
 
 
 def test_sustained_throughput_recomputes_legacy_buffered_rows() -> None:
@@ -174,6 +189,95 @@ def test_sustained_throughput_recomputes_legacy_buffered_rows() -> None:
 
     assert result["models"][0]["p50_tokens_per_second"] == 20.0
     assert result["providers"][0]["p50_tokens_per_second"] == 20.0
+
+
+def test_sustained_throughput_uses_visible_tokens_not_reasoning_tokens() -> None:
+    result = aggregate_leaderboard(
+        [
+            _sample(
+                provider="p",
+                model="p/reasoner",
+                output_tokens=512,
+                visible_output_tokens=200,
+                reasoning_tokens=312,
+                requested_output_tokens=512,
+                elapsed_milliseconds=10_000,
+                source="synthetic_throughput",
+            )
+        ]
+    )
+
+    model = result["models"][0]
+    assert model["p50_tokens_per_second"] == 20.0
+    assert model["throughput_attempt_count"] == 1
+    assert model["throughput_success_count"] == 1
+
+
+def test_failed_only_throughput_route_remains_visible() -> None:
+    result = aggregate_leaderboard(
+        [
+            _sample(
+                provider="p",
+                model="p/failing",
+                status="error",
+                error_type="TimeoutError",
+                source="synthetic_throughput",
+            )
+        ]
+    )
+
+    model = result["models"][0]
+    assert model["sample_count"] == 0
+    assert model["throughput_attempt_count"] == 1
+    assert model["throughput_success_count"] == 0
+    assert model["throughput_completion_rate"] == 0.0
+    assert model["throughput_timeout_rate"] == 1.0
+    assert model["top_throughput_error"] == "TimeoutError"
+
+
+def test_throughput_confidence_thresholds_use_attempts_and_successes() -> None:
+    medium_rows = [
+        _sample(
+            provider="medium",
+            model="same/model",
+            source="synthetic_throughput",
+            tps=10.0,
+            created_at=f"2026-06-04T00:00:{index:02d}Z",
+        )
+        for index in range(5)
+    ]
+    high_rows = [
+        _sample(
+            provider="high",
+            model="same/model",
+            source="synthetic_throughput",
+            tps=20.0,
+            created_at=f"2026-06-04T00:01:{index:02d}Z",
+        )
+        for index in range(20)
+    ]
+
+    result = aggregate_leaderboard([*medium_rows, *high_rows])
+    by_provider = {row["provider"]: row for row in result["providers"]}
+    assert by_provider["medium"]["throughput_confidence"] == "medium"
+    assert by_provider["high"]["throughput_confidence"] == "high"
+    assert result["throughput_confidence"] == "high"
+
+
+def test_same_model_comparisons_hold_model_constant_across_providers() -> None:
+    samples = [
+        _sample(provider="fast", model="publisher/shared", ttft=100),
+        _sample(provider="slow", model="publisher/shared", ttft=300),
+        _sample(provider="solo", model="publisher/solo", ttft=50),
+    ]
+
+    result = aggregate_leaderboard(samples)
+
+    assert len(result["same_model_comparisons"]) == 1
+    comparison = result["same_model_comparisons"][0]
+    assert comparison["model"] == "publisher/shared"
+    assert comparison["provider_count"] == 2
+    assert [row["provider"] for row in comparison["rows"]] == ["fast", "slow"]
 
 
 def test_throughput_only_route_is_visible_without_claiming_availability() -> None:
@@ -373,6 +477,27 @@ def test_aggregate_excluded_only_rows_do_not_surface_as_provider_errors() -> Non
     assert provider["error_rate"] == 0.0
     assert provider["top_error"] is None
     assert provider["excluded_count"] == 2
+
+
+def test_aggregate_excludes_route_entitlement_drift_for_manual_review() -> None:
+    result = aggregate_leaderboard(
+        [
+            _sample(provider="makora", model="publisher/model", ttft=100),
+            _sample(
+                provider="makora",
+                model="publisher/model",
+                status="error",
+                error_type="route_configuration_error",
+                error_status=502,
+            ),
+        ]
+    )
+
+    model = result["models"][0]
+    assert model["sample_count"] == 1
+    assert model["route_success_rate"] == 1.0
+    assert model["excluded_count"] == 1
+    assert model["top_excluded"] == "route_configuration_error"
 
 
 def test_aggregate_excludes_organic_config_failures_by_status() -> None:

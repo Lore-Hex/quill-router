@@ -22,6 +22,7 @@ LEADERBOARD_URL: Final = "https://trustedrouter.com/leaderboard"
 ROUTING_PATH: Final = Path("src/trusted_router/routing.py")
 MIN_SAMPLES: Final = 25
 MIN_THROUGHPUT_SAMPLES: Final = 5
+MIN_THROUGHPUT_COMPLETION_RATE: Final = 0.70
 MIN_UPTIME: Final = 0.95
 SECONDARY_START: Final = 20
 SECONDARY_PROVIDERS: Final = (
@@ -53,6 +54,9 @@ class ProviderLeaderboardRow:
     provider: str
     throughput_tokens_per_second: float | None
     throughput_samples: int
+    throughput_attempts: int
+    throughput_completion_rate: float
+    throughput_confidence: str
     uptime: float
     samples: int
     p50_ttft_ms: int | None
@@ -115,6 +119,9 @@ def parse_provider_rows(html: str) -> list[ProviderLeaderboardRow]:
                 provider=row[1].strip().lower(),
                 throughput_tokens_per_second=_parse_throughput(row[4]),
                 throughput_samples=_parse_throughput_samples(row[4]),
+                throughput_attempts=_parse_throughput_attempts(row[4]),
+                throughput_completion_rate=_parse_throughput_completion_rate(row[4]),
+                throughput_confidence=_parse_throughput_confidence(row[4]),
                 uptime=_parse_percent(row[5]),
                 samples=_parse_int(row[8]),
                 p50_ttft_ms=_parse_milliseconds(row[3]),
@@ -128,6 +135,7 @@ def measured_rank(
     *,
     min_samples: int = MIN_SAMPLES,
     min_throughput_samples: int = MIN_THROUGHPUT_SAMPLES,
+    min_throughput_completion_rate: float = MIN_THROUGHPUT_COMPLETION_RATE,
     min_uptime: float = MIN_UPTIME,
 ) -> list[str]:
     eligible = [
@@ -136,6 +144,8 @@ def measured_rank(
         if row.throughput_tokens_per_second is not None
         and row.throughput_tokens_per_second > 0
         and row.throughput_samples >= min_throughput_samples
+        and row.throughput_completion_rate >= min_throughput_completion_rate
+        and row.throughput_confidence in {"medium", "high"}
         and row.samples >= min_samples
         and row.uptime >= min_uptime
     ]
@@ -168,7 +178,8 @@ def build_rank_block(measured: list[str], *, generated_date: dt.date | None = No
         f"# Generated from the public /leaderboard provider table on {generated.isoformat()} with:",
         "#   python scripts/update_provider_throughput_rank.py --write",
         "# The generator admits only providers with enough availability and throughput",
-        "# samples, >=95% measured uptime, and positive effective output tokens/second.",
+        "# samples, >=70% throughput completion, medium/high confidence,",
+        "# >=95% pinned route success, and positive effective visible tokens/second.",
         "# Providers without reliable token/s data",
         "# keep conservative secondary ranks so they do not beat measured fast routes.",
         "_THROUGHPUT_RANK = {",
@@ -204,8 +215,32 @@ def _parse_throughput(value: str) -> float | None:
 
 
 def _parse_throughput_samples(value: str) -> int:
-    match = re.search(r"\bn=(\d+)\b", value)
+    match = re.search(r"\bn=(\d+)(?:/\d+)?\b", value)
     return int(match.group(1)) if match else 0
+
+
+def _parse_throughput_attempts(value: str) -> int:
+    match = re.search(r"\bn=\d+/(\d+)\b", value)
+    if match:
+        return int(match.group(1))
+    return _parse_throughput_samples(value)
+
+
+def _parse_throughput_completion_rate(value: str) -> float:
+    match = re.search(r"(\d+(?:\.\d+)?)%\s+complete\b", value)
+    if match:
+        return float(match.group(1)) / 100
+    attempts = _parse_throughput_attempts(value)
+    return _parse_throughput_samples(value) / attempts if attempts else 0.0
+
+
+def _parse_throughput_confidence(value: str) -> str:
+    match = re.search(r"\b(high|medium|low)\b", value, re.IGNORECASE)
+    # Old pages had only successful n values. Treat enough old measurements as
+    # medium confidence during a rolling deploy, never as high confidence.
+    if match:
+        return match.group(1).lower()
+    return "medium" if _parse_throughput_samples(value) >= MIN_THROUGHPUT_SAMPLES else "low"
 
 
 def _parse_percent(value: str) -> float:

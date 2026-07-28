@@ -780,10 +780,18 @@ def _sse_line_usage(line: str) -> _StreamUsage | None:
     completion_details = usage.get("completion_tokens_details")
     if not isinstance(completion_details, dict):
         completion_details = {}
+    output_details = usage.get("output_tokens_details")
+    if not isinstance(output_details, dict):
+        output_details = {}
+    reasoning_tokens = _first_int(completion_details, "reasoning_tokens")
+    if reasoning_tokens == 0:
+        reasoning_tokens = _first_int(output_details, "reasoning_tokens")
+    if reasoning_tokens == 0:
+        reasoning_tokens = _first_int(usage, "reasoning_tokens")
     return _StreamUsage(
         input_tokens=_first_int(usage, "prompt_tokens", "input_tokens"),
         output_tokens=_first_int(usage, "completion_tokens", "output_tokens"),
-        reasoning_tokens=_first_int(completion_details, "reasoning_tokens"),
+        reasoning_tokens=reasoning_tokens,
     )
 
 
@@ -909,7 +917,14 @@ _PROBE_CONFIG_MESSAGE_MARKERS = (
     "temperature",
     "max_tokens",
     "max_completion_tokens",
+    "maxtokens",
+    "maxcompletiontokens",
     "top_p",
+)
+
+_ROUTE_CONFIGURATION_MESSAGE_MARKERS = (
+    "unable to verify model access",
+    "model access could not be verified",
 )
 
 
@@ -920,10 +935,6 @@ def _rotation_error_type(
 ) -> str:
     raw_type = error_type.casefold()
     raw_message = (message or "").casefold()
-    if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or any(
-        marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS
-    ):
-        return "unsupported_route"
     if raw_type in _PROBE_CONFIG_ERROR_TYPES or (
         status in {400, 422}
         and any(marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS)
@@ -931,6 +942,16 @@ def _rotation_error_type(
         return "probe_config_error"
     if status in {401, 403}:
         return "provider_auth_config"
+    if any(marker in raw_message for marker in _ROUTE_CONFIGURATION_MESSAGE_MARKERS):
+        return "route_configuration_error"
+    if (
+        raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES
+        and (status is None or status < 500)
+    ) or (
+        status in {400, 404, 422}
+        and any(marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS)
+    ):
+        return "unsupported_route"
     return error_type
 
 
@@ -1056,12 +1077,12 @@ async def provider_throughput_probe(
     """Measure effective output throughput from request start to completion.
 
     Unlike the tiny PONG rotation probe, this requires provider-reported final
-    usage and enough output tokens for a stable sample. Measuring the complete
-    request makes the result insensitive to HTTP/SSE buffering: a provider
-    cannot appear artificially fast because many token events arrived in one
-    network chunk. It records metadata only. The response bytes are discarded
-    inside this function and are never returned to the control plane ingest
-    payload.
+    usage and enough visible output tokens for a stable sample. Measuring the
+    complete request makes the result insensitive to HTTP/SSE buffering.
+    Reasoning tokens are stored separately and never inflate visible
+    throughput; usage that exceeds the requested visible cap is rejected. It
+    records metadata only. Response bytes are discarded inside this function
+    and never returned to the control-plane ingest payload.
     """
     if max_tokens <= 1:
         raise ValueError("max_tokens must be greater than one")
@@ -1139,8 +1160,33 @@ async def provider_throughput_probe(
 
     usage = observation.usage
     first_token_ms = observation.first_token_milliseconds
+    visible_output_tokens = max(usage.output_tokens - usage.reasoning_tokens, 0)
+    invalid_token_accounting = (
+        usage.reasoning_tokens > usage.output_tokens
+        or usage.output_tokens > max_tokens
+        or visible_output_tokens > max_tokens
+    )
+    if invalid_token_accounting:
+        sample = _rotation_error_sample(
+            served_provider,
+            served_model,
+            region=monitor_region,
+            elapsed_ms=observation.elapsed_milliseconds,
+            error_status=None,
+            error_type="invalid_token_accounting",
+            source="synthetic_throughput",
+        )
+        sample.input_tokens = usage.input_tokens
+        sample.output_tokens = usage.output_tokens
+        sample.visible_output_tokens = visible_output_tokens
+        sample.reasoning_tokens = usage.reasoning_tokens
+        sample.requested_output_tokens = max_tokens
+        sample.first_token_milliseconds = first_token_ms
+        sample.ttfb_milliseconds = observation.ttfb_milliseconds
+        sample.finish_reason = observation.finish_reason or "invalid_token_accounting"
+        return sample
     if (
-        usage.output_tokens < minimum_output_tokens
+        visible_output_tokens < minimum_output_tokens
         or first_token_ms is None
         or observation.elapsed_milliseconds <= 0
     ):
@@ -1155,12 +1201,17 @@ async def provider_throughput_probe(
         )
         sample.input_tokens = usage.input_tokens
         sample.output_tokens = usage.output_tokens
+        sample.visible_output_tokens = visible_output_tokens
+        sample.reasoning_tokens = usage.reasoning_tokens
+        sample.requested_output_tokens = max_tokens
         sample.first_token_milliseconds = first_token_ms
         sample.ttfb_milliseconds = observation.ttfb_milliseconds
         sample.finish_reason = observation.finish_reason or "insufficient_sample"
         return sample
 
-    speed_tokens_per_second = usage.output_tokens * 1000 / observation.elapsed_milliseconds
+    speed_tokens_per_second = (
+        visible_output_tokens * 1000 / observation.elapsed_milliseconds
+    )
     return ProviderBenchmarkSample(
         id=f"bench-{uuid.uuid4().hex}",
         model=served_model,
@@ -1171,6 +1222,9 @@ async def provider_throughput_probe(
         streamed=True,
         input_tokens=usage.input_tokens,
         output_tokens=usage.output_tokens,
+        visible_output_tokens=visible_output_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
+        requested_output_tokens=max_tokens,
         total_cost_microdollars=_benchmark_route_cost_microdollars(
             served_provider,
             served_model,
@@ -1301,7 +1355,9 @@ def _rotation_error_excluded_from_uptime(error_type: str | None) -> bool:
         "unsupported_route",
         "probe_config_error",
         "provider_auth_config",
+        "route_configuration_error",
         "insufficient_throughput_sample",
+        "invalid_token_accounting",
     }
 
 

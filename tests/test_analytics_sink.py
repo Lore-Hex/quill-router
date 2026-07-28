@@ -202,11 +202,24 @@ def test_rows_are_batched_not_one_insert_each() -> None:
 
 
 def test_row_shape_matches_the_clickhouse_columns() -> None:
-    row = _row_from_sample(_sample())
+    row = _row_from_sample(
+        _sample(
+            output_tokens=512,
+            visible_output_tokens=128,
+            reasoning_tokens=384,
+            requested_output_tokens=512,
+            synthetic_slot=1234,
+        )
+    )
     assert row["id"] == "s1"
     assert row["provider"] == "acme"
     assert row["streamed"] == 1  # UInt8, not a bool
     assert isinstance(row["usage_type"], str)  # enum stringified
+    assert row["output_tokens"] == 512
+    assert row["visible_output_tokens"] == 128
+    assert row["reasoning_tokens"] == 384
+    assert row["requested_output_tokens"] == 512
+    assert row["synthetic_slot"] == 1234
     # DateTime64(3) text format, not ISO-8601.
     assert "T" not in row["created_at"] and row["created_at"].count("-") == 2
 

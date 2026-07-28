@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS provider_benchmark_samples
 
     input_tokens             UInt32,
     output_tokens            UInt32,
+    visible_output_tokens    UInt32 DEFAULT 0,
+    reasoning_tokens         UInt32 DEFAULT 0,
+    requested_output_tokens  UInt32 DEFAULT 0,
+    synthetic_slot           Nullable(UInt64),
     total_cost_microdollars  Int64,
 
     speed_tokens_per_second  Nullable(Float32),

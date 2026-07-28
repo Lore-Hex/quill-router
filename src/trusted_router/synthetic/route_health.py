@@ -8,13 +8,13 @@ from trusted_router.synthetic.probes import rotation_candidates
 
 _SAMPLES_PER_ROUTE_LIMIT = 48
 
-# A route-health alert means "this route is structurally broken — quarantine
-# it". Transient/capacity failures (rate limits, gateway/no-upstream, timeouts,
-# dropped connections) are NOT actionable that way: the model may recover, and
-# quarantining it would stop us ever re-probing it. They still count toward the
-# public leaderboard's uptime display (a separate path); they just don't page.
-# Structural failures — 4xx model-not-found / bad-request / auth (except 429) —
-# do page.
+# A route-health alert means "this route needs operator review". It never
+# mutates routing automatically. Transient/capacity failures (rate limits,
+# gateway/no-upstream, timeouts, dropped connections) are not actionable that
+# way: the model may recover, and automatic quarantine would stop us
+# re-probing it. They still count toward pinned-route success on the public
+# leaderboard; they just do not page. Structural failures such as 4xx
+# model-not-found, bad-request, or auth errors do page for manual correction.
 _TRANSIENT_ERROR_TYPES = frozenset(
     {
         "ReadTimeout",

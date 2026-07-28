@@ -1249,6 +1249,24 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
     payload["sample_window_count"] = len(samples)
     payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
     payload["window_label"] = f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
+    provider_effective = (
+        _status_snapshot(settings)
+        .get("slo_classes", {})
+        .get("provider_effective", {})
+        .get("windows", {})
+        .get("24h", {})
+    )
+    if isinstance(provider_effective, dict):
+        payload["fallback_adjusted_success"] = {
+            "success_rate": (
+                float(provider_effective["uptime_percent"]) / 100
+                if provider_effective.get("uptime_percent") is not None
+                else None
+            ),
+            "sample_count": int(provider_effective.get("sample_count") or 0),
+            "scope": "trustedrouter/monitor synthetic requests after automatic fallback",
+            "window": "24h",
+        }
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
     return payload

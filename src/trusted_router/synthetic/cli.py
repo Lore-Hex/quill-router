@@ -23,9 +23,11 @@ from trusted_router.synthetic.probes import (
     run_synthetic_once,
 )
 from trusted_router.synthetic.throughput import (
+    THROUGHPUT_BATCH_SIZE,
     THROUGHPUT_INTERVAL_SECONDS,
-    choose_throughput_target,
     throughput_candidates,
+    throughput_sample_identity,
+    throughput_slots_for_batch,
 )
 
 # Inside-a-single-cron-invocation cadence. Cloud Scheduler is minute-granularity
@@ -44,6 +46,7 @@ _DEFAULT_THROUGHPUT_MAX_TOKENS = 512
 _DEFAULT_THROUGHPUT_MINIMUM_OUTPUT_TOKENS = 128
 _DEFAULT_THROUGHPUT_TIMEOUT_SECONDS = 90.0
 _DEFAULT_THROUGHPUT_INTERVAL_SECONDS = THROUGHPUT_INTERVAL_SECONDS
+_DEFAULT_THROUGHPUT_BATCH_SIZE = THROUGHPUT_BATCH_SIZE
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -212,30 +215,50 @@ async def _throughput_pass(
     minimum_output_tokens: int,
     timeout_seconds: float,
     interval_seconds: int,
+    batch_size: int = _DEFAULT_THROUGHPUT_BATCH_SIZE,
+    now_epoch_seconds: float | None = None,
 ) -> list[ProviderBenchmarkSample]:
     candidates = throughput_candidates(limit=route_limit)
-    picked = choose_throughput_target(
-        candidates,
+    slots = throughput_slots_for_batch(
+        now_epoch_seconds=now_epoch_seconds,
         interval_seconds=interval_seconds,
+        batch_size=batch_size,
     )
-    if picked is None:
+    if not candidates:
         return []
-    provider, model = picked
     target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
     async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-        return [
-            await provider_throughput_probe(
-                client,
-                target,
-                monitor_region=monitor_region,
-                api_key=api_key,
-                provider=provider,
-                model=model,
-                max_tokens=max_tokens,
-                minimum_output_tokens=minimum_output_tokens,
-                total_timeout_seconds=timeout_seconds,
-            )
+        routes = [
+            (slot, candidates[slot % len(candidates)])
+            for slot in slots
         ]
+        samples = list(
+            await asyncio.gather(
+                *(
+                    provider_throughput_probe(
+                        client,
+                        target,
+                        monitor_region=monitor_region,
+                        api_key=api_key,
+                        provider=provider,
+                        model=model,
+                        max_tokens=max_tokens,
+                        minimum_output_tokens=minimum_output_tokens,
+                        total_timeout_seconds=timeout_seconds,
+                    )
+                    for _, (provider, model) in routes
+                )
+            )
+        )
+    for sample, (slot, (provider, model)) in zip(samples, routes, strict=True):
+        sample.id, sample.created_at = throughput_sample_identity(
+            slot,
+            provider,
+            model,
+            interval_seconds=interval_seconds,
+        )
+        sample.synthetic_slot = slot
+    return samples
 
 
 async def _post_route_health(
@@ -351,6 +374,15 @@ async def run() -> int:
             )
         ),
     )
+    throughput_batch_size = max(
+        1,
+        int(
+            os.environ.get(
+                "TR_SYNTHETIC_THROUGHPUT_BATCH_SIZE",
+                str(_DEFAULT_THROUGHPUT_BATCH_SIZE),
+            )
+        ),
+    )
 
     all_samples: list[SyntheticProbeSample] = []
     benchmark_samples: list[ProviderBenchmarkSample] = []
@@ -383,6 +415,7 @@ async def run() -> int:
                 minimum_output_tokens=throughput_minimum_output_tokens,
                 timeout_seconds=throughput_timeout_seconds,
                 interval_seconds=throughput_interval_seconds,
+                batch_size=throughput_batch_size,
             )
         )
     else:

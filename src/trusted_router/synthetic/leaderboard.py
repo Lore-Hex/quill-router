@@ -4,7 +4,8 @@ Pure, store-agnostic aggregation: given a window of samples (organic
 production traffic + synthetic rotation-probe samples, combined — the `source`
 field is internal-only and intentionally NOT surfaced here), compute per-model
 and per-provider performance: p50/p95 TTFT and TTFB, median throughput,
-uptime %, error rate, and sample counts.
+pinned route success, throughput completion yield, error rate, and sample
+counts. The legacy ``uptime`` response key remains as a compatibility alias.
 
 This is the data layer behind the public ``/leaderboard`` page and the per-model
 performance subpages. The page builds it from a recent window of samples behind
@@ -27,8 +28,10 @@ NON_DOWNTIME_ERROR_TYPES = frozenset(
         "unsupported_route",
         "probe_config_error",
         "provider_auth_config",
+        "route_configuration_error",
     }
 )
+SAME_MODEL_COMPARISON_LIMIT = 20
 
 # Organic benchmark samples (ProviderBenchmarkSample.from_provider_error) are
 # written with the provider's RAW error_type/error_status and are NOT run
@@ -88,16 +91,21 @@ def _effective_throughput(sample: ProviderBenchmarkSample) -> float | None:
 
     Rows written before the metric correction stored post-first-chunk delivery
     speed, which can be wildly inflated when an upstream buffers SSE events.
-    All long-probe rows already carry provider-reported output tokens and total
-    elapsed time, so derive the honest end-to-end rate at read time. The stored
-    speed remains a compatibility fallback for older tests or partial rows.
+    New rows separate visible and reasoning tokens; legacy rows carry only
+    provider-reported output tokens. Derive the end-to-end rate at read time
+    and keep stored speed as a compatibility fallback for partial rows.
     """
+    output_tokens = (
+        sample.visible_output_tokens
+        if sample.requested_output_tokens > 0
+        else sample.output_tokens
+    )
     if (
-        sample.output_tokens > 0
+        output_tokens > 0
         and sample.elapsed_milliseconds is not None
         and sample.elapsed_milliseconds > 0
     ):
-        return sample.output_tokens * 1000 / sample.elapsed_milliseconds
+        return output_tokens * 1000 / sample.elapsed_milliseconds
     if sample.speed_tokens_per_second is not None and sample.speed_tokens_per_second > 0:
         return sample.speed_tokens_per_second
     return None
@@ -112,6 +120,9 @@ class ProviderModelStats:
     error_count: int = 0
     excluded_count: int = 0
     throughput_sample_count: int = 0
+    throughput_attempt_count: int = 0
+    throughput_error_count: int = 0
+    throughput_timeout_count: int = 0
     p50_ttft_ms: int | None = None
     p95_ttft_ms: int | None = None
     p50_ttfb_ms: int | None = None
@@ -120,6 +131,7 @@ class ProviderModelStats:
     last_seen: str | None = None
     errors: Counter[str] = field(default_factory=Counter)
     excluded_reasons: Counter[str] = field(default_factory=Counter)
+    throughput_errors: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -139,15 +151,58 @@ class ProviderModelStats:
         common = self.excluded_reasons.most_common(1)
         return common[0][0] if common else None
 
+    @property
+    def throughput_completion_rate(self) -> float:
+        if not self.throughput_attempt_count:
+            return 0.0
+        return self.throughput_sample_count / self.throughput_attempt_count
+
+    @property
+    def throughput_timeout_rate(self) -> float:
+        if not self.throughput_attempt_count:
+            return 0.0
+        return self.throughput_timeout_count / self.throughput_attempt_count
+
+    @property
+    def throughput_confidence(self) -> str:
+        return _throughput_confidence(
+            attempts=self.throughput_attempt_count,
+            successes=self.throughput_sample_count,
+        )
+
+    @property
+    def top_throughput_error(self) -> str | None:
+        common = self.throughput_errors.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
             "model": self.model,
             "sample_count": self.sample_count,
+            "route_attempt_count": self.sample_count,
             "uptime": round(self.uptime, 4) if self.sample_count else None,
+            "route_success_rate": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "throughput_sample_count": self.throughput_sample_count,
+            "throughput_success_count": self.throughput_sample_count,
+            "throughput_attempt_count": self.throughput_attempt_count,
+            "throughput_error_count": self.throughput_error_count,
+            "throughput_timeout_count": self.throughput_timeout_count,
+            "throughput_completion_rate": (
+                round(self.throughput_completion_rate, 4)
+                if self.throughput_attempt_count
+                else None
+            ),
+            "throughput_timeout_rate": (
+                round(self.throughput_timeout_rate, 4)
+                if self.throughput_attempt_count
+                else None
+            ),
+            "throughput_confidence": self.throughput_confidence,
+            "top_throughput_error": self.top_throughput_error,
+            "throughput_errors": dict(self.throughput_errors),
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -174,10 +229,14 @@ class ProviderStats:
     error_count: int = 0
     excluded_count: int = 0
     throughput_sample_count: int = 0
+    throughput_attempt_count: int = 0
+    throughput_error_count: int = 0
+    throughput_timeout_count: int = 0
     p50_ttft_ms: int | None = None
     p50_tokens_per_second: float | None = None
     errors: Counter[str] = field(default_factory=Counter)
     excluded_reasons: Counter[str] = field(default_factory=Counter)
+    throughput_errors: Counter[str] = field(default_factory=Counter)
 
     @property
     def uptime(self) -> float:
@@ -197,15 +256,58 @@ class ProviderStats:
         common = self.excluded_reasons.most_common(1)
         return common[0][0] if common else None
 
+    @property
+    def throughput_completion_rate(self) -> float:
+        if not self.throughput_attempt_count:
+            return 0.0
+        return self.throughput_sample_count / self.throughput_attempt_count
+
+    @property
+    def throughput_timeout_rate(self) -> float:
+        if not self.throughput_attempt_count:
+            return 0.0
+        return self.throughput_timeout_count / self.throughput_attempt_count
+
+    @property
+    def throughput_confidence(self) -> str:
+        return _throughput_confidence(
+            attempts=self.throughput_attempt_count,
+            successes=self.throughput_sample_count,
+        )
+
+    @property
+    def top_throughput_error(self) -> str | None:
+        common = self.throughput_errors.most_common(1)
+        return common[0][0] if common else None
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
             "model_count": self.model_count,
             "sample_count": self.sample_count,
+            "route_attempt_count": self.sample_count,
             "uptime": round(self.uptime, 4) if self.sample_count else None,
+            "route_success_rate": round(self.uptime, 4) if self.sample_count else None,
             "error_rate": round(self.error_rate, 4),
             "excluded_count": self.excluded_count,
             "throughput_sample_count": self.throughput_sample_count,
+            "throughput_success_count": self.throughput_sample_count,
+            "throughput_attempt_count": self.throughput_attempt_count,
+            "throughput_error_count": self.throughput_error_count,
+            "throughput_timeout_count": self.throughput_timeout_count,
+            "throughput_completion_rate": (
+                round(self.throughput_completion_rate, 4)
+                if self.throughput_attempt_count
+                else None
+            ),
+            "throughput_timeout_rate": (
+                round(self.throughput_timeout_rate, 4)
+                if self.throughput_attempt_count
+                else None
+            ),
+            "throughput_confidence": self.throughput_confidence,
+            "top_throughput_error": self.top_throughput_error,
+            "throughput_errors": dict(self.throughput_errors),
             "top_error": self.top_error,
             "top_excluded": self.top_excluded,
             "errors": dict(self.errors),
@@ -222,6 +324,22 @@ class ProviderStats:
 def _sort_key(p50_ttft_ms: int | None) -> tuple[int, int]:
     # Fastest measured TTFT first; un-measured (None) sink to the bottom.
     return (0 if p50_ttft_ms is not None else 1, p50_ttft_ms or 0)
+
+
+def _throughput_confidence(*, attempts: int, successes: int) -> str:
+    if attempts >= 20 and successes >= 10:
+        return "high"
+    if attempts >= 5 and successes >= 3:
+        return "medium"
+    return "low"
+
+
+def _is_throughput_timeout(error_type: str | None) -> bool:
+    normalized = (error_type or "").casefold()
+    return "timeout" in normalized or normalized in {
+        "ttfb_exceeded",
+        "first_token_exceeded",
+    }
 
 
 def aggregate_leaderboard(
@@ -249,10 +367,17 @@ def aggregate_leaderboard(
             legacy_tps[key] = []
             sustained_tps[key] = []
         if sample.source == "synthetic_throughput":
+            stats.throughput_attempt_count += 1
             effective_tps = _effective_throughput(sample)
             if sample.status == "success" and effective_tps is not None:
                 sustained_tps[key].append(effective_tps)
                 stats.throughput_sample_count += 1
+            else:
+                throughput_error = sample.error_type or "invalid_throughput_sample"
+                stats.throughput_error_count += 1
+                stats.throughput_errors[throughput_error] += 1
+                if _is_throughput_timeout(sample.error_type):
+                    stats.throughput_timeout_count += 1
             if stats.last_seen is None or sample.created_at > stats.last_seen:
                 stats.last_seen = sample.created_at
             # Long probes are intentionally excluded from availability and
@@ -291,18 +416,45 @@ def aggregate_leaderboard(
     models = [
         stats
         for stats in by_model.values()
-        if stats.sample_count >= min_samples or stats.throughput_sample_count >= min_samples
+        if stats.sample_count >= min_samples
+        or stats.throughput_attempt_count >= min_samples
     ]
     models.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
 
     providers = _aggregate_providers(models)
+    throughput_attempts = sum(s.throughput_attempt_count for s in models)
+    throughput_successes = sum(s.throughput_sample_count for s in models)
+    throughput_timeouts = sum(s.throughput_timeout_count for s in models)
+    route_attempts = sum(s.sample_count for s in models)
+    route_successes = sum(s.success_count for s in models)
     return {
         "models": [s.as_dict() for s in models],
         "providers": [s.as_dict() for s in providers],
+        "same_model_comparisons": _same_model_comparisons(models),
         "model_count": len(models),
         "provider_count": len(providers),
-        "total_samples": sum(s.sample_count for s in models),
-        "total_throughput_samples": sum(s.throughput_sample_count for s in models),
+        "total_samples": route_attempts,
+        "total_route_successes": route_successes,
+        "route_success_rate": (
+            round(route_successes / route_attempts, 4) if route_attempts else None
+        ),
+        "total_throughput_samples": throughput_successes,
+        "total_throughput_attempts": throughput_attempts,
+        "total_throughput_timeouts": throughput_timeouts,
+        "throughput_completion_rate": (
+            round(throughput_successes / throughput_attempts, 4)
+            if throughput_attempts
+            else None
+        ),
+        "throughput_timeout_rate": (
+            round(throughput_timeouts / throughput_attempts, 4)
+            if throughput_attempts
+            else None
+        ),
+        "throughput_confidence": _throughput_confidence(
+            attempts=throughput_attempts,
+            successes=throughput_successes,
+        ),
         "excluded_samples": sum(s.excluded_count for s in by_model.values()),
     }
 
@@ -324,8 +476,12 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.error_count += stats.error_count
         agg.excluded_count += stats.excluded_count
         agg.throughput_sample_count += stats.throughput_sample_count
+        agg.throughput_attempt_count += stats.throughput_attempt_count
+        agg.throughput_error_count += stats.throughput_error_count
+        agg.throughput_timeout_count += stats.throughput_timeout_count
         agg.errors.update(stats.errors)
         agg.excluded_reasons.update(stats.excluded_reasons)
+        agg.throughput_errors.update(stats.throughput_errors)
         # Weight each model's p50 by its sample count for the provider median.
         if stats.p50_ttft_ms is not None:
             ttft[stats.provider].extend([stats.p50_ttft_ms] * stats.sample_count)
@@ -338,6 +494,49 @@ def _aggregate_providers(model_stats: list[ProviderModelStats]) -> list[Provider
         agg.p50_tokens_per_second = _median_float(tps[agg.provider])
     providers.sort(key=lambda s: _sort_key(s.p50_ttft_ms))
     return providers
+
+
+def _same_model_comparisons(
+    model_stats: list[ProviderModelStats],
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[ProviderModelStats]] = {}
+    for stats in model_stats:
+        grouped.setdefault(stats.model, []).append(stats)
+
+    comparisons: list[dict[str, Any]] = []
+    for model, rows in grouped.items():
+        providers = {row.provider for row in rows}
+        if len(providers) < 2:
+            continue
+        ordered = sorted(
+            rows,
+            key=lambda row: (
+                -(row.uptime if row.sample_count else -1),
+                -row.throughput_completion_rate,
+                *_sort_key(row.p50_ttft_ms),
+                row.provider,
+            ),
+        )
+        comparisons.append(
+            {
+                "model": model,
+                "provider_count": len(providers),
+                "route_attempt_count": sum(row.sample_count for row in rows),
+                "throughput_attempt_count": sum(
+                    row.throughput_attempt_count for row in rows
+                ),
+                "rows": [row.as_dict() for row in ordered],
+            }
+        )
+    comparisons.sort(
+        key=lambda comparison: (
+            -int(comparison["provider_count"]),
+            -int(comparison["throughput_attempt_count"]),
+            -int(comparison["route_attempt_count"]),
+            str(comparison["model"]),
+        )
+    )
+    return comparisons[:SAME_MODEL_COMPARISON_LIMIT]
 
 
 def _excluded_from_uptime(sample: ProviderBenchmarkSample) -> bool:
