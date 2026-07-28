@@ -1,0 +1,43 @@
+displayName: "TR Gateway: billing path pressure"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    The billing path is degrading before broad customer-visible failures.
+    Check authorize/settle latency, Spanner aborts, and lock insights. Decode
+    hot row keys, verify shard distribution, and run the typed billing audit.
+    This warning intentionally fires below the main Spanner contention page.
+    Runbook: docs/spanner-reliability.md.
+conditions:
+  - displayName: "More than two successful 10-second billing calls per minute for 3 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "cloud_run_revision" AND metric.type = "logging.googleapis.com/user/trustedrouter_gateway_billing_slow"'
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_SUM
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 2
+      duration: 180s
+      evaluationMissingData: EVALUATION_MISSING_DATA_INACTIVE
+      trigger:
+        count: 1
+  - displayName: "More than 10 aborted commits per minute for 3 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/transaction_stat/total/commit_attempt_count" AND metric.labels.status = "abort"'
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 0.166666667
+      duration: 180s
+      evaluationMissingData: EVALUATION_MISSING_DATA_INACTIVE
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 1800s
+  notificationPrompts:
+    - OPENED
+    - CLOSED
