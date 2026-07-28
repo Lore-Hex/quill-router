@@ -117,11 +117,46 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("gmi", "BYOK"),
     } <= kimi_k3_routes
     kimi_k3 = MODELS["moonshotai/kimi-k3"]
+    from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
+    from trusted_router.pricing import _customer_price
+
+    kimi_manifest = json.loads(
+        (_PROVIDER_MODELS_DIR / "kimi.json").read_text(encoding="utf-8")
+    )
+    kimi_k3_row = next(
+        row
+        for row in kimi_manifest["models"]
+        if row["id"] == "moonshotai/kimi-k3"
+    )
+    expected_prompt_price = _customer_price(
+        int(kimi_k3_row["input_token_price_per_m"])
+    )
+    expected_completion_price = _customer_price(
+        int(kimi_k3_row["output_token_price_per_m"])
+    )
+    expected_cached_prompt_price = _customer_price(
+        int(kimi_k3_row["cached_input_token_price_per_m"])
+    )
     assert kimi_k3.context_length == 1_048_576
-    assert kimi_k3.prompt_price_microdollars_per_million_tokens == 3_150_000
-    assert kimi_k3.completion_price_microdollars_per_million_tokens == 15_750_000
-    assert kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens == 315_000
-    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"].upstream_id == "kimi-k3"
+    assert kimi_k3.prompt_price_microdollars_per_million_tokens == expected_prompt_price
+    assert (
+        kimi_k3.completion_price_microdollars_per_million_tokens
+        == expected_completion_price
+    )
+    assert (
+        kimi_k3.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
+        == expected_cached_prompt_price
+    )
+    kimi_k3_direct = MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"]
+    assert kimi_k3_direct.upstream_id == "kimi-k3"
+    assert (
+        kimi_k3_direct.prompt_price_microdollars_per_million_tokens
+        == expected_prompt_price
+    )
+    assert (
+        kimi_k3_direct.completion_price_microdollars_per_million_tokens
+        == expected_completion_price
+    )
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
         == "moonshotai/kimi-k3"
@@ -173,9 +208,6 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
         ("z-ai/glm-5.2", "venice"),
         ("z-ai/glm-5.2", "parasail"),
         ("z-ai/glm-5.2", "friendli"),
-        ("z-ai/glm-5.2", "makora"),
-        ("deepseek/deepseek-v4-flash", "makora"),
-        ("moonshotai/kimi-k2.7-code", "makora"),
         ("cerebras/gpt-oss-120b", "cerebras"),
     ]:
         assert f"{model_id}@{provider}/prepaid" in MODEL_ENDPOINTS
@@ -1648,31 +1680,54 @@ def test_crusoe_provider_models_follow_authoritative_manifest() -> None:
     assert byok == expected
 
 
-def test_makora_provider_models_present_and_routable() -> None:
-    """Makora onboarding: native ids from Makora's OpenAI-compatible catalog
-    load from the manifest and create prepaid + BYOK endpoints."""
+def test_makora_provider_models_follow_live_manifest() -> None:
+    """Makora routes track its generated catalog without freezing retirements."""
+    from trusted_router.catalog_ingest import (
+        _PROVIDER_MODELS_DIR,
+        _is_provider_deprecated_model,
+    )
 
     assert "makora" in PROVIDERS
     assert "makora" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    expected = {
-        "deepseek/deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash",
-        "deepseek/deepseek-v4-pro": "deepseek-ai/DeepSeek-V4-Pro",
-        "google/gemma-4-26b-a4b-it": "google/gemma-4-26B-A4B",
-        "z-ai/glm-5.2": "zai-org/GLM-5.2-FP8",
-        "z-ai/glm-5.2-nvfp4": "zai-org/GLM-5.2-NVFP4",
-        "moonshotai/kimi-k2.7-code": "moonshotai/Kimi-K2.7-Code",
-    }
-    makora_model_ids = {
+    raw = json.loads(
+        (_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8")
+    )
+    raw_models = raw.get("models")
+    assert isinstance(raw_models, list)
+    expected: dict[str, str] = {}
+    for row in raw_models:
+        assert isinstance(row, dict)
+        if row.get("routable") is False:
+            continue
+        if row.get("model_type") not in (None, "chat"):
+            continue
+        if "chat/completions" not in {
+            str(item) for item in (row.get("endpoints") or [])
+        }:
+            continue
+        model_id = row.get("id")
+        assert isinstance(model_id, str) and model_id
+        upstream_id = str(row.get("upstream_id") or model_id)
+        if _is_provider_deprecated_model("makora", model_id, upstream_id):
+            continue
+        expected[model_id] = upstream_id
+
+    credits_model_ids = {
         endpoint.model_id
         for endpoint in MODEL_ENDPOINTS.values()
         if endpoint.provider == "makora" and str(endpoint.usage_type) == "Credits"
     }
-    # The manifest deliberately keeps a missing upstream model routable for
-    # one refresh before tombstoning it. Require the current live lineup
-    # without freezing a minimum fleet size that breaks normal retirements.
-    assert set(expected) <= makora_model_ids
-    assert "qwen/qwen3.6-27b" not in makora_model_ids
-    assert "openai/gpt-oss-120b" not in makora_model_ids
+    byok_model_ids = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "makora" and str(endpoint.usage_type) == "BYOK"
+    }
+
+    assert expected
+    assert credits_model_ids == set(expected)
+    assert byok_model_ids == set(expected)
+    assert "qwen/qwen3.6-27b" not in credits_model_ids
+    assert "openai/gpt-oss-120b" not in credits_model_ids
     for model_id, upstream in expected.items():
         model = MODELS.get(model_id)
         assert model is not None, f"{model_id} missing from catalog"
