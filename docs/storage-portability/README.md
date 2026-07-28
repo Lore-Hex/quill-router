@@ -22,6 +22,14 @@ with no deployment risk, and it is what lets a non-GCP process start at all.
 
 ## The architecture decision
 
+> **SUPERSEDED 2026-07-27 by [`multi-cloud-separation.md`](multi-cloud-separation.md).**
+> Each cloud is now a **standalone deployment with its own database**: identity
+> federates across clouds, credits and API keys do not. The shared-Spanner plan
+> below is kept because its *analysis* is still what makes the new decision
+> legible — the tradeoffs in "What this trades away" are exactly the costs that
+> separation avoids, and the phased delivery still applies. Read the new
+> document first; treat the bullets immediately below as history.
+
 The naive plan is "replace Spanner and Bigtable with cloud-native equivalents
 on each cloud." That is three ports of the hardest, most dangerous code we
 own (reserve/settle billing), once per cloud.
