@@ -15,6 +15,16 @@ def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
 
 
+def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '--format=json 2>/dev/null' in rollout
+    assert 'select(.name == "TR_REQUEST_RECORD_WRITE_MODE")' in rollout
+    assert 'cannot determine TR_REQUEST_RECORD_WRITE_MODE' in rollout
+    assert '*) REQUEST_RECORD_WRITE_MODE="legacy"' not in rollout
+    assert "[?name='TR_REQUEST_RECORD_WRITE_MODE']" not in rollout
+
+
 def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()

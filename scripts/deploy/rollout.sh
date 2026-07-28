@@ -83,13 +83,22 @@ if [ -z "$REQUEST_RECORD_WRITE_MODE" ]; then
   REQUEST_RECORD_WRITE_MODE="$(
     gc run services describe "$SERVICE" \
       --region="$TR_PRIMARY_REGION" \
-      --format="value(spec.template.spec.containers[0].env[?name='TR_REQUEST_RECORD_WRITE_MODE'].value)" \
-      2>/dev/null || true
+      --format=json 2>/dev/null \
+      | jq -r '
+          [
+            .spec.template.spec.containers[0].env[]?
+            | select(.name == "TR_REQUEST_RECORD_WRITE_MODE")
+            | .value
+          ][0] // empty
+        ' || true
   )"
 fi
 case "$REQUEST_RECORD_WRITE_MODE" in
   legacy|typed) ;;
-  *) REQUEST_RECORD_WRITE_MODE="legacy" ;;
+  *)
+    log "refusing rollout: cannot determine TR_REQUEST_RECORD_WRITE_MODE; set it explicitly"
+    exit 1
+    ;;
 esac
 
 ENV_VARS=(
