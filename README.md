@@ -265,17 +265,18 @@ The current two-minute schedule gives each sustained route about 25 samples per
 week and 108 per 30 days. CI calculates a full-cap spend estimate from the live
 catalog and fails if it exceeds the reviewed monthly ceiling.
 
-Status separates three SLO classes instead of blending them:
+Status separates two service SLO classes instead of blending them with
+upstream-provider behavior:
 
 - `router_core`: attested API reachable, key authorization works, route
   candidates/fallback are available, and settle/refund is durable.
-- `provider_effective`: a full model response succeeds after provider fallback.
 - `control_plane`: dashboard, billing UI, keys, credits, docs, trust, and
   status surfaces.
 
 Deploy watchdogs and internal burn-rate alerts default to `router_core`.
-Provider-only failures should degrade `provider_effective` without consuming
-the router-core error budget when fallback remains available.
+Provider-only failures are measured per provider on `/status` and
+`/leaderboard`; they do not consume the router-core error budget when fallback
+remains available.
 
 ## Public Positioning
 
@@ -405,12 +406,12 @@ The key design rule: a regional outage can fail closed or route to another
 attested region, but it must never silently degrade to a non-attested prompt
 handler.
 
-## Router-Core 5 9s Roadmap
+## Router-Core Four-Nines Target
 
-The first target is an internal SLO, not a public contractual SLA. 99.999%
-allows about 5 minutes 15 seconds of downtime per year, so the public product
-copy should stay at 99.9% until at least 30-60 days of measured 99.99%+
-router-core uptime exists.
+The target is an internal SLO, not a contractual SLA. 99.99% allows about
+52 minutes 36 seconds of downtime per year. Public status labels this number
+as a target until at least 30-60 days of measured 99.99% router-core uptime
+exists.
 
 Router-core availability means:
 
@@ -423,8 +424,8 @@ Router-core availability means:
 The code paths that support this roadmap today are:
 
 - `/status.json` exports `slo_classes.router_core`,
-  `slo_classes.provider_effective`, `slo_classes.control_plane`, and burn-rate
-  alerts for 5m, 1h, 6h, and 24h windows.
+  `slo_classes.control_plane`, and burn-rate alerts for 5m, 1h, 6h, and 24h
+  windows.
 - The deploy watchdog reads `router_core` by default, so provider-only outages
   do not automatically roll back a control-plane deploy.
 - SDKs are expected to retry connection failures and 502/503/504 across
@@ -433,10 +434,10 @@ The code paths that support this roadmap today are:
   Settlement uses deterministic generation IDs, so retries overwrite the same
   index rows and cannot double charge or duplicate activity.
 
-Before making a public 5 9s claim, require three warm GCP attested regions, one
-exercised non-GCP failover pool, tested paging, router-core chaos tests, staged
-regional deploys with rollback gates, and 30 days of measured router-core
-uptime at or above 99.99%.
+Before describing four nines as measured availability rather than a target,
+require three warm GCP attested regions, tested paging, router-core chaos
+tests, staged regional deploys with rollback gates, and at least 30 days of
+measured router-core uptime at or above 99.99%.
 
 ## Internal Gateway Contract
 

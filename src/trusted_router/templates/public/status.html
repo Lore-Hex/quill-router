@@ -15,6 +15,7 @@
 {% endblock %}
 
 {% block body %}
+{% set router_slo = snapshot.slo_classes["router_core"] %}
 <section class="status-page">
   <div class="status-banner status-{{ snapshot.overall_status_class }}">
     <div>
@@ -22,11 +23,12 @@
       <p>{{ snapshot.summary.detail }}</p>
     </div>
     <div class="status-banner-metrics">
-      <span>{{ snapshot.overall_status_label }}</span>
-      <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>In region gateway overhead p50, {{ snapshot.headline_metrics.window }}</small>
+      <span>{{ snapshot.overall_status_label }} · Router Core</span>
+      <strong>{{ router_slo.target_uptime_percent }}%</strong>
+      <small>Availability target</small>
+      <small>In region gateway overhead p50: {% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</small>
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
-      <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
+      <small>Global observed gateway p50: {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
       {% if snapshot.monitor_freshness.latest_sample_at %}
       <small>Latest synthetic sample {{ snapshot.monitor_freshness.latest_sample_at }}</small>
@@ -92,14 +94,14 @@
     <div class="status-section-head">
       <div>
         <h2>Error budget burn</h2>
-        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal. Provider Effective is an upstream provider quality watch and is not counted as router core downtime.</p>
+        <p>Burn rate means how quickly failures are spending the allowed error budget. Router Core is the paging signal. Upstream reliability is measured separately for every provider above.</p>
       </div>
     </div>
     <div class="burn-list">
       {% for alert in snapshot.burn_rate_alerts %}
       <div class="burn-row burn-{{ alert.level }}">
         <strong>{{ alert.level|title }}</strong>
-        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn{% if alert.slo_class != "router_core" %} · provider watch{% endif %}</span>
+        <span>{{ alert.slo_name }} · {{ alert.window }} · {{ alert.burn_rate }}x burn</span>
         <small>{{ alert.bad_count }} bad / {{ alert.sample_count }} samples</small>
       </div>
       {% endfor %}

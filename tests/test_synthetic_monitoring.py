@@ -467,6 +467,9 @@ def test_status_subdomain_root_renders_status_page(client: TestClient) -> None:
     assert page.status_code == 200
     assert "TrustedRouter Status" in page.text
     assert "All Systems Operational" in page.text
+    assert "99.99%" in page.text
+    assert "Availability target" in page.text
+    assert "Provider Effective" not in page.text
 
 
 def test_chat_monitor_model_requires_configured_monitor_key() -> None:
@@ -558,7 +561,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["current"]["checks"]
     assert snapshot["overall_status"] == "up"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
-    assert snapshot["slo_classes"]["provider_effective"]["status"] == "down"
+    assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
     assert snapshot["windows"]["5m"]["sample_count"] == 3
     assert snapshot["windows"]["24h"]["sample_count"] == 4
     assert snapshot["windows"]["48h"]["sample_count"] == 4
@@ -576,7 +579,7 @@ def test_status_rollups_cover_current_5m_24h_and_daily_windows() -> None:
     assert snapshot["recent_events"][0]["component"] == "Canonical API"
 
 
-def test_status_slo_classes_do_not_blend_provider_failures_into_router_core() -> None:
+def test_status_keeps_provider_failures_out_of_global_slo_classes() -> None:
     now = utcnow()
     samples = [
         _sample(
@@ -621,9 +624,12 @@ def test_status_slo_classes_do_not_blend_provider_failures_into_router_core() ->
     assert snapshot["overall_status"] == "up"
     assert snapshot["summary"]["headline"] == "All Systems Operational"
     assert snapshot["slo_classes"]["router_core"]["status"] == "up"
-    assert snapshot["slo_classes"]["provider_effective"]["status"] == "down"
     assert snapshot["slo_classes"]["router_core"]["windows"]["5m"]["bad_count"] == 0
-    assert snapshot["slo_classes"]["provider_effective"]["windows"]["5m"]["bad_count"] == 2
+    assert set(snapshot["slo_classes"]) == {"router_core", "control_plane"}
+    assert all(
+        alert["slo_class"] != "provider_effective"
+        for alert in snapshot["burn_rate_alerts"]
+    )
 
 
 def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
@@ -654,7 +660,7 @@ def test_status_router_core_burn_rate_alerts_on_short_window_failures() -> None:
         if item["slo_class"] == "router_core" and item["window"] == "5m"
     )
     assert alert["level"] == "critical"
-    assert alert["burn_rate"] >= 100_000
+    assert alert["burn_rate"] >= 10_000
     assert alert["bad_count"] == 2
 
 
@@ -1307,9 +1313,9 @@ async def test_pong_probe_accepts_reasoning_model_shapes() -> None:
     this regression test the probe flagged `pong_mismatch` on every
     such reply even though the model actually responded with PONG.
 
-    Status-page root cause from 2026-05-31: provider_effective SLO at
-    ~99.0% over 6h, ~99.76% over 24h, driven entirely by
-    pong_mismatch on these models.
+    Status-page root cause from 2026-05-31: per-provider health was
+    degraded by pong_mismatch on these models even though they returned
+    the requested answer.
     """
 
     def chat_handler(request: httpx.Request) -> httpx.Response:
