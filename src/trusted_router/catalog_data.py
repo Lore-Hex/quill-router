@@ -300,11 +300,14 @@ PROVIDERS: dict[str, Provider] = {
         supports_prepaid=True,
         supports_byok=False,
         provider_zero_data_retention=False,
+        prepaid_zero_data_retention=True,
+        prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
-            "Not currently marked ZDR in TrustedRouter. Vertex AI documents a "
-            "separate zero-data-retention configuration process, but this managed "
-            "route stays outside trustedrouter/zdr until its live account settings "
-            "are verified."
+            "TrustedRouter's managed Vertex AI account is covered by contractual "
+            "Zero Data Retention. This guarantee applies only to TrustedRouter-funded "
+            "prepaid routes. TrustedRouter does not invoke Google Search or Maps "
+            "grounding or Gemini Live session resumption on these routes. Google AI "
+            "Studio is classified separately."
         ),
         provider_policy_url=(
             "https://docs.cloud.google.com/vertex-ai/generative-ai/docs/"
