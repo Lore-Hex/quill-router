@@ -6,10 +6,10 @@
 # What this script provisions, idempotently, in quill-cloud-proxy:
 #
 #   nam6         Spanner instance `trusted-router-nam6` (config=nam6,
-#                100 PUs). Replicas in us-central1 + us-east1 + us-east4.
+#                300 PUs). Seven replicas across five US regions.
 #                Schema mirrors `trusted-router` (current regional-us-central1).
-#                ~$219/mo when up. Existing trusted-router stays untouched
-#                until Stage 1's cutover.
+#                Check the current Spanner calculator before changing capacity.
+#                Existing trusted-router stays untouched until Stage 1's cutover.
 #
 #   bt-hdd       Bigtable instance `trusted-router-logs-v2` with 3 HDD
 #                clusters (us-central1-a + europe-west4-a + us-east4-a).
@@ -86,13 +86,14 @@ phase_nam6() {
   if gc spanner instances describe "$NEW_SPANNER_INSTANCE" >/dev/null 2>&1; then
     log "  Spanner instance $NEW_SPANNER_INSTANCE already exists"
   else
-    log "  creating Spanner instance $NEW_SPANNER_INSTANCE (config=nam6, 100 PUs)"
+    log "  creating Spanner instance $NEW_SPANNER_INSTANCE (config=nam6, ${SPANNER_PROCESSING_UNITS} PUs)"
     # `--description` actually sets display_name in the GCP API and is
     # capped at 30 characters. Keep it short.
     gc_or_dry spanner instances create "$NEW_SPANNER_INSTANCE" \
       --config=nam6 \
+      --edition=ENTERPRISE_PLUS \
       --description="TrustedRouter (nam6)" \
-      --processing-units=100
+      --processing-units="$SPANNER_PROCESSING_UNITS"
   fi
 
   if gc spanner databases describe "$NEW_SPANNER_DATABASE" \
@@ -104,6 +105,26 @@ phase_nam6() {
       --instance="$NEW_SPANNER_INSTANCE" \
       --database-dialect=GOOGLE_STANDARD_SQL \
       --ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'
+  fi
+  if [ $DRY_RUN -eq 1 ]; then
+    dry_log "gcloud spanner databases ddl update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --ddl=ALTER_DATABASE_PITR_7D"
+    dry_log "gcloud spanner databases update $NEW_SPANNER_DATABASE --instance=$NEW_SPANNER_INSTANCE --enable-drop-protection"
+  else
+    if [ "$(gc spanner databases describe "$NEW_SPANNER_DATABASE" \
+        --instance="$NEW_SPANNER_INSTANCE" \
+        --format='value(versionRetentionPeriod)')" != "7d" ]; then
+      gc spanner databases ddl update "$NEW_SPANNER_DATABASE" \
+        --instance="$NEW_SPANNER_INSTANCE" \
+        --ddl="ALTER DATABASE \`${NEW_SPANNER_DATABASE}\` SET OPTIONS (version_retention_period = '7d')"
+    fi
+    if [ "$(gc spanner databases describe "$NEW_SPANNER_DATABASE" \
+        --instance="$NEW_SPANNER_INSTANCE" \
+        --format='value(enableDropProtection)')" != "True" ]; then
+      gc spanner databases update "$NEW_SPANNER_DATABASE" \
+        --instance="$NEW_SPANNER_INSTANCE" \
+        --enable-drop-protection \
+        --quiet
+    fi
   fi
 
   log "  nam6 ready. Stage 1 cutover will populate this instance from a"

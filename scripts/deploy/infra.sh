@@ -20,15 +20,29 @@ gc services enable \
 log "ensuring Spanner instance/database"
 if ! gc spanner instances describe "$SPANNER_INSTANCE_ID" >/dev/null 2>&1; then
   gc spanner instances create "$SPANNER_INSTANCE_ID" \
-    --config="regional-${REGION}" \
+    --config="$SPANNER_CONFIG" \
+    --edition="$SPANNER_EDITION" \
     --description="TrustedRouter ledger" \
-    --processing-units=100
+    --processing-units="$SPANNER_PROCESSING_UNITS"
 fi
 if ! gc spanner databases describe "$SPANNER_DATABASE_ID" --instance="$SPANNER_INSTANCE_ID" >/dev/null 2>&1; then
   gc spanner databases create "$SPANNER_DATABASE_ID" \
     --instance="$SPANNER_INSTANCE_ID" \
     --database-dialect=GOOGLE_STANDARD_SQL \
     --ddl='CREATE TABLE tr_entities (kind STRING(64) NOT NULL, id STRING(512) NOT NULL, body STRING(MAX) NOT NULL, updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)) PRIMARY KEY (kind, id)'
+fi
+if [ "$(gc spanner databases describe "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" --format='value(versionRetentionPeriod)')" != "7d" ]; then
+  gc spanner databases ddl update "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" \
+    --ddl="ALTER DATABASE \`${SPANNER_DATABASE_ID}\` SET OPTIONS (version_retention_period = '7d')"
+fi
+if [ "$(gc spanner databases describe "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" --format='value(enableDropProtection)')" != "True" ]; then
+  gc spanner databases update "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" \
+    --enable-drop-protection \
+    --quiet
 fi
 
 log "ensuring Bigtable instance/table"

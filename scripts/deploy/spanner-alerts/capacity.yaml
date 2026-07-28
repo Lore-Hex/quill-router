@@ -1,0 +1,39 @@
+displayName: "TR Spanner: storage and sessions"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    Production Spanner is approaching a storage or session capacity guardrail.
+    Inspect storage growth and client session pools before the hard limit.
+    Runbook: docs/spanner-reliability.md.
+conditions:
+  - displayName: "Storage utilization above 70% for 15 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/instance/storage/combined/utilization"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 0.7
+      duration: 900s
+      trigger:
+        count: 1
+  - displayName: "Session count above 2000 for 10 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "spanner_instance" AND resource.labels.instance_id = "trusted-router-nam6" AND metric.type = "spanner.googleapis.com/instance/session_count"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 2000
+      duration: 600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED
