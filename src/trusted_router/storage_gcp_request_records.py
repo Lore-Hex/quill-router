@@ -1,0 +1,210 @@
+"""Typed Spanner storage for bounded gateway authorization state.
+
+The generic ``tr_entities`` table is appropriate for low-volume control-plane
+objects, but not for one row per inference request. Gateway authorizations are
+active billing state until settle/refund wins the reservation claim. Once the
+durable settle outbox confirms the index write, ``terminal_at`` starts a bounded
+idempotency/audit window.
+
+``terminal_at`` is deliberately nullable. Spanner TTL ignores NULL timestamps,
+so an unresolved authorization or a settled request with pending metadata
+repair can never be deleted by the row-deletion policy.
+
+The JSON payload is the minimal content-free replay record needed to honor an
+idempotency key after settlement. It expires with the typed row after 30 days.
+Prompt and output content are never present in either representation.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from datetime import UTC, datetime
+from typing import Any
+
+from trusted_router.storage_gcp_codec import json_body
+from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.types import UsageType
+
+AUTHORIZATION_TABLE = "tr_gateway_authorization"
+
+
+def insert_gateway_authorization(
+    transaction: Any,
+    param_types: Any,
+    authorization: GatewayAuthorization,
+    *,
+    created_at: Any,
+) -> None:
+    """Insert active authorization state in the caller's billing transaction."""
+    transaction.execute_update(
+        "INSERT INTO tr_gateway_authorization ("
+        "authorization_id, workspace_id, key_hash, reservation_id, model_id, "
+        "provider, usage_type, estimated_microdollars, settled, created_at, "
+        "terminal_at, payload"
+        ") VALUES ("
+        "@authorization_id, @workspace_id, @key_hash, @reservation_id, @model_id, "
+        "@provider, @usage_type, @estimated_microdollars, false, @created_at, "
+        "NULL, @payload"
+        ")",
+        params={
+            "authorization_id": authorization.id,
+            "workspace_id": authorization.workspace_id,
+            "key_hash": authorization.key_hash,
+            "reservation_id": authorization.credit_reservation_id,
+            "model_id": authorization.model_id,
+            "provider": authorization.provider,
+            "usage_type": str(authorization.usage_type),
+            "estimated_microdollars": int(authorization.estimated_microdollars),
+            "created_at": created_at,
+            "payload": json_body(authorization),
+        },
+        param_types={
+            "authorization_id": param_types.STRING,
+            "workspace_id": param_types.STRING,
+            "key_hash": param_types.STRING,
+            "reservation_id": param_types.STRING,
+            "model_id": param_types.STRING,
+            "provider": param_types.STRING,
+            "usage_type": param_types.STRING,
+            "estimated_microdollars": param_types.INT64,
+            "created_at": param_types.TIMESTAMP,
+            "payload": param_types.STRING,
+        },
+    )
+
+
+def read_gateway_authorization(
+    reader: Any,
+    param_types: Any,
+    authorization_id: str,
+) -> GatewayAuthorization | None:
+    rows = list(
+        reader.execute_sql(
+            "SELECT authorization_id, workspace_id, key_hash, reservation_id, "
+            "model_id, provider, usage_type, estimated_microdollars, settled, "
+            "created_at, payload FROM tr_gateway_authorization "
+            "WHERE authorization_id=@authorization_id",
+            params={"authorization_id": authorization_id},
+            param_types={"authorization_id": param_types.STRING},
+        )
+    )
+    if not rows:
+        return None
+    (
+        row_id,
+        workspace_id,
+        key_hash,
+        reservation_id,
+        model_id,
+        provider,
+        usage_type,
+        estimated_microdollars,
+        settled,
+        created_at,
+        payload,
+    ) = rows[0]
+    if payload:
+        authorization = _authorization_from_payload(payload)
+        authorization.settled = bool(settled)
+        authorization.created_at = _timestamp_string(created_at)
+        return authorization
+    return GatewayAuthorization(
+        id=str(row_id),
+        workspace_id=str(workspace_id),
+        key_hash=str(key_hash),
+        model_id=str(model_id),
+        provider=str(provider),
+        usage_type=UsageType.coerce(usage_type),
+        estimated_microdollars=int(estimated_microdollars),
+        credit_reservation_id=(
+            str(reservation_id) if reservation_id is not None else None
+        ),
+        settled=bool(settled),
+        created_at=_timestamp_string(created_at),
+    )
+
+
+def mark_gateway_authorization_settled(
+    transaction: Any,
+    param_types: Any,
+    authorization: GatewayAuthorization,
+) -> int:
+    """Mark billing settled while keeping repair metadata and TTL disabled."""
+    return transaction.execute_update(
+        "UPDATE tr_gateway_authorization SET settled=true, payload=@payload "
+        "WHERE authorization_id=@authorization_id",
+        params={
+            "authorization_id": authorization.id,
+            "payload": json_body(authorization),
+        },
+        param_types={
+            "authorization_id": param_types.STRING,
+            "payload": param_types.STRING,
+        },
+    )
+
+
+def complete_gateway_authorization_retention(
+    transaction: Any,
+    param_types: Any,
+    authorization_id: str,
+    *,
+    terminal_at: Any,
+) -> int:
+    """Start the retention clock for a settled, replayable authorization.
+
+    The settled predicate guards active authorizations. The NULL predicate makes
+    retries idempotent without extending the 30-day replay/audit window.
+    """
+    return transaction.execute_update(
+        "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "
+        "WHERE authorization_id=@authorization_id AND settled=true "
+        "AND terminal_at IS NULL",
+        params={
+            "authorization_id": authorization_id,
+            "terminal_at": terminal_at,
+        },
+        param_types={
+            "authorization_id": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+        },
+    )
+
+
+def close_reaped_gateway_authorization(
+    transaction: Any,
+    param_types: Any,
+    authorization_id: str,
+    *,
+    terminal_at: Any,
+) -> int:
+    """Close an expired authorization whose hold was released by the reaper."""
+    return transaction.execute_update(
+        "UPDATE tr_gateway_authorization SET settled=true, terminal_at=@terminal_at, "
+        "payload=NULL WHERE authorization_id=@authorization_id AND settled=false",
+        params={
+            "authorization_id": authorization_id,
+            "terminal_at": terminal_at,
+        },
+        param_types={
+            "authorization_id": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+        },
+    )
+
+
+def _authorization_from_payload(payload: str) -> GatewayAuthorization:
+    data = json.loads(payload)
+    known = {field.name for field in dataclasses.fields(GatewayAuthorization)}
+    return GatewayAuthorization(**{key: value for key, value in data.items() if key in known})
+
+
+def _timestamp_string(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    raise TypeError("gateway authorization created_at is not a timestamp")

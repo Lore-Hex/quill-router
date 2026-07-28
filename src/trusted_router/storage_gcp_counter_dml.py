@@ -22,6 +22,7 @@ transaction (docs §5) — the authorize/settle transactions are DML-only.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from trusted_router.storage_gcp_counters import UNSHARDED
@@ -309,6 +310,7 @@ RESERVATION_COLUMNS = (
     "reservation_id", "workspace_id", "key_hash", "ws_shard", "credit_shard", "key_shard",
     "credit_reserved_micro", "key_reserved_micro", "hold_usage_type",
     "authorization_id", "idempotency_scope", "idempotency_fingerprint", "expires_at",
+    "created_at",
 )
 
 
@@ -385,7 +387,7 @@ def insert_reservation(transaction: Any, param_types: Any, **fields: Any) -> Non
         "credit_reserved_micro": pt.INT64, "key_reserved_micro": pt.INT64,
         "hold_usage_type": pt.STRING, "authorization_id": pt.STRING,
         "idempotency_scope": pt.STRING, "idempotency_fingerprint": pt.STRING,
-        "expires_at": pt.TIMESTAMP,
+        "expires_at": pt.TIMESTAMP, "created_at": pt.TIMESTAMP,
     }
     cols = ", ".join(RESERVATION_COLUMNS)
     binds = ", ".join(f"@{c}" for c in RESERVATION_COLUMNS)
@@ -407,6 +409,8 @@ def claim_reservation(
     *,
     actual_micro: int,
     settled_usage_type: str,
+    terminal_at: Any | None = None,
+    defer_retention: bool = False,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
@@ -415,17 +419,49 @@ def claim_reservation(
     Persists `actual_micro` + `settled_usage_type` so the durable reservation
     records the exact settled amount for audit / reaper reconciliation.
     """
+    resolved_terminal_at = (
+        None if defer_retention else (terminal_at or datetime.now(UTC))
+    )
     count = transaction.execute_update(
         "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
-        "settled_usage_type=@sut WHERE reservation_id=@rid AND settled=false",
-        params={"rid": reservation_id, "actual": int(actual_micro), "sut": settled_usage_type},
+        "settled_usage_type=@sut, terminal_at=@terminal_at "
+        "WHERE reservation_id=@rid AND settled=false",
+        params={
+            "rid": reservation_id,
+            "actual": int(actual_micro),
+            "sut": settled_usage_type,
+            "terminal_at": resolved_terminal_at,
+        },
         param_types={
             "rid": param_types.STRING,
             "actual": param_types.INT64,
             "sut": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
         },
     )
     return count == 1
+
+
+def complete_reservation_retention(
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+    *,
+    terminal_at: Any,
+) -> int:
+    """Start TTL only after all durable settlement repair work is complete."""
+    return transaction.execute_update(
+        "UPDATE tr_reservation SET terminal_at=@terminal_at "
+        "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL",
+        params={
+            "rid": reservation_id,
+            "terminal_at": terminal_at,
+        },
+        param_types={
+            "rid": param_types.STRING,
+            "terminal_at": param_types.TIMESTAMP,
+        },
+    )
 
 
 def insert_entity_dml(

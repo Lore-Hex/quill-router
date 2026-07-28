@@ -211,12 +211,25 @@ jobs:
           workload_identity_provider: projects/44325983244/locations/global/workloadIdentityPools/github-actions/providers/github
           service_account: tr-deploy@quill-cloud-proxy.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install migration runtime
+        run: uv sync --frozen --no-dev
       - name: Apply idempotent Spanner schema prerequisites
         env:
           GCP_PROJECT_ID: quill-cloud-proxy
           SPANNER_INSTANCE_ID: trusted-router-nam6
           SPANNER_DATABASE_ID: trusted-router
         run: scripts/deploy/migrate_typed_counters.sh
+      - name: Apply bounded request-retention schema
+        env:
+          TR_GCP_PROJECT_ID: quill-cloud-proxy
+          TR_SPANNER_INSTANCE_ID: trusted-router-nam6
+          TR_SPANNER_DATABASE_ID: trusted-router
+          TR_BIGTABLE_INSTANCE_ID: trusted-router-logs
+          TR_BIGTABLE_GENERATION_TABLE: trustedrouter-generations
+        run: scripts/deploy/migrate_request_retention.sh --apply
 
   deploy:
     needs: [gate-on-ci, build-image, migrate-schema]

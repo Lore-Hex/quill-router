@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Phase 4: parallel Cloud Run rollout across every TR_REGIONS entry, then
+# Phase 4: parallel Cloud Run rollout across every control-plane region, then
 # attach a Serverless NEG per region to the global LB backend service so
-# trustedrouter.com routes to the nearest healthy region. Finally ensures
-# the HTTP -> HTTPS redirect on :80.
+# trustedrouter.com routes to the nearest healthy region. Finally ensures the
+# HTTP -> HTTPS redirect on :80.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/deploy/_lib.sh
@@ -78,6 +78,20 @@ add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
 add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
+REQUEST_RECORD_WRITE_MODE="${TR_REQUEST_RECORD_WRITE_MODE:-}"
+if [ -z "$REQUEST_RECORD_WRITE_MODE" ]; then
+  REQUEST_RECORD_WRITE_MODE="$(
+    gc run services describe "$SERVICE" \
+      --region="$TR_PRIMARY_REGION" \
+      --format="value(spec.template.spec.containers[0].env[?name='TR_REQUEST_RECORD_WRITE_MODE'].value)" \
+      2>/dev/null || true
+  )"
+fi
+case "$REQUEST_RECORD_WRITE_MODE" in
+  legacy|typed) ;;
+  *) REQUEST_RECORD_WRITE_MODE="legacy" ;;
+esac
+
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
@@ -124,6 +138,11 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
+  # The first expand deployment defaults to legacy. After an explicit typed
+  # cutover, preserve the primary region's live mode on later deploys unless an
+  # operator overrides it. This prevents routine rollouts from reopening the
+  # unbounded generic write path.
+  "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 
@@ -244,7 +263,7 @@ if ! gc artifacts docker images describe "$IMAGE" >/dev/null 2>&1; then
   exit 1
 fi
 
-DEPLOY_TARGET_REGIONS="${TR_DEPLOY_TARGET_REGIONS:-$TR_REGIONS}"
+DEPLOY_TARGET_REGIONS="${TR_DEPLOY_TARGET_REGIONS:-$TR_CONTROL_PLANE_REGIONS}"
 IFS=',' read -ra _REGION_LIST <<<"$DEPLOY_TARGET_REGIONS"
 TARGETS=()
 for r in "${_REGION_LIST[@]}"; do

@@ -88,9 +88,43 @@ WHERE interval_end = (
 ORDER BY used_bytes DESC;
 ```
 
-Do not retain unbounded per-request authorization, idempotency, generation, or
-outbox rows in Spanner. Before high-volume traffic, move ephemeral records to
-typed tables with row deletion policies, or run a tested partitioned-DML
-retention job that deletes only terminal records after their replay and audit
-windows. Bigtable remains the metadata activity store; prompt and output
-content must never enter either system.
+Per-request state is bounded without deleting active or unresolved billing
+records:
+
+- `tr_gateway_authorization`, `tr_reservation`, and `tr_settle_outbox` use a
+  nullable `terminal_at` and a 30-day row deletion policy.
+- Active, pending, dead, and repairable rows keep `terminal_at=NULL`. Spanner
+  TTL does not select a row while that value is NULL.
+- A successful settlement makes the reservation immutable but leaves all three
+  retention clocks stopped while Bigtable repair is pending. After the
+  deterministic activity row is confirmed, one transaction sets
+  `terminal_at` on the reservation, authorization, and outbox. It also clears
+  the terminal outbox body. The authorization keeps its content-free replay
+  record for the bounded idempotency window.
+- New terminal generations are not written to `tr_entities`. Existing generic
+  rows remain untouched by the migration and can be archived or removed in a
+  separate, reviewed operation.
+- Bigtable writes new activity, benchmark, synthetic, and rollup cells to
+  distinct families with 30-day, 30-day, 14-day, and 730-day GC policies.
+  Readers prefer those families and fall back to legacy `m` cells. The
+  migration never adds a GC policy to `m`.
+
+Apply the additive migration:
+
+```bash
+scripts/deploy/migrate_request_retention.sh
+scripts/deploy/migrate_request_retention.sh --apply
+```
+
+The first command is a dry run. The apply path refuses to add a Spanner policy
+if any row would be immediately eligible. It performs no `DELETE`, `DROP`, or
+`terminal_at` backfill.
+
+Roll out application code with `TR_REQUEST_RECORD_WRITE_MODE=legacy` in every
+region first. After all revisions can read both layouts and production smoke
+passes, switch regions to `typed`. Do not roll back to a revision that predates
+typed-table reads after the first typed authorization is created.
+
+Spanner table-size metrics include retained historical versions. TTL deletion
+is asynchronous, and physical storage can remain visible until the database
+version-retention window and compaction have elapsed.

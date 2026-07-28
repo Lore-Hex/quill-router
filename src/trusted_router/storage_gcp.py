@@ -78,6 +78,7 @@ from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_ret
 from trusted_router.storage_gcp_keys import SpannerApiKeys
 from trusted_router.storage_gcp_oauth_codes import SpannerOAuthCodes
 from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
+from trusted_router.storage_gcp_request_records import read_gateway_authorization
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_gcp_synthetic_index import (
     synthetic_probe_samples as _bt_synthetic_probe_samples,
@@ -90,6 +91,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
 )
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
+from trusted_router.storage_models import TypedFinalizeResult
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
@@ -111,7 +113,14 @@ class SpannerBigtableStore:
     """
 
     entity_table = "tr_entities"
-    generation_family = "m"
+    # New Bigtable writes are separated by retention class. ``m`` is retained
+    # as a read-only compatibility family until legacy history ages out.
+    legacy_generation_family = "m"
+    activity_family = "activity"
+    benchmark_family = "benchmark"
+    synthetic_family = "synthetic"
+    synthetic_rollup_family = "rollup"
+    generation_family = legacy_generation_family
 
     def __init__(
         self,
@@ -122,9 +131,13 @@ class SpannerBigtableStore:
         bigtable_instance_id: str,
         generation_table: str,
         bigtable_app_profile_id: str = "",
+        request_record_write_mode: str = "legacy",
     ) -> None:
         if not spanner_instance_id or not spanner_database_id or not bigtable_instance_id:
             raise ValueError("Spanner and Bigtable IDs are required")
+        if request_record_write_mode not in {"legacy", "typed"}:
+            raise ValueError("request_record_write_mode must be 'legacy' or 'typed'")
+        self.request_record_write_mode = request_record_write_mode
         try:
             from google.cloud import bigtable, spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
@@ -228,7 +241,9 @@ class SpannerBigtableStore:
         self.generation_store = SpannerGenerations(
             io,
             bt_table=self._bt_table,
-            generation_family=self.generation_family,
+            activity_family=self.activity_family,
+            benchmark_family=self.benchmark_family,
+            legacy_family=self.legacy_generation_family,
             add_usage_to_key=self.api_keys.add_usage,
         )
         self.byok_store = SpannerByok(io)
@@ -1098,6 +1113,14 @@ class SpannerBigtableStore:
     def get_gateway_authorization(
         self, authorization_id: str
     ) -> GatewayAuthorization | None:
+        with self._database.snapshot() as snapshot:
+            typed = read_gateway_authorization(
+                snapshot,
+                self._param_types,
+                authorization_id,
+            )
+        if typed is not None:
+            return typed
         return self.api_keys.get_gateway_authorization(authorization_id)
 
     def get_gateway_authorization_by_idempotency_key(
@@ -1145,17 +1168,35 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
     ) -> bool:
+        return self.typed_finalize_gateway_authorization_result(
+            authorization_id,
+            success=success,
+            actual_microdollars=actual_microdollars,
+            selected_usage_type=selected_usage_type,
+            generation=generation,
+        ).finalized
+
+    def typed_finalize_gateway_authorization_result(
+        self,
+        authorization_id: str,
+        *,
+        success: bool,
+        actual_microdollars: int,
+        selected_usage_type: UsageType | str,
+        generation: Generation | None = None,
+    ) -> TypedFinalizeResult:
         """Route-facing typed settle: same contract as
-        finalize_gateway_authorization (returns False on replay/already-settled)
-        but via the DML-only typed_finalize_atomic. Builds the generation entity
-        bodies + the settled gateway_authorization body, then indexes Bigtable
-        after commit (NOT generation_store.add — that would double-book key usage
-        the typed settle already booked)."""
+        finalize_gateway_authorization, with explicit activity-index status.
+
+        The billing transaction commits before the Bigtable activity write. A
+        false ``activity_indexed`` leaves the durable outbox pending so its
+        deterministic generation can be retried without double charging.
+        """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
 
         authorization = self.get_gateway_authorization(authorization_id)
         if authorization is None or authorization.credit_reservation_id is None:
-            return False
+            return TypedFinalizeResult(finalized=False, activity_indexed=False)
         actual_usage_type = UsageType.coerce(selected_usage_type)
         generation_writes: list[tuple[str, str, str]] = []
         if success and generation is not None:
@@ -1178,6 +1219,7 @@ class SpannerBigtableStore:
             actual_micro=actual_microdollars,
             settled_usage_type=str(actual_usage_type),
             now=dt.datetime.now(dt.UTC),
+            authorization=authorization,
             auth_body_settled=_json_body(authorization),
             generation_writes=generation_writes,
         )
@@ -1186,9 +1228,10 @@ class SpannerBigtableStore:
             raise RuntimeError("typed finalize failed: release row-count != 1")
         if result["outcome"] == SettleOutcome.SETTLED:
             index_ms = 0.0
+            activity_indexed = True
             if success and generation is not None:
                 index_start = time.perf_counter()
-                self.generation_store.index_after_commit(generation)
+                activity_indexed = self.generation_store.index_after_commit(generation)
                 index_ms = (time.perf_counter() - index_start) * 1000
             # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
             # into Spanner-txn vs Bigtable-index time.
@@ -1202,8 +1245,15 @@ class SpannerBigtableStore:
                 index_ms,
                 result.get("attempts", 1),
             )
-            return True
-        return False  # already_settled / not_found
+            return TypedFinalizeResult(
+                finalized=True,
+                activity_indexed=activity_indexed,
+                request_record_typed=bool(result.get("request_record_typed")),
+            )
+        return TypedFinalizeResult(
+            finalized=False,
+            activity_indexed=False,
+        )  # already_settled / not_found
 
     def authorize_gateway_typed(
         self,
@@ -1252,8 +1302,11 @@ class SpannerBigtableStore:
             else None
         )
 
-        def build_body(authorization_id: str, reservation_id: str) -> str:
-            auth = GatewayAuthorization(
+        def build_authorization(
+            authorization_id: str,
+            reservation_id: str,
+        ) -> GatewayAuthorization:
+            return GatewayAuthorization(
                 id=authorization_id,
                 workspace_id=workspace_id,
                 key_hash=key_hash,
@@ -1274,7 +1327,9 @@ class SpannerBigtableStore:
                 custom_model_revision=custom_model_revision,
                 additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
             )
-            return _json_body(auth)
+
+        def build_body(authorization_id: str, reservation_id: str) -> str:
+            return _json_body(build_authorization(authorization_id, reservation_id))
 
         if window_limits:
             # Lock-free snapshot check BEFORE the DML-only transaction (keeps
@@ -1315,7 +1370,9 @@ class SpannerBigtableStore:
                 idempotency_scope=scope,
                 idempotency_fingerprint=idempotency_fingerprint,
                 expires_at=expires_at,
+                build_authorization=build_authorization,
                 build_auth_body=build_body,
+                request_record_write_mode=self.request_record_write_mode,
                 credit_shard_candidates=candidates,
                 key_shard_candidates=key_shard_candidates,
             )
@@ -1641,7 +1698,13 @@ class SpannerBigtableStore:
         )
 
     def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
-        _bt_write_synthetic_probe_sample(self._bt_table, self.generation_family, sample)
+        _bt_write_synthetic_probe_sample(
+            self._bt_table,
+            self.synthetic_family,
+            sample,
+            rollup_family=self.synthetic_rollup_family,
+            legacy_family=self.legacy_generation_family,
+        )
 
     def synthetic_probe_samples(
         self,
@@ -1654,7 +1717,7 @@ class SpannerBigtableStore:
     ) -> list[SyntheticProbeSample]:
         return _bt_synthetic_probe_samples(
             self._bt_table,
-            self.generation_family,
+            (self.synthetic_family, self.legacy_generation_family),
             date=date,
             target=target,
             probe_type=probe_type,
@@ -1673,7 +1736,7 @@ class SpannerBigtableStore:
     ) -> list[SyntheticRollup]:
         return _bt_synthetic_rollups(
             self._bt_table,
-            self.generation_family,
+            (self.synthetic_rollup_family, self.legacy_generation_family),
             period=period,
             since=since,
             until=until,

@@ -32,6 +32,7 @@ from trusted_router.storage_gcp_counter_dml import (
     KEY_ACCEPTED,
     KEY_INSUFFICIENT,
     KEY_MISSING,
+    complete_reservation_retention,
     insert_entity_dml,
     insert_reservation,
     read_reservation_by_idempotency,
@@ -40,7 +41,13 @@ from trusted_router.storage_gcp_counter_dml import (
 )
 from trusted_router.storage_gcp_counters import UNSHARDED
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
+from trusted_router.storage_gcp_request_records import (
+    close_reaped_gateway_authorization,
+    insert_gateway_authorization,
+    mark_gateway_authorization_settled,
+)
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
+from trusted_router.storage_models import GatewayAuthorization
 
 log = logging.getLogger(__name__)
 
@@ -138,15 +145,19 @@ def authorize_atomic(
     idempotency_scope: str | None,
     idempotency_fingerprint: str | None,
     expires_at: Any,
-    build_auth_body: Callable[[str, str], str],
+    build_authorization: Callable[[str, str], GatewayAuthorization] | None = None,
+    build_auth_body: Callable[[str, str], str] | None = None,
+    request_record_write_mode: str = "legacy",
     credit_shard: int = UNSHARDED,
     credit_shard_candidates: tuple[int, ...] | None = None,
     key_shard_candidates: tuple[int, ...] = (UNSHARDED,),
 ) -> dict:
     """Run the atomic authorize. Returns {outcome, reservation_id?, authorization_id?}.
 
-    `build_auth_body(authorization_id, reservation_id) -> json str` lets the caller
-    construct the gateway_authorization body once the ids are known.
+    `request_record_write_mode="legacy"` preserves the generic tr_entities write
+    during the expand rollout. `"typed"` writes the same authorization into the
+    bounded typed table. The corresponding builder is required for the selected
+    mode.
     `reservation_usage_type` is the HOLD usage type (Credits if any credit
     candidate, else BYOK). `has_credit_candidate` gates the credit hold.
     `credit_shard_candidates` is a bounded, pre-randomized order built outside
@@ -160,6 +171,12 @@ def authorize_atomic(
     transaction exists to eliminate (codex #93 review).
     """
     pt = param_types
+    if request_record_write_mode not in {"legacy", "typed"}:
+        raise ValueError("request_record_write_mode must be 'legacy' or 'typed'")
+    if request_record_write_mode == "typed" and build_authorization is None:
+        raise ValueError("typed request records require build_authorization")
+    if request_record_write_mode == "legacy" and build_auth_body is None:
+        raise ValueError("legacy request records require build_auth_body")
     shard_candidates: tuple[int, ...]
     if credit_shard_candidates is None:
         shard_candidates = (credit_shard,)
@@ -186,6 +203,19 @@ def authorize_atomic(
     # Stable ids across ABORTED retries (only the committed attempt persists).
     reservation_id = str(uuid.uuid4())
     authorization_id = f"gwa-{uuid.uuid4().hex}"
+    created_at = utcnow()
+    authorization = (
+        build_authorization(authorization_id, reservation_id)
+        if build_authorization is not None
+        else None
+    )
+    if authorization is not None:
+        authorization.created_at = created_at.isoformat().replace("+00:00", "Z")
+    legacy_auth_body = (
+        build_auth_body(authorization_id, reservation_id)
+        if build_auth_body is not None
+        else None
+    )
 
     def _replay(existing: dict) -> dict:
         return {
@@ -252,11 +282,25 @@ def authorize_atomic(
             hold_usage_type=reservation_usage_type, authorization_id=authorization_id,
             idempotency_scope=idempotency_scope, idempotency_fingerprint=idempotency_fingerprint,
             expires_at=expires_at,
+            created_at=created_at,
         )
-        insert_entity_dml(
-            transaction, pt, "gateway_authorization", authorization_id,
-            build_auth_body(authorization_id, reservation_id),
-        )
+        if request_record_write_mode == "typed":
+            assert authorization is not None
+            insert_gateway_authorization(
+                transaction,
+                pt,
+                authorization,
+                created_at=created_at,
+            )
+        else:
+            assert legacy_auth_body is not None
+            insert_entity_dml(
+                transaction,
+                pt,
+                "gateway_authorization",
+                authorization_id,
+                legacy_auth_body,
+            )
         return {
             "outcome": AuthorizeOutcome.ACCEPTED,
             "reservation_id": reservation_id,
@@ -363,6 +407,7 @@ def settle_atomic(
     settled_usage_type: str,
     success: bool,
     guard_outbox: bool = False,
+    mark_authorization_terminal: bool = False,
 ) -> dict:
     """Claim-gated settle/refund in ONE transaction (key then credit lock order).
 
@@ -381,6 +426,7 @@ def settle_atomic(
     pt = param_types
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
+    terminal_at = utcnow()
 
     def txn(transaction: Any) -> dict:
         res = read_reservation(transaction, pt, reservation_id)
@@ -402,7 +448,9 @@ def settle_atomic(
                     return {"outcome": SettleOutcome.OUTBOX_GUARDED}
         won = claim_reservation(
             transaction, pt, reservation_id,
-            actual_micro=book_actual, settled_usage_type=settled_usage_type,
+            actual_micro=book_actual,
+            settled_usage_type=settled_usage_type,
+            terminal_at=terminal_at,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
@@ -429,6 +477,13 @@ def settle_atomic(
             )
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
+        if mark_authorization_terminal and res.get("authorization_id"):
+            close_reaped_gateway_authorization(
+                transaction,
+                pt,
+                str(res["authorization_id"]),
+                terminal_at=terminal_at,
+            )
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
@@ -526,6 +581,7 @@ def reap_expired_reservations(
         result = settle_atomic(
             database, pt, reservation_id=reservation_id, actual_micro=0,
             settled_usage_type="Credits", success=False, guard_outbox=guard_active,
+            mark_authorization_terminal=True,
         )
         if result["outcome"] == SettleOutcome.SETTLED:
             reaped += 1
@@ -542,24 +598,22 @@ def typed_finalize_atomic(
     actual_micro: int,
     settled_usage_type: str,
     now: Any,
+    authorization: GatewayAuthorization | None = None,
     auth_body_settled: str,
-    generation_writes: list | None = None,
+    generation_writes: list[tuple[str, str, str]] | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
     ONE transaction reproduces legacy finalize_gateway_authorization's whole
-    behavior so a crash can't leave counters charged but the generation missing /
-    auth unsettled: claim the reservation -> release the EXACT holds (key then
-    credit) and book actual -> on success DML-insert the generation entities ->
-    DML-mark the gateway_authorization settled. All writes use a client `now`
-    timestamp (NOT PENDING_COMMIT_TIMESTAMP) so the multiple tr_entities DML
-    statements don't hit the PCT same-table trap. The caller does the Bigtable
-    index AFTER commit (like legacy index_after_commit), and must NOT use
-    SpannerGenerations.add() (it would double-book key usage already booked here).
+    behavior so a crash can't leave counters charged but the authorization
+    active: claim the reservation -> release the EXACT holds (key then credit)
+    and book actual -> DML-mark the authorization settled. Typed request records
+    keep their repair payload until Bigtable indexing is confirmed; rolling
+    legacy records retain the old generic generation repair rows.
 
-    `generation_writes` = [(kind, entity_id, body_json), ...] inserted only on
-    success. `auth_body_settled` = the gateway_authorization JSON body with
-    settled=true. Returns {outcome: settled|already_settled|not_found|error}.
+    `auth_body_settled` and `generation_writes` remain for rolling compatibility
+    with an authorization created by the generic-table revision. Returns
+    {outcome: settled|already_settled|not_found|error}.
     """
     from trusted_router.storage_gcp_counter_dml import (
         claim_reservation,
@@ -580,7 +634,10 @@ def typed_finalize_atomic(
             return {"outcome": SettleOutcome.NOT_FOUND}
         won = claim_reservation(
             transaction, pt, reservation_id,
-            actual_micro=book_actual, settled_usage_type=settled_usage_type,
+            actual_micro=book_actual,
+            settled_usage_type=settled_usage_type,
+            terminal_at=now,
+            defer_retention=True,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}
@@ -604,19 +661,46 @@ def typed_finalize_atomic(
             if credit_count != 1:
                 raise _SettleError("credit release row-count != 1")
 
-        if success:
-            for kind, entity_id, body_json in writes:
-                insert_entity_dml_at(transaction, pt, kind, entity_id, body_json, now)
-
-        marked = update_entity_body_dml(
-            transaction, pt, "gateway_authorization", authorization_id,
-            auth_body_settled, now,
-        )
+        marked = 0
+        request_record_typed = False
+        if authorization is not None:
+            marked = mark_gateway_authorization_settled(
+                transaction,
+                pt,
+                authorization,
+            )
+            request_record_typed = marked == 1
+        if not request_record_typed:
+            if success:
+                for kind, entity_id, body_json in writes:
+                    insert_entity_dml_at(
+                        transaction,
+                        pt,
+                        kind,
+                        entity_id,
+                        body_json,
+                        now,
+                    )
+            marked = update_entity_body_dml(
+                transaction,
+                pt,
+                "gateway_authorization",
+                authorization_id,
+                auth_body_settled,
+                now,
+            )
+            complete_reservation_retention(
+                transaction,
+                pt,
+                reservation_id,
+                terminal_at=now,
+            )
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
+            "request_record_typed": request_record_typed,
         }
 
     try:
@@ -627,4 +711,3 @@ def typed_finalize_atomic(
         return result
     except _SettleError:
         return {"outcome": SettleOutcome.ERROR}
-

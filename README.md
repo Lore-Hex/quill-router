@@ -359,10 +359,12 @@ stateless:
   They authorize, reserve, and settle through the control plane, but prompt
   bytes never leave the attested path.
 - Spanner stores strongly consistent control-plane and billing state: users,
-  workspaces, keys, BYOK metadata, Stripe event idempotency, reservations, and
-  spend limits.
-- Bigtable stores high-volume generation metadata rows keyed by workspace/date.
-  Prompt and output content are still not stored.
+  workspaces, keys, BYOK metadata, payment event idempotency, balances,
+  aggregates, active reservations, and a 30-day terminal request audit window.
+- Bigtable stores bounded high-volume activity metadata keyed by workspace and
+  date. Activity and provider benchmarks retain 30 days, raw synthetic samples
+  retain 14 days, and compact status rollups retain 24 months. Prompt, output,
+  and tool-call arguments are not stored.
 - API-key verification uses a high-entropy lookup hash for point reads; it does
   not scan keys.
 - Rate limits are enforced before route handlers and use the configured store,
@@ -427,8 +429,9 @@ The code paths that support this roadmap today are:
   do not automatically roll back a control-plane deploy.
 - SDKs are expected to retry connection failures and 502/503/504 across
   regional attested endpoints before surfacing failure.
-- Bigtable activity writes are repairable from Spanner generation records via
-  `/v1/internal/reconcile/generation-activity`.
+- Bigtable activity writes are repairable from the durable settlement outbox.
+  Settlement uses deterministic generation IDs, so retries overwrite the same
+  index rows and cannot double charge or duplicate activity.
 
 Before making a public 5 9s claim, require three warm GCP attested regions, one
 exercised non-GCP failover pool, tested paging, router-core chaos tests, staged

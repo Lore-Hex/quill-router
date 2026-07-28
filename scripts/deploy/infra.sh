@@ -60,6 +60,28 @@ if ! gc bigtable instances tables describe "$BIGTABLE_GENERATION_TABLE" --instan
     --column-families=m
 fi
 
+# Retention migrations need only table-schema reads and column-family updates.
+# Keep that capability table-scoped and separate from row-data access.
+BIGTABLE_SCHEMA_ROLE_ID="${TR_BIGTABLE_SCHEMA_ROLE_ID:-trustedRouterBigtableSchemaManager}"
+BIGTABLE_SCHEMA_ROLE="projects/${PROJECT_ID}/roles/${BIGTABLE_SCHEMA_ROLE_ID}"
+DEPLOY_SERVICE_ACCOUNT="${TR_DEPLOY_SERVICE_ACCOUNT:-tr-deploy@${PROJECT_ID}.iam.gserviceaccount.com}"
+OPS_SERVICE_ACCOUNT="${TR_OPS_SERVICE_ACCOUNT:-tr-ops-local@${PROJECT_ID}.iam.gserviceaccount.com}"
+if ! gc iam roles describe "$BIGTABLE_SCHEMA_ROLE_ID" >/dev/null 2>&1; then
+  gc iam roles create "$BIGTABLE_SCHEMA_ROLE_ID" \
+    --title="TrustedRouter Bigtable Schema Manager" \
+    --description="May read table schema and update column-family GC policies; no row data access." \
+    --permissions=bigtable.tables.get,bigtable.tables.update \
+    --stage=GA \
+    --quiet
+fi
+for service_account in "$DEPLOY_SERVICE_ACCOUNT" "$OPS_SERVICE_ACCOUNT"; do
+  gc bigtable tables add-iam-policy-binding "$BIGTABLE_GENERATION_TABLE" \
+    --instance="$BIGTABLE_INSTANCE_ID" \
+    --member="serviceAccount:${service_account}" \
+    --role="$BIGTABLE_SCHEMA_ROLE" \
+    --quiet >/dev/null
+done
+
 log "ensuring BYOK envelope KMS key"
 if ! gc kms keyrings describe "$KMS_KEYRING_ID" --location "$REGION" >/dev/null 2>&1; then
   gc kms keyrings create "$KMS_KEYRING_ID" --location "$REGION"

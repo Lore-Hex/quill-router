@@ -38,6 +38,7 @@ _TRANSIENT_STORE_EXCS = transient_store_error_types()
 
 class ApplyOutcome:
     SETTLED_NOW = "settled_now"
+    ACTIVITY_PENDING = "activity_pending"
     ALREADY_SETTLED_WITH_CHARGE = "already_settled_with_charge"
     RESOLVED_ZERO_COST_ELSEWHERE = "resolved_zero_cost_elsewhere"
     # Legacy origin cannot disambiguate a charged replay from a refund/
@@ -248,6 +249,7 @@ def _apply_typed(
             actual_micro=row.actual_cost_micro,
             settled_usage_type=str(usage_type),
             now=dt.datetime.now(dt.UTC),
+            authorization=auth_settled,
             auth_body_settled=_json_body(auth_settled),
             generation_writes=generation_writes,
         )
@@ -256,7 +258,8 @@ def _apply_typed(
     outcome = result.get("outcome")
     if outcome == SettleOutcome.SETTLED:
         if success and generation is not None:
-            _index_generation_after_commit(typed_store, generation)
+            if not _index_generation_after_commit(typed_store, generation):
+                return ApplyOutcome.ACTIVITY_PENDING
         return ApplyOutcome.SETTLED_NOW
     if outcome == SettleOutcome.NOT_FOUND:
         return ApplyOutcome.RESERVATION_MISSING
@@ -271,12 +274,10 @@ def _apply_typed(
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
         if actual_micro > 0:
-            # Charged replay. Parity with the inline path's known post-commit
-            # index hole; the drain's retry-after-ambiguous-failure purpose
-            # makes it likelier.
-            logger.info(
-                "drain replay of a charged settle; if the charge was committed by a finalize whose response was lost (park->retry), its Bigtable activity-index entry may be absent; repairable via reconcile_activity"
-            )
+            if generation is None:
+                return ApplyOutcome.INVALID_ROW
+            if not _index_generation_after_commit(typed_store, generation):
+                return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:
             return ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE
@@ -313,6 +314,9 @@ def _apply_legacy(
     return ApplyOutcome.ALREADY_SETTLED_LEGACY
 
 
-def _index_generation_after_commit(typed_store: Any, generation: Generation) -> None:
+def _index_generation_after_commit(
+    typed_store: Any,
+    generation: Generation,
+) -> bool:
     generation_store = cast(Any, typed_store).generation_store
-    generation_store.index_after_commit(generation)
+    return bool(generation_store.index_after_commit(generation))

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, TypeAlias
 
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 
@@ -14,14 +14,27 @@ from trusted_router.synthetic.rollups import (
     sample_rollup_ids,
 )
 
+FamilyNames: TypeAlias = str | tuple[str, ...]
 
-def write_synthetic_rollups(table: Any, family: str, sample: SyntheticProbeSample) -> None:
+
+def write_synthetic_rollups(
+    table: Any,
+    family: str,
+    sample: SyntheticProbeSample,
+    *,
+    read_families: FamilyNames | None = None,
+) -> None:
+    resolved_read_families = read_families or family
     for period, component in sample_rollup_ids(sample):
         update = new_rollup_for_sample(sample, period=period, component=component)
         marker_key = _seen_key(update, sample.id)
-        if _row_exists(table, family, marker_key):
+        if _row_exists(table, resolved_read_families, marker_key):
             continue
-        existing = _read_rollup(table, family, _rollup_key(update))
+        existing = _read_rollup(
+            table,
+            resolved_read_families,
+            _rollup_key(update),
+        )
         if existing is None:
             existing = update
         else:
@@ -32,7 +45,7 @@ def write_synthetic_rollups(table: Any, family: str, sample: SyntheticProbeSampl
 
 def synthetic_rollups(
     table: Any,
-    family: str,
+    family: FamilyNames,
     *,
     period: str | None,
     since: str | None = None,
@@ -80,16 +93,20 @@ def _seen_key(rollup: SyntheticRollup, sample_id: str) -> bytes:
     return _rollup_key(rollup).replace(b"synthetic_rollup#", b"synthetic_rollup_seen#", 1) + b"#" + sample_id.encode("utf-8")
 
 
-def _row_exists(table: Any, family: str, key: bytes) -> bool:
+def _row_exists(table: Any, family: FamilyNames, key: bytes) -> bool:
     rows = _read_latest_rows(table, start_key=key, end_key=key + b"\x00", limit=1)
     for row in rows:
-        cells = row.cells.get(family, {}).get(b"body", [])
+        cells = _body_cells(row, family)
         if cells:
             return True
     return False
 
 
-def _read_rollup(table: Any, family: str, key: bytes) -> SyntheticRollup | None:
+def _read_rollup(
+    table: Any,
+    family: FamilyNames,
+    key: bytes,
+) -> SyntheticRollup | None:
     rows = _read_latest_rows(table, start_key=key, end_key=key + b"\x00", limit=1)
     rollups = _rollups_from_rows(rows, family, include_histograms=True)
     return rollups[0] if rollups else None
@@ -106,13 +123,13 @@ def _read_latest_rows(table: Any, *, start_key: bytes, end_key: bytes, limit: in
 
 def _rollups_from_rows(
     rows: Any,
-    family: str,
+    family: FamilyNames,
     *,
     include_histograms: bool,
 ) -> list[SyntheticRollup]:
     rollups: list[SyntheticRollup] = []
     for row in rows:
-        cells = row.cells.get(family, {}).get(b"body", [])
+        cells = _body_cells(row, family)
         if not cells:
             continue
         try:
@@ -132,3 +149,12 @@ def _write_json_row(table: Any, family: str, key: bytes, value: Any) -> None:
     row = table.direct_row(key)
     row.set_cell(family, b"body", json_body(value).encode("utf-8"))
     row.commit()
+
+
+def _body_cells(row: Any, families: FamilyNames) -> list[Any]:
+    ordered = (families,) if isinstance(families, str) else families
+    for family in ordered:
+        cells = row.cells.get(family, {}).get(b"body", [])
+        if cells:
+            return cells
+    return []

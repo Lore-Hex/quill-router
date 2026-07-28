@@ -1289,6 +1289,9 @@ def create_store(settings: Any) -> Store:
             bigtable_app_profile_id=getattr(
                 settings, "bigtable_app_profile_id", ""
             ),
+            request_record_write_mode=getattr(
+                settings, "request_record_write_mode", "legacy"
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 
