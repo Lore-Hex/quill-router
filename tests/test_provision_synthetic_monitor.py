@@ -51,7 +51,12 @@ def test_provision_synthetic_monitor_is_isolated_funding_limited_and_idempotent(
     assert second["workspace_id"] == first["workspace_id"]
     assert second["key_id"] == first["key_id"]
     assert key_file.stat().st_mode & 0o777 == 0o600
-    assert key_file.read_text(encoding="utf-8").startswith("sk-tr-v1-")
+    raw_key = key_file.read_text(encoding="utf-8")
+    assert raw_key.startswith("sk-tr-v1-")
+    assert raw_key == raw_key.strip()
+    stored_key = store.get_key_by_raw(raw_key)
+    assert stored_key is not None
+    assert stored_key.hash == first["key_id"]
     user = store.find_user_by_email("synthetic-monitor@trustedrouter.internal")
     assert user is not None
     workspaces = store.list_workspaces_for_user(user.id)
