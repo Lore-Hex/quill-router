@@ -1,0 +1,15 @@
+{% macro provider_privacy_badges(item) -%}
+  {% if item.provider_policy_varies|default(false) %}
+    <span class="pill warn">{{ item.provider_policy_variation_label }}</span>
+  {% else %}
+    {% if item.provider_e2ee is sameas true %}<span class="pill good">provider E2EE</span>{% endif %}
+    {% if item.provider_confidential_compute is sameas true %}<span class="pill good">confidential</span>{% endif %}
+    {% if item.provider_zero_data_retention is sameas true %}<span class="pill good">ZDR</span>{% endif %}
+    {% if item.provider_e2ee is sameas false and (item.provider_confidential_compute is sameas true or item.provider_zero_data_retention is sameas true) %}<span class="pill warn">provider E2EE not verified</span>{% endif %}
+    {% if item.provider_e2ee is none and item.provider_confidential_compute is none and item.provider_zero_data_retention is none %}
+      <span class="pill warn">privacy unknown</span>
+    {% elif item.provider_e2ee is not sameas true and item.provider_confidential_compute is not sameas true and item.provider_zero_data_retention is not sameas true %}
+      <span class="pill warn">no verified privacy claim</span>
+    {% endif %}
+  {% endif %}
+{%- endmacro %}

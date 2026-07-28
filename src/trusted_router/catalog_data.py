@@ -430,10 +430,10 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_policy_url="https://novita.ai/legal/privacy-policy",
     ),
-    # Phala (RedPill) — confidential AI inference inside Intel TDX
-    # / NVIDIA Confidential Compute enclaves. Verified attestation,
-    # end-to-end encrypted prompts. **On-brand for TR's trust story.**
-    # OpenAI-compatible at api.red-pill.ai/v1.
+    # Phala publishes Intel TDX / NVIDIA Confidential Compute evidence and
+    # signed request receipts. TrustedRouter does not yet verify that evidence
+    # on every request, so Phala must not satisfy the provider-E2EE routing
+    # floor until the gateway enforces the complete receipt chain.
     "phala": Provider(
         slug="phala",
         name="Phala",
@@ -441,12 +441,16 @@ PROVIDERS: dict[str, Provider] = {
         stores_content=False,
         provider_zero_data_retention=True,
         provider_confidential_compute=True,
-        provider_e2ee=True,
+        provider_e2ee=False,
         provider_policy=(
-            "Tracked as a confidential AI provider with provider-side "
-            "attestation and encrypted prompt transport."
+            "Phala publishes TDX/GPU attestation and signed request receipts, "
+            "but TrustedRouter does not yet verify the complete receipt chain "
+            "on every routed request. The route is therefore not classified as "
+            "provider E2EE and is excluded from trustedrouter/e2e."
         ),
-        provider_policy_url="https://docs.phala.com/confidential-ai-inference/host-llm-in-tee",
+        provider_policy_url=(
+            "https://docs.phala.com/phala-cloud/confidential-ai/verify/overview"
+        ),
     ),
     # SiliconFlow — Chinese serverless inference with 200+ open-weight
     # models. OpenAI-compatible at api.siliconflow.com/v1.
