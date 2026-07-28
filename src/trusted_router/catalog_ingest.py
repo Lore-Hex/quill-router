@@ -135,8 +135,12 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
         }:
             continue
         model_id = row.get("id")
-        if isinstance(model_id, str) and model_id:
-            allowed.add(model_id)
+        if not isinstance(model_id, str) or not model_id:
+            continue
+        upstream_id = str(row.get("upstream_id") or model_id)
+        if provider_model_retired(provider_slug, model_id, upstream_id):
+            continue
+        allowed.add(model_id)
     return frozenset(allowed)
 
 _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
