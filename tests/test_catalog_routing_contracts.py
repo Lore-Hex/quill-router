@@ -1355,6 +1355,17 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
         for _model, endpoint in e2e_endpoints
     )
     assert "venice" not in {endpoint.provider for _model, endpoint in e2e_endpoints}
+    assert "phala" not in {endpoint.provider for _model, endpoint in e2e_endpoints}
+
+
+def test_phala_is_not_classified_as_verified_e2ee() -> None:
+    provider = PROVIDERS["phala"]
+
+    assert provider.provider_confidential_compute is True
+    assert provider.provider_e2ee is False
+    assert provider_privacy_tier(provider) == PRIVACY_TIER_ZERO_RETENTION
+    assert "does not yet verify" in provider.provider_policy
+    assert "excluded from trustedrouter/e2e" in provider.provider_policy
 
 
 def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:

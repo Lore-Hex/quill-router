@@ -1084,6 +1084,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert provider_flags["zai"]["supports_byok"] is True
     assert provider_flags["tinfoil"]["provider_e2ee"] is True
     assert provider_flags["phala"]["provider_confidential_compute"] is True
+    assert provider_flags["phala"]["provider_e2ee"] is False
     assert provider_flags["anthropic"]["provider_zero_data_retention"] is False
     assert provider_flags["cerebras"]["provider_zero_data_retention"] is True
     assert provider_flags["cerebras"]["stores_content"] is False

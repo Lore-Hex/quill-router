@@ -1,4 +1,5 @@
 {% extends "public/_base.html" %}
+{% from "public/_provider_privacy_badges.html" import provider_privacy_badges %}
 {% block body %}
 <section class="panel">
   <div class="panel-head">
@@ -150,10 +151,7 @@
           <td>{{ endpoint.completion_price }}</td>
           <td>{% if endpoint.attested_gateway %}<span class="pill good">yes</span>{% else %}no{% endif %}</td>
           <td>
-            {% if endpoint.provider_e2ee %}<span class="pill good">provider E2EE</span>{% endif %}
-            {% if endpoint.provider_confidential_compute %}<span class="pill good">confidential</span>{% endif %}
-            {% if endpoint.provider_zero_data_retention %}<span class="pill good">ZDR</span>{% endif %}
-            {% if not endpoint.provider_e2ee and not endpoint.provider_confidential_compute and not endpoint.provider_zero_data_retention %}<span class="pill warn">upstream varies</span>{% endif %}
+            {{ provider_privacy_badges(endpoint) }}
           </td>
         </tr>
         {% endfor %}

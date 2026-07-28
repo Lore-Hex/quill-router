@@ -348,7 +348,7 @@ def test_public_model_pages_never_claim_tr_stores_content(client: TestClient) ->
     assert "stores content" not in catalog.text.lower()
     assert "tr stores content" not in detail.text.lower()
     assert "Provider policy" in detail.text
-    assert "upstream varies" in detail.text
+    assert "varies by provider" in catalog.text
 
 
 def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
@@ -364,8 +364,31 @@ def test_public_kimi_k3_page_separates_router_attestation_from_provider_e2ee(
     assert "<th>TR router attested</th>" in detail.text
     assert "<th>Attested</th>" not in detail.text
     assert "Provider policy" in detail.text
-    assert "upstream varies" in detail.text
+    assert "privacy unknown" in detail.text
     assert "provider E2EE" not in detail.text
+
+
+def test_single_provider_model_shows_provider_posture_not_variation(
+    client: TestClient,
+) -> None:
+    detail = client.get("/models/qwen/qwen-2.5-72b-instruct")
+
+    assert detail.status_code == 200
+    assert "Novita AI" in detail.text
+    assert "privacy unknown" in detail.text
+    assert "varies by provider" not in detail.text
+    assert "varies by route" not in detail.text
+
+
+def test_phala_pages_do_not_claim_verified_provider_e2ee(client: TestClient) -> None:
+    provider = client.get("/providers/phala")
+    detail = client.get("/models/z-ai/glm-5.2")
+
+    assert provider.status_code == 200
+    assert 'Provider E2EE</th><td><span class="pill ">no</span>' in provider.text
+    assert "does not yet verify the complete receipt chain" in provider.text
+    assert detail.status_code == 200
+    assert "provider E2EE not verified" in detail.text
 
 
 def test_public_meta_model_detail_renders_orchestration_components(client: TestClient) -> None:

@@ -2844,6 +2844,28 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         prompt = _price(model.prompt_price_microdollars_per_million_tokens)
         completion = _price(model.completion_price_microdollars_per_million_tokens)
     providers = _endpoint_provider_views(endpoints, fallback_provider=model.provider)
+    endpoint_postures = {
+        (
+            endpoint_zero_data_retention(endpoint),
+            PROVIDERS[endpoint.provider].provider_confidential_compute,
+            PROVIDERS[endpoint.provider].provider_e2ee,
+        )
+        for endpoint in endpoints
+    }
+    if not endpoint_postures:
+        endpoint_postures = {
+            (
+                provider.provider_zero_data_retention,
+                provider.provider_confidential_compute,
+                provider.provider_e2ee,
+            )
+        }
+    provider_policy_varies = len(endpoint_postures) > 1
+    (
+        provider_zero_data_retention,
+        provider_confidential_compute,
+        provider_e2ee,
+    ) = next(iter(endpoint_postures))
     return {
         "id": model.id,
         "name": model.name,
@@ -2861,11 +2883,13 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
         or model.prepaid_available,
         "byok": model.byok_available,
         "attested": provider.attested_gateway,
-        "provider_zero_data_retention": any(
-            endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints
+        "provider_zero_data_retention": provider_zero_data_retention,
+        "provider_confidential_compute": provider_confidential_compute,
+        "provider_e2ee": provider_e2ee,
+        "provider_policy_varies": provider_policy_varies,
+        "provider_policy_variation_label": (
+            "varies by route" if len(providers) == 1 else "varies by provider"
         ),
-        "provider_confidential_compute": provider.provider_confidential_compute,
-        "provider_e2ee": provider.provider_e2ee,
         "open_weights": model_open_weights(model),
         "orchestration_primitive": orchestration_primitive(model.id),
         "orchestration_role": orchestration_role(model.id),

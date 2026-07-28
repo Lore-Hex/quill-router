@@ -134,4 +134,4 @@ def test_public_pages_explain_scheduled_openai_prepaid_scope(client: TestClient)
     assert model.status_code == 200
     assert "Credits" in model.text
     assert "BYOK" in model.text
-    assert "upstream varies" in model.text
+    assert "no verified privacy claim" in model.text
