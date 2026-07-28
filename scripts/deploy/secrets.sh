@@ -15,6 +15,15 @@ ensure_secret_from_env_file() {
   local value
   value="${!env_name:-}"
   if [ -z "$value" ]; then
+    local alias
+    for alias in "$@"; do
+      value="${!alias:-}"
+      if [ -n "$value" ]; then
+        break
+      fi
+    done
+  fi
+  if [ -z "$value" ]; then
     value="$(read_key_file_var "$env_name" "$@")"
   fi
   if [ -z "$value" ]; then
@@ -87,7 +96,9 @@ PY
 
 ensure_secret_from_env_file "ANTHROPIC_API_KEY" "trustedrouter-anthropic-api-key" "CLAUDE_API_KEY"
 ensure_secret_from_env_file "OPENAI_API_KEY" "trustedrouter-openai-api-key" "CHATGPT_API_KEY"
-ensure_secret_from_env_file "GEMINI_API_KEY" "trustedrouter-gemini-api-key"
+# Prefer the explicitly named AI Studio key. GEMINI_API_KEY remains a
+# compatibility fallback for older environments and key files.
+ensure_secret_from_env_file "GOOGLE_AI_STUDIO_KEY" "trustedrouter-gemini-api-key" "GEMINI_API_KEY"
 ensure_secret_from_env_file "CEREBRAS_API_KEY" "trustedrouter-cerebras-api-key"
 ensure_secret_from_env_file "DEEPSEEK_API_KEY" "trustedrouter-deepseek-api-key"
 ensure_secret_from_env_file "MISTRAL_API_KEY" "trustedrouter-mistral-api-key"

@@ -34,6 +34,17 @@ def test_deploy_provider_secrets_include_priced_glm52_backends() -> None:
         assert f'ensure_secret_from_env_file "{env_name}" "{secret_name}"' in secrets
 
 
+def test_deploy_prefers_explicit_google_ai_studio_key() -> None:
+    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
+
+    assert (
+        'ensure_secret_from_env_file "GOOGLE_AI_STUDIO_KEY" '
+        '"trustedrouter-gemini-api-key" "GEMINI_API_KEY"'
+    ) in secrets
+    assert 'for alias in "$@"; do' in secrets
+    assert 'value="${!alias:-}"' in secrets
+
+
 def test_deploy_wires_athena_worker_prompt_secret() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text()
