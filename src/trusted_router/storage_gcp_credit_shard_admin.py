@@ -11,7 +11,10 @@ from trusted_router.storage_gcp_counters import (
     credit_shard_count,
     distribute_credit_amount,
 )
-from trusted_router.storage_models import CreditAccount, Reservation, Workspace
+from trusted_router.storage_gcp_legacy_reservations import (
+    legacy_reservation_snapshot,
+)
+from trusted_router.storage_models import CreditAccount, Workspace
 
 _RESHARD_COLUMNS = (
     "workspace_id",
@@ -34,6 +37,7 @@ class CreditReshardResult:
     reserved_micro: int | None = None
     typed_open_reservations: int = 0
     legacy_open_reservations: int = 0
+    stale_legacy_reservations_ignored: int = 0
     reasons: list[str] = field(default_factory=list)
     applied: bool = False
 
@@ -96,10 +100,10 @@ def inspect_credit_reshard(
     result.current_shard_count = current_count
     rows, typed_open = _typed_state(store, workspace_id, current_count)
     result.typed_open_reservations = typed_open
-    result.legacy_open_reservations = sum(
-        1
-        for reservation in store._list_entities("reservation", cls=Reservation)
-        if reservation.workspace_id == workspace_id and not reservation.settled
+    legacy = legacy_reservation_snapshot(store)
+    result.legacy_open_reservations = legacy.live_by_workspace.get(workspace_id, 0)
+    result.stale_legacy_reservations_ignored = legacy.stale_by_workspace.get(
+        workspace_id, 0
     )
     observed = [int(row[0]) for row in rows]
     if observed != list(range(current_count)):
