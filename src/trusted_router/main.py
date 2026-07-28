@@ -77,7 +77,9 @@ def create_app(
     app = FastAPI(
         title="TrustedRouter",
         version="0.1.0",
-        docs_url="/api/reference",
+        docs_url=None,
+        redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
     )
     app.state.settings = settings
 

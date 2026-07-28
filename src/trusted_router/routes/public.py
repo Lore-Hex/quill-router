@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
 import logging
 import re
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -40,6 +42,7 @@ from trusted_router.config import Settings
 from trusted_router.dashboard import (
     MODEL_SEO_SECTIONS,
     STATIC_DIR,
+    canonical_model_comparison_path,
     dashboard_html,
     docs_llms_full_txt,
     docs_llms_txt,
@@ -307,6 +310,47 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             return func
 
         return decorator
+
+    @app.api_route(
+        "/api/reference",
+        methods=["GET", "HEAD"],
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
+    @app.api_route(
+        "/api/reference/",
+        methods=["GET", "HEAD"],
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
+    async def api_reference() -> HTMLResponse:
+        response = get_swagger_ui_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=f"{app.title} API reference",
+        )
+        canonical = html.escape(
+            f"https://{settings.trusted_domain}/api/reference",
+            quote=True,
+        )
+        body = bytes(response.body).decode().replace(
+            "</head>",
+            f'<link rel="canonical" href="{canonical}">\n</head>',
+            1,
+        )
+        return HTMLResponse(body)
+
+    @app.api_route(
+        "/redoc",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    @app.api_route(
+        "/docs/oauth2-redirect",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def legacy_api_reference() -> RedirectResponse:
+        return RedirectResponse(url="/api/reference", status_code=301)
 
     @public_html_route("/", include_slash=False)
     async def dashboard(request: Request, background_tasks: BackgroundTasks) -> Any:
@@ -933,9 +977,14 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
         left_slug: str,
         right_author: str,
         right_slug: str,
-    ) -> HTMLResponse:
+    ) -> Response:
         left_id = f"{left_author.strip()}/{left_slug.strip()}"
         right_id = f"{right_author.strip()}/{right_slug.strip()}"
+        canonical_path = canonical_model_comparison_path(left_id, right_id)
+        if canonical_path is not None:
+            requested_path = f"/compare/models/{left_id}/vs/{right_id}"
+            if requested_path != canonical_path:
+                return RedirectResponse(url=canonical_path, status_code=301)
         body = public_model_compare_html(settings, left_id, right_id)
         if body is None:
             return HTMLResponse(

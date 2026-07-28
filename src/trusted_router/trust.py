@@ -66,6 +66,7 @@ def trust_html(settings: Settings) -> str:
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TrustedRouter Trust</title>
+  <link rel="canonical" href="https://trust.trustedrouter.com/">
   <style>
     :root {{
       color-scheme: light;
