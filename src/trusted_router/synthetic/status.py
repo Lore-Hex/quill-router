@@ -1219,7 +1219,10 @@ def _summary(status: str, *, freshness: dict[str, Any] | None = None) -> dict[st
     if status in {"degraded", "routing_degraded"}:
         return {
             "headline": "Router Core Degraded",
-            "detail": "One or more authorization, fallback, or regional router-core checks are degraded.",
+            "detail": (
+                "One or more canonical reachability, authorization, fallback, "
+                "or settlement checks are degraded."
+            ),
         }
     return {
         "headline": "Status Unknown",
