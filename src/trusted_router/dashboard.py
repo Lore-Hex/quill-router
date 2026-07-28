@@ -2209,18 +2209,13 @@ def public_model_detail_html(settings: Settings, model_id: str) -> str | None:
 
 
 def public_model_compare_html(settings: Settings, left_id: str, right_id: str) -> str | None:
-    left = MODELS.get(left_id)
-    right = MODELS.get(right_id)
-    if (
-        left is None
-        or right is None
-        or left.id in META_MODEL_IDS
-        or right.id in META_MODEL_IDS
-        or left.id == right.id
-    ):
+    pair = _canonical_model_comparison_pair(left_id, right_id)
+    if pair is None:
         return None
+    left, right = pair
     test_mode = settings.environment == "test"
-    site_path = f"/compare/models/{left.id}/vs/{right.id}"
+    site_path = canonical_model_comparison_path(left.id, right.id)
+    assert site_path is not None
     return (
         _env()
         .get_template("public/model_compare.html")
@@ -3272,7 +3267,38 @@ def _model_comparison_pairs() -> list[tuple[Model, Model]]:
             model.id.lower(),
         ),
     )[:MODEL_COMPARE_MODEL_LIMIT]
-    return list(combinations(candidates, 2))[:MODEL_COMPARE_URL_LIMIT]
+    pairs = [
+        tuple(sorted(pair, key=lambda model: model.id.casefold()))
+        for pair in combinations(candidates, 2)
+    ]
+    return cast(list[tuple[Model, Model]], pairs[:MODEL_COMPARE_URL_LIMIT])
+
+
+def _canonical_model_comparison_pair(
+    left_id: str,
+    right_id: str,
+) -> tuple[Model, Model] | None:
+    left = MODELS.get(left_id)
+    right = MODELS.get(right_id)
+    if (
+        left is None
+        or right is None
+        or left.id in META_MODEL_IDS
+        or right.id in META_MODEL_IDS
+        or left.id == right.id
+    ):
+        return None
+    ordered = sorted((left, right), key=lambda model: model.id.casefold())
+    return ordered[0], ordered[1]
+
+
+def canonical_model_comparison_path(left_id: str, right_id: str) -> str | None:
+    """Return the one stable URL for an unordered pair of model ids."""
+    pair = _canonical_model_comparison_pair(left_id, right_id)
+    if pair is None:
+        return None
+    left, right = pair
+    return f"/compare/models/{left.id}/vs/{right.id}"
 
 
 def _seo_model_rows(*, test_mode: bool = False) -> list[dict[str, object]]:

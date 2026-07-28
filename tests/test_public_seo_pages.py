@@ -95,7 +95,7 @@ def test_robots_and_sitemap_are_public(client: TestClient) -> None:
     comparisons = client.get("/sitemap-comparisons.xml")
     assert comparisons.status_code == 200
     assert (
-        "<loc>https://trustedrouter.com/compare/models/z-ai/glm-5.2/vs/moonshotai/kimi-k2.6</loc>"
+        "<loc>https://trustedrouter.com/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.2</loc>"
         in comparisons.text
     )
     assert "<loc>https://trustedrouter.com/compare/models/page/2</loc>" in comparisons.text
@@ -140,6 +140,44 @@ def test_public_host_aliases_redirect_to_the_canonical_marketing_host(
         follow_redirects=False,
     )
     assert status_json.status_code == 200
+
+
+def test_api_reference_declares_one_query_independent_canonical(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/reference?group=models&utm_source=test")
+
+    assert response.status_code == 200
+    assert response.text.count('rel="canonical"') == 1
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/api/reference">'
+        in response.text
+    )
+
+
+def test_duplicate_api_reference_surfaces_redirect_to_canonical(
+    client: TestClient,
+) -> None:
+    for path in ["/redoc", "/docs/oauth2-redirect"]:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 301
+        assert response.headers["location"] == "/api/reference"
+
+
+def test_trust_page_declares_dedicated_trust_host_as_canonical(
+    client: TestClient,
+) -> None:
+    for path, headers in [
+        ("/trust", {}),
+        ("/", {"host": "trust.trustedrouter.com"}),
+    ]:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.text.count('rel="canonical"') == 1
+        assert (
+            '<link rel="canonical" href="https://trust.trustedrouter.com/">'
+            in response.text
+        )
 
 
 def test_indexnow_key_file_is_public(client: TestClient) -> None:
@@ -722,6 +760,25 @@ def test_model_comparison_pages_are_public(client: TestClient) -> None:
     assert "openrouter.ai" not in response.text.lower()
 
 
+def test_reversed_model_comparison_redirects_to_stable_canonical(
+    client: TestClient,
+) -> None:
+    canonical_path = "/compare/models/moonshotai/kimi-k2.6/vs/z-ai/glm-5.1"
+    canonical = client.get(canonical_path, follow_redirects=False)
+    assert canonical.status_code == 200
+    assert (
+        f'<link rel="canonical" href="https://trustedrouter.com{canonical_path}">'
+        in canonical.text
+    )
+
+    reversed_page = client.get(
+        "/compare/models/z-ai/glm-5.1/vs/moonshotai/kimi-k2.6",
+        follow_redirects=False,
+    )
+    assert reversed_page.status_code == 301
+    assert reversed_page.headers["location"] == canonical_path
+
+
 def test_model_comparison_directory_links_every_sitemap_pair(client: TestClient) -> None:
     sitemap = client.get("/sitemap-comparisons.xml")
     sitemap_pairs = set(
@@ -753,6 +810,11 @@ def test_model_comparison_directory_links_every_sitemap_pair(client: TestClient)
 
     assert len(sitemap_pairs) == 2_600
     assert linked_paths == sitemap_pairs
+    assert all(
+        left.casefold() < right.casefold()
+        for pair in sitemap_pairs
+        for left, right in [pair.removeprefix("/compare/models/").split("/vs/", 1)]
+    )
 
 
 def test_resources_directory_links_previous_orphan_pages(client: TestClient) -> None:
