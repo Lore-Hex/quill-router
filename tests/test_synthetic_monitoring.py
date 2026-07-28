@@ -1621,6 +1621,70 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_run_synthetic_once_bounds_credit_bearing_probe_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import probes as probe_module
+
+    targets = [
+        SyntheticTarget(f"target-{index}", f"https://api-{index}.example/v1", "test")
+        for index in range(4)
+    ]
+    active = 0
+    peak = 0
+
+    async def fake_health_probe(
+        _client: httpx.AsyncClient,
+        target: SyntheticTarget,
+        *,
+        monitor_region: str,
+        **_kwargs: Any,
+    ) -> SyntheticProbeSample:
+        return _sample(
+            id=f"health-{target.name}",
+            probe_type="tls_health",
+            status="up",
+            target=target.name,
+            monitor_region=monitor_region,
+        )
+
+    async def fake_billing_probe(
+        _client: httpx.AsyncClient,
+        target: SyntheticTarget,
+        *,
+        monitor_region: str,
+        **_kwargs: Any,
+    ) -> SyntheticProbeSample:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return _sample(
+            id=f"billing-{target.name}",
+            probe_type="openai_sdk_pong",
+            status="up",
+            target=target.name,
+            monitor_region=monitor_region,
+        )
+
+    monkeypatch.setattr(probe_module, "configured_targets", lambda _settings: targets)
+    monkeypatch.setattr(probe_module, "tls_health_probe", fake_health_probe)
+    monkeypatch.setattr(probe_module, "attestation_nonce_probe", fake_health_probe)
+    monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_billing_probe)
+    monkeypatch.setattr(probe_module, "responses_pong_probe", fake_billing_probe)
+
+    samples = await run_synthetic_once(
+        Settings(environment="test", synthetic_monitor_api_key="sk-tr-test"),
+        monitor_region="us-central1",
+        api_key="sk-tr-test",
+    )
+
+    assert len(samples) == 16
+    assert peak == 2
+
+
+@pytest.mark.asyncio
 async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPatch) -> None:
     from trusted_router.synthetic import cli as cli_module
 
@@ -1700,6 +1764,52 @@ async def test_probe_and_rotation_pass_runs_independent_blocks_concurrently(
     ]
     assert rotation_samples == ["rotation-a", "rotation-b"]
     assert elapsed < 0.06
+
+
+@pytest.mark.asyncio
+async def test_probe_and_rotation_share_one_billing_concurrency_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router.synthetic import cli as cli_module
+
+    active = 0
+    peak = 0
+
+    async def bounded_work(semaphore: asyncio.Semaphore) -> None:
+        nonlocal active, peak
+        async with semaphore:
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+
+    async def fake_one_probe_pass(**kwargs: Any) -> list[SyntheticProbeSample]:
+        semaphore = kwargs["billing_semaphore"]
+        await asyncio.gather(*(bounded_work(semaphore) for _ in range(4)))
+        return []
+
+    async def fake_rotation_pass(**kwargs: Any) -> list[ProviderBenchmarkSample]:
+        semaphore = kwargs["billing_semaphore"]
+        await asyncio.gather(*(bounded_work(semaphore) for _ in range(4)))
+        return []
+
+    monkeypatch.setattr(cli_module, "_one_probe_pass", fake_one_probe_pass)
+    monkeypatch.setattr(cli_module, "_rotation_pass", fake_rotation_pass)
+
+    await cli_module._probe_and_rotation_pass(
+        settings=Settings(environment="test"),
+        monitor_region="us-central1",
+        control_plane="https://trustedrouter.com",
+        internal_token="internal",  # noqa: S106 - test placeholder.
+        api_key="sk-tr-test",
+        timeout=httpx.Timeout(1),
+        rotation_enabled=True,
+        rotation_per_pass=4,
+        rotation_rng=random.Random(0),  # noqa: S311 - deterministic test selection.
+        billing_concurrency=2,
+    )
+
+    assert peak == 2
 
 
 @pytest.mark.asyncio
@@ -1840,11 +1950,16 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
-    assert '"*/2 * * * *"' in body
-    assert 'throughput_scheduler_name="${throughput_job_name}-every-minute"' in body
-    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=60"' in body
-    assert '"* * * * *"' in body
-    assert "legacy_throughput_scheduler_name" in body
+    assert 'scheduler_name="${job_name}-every-five-minutes"' in body
+    assert 'legacy_scheduler_name="${job_name}-every-minute"' in body
+    assert '"*/5 * * * *"' in body
+    assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"' in body
+    assert '"TR_SYNTHETIC_BILLING_CONCURRENCY=2"' in body
+    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"' in body
+    assert '"TR_SYNTHETIC_START_DELAY_SECONDS=45"' in body
+    assert '"${throughput_job_name}-every-minute"' in body
+    assert '"${throughput_job_name}-every-two-minutes"' in body
 
 
 class _FakeCell:
