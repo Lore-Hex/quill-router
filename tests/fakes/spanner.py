@@ -985,6 +985,40 @@ def _execute_sql(
             1 for rec in db.reservations.values()
             if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) != 0
         )]]
+    if (
+        "FROM tr_reservation WHERE workspace_id=@ws AND settled=false" in sql
+        and "GROUP BY credit_shard, ws_shard" in sql
+    ):
+        ws = params["ws"]
+        groups: dict[tuple[Any, Any], list[int]] = {}
+        for rec in db.reservations.values():
+            if rec.get("workspace_id") != ws or rec.get("settled"):
+                continue
+            group = (rec.get("credit_shard"), rec.get("ws_shard", 0))
+            values = groups.setdefault(group, [0, 0])
+            values[0] += 1
+            values[1] += int(rec.get("credit_reserved_micro") or 0)
+        return [
+            [credit_shard, ws_shard, values[0], values[1]]
+            for (credit_shard, ws_shard), values in groups.items()
+        ]
+    if (
+        "FROM tr_reservation WHERE key_hash=@kh AND settled=false" in sql
+        and "GROUP BY key_shard" in sql
+    ):
+        kh = params["kh"]
+        groups: dict[Any, list[int]] = {}
+        for rec in db.reservations.values():
+            if rec.get("key_hash") != kh or rec.get("settled"):
+                continue
+            shard = rec.get("key_shard", 0)
+            values = groups.setdefault(shard, [0, 0])
+            values[0] += 1
+            values[1] += int(rec.get("key_reserved_micro") or 0)
+        return [
+            [shard, values[0], values[1]]
+            for shard, values in groups.items()
+        ]
     # Open typed holds for this workspace. Checked BEFORE the generic count
     # below, which this query string contains.
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false" in sql:

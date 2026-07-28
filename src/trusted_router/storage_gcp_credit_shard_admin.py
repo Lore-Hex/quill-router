@@ -50,7 +50,7 @@ def _typed_state(
     store: Any,
     workspace_id: str,
     shard_count: int,
-) -> tuple[list[list[Any]], int]:
+) -> tuple[list[list[Any]], int, dict[int, int]]:
     pt = store._param_types
     with store._database.snapshot(multi_use=True) as snapshot:
         rows = list(
@@ -62,25 +62,59 @@ def _typed_state(
                 param_types={"pk": pt.STRING, "shard_count": pt.INT64},
             )
         )
-        open_reservations = int(
-            list(
-                snapshot.execute_sql(
-                    "SELECT COUNT(*) FROM tr_reservation "
-                    "WHERE workspace_id=@ws AND settled = false",
-                    params={"ws": workspace_id},
-                    param_types={"ws": pt.STRING},
-                )
-            )[0][0]
+        hold_rows = list(
+            snapshot.execute_sql(
+                "SELECT credit_shard, ws_shard, COUNT(*), "
+                "COALESCE(SUM(credit_reserved_micro), 0) "
+                "FROM tr_reservation WHERE workspace_id=@ws AND settled=false "
+                "GROUP BY credit_shard, ws_shard",
+                params={"ws": workspace_id},
+                param_types={"ws": pt.STRING},
+            )
         )
-    return rows, open_reservations
+    open_reservations = 0
+    reserved_by_shard: dict[int, int] = {}
+    for credit_shard, ws_shard, count, reserved in hold_rows:
+        shard = int(credit_shard if credit_shard is not None else (ws_shard or 0))
+        open_reservations += int(count)
+        reserved_by_shard[shard] = reserved_by_shard.get(shard, 0) + int(
+            reserved or 0
+        )
+    return rows, open_reservations, reserved_by_shard
+
+
+def _validate_open_holds(
+    rows: list[list[Any]],
+    reserved_by_shard: dict[int, int],
+) -> list[str]:
+    reasons: list[str] = []
+    observed = {int(row[0]): int(row[3]) for row in rows}
+    unknown = sorted(set(reserved_by_shard) - set(observed))
+    if unknown:
+        reasons.append(f"open typed credit holds reference unknown shards {unknown}")
+    for shard, reserved in observed.items():
+        held = reserved_by_shard.get(shard, 0)
+        if reserved != held:
+            reasons.append(
+                f"typed credit shard {shard} reserved={reserved} "
+                f"but open holds={held}"
+            )
+    return reasons
 
 
 def inspect_credit_reshard(
     store: Any,
     workspace_id: str,
     target_shard_count: int,
+    *,
+    preserve_open_holds: bool = False,
 ) -> CreditReshardResult:
-    """Read-only readiness check for a paused, fully drained reshard."""
+    """Read-only readiness check for a paused reshard.
+
+    The default requires a fully drained ledger. The explicit online mode only
+    permits splits and verifies that each typed reserved counter exactly matches
+    the open holds that will continue settling against that shard.
+    """
     target_count = credit_shard_count({"shard_count": target_shard_count})
     result = CreditReshardResult(
         workspace_id=workspace_id,
@@ -98,7 +132,9 @@ def inspect_credit_reshard(
 
     current_count = credit_shard_count(account)
     result.current_shard_count = current_count
-    rows, typed_open = _typed_state(store, workspace_id, current_count)
+    rows, typed_open, reserved_by_shard = _typed_state(
+        store, workspace_id, current_count
+    )
     result.typed_open_reservations = typed_open
     legacy = legacy_reservation_snapshot(store)
     result.legacy_open_reservations = legacy.live_by_workspace.get(workspace_id, 0)
@@ -116,14 +152,21 @@ def inspect_credit_reshard(
     result.total_credits_micro = total_credits
     result.total_usage_micro = total_usage
     result.reserved_micro = reserved
+    result.reasons.extend(_validate_open_holds(rows, reserved_by_shard))
     if any(int(row[2]) < 0 or int(row[3]) < 0 for row in rows):
         result.reasons.append("typed credit shard has a negative counter")
     if any(int(row[2]) + int(row[3]) > int(row[1]) for row in rows):
         result.reasons.append("typed credit shard exceeds its sub-budget")
-    if reserved != 0:
-        result.reasons.append(f"typed credit has reserved={reserved}; wait for drain")
-    if typed_open != 0:
-        result.reasons.append(f"{typed_open} open typed reservations; wait for drain")
+    if preserve_open_holds:
+        if target_count < current_count:
+            result.reasons.append(
+                "hold-preserving reshard only supports increasing the shard count"
+            )
+    else:
+        if reserved != 0:
+            result.reasons.append(f"typed credit has reserved={reserved}; wait for drain")
+        if typed_open != 0:
+            result.reasons.append(f"{typed_open} open typed reservations; wait for drain")
     if result.legacy_open_reservations != 0:
         result.reasons.append(
             f"{result.legacy_open_reservations} open legacy reservations; wait for drain"
@@ -137,13 +180,23 @@ def reshard_credit_account(
     target_shard_count: int,
     *,
     apply: bool = False,
+    preserve_open_holds: bool = False,
 ) -> CreditReshardResult:
-    """Atomically repartition a paused and drained workspace's credit ledger.
+    """Atomically repartition a paused workspace's credit ledger.
 
     Both splitting and consolidation use this function. A dry run never writes.
     The JSON shard configuration and every typed row commit in one transaction.
+    ``preserve_open_holds`` is an opt-in split-only path: existing usage and
+    reserved counters remain on their original shard IDs, while only free
+    capacity is distributed to new shards. Existing reservations can therefore
+    settle normally after the split.
     """
-    status = inspect_credit_reshard(store, workspace_id, target_shard_count)
+    status = inspect_credit_reshard(
+        store,
+        workspace_id,
+        target_shard_count,
+        preserve_open_holds=preserve_open_holds,
+    )
     if not status.ready or not apply:
         return status
     assert status.current_shard_count is not None
@@ -171,31 +224,58 @@ def reshard_credit_account(
         observed = [int(row[0]) for row in rows]
         if observed != list(range(current_count)):
             return None
-        open_typed = int(
-            list(
-                transaction.execute_sql(
-                    "SELECT COUNT(*) FROM tr_reservation "
-                    "WHERE workspace_id=@ws AND settled = false",
-                    params={"ws": workspace_id},
-                    param_types={"ws": pt.STRING},
-                )
-            )[0][0]
-        )
         total_credits = sum(int(row[1]) for row in rows)
         total_usage = sum(int(row[2]) for row in rows)
         reserved = sum(int(row[3]) for row in rows)
-        if (
-            open_typed != 0
-            or reserved != 0
-            or any(int(row[2]) < 0 or int(row[3]) < 0 for row in rows)
+        invalid_counters = (
+            any(int(row[2]) < 0 or int(row[3]) < 0 for row in rows)
             or any(int(row[2]) + int(row[3]) > int(row[1]) for row in rows)
-        ):
+        )
+        if invalid_counters:
             return None
 
-        credit_parts = distribute_credit_amount(total_credits, target_count)
-        usage_parts = distribute_credit_amount(total_usage, target_count)
-        if any(usage > credit for usage, credit in zip(usage_parts, credit_parts, strict=True)):
-            return None  # defensive; global usage<=credits should make this impossible.
+        if preserve_open_holds:
+            if target_count < current_count:
+                return None
+            usage_parts = [int(row[2]) for row in rows] + [0] * (
+                target_count - current_count
+            )
+            reserved_parts = [int(row[3]) for row in rows] + [0] * (
+                target_count - current_count
+            )
+            committed = sum(usage_parts) + sum(reserved_parts)
+            if committed > total_credits:
+                return None
+            free_parts = distribute_credit_amount(
+                total_credits - committed, target_count
+            )
+            credit_parts = [
+                usage_parts[shard] + reserved_parts[shard] + free_parts[shard]
+                for shard in range(target_count)
+            ]
+        else:
+            open_typed = int(
+                list(
+                    transaction.execute_sql(
+                        "SELECT COUNT(*) FROM tr_reservation "
+                        "WHERE workspace_id=@ws AND settled = false",
+                        params={"ws": workspace_id},
+                        param_types={"ws": pt.STRING},
+                    )
+                )[0][0]
+            )
+            if open_typed != 0 or reserved != 0:
+                return None
+            credit_parts = list(distribute_credit_amount(total_credits, target_count))
+            usage_parts = list(distribute_credit_amount(total_usage, target_count))
+            reserved_parts = [0] * target_count
+            if any(
+                usage > credit
+                for usage, credit in zip(
+                    usage_parts, credit_parts, strict=True
+                )
+            ):
+                return None
         commit_timestamp = store._spanner.COMMIT_TIMESTAMP
         transaction.insert_or_update(
             table=CREDIT_BALANCE_TABLE,
@@ -206,7 +286,7 @@ def reshard_credit_account(
                     shard,
                     credit_parts[shard],
                     usage_parts[shard],
-                    0,
+                    reserved_parts[shard],
                     commit_timestamp,
                     commit_timestamp,
                 )
@@ -252,7 +332,12 @@ def reshard_credit_account(
         )
         return status
     store._credit_shard_counts.invalidate(workspace_id)
-    verified = inspect_credit_reshard(store, workspace_id, target_count)
+    verified = inspect_credit_reshard(
+        store,
+        workspace_id,
+        target_count,
+        preserve_open_holds=preserve_open_holds,
+    )
     if not verified.ready:
         verified.reasons.append("post-commit reshard verification failed")
         return verified
