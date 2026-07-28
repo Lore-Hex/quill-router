@@ -19,7 +19,7 @@ rather than tribal knowledge living in one implementation.
 Backend availability
 --------------------
 `memory` always runs. Backends that need a live server (the Spanner/Bigtable
-emulators today, a Postgres container later) are opt-in: their factory calls
+emulators or a Postgres container) are opt-in: their factory calls
 `pytest.skip()` when the server isn't reachable, so the suite stays green on a
 laptop and gains real cross-backend enforcement in CI. A backend that is
 skipped proves nothing, which is why `test_memory_backend_is_always_runnable`
@@ -96,9 +96,25 @@ def _spanner_emulator_store() -> Store:
     )
 
 
+def _postgres_store() -> Store:
+    """A PostgresStore pointed at the conformance database."""
+    dsn = os.environ.get("TR_CONFORMANCE_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip(
+            "Postgres conformance backend not configured "
+            "(set TR_CONFORMANCE_POSTGRES_DSN)"
+        )
+    from trusted_router.storage_postgres import PostgresStore
+
+    store = PostgresStore(dsn)
+    store.apply_schema()
+    return store
+
+
 #: Add a backend here and it must pass every test in this package.
 BACKENDS: dict[str, Callable[[], Store]] = {
     "memory": _memory_store,
+    "postgres": _postgres_store,
     "spanner-emulator": _spanner_emulator_store,
 }
 
@@ -112,7 +128,12 @@ def store(request: pytest.FixtureRequest) -> Iterator[Store]:
     counted as a pass.
     """
     backend = BACKENDS[request.param]()
-    yield backend
+    try:
+        yield backend
+    finally:
+        close = getattr(backend, "close", None)
+        if close is not None:
+            close()
 
 
 # --------------------------------------------------------------------------
