@@ -99,11 +99,10 @@ def provision(
     if workspace is None:
         raise ValueError("synthetic monitoring workspace is missing")
 
-    existing_keys = [
-        key
-        for key in store.list_keys(workspace.id)
-        if key.name == key_name and not key.disabled
-    ]
+    active_keys = [key for key in store.list_keys(workspace.id) if not key.disabled]
+    existing_keys = [key for key in active_keys if key.name == key_name]
+    if len(active_keys) != len(existing_keys):
+        raise ValueError("synthetic monitoring workspace has unexpected active keys")
     if len(existing_keys) > 1:
         raise ValueError("multiple active synthetic monitor keys exist")
     if existing_keys:
@@ -114,14 +113,20 @@ def provision(
             or existing_key.limit_daily_microdollars is not None
             or existing_key.limit_weekly_microdollars is not None
             or existing_key.limit_monthly_microdollars is not None
+            or existing_key.expires_at is not None
             or existing_key.tags.get("purpose") != "synthetic_monitoring"
+            or existing_key.tags.get("analytics") != "excluded"
+            or existing_key.tags.get("spend_control") != "workspace_funding_only"
         ):
             raise ValueError("existing synthetic monitor key has unsafe configuration")
 
     account = store.get_credit_account(workspace.id)
     if account is None:
         raise ValueError("synthetic monitoring credit account is missing")
+    if account.auto_refill_enabled:
+        raise ValueError("synthetic monitoring workspace must not use auto-refill")
     current_shards = account.shard_count
+    current_key_shards = existing_keys[0].usage_shard_count if existing_keys else 1
 
     result: dict[str, Any] = {
         "apply": apply,
@@ -136,8 +141,11 @@ def provision(
         "credited": False,
         "funding_microdollars": funding_microdollars,
         "current_shards": current_shards,
+        "current_key_shards": current_key_shards,
         "target_shards": target_shards,
-        "requires_reshard": current_shards != target_shards,
+        "requires_reshard": (
+            current_shards != target_shards or current_key_shards != target_shards
+        ),
     }
     if not apply:
         result["would_create_key"] = not existing_keys

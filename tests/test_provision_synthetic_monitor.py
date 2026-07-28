@@ -67,6 +67,7 @@ def test_provision_synthetic_monitor_is_isolated_funding_limited_and_idempotent(
     assert keys[0].tags["spend_control"] == "workspace_funding_only"
     assert first["target_shards"] == 16
     assert first["current_shards"] == 1
+    assert first["current_key_shards"] == 1
     assert first["requires_reshard"] is True
     snapshot = store.credit_money_snapshot(workspaces[0].id)
     assert snapshot is not None
@@ -132,3 +133,38 @@ def test_provision_synthetic_monitor_refuses_existing_key_output_path(
     else:
         raise AssertionError("existing key output path was overwritten")
     assert key_file.read_text(encoding="utf-8") == "do-not-overwrite\n"
+
+
+def test_provision_synthetic_monitor_rejects_auto_refill(tmp_path: Path) -> None:
+    store = InMemoryStore()
+    first = provision(
+        store,
+        email="synthetic-monitor@trustedrouter.internal",
+        workspace_name="TrustedRouter Synthetic Monitoring",
+        key_name="Synthetic monitor",
+        funding_microdollars=1_000_000_000,
+        funding_event_id="synthetic_monitor_workspace_funding_v1",
+        target_shards=16,
+        apply=True,
+        key_output_file=tmp_path / "monitor.key",
+    )
+    account = store.get_credit_account(first["workspace_id"])
+    assert account is not None
+    account.auto_refill_enabled = True
+
+    try:
+        provision(
+            store,
+            email="synthetic-monitor@trustedrouter.internal",
+            workspace_name="TrustedRouter Synthetic Monitoring",
+            key_name="Synthetic monitor",
+            funding_microdollars=1_000_000_000,
+            funding_event_id="synthetic_monitor_workspace_funding_v1",
+            target_shards=16,
+            apply=True,
+            key_output_file=None,
+        )
+    except ValueError as exc:
+        assert str(exc) == "synthetic monitoring workspace must not use auto-refill"
+    else:
+        raise AssertionError("auto-refill monitor workspace was accepted")
