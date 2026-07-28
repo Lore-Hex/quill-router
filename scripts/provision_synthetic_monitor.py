@@ -174,11 +174,20 @@ def provision(
                 "spend_control": "workspace_funding_only",
             },
         )
+        created_output_file = False
         try:
-            key_output_file.write_text(f"{raw_key}\n", encoding="utf-8")
-            key_output_file.chmod(0o600)
+            fd = os.open(
+                key_output_file,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            created_output_file = True
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                output.write(f"{raw_key}\n")
         except Exception:
             store.delete_key(api_key.hash)
+            if created_output_file:
+                key_output_file.unlink(missing_ok=True)
             raise
         result["key_id"] = api_key.hash
         created_key = True

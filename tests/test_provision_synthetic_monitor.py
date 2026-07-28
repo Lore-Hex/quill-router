@@ -106,3 +106,29 @@ def test_provision_synthetic_monitor_rejects_reused_capped_key(tmp_path: Path) -
         assert str(exc) == "existing synthetic monitor key has unsafe configuration"
     else:
         raise AssertionError("unsafe existing key was accepted")
+
+
+def test_provision_synthetic_monitor_refuses_existing_key_output_path(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryStore()
+    key_file = tmp_path / "monitor.key"
+    key_file.write_text("do-not-overwrite\n", encoding="utf-8")
+
+    try:
+        provision(
+            store,
+            email="synthetic-monitor@trustedrouter.internal",
+            workspace_name="TrustedRouter Synthetic Monitoring",
+            key_name="Synthetic monitor",
+            funding_microdollars=1_000_000_000,
+            funding_event_id="synthetic_monitor_workspace_funding_v1",
+            target_shards=16,
+            apply=True,
+            key_output_file=key_file,
+        )
+    except ValueError as exc:
+        assert str(exc) == "refusing to overwrite the key output file"
+    else:
+        raise AssertionError("existing key output path was overwritten")
+    assert key_file.read_text(encoding="utf-8") == "do-not-overwrite\n"
