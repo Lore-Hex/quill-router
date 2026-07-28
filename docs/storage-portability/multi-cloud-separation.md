@@ -142,6 +142,28 @@ to a single logical partition, which is weaker than what reserve/settle needs.
 **These are recommendations, not conclusions.** Each is validated the same way:
 implement the `Store`, run the conformance suite, and only then argue about it.
 
+### The unlock: both are Postgres
+
+Aurora DSQL and Cosmos DB for PostgreSQL both speak the Postgres wire protocol.
+So this is **not two backends — it is one**.
+
+Write a single `PostgresStore`. Develop and test it against plain Postgres in a
+container, which costs nothing, runs in CI as a service container, and gives the
+conformance suite a *third real backend* to pin behaviour against — the thing
+that catches divergence, including in the money code. Then deploy that same
+implementation on Aurora DSQL for AWS and on Citus for Azure.
+
+This turns "port the hardest code in the system, twice, against two cloud
+databases we cannot run locally" into "write one SQL backend, test it locally,
+deploy it twice." It is the difference between a tractable project and a
+research project, and it is the reason to prefer these two managed services
+over their more obvious cloud-native alternatives.
+
+Where they diverge from stock Postgres — DSQL's optimistic concurrency and its
+restrictions on some DDL, Citus requiring a distribution column on every
+distributed table — those differences are narrow, known up front, and are the
+first thing the conformance suite should be pointed at once a cluster exists.
+
 ---
 
 ## 6. Open questions
