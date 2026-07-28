@@ -115,7 +115,8 @@ monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
-  scheduler_name="${job_name}-every-minute"
+  scheduler_name="${job_name}-every-five-minutes"
+  legacy_scheduler_name="${job_name}-every-minute"
   env_vars=(
     "${BASE_ENV_VARS[@]}"
     "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}"
@@ -150,7 +151,16 @@ for monitor_region in "${_REGION_LIST[@]}"; do
   # probe latency balloons from ~2s to ~12s, blowing past task-
   # timeout. 2 CPU / 1Gi keeps the concurrent regional probes bounded.
 
-  upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/2 * * * *"
+  upsert_scheduler "$scheduler_name" "$job_name" "$monitor_region" "*/5 * * * *"
+  if gc scheduler jobs describe \
+    "$legacy_scheduler_name" \
+    --location "$monitor_region" >/dev/null 2>&1; then
+    log "deleting legacy synthetic scheduler ${legacy_scheduler_name}"
+    gc scheduler jobs delete \
+      "$legacy_scheduler_name" \
+      --location "$monitor_region" \
+      --quiet >/dev/null
+  fi
   monitor_index=$((monitor_index + 1))
 done
 
@@ -159,10 +169,10 @@ done
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
-throughput_scheduler_name="${throughput_job_name}-every-two-minutes"
+throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
 legacy_throughput_scheduler_names=(
   "${throughput_job_name}-every-minute"
-  "${throughput_job_name}-every-five-minutes"
+  "${throughput_job_name}-every-two-minutes"
 )
 throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
@@ -178,7 +188,7 @@ throughput_env_vars=(
   "TR_SYNTHETIC_THROUGHPUT_MAX_TOKENS=512"
   "TR_SYNTHETIC_THROUGHPUT_MINIMUM_OUTPUT_TOKENS=128"
   "TR_SYNTHETIC_THROUGHPUT_TIMEOUT_SECONDS=90"
-  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"
+  "TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"
 )
 throughput_set_env_vars="$(IFS='|'; echo "^|^${throughput_env_vars[*]}")"
 
@@ -201,7 +211,7 @@ upsert_scheduler \
   "$throughput_scheduler_name" \
   "$throughput_job_name" \
   "$throughput_region" \
-  "*/2 * * * *"
+  "*/5 * * * *"
 
 # Avoid double-sampling after cadence changes. Delete every historical
 # throughput scheduler only after the canonical scheduler is healthy.

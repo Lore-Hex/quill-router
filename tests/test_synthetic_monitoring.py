@@ -1950,14 +1950,16 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=true"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ONLY=false"' in body
     assert '"TR_SYNTHETIC_THROUGHPUT_ENABLED=false"' in body
-    assert '"*/2 * * * *"' in body
-    assert 'throughput_scheduler_name="${throughput_job_name}-every-two-minutes"' in body
-    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=120"' in body
+    assert 'scheduler_name="${job_name}-every-five-minutes"' in body
+    assert 'legacy_scheduler_name="${job_name}-every-minute"' in body
+    assert '"*/5 * * * *"' in body
+    assert 'throughput_scheduler_name="${throughput_job_name}-every-five-minutes"' in body
+    assert '"TR_SYNTHETIC_THROUGHPUT_INTERVAL_SECONDS=300"' in body
     assert '"TR_SYNTHETIC_BILLING_CONCURRENCY=2"' in body
     assert '"TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"' in body
     assert '"TR_SYNTHETIC_START_DELAY_SECONDS=45"' in body
     assert '"${throughput_job_name}-every-minute"' in body
-    assert '"${throughput_job_name}-every-five-minutes"' in body
+    assert '"${throughput_job_name}-every-two-minutes"' in body
 
 
 class _FakeCell:
