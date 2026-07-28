@@ -2,7 +2,7 @@
   "_about": "Provider-native supplement for Together AI routes that are live ahead of the shared OpenRouter snapshot. Verified against https://api.together.xyz/v1/models on 2026-06-22.",
   "provider": "together",
   "source": "https://api.together.xyz/v1/endpoints?type=serverless",
-  "generated_at": "2026-07-27T23:04:35Z",
+  "generated_at": "2026-07-28T05:49:08Z",
   "model_count": 19,
   "models": [
     {
@@ -10,7 +10,7 @@
       "upstream_id": "zai-org/GLM-5.2",
       "display_name": "GLM 5.2",
       "title": "zai-org/GLM-5.2",
-      "context_length": 262144,
+      "context_length": 512000,
       "max_output_tokens": 131072,
       "input_token_price_per_m": 1400000,
       "output_token_price_per_m": 4400000,
@@ -145,7 +145,8 @@
       "context_length": 196608,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 60000
+      "cached_input_token_price_per_m": 60000,
+      "missing_since": "2026-07-28"
     },
     {
       "display_name": "MiniMax M3",
