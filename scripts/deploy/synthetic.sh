@@ -226,3 +226,38 @@ for legacy_throughput_scheduler_name in "${legacy_throughput_scheduler_names[@]}
       --quiet >/dev/null
   fi
 done
+
+# Image generation is materially more expensive than text PONG probes. Keep it
+# isolated and run one canonical end-to-end request every six hours.
+image_region="us-central1"
+image_job_name="trusted-router-image-generation-${image_region}"
+image_scheduler_name="${image_job_name}-every-six-hours"
+image_env_vars=(
+  "${BASE_ENV_VARS[@]}"
+  "TR_SYNTHETIC_MONITOR_REGION=${image_region}"
+  "TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"
+  "TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"
+  "TR_SYNTHETIC_IMAGE_TIMEOUT_SECONDS=120"
+)
+image_set_env_vars="$(IFS='|'; echo "^|^${image_env_vars[*]}")"
+
+log "deploying isolated image-generation Cloud Run job ${image_job_name}"
+gc run jobs deploy "$image_job_name" \
+  --region "$image_region" \
+  --image "$IMAGE" \
+  --command="/app/.venv/bin/python" \
+  --args="-m,trusted_router.synthetic.image_generation" \
+  --service-account "$RUN_SERVICE_ACCOUNT" \
+  --set-env-vars "$image_set_env_vars" \
+  --update-secrets "$UPDATE_SECRETS" \
+  --max-retries 0 \
+  --task-timeout 180s \
+  --cpu 1 \
+  --memory 512Mi \
+  --quiet >/dev/null
+
+upsert_scheduler \
+  "$image_scheduler_name" \
+  "$image_job_name" \
+  "$image_region" \
+  "17 */6 * * *"

@@ -13,6 +13,7 @@ ROUTER_CORE_PROBES = {
 }
 PROVIDER_EFFECTIVE_PROBES = {"openai_sdk_pong", "responses_pong"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
+IMAGE_GENERATION_PROBES = {"image_generation"}
 
 SLO_PROBES: dict[str, set[str]] = {
     "router_core": ROUTER_CORE_PROBES,
@@ -77,6 +78,11 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
         "name": "Provider Fallback",
         "description": "Fail-first route selection and rollover to the next healthy provider.",
     },
+    {
+        "id": "image_generation",
+        "name": "Image Generation",
+        "description": "Public attested Gemini image generation and binary image validation.",
+    },
 )
 
 
@@ -96,6 +102,8 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("billing_settlement")
     if sample.target == "control-plane" and sample.probe_type == "provider_fallback":
         ids.append("provider_fallback")
+    if sample.target == "canonical" and sample.probe_type in IMAGE_GENERATION_PROBES:
+        ids.append("image_generation")
     return ids
 
 
