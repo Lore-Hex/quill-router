@@ -111,10 +111,44 @@ def _postgres_store() -> Store:
     return store
 
 
+def _spanner_pg_store() -> Store:
+    """`PostgresStore` against **Spanner's PostgreSQL dialect**, via PGAdapter.
+
+    This is the same implementation as the `postgres` backend, pointed at a
+    different server — which is the whole claim being tested. Spanner PG is a
+    *subset* of PostgreSQL, so "passes on Postgres 17" does not imply "passes
+    on Spanner", and the difference lands on the credit path: exactly-once
+    credit depends on `INSERT ... ON CONFLICT DO NOTHING` reporting rowcount
+    correctly, and entities are stored as `jsonb`.
+
+    If this backend passes, one implementation covers GCP, AWS and Azure, and
+    the two-backends-with-different-money-code risk disappears instead of
+    multiplying.
+
+    Stand it up with no GCP credentials at all:
+
+        docker run -d --rm --name tr-spanner-pg -p 5434:5432 \\
+          gcr.io/cloud-spanner-pg-adapter/pgadapter-emulator:latest
+        export TR_CONFORMANCE_SPANNER_PG_DSN=postgresql://localhost:5434/tr-conformance
+    """
+    dsn = os.environ.get("TR_CONFORMANCE_SPANNER_PG_DSN")
+    if not dsn:
+        pytest.skip(
+            "Spanner PG-dialect conformance backend not configured "
+            "(set TR_CONFORMANCE_SPANNER_PG_DSN — see this factory's docstring)"
+        )
+    from trusted_router.storage_postgres import PostgresStore
+
+    store = PostgresStore(dsn)
+    store.apply_schema()
+    return store
+
+
 #: Add a backend here and it must pass every test in this package.
 BACKENDS: dict[str, Callable[[], Store]] = {
     "memory": _memory_store,
     "postgres": _postgres_store,
+    "spanner-pg": _spanner_pg_store,
     "spanner-emulator": _spanner_emulator_store,
 }
 

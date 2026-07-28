@@ -100,13 +100,31 @@ class PostgresStore:
         self._pool.close()
 
     def apply_schema(self) -> None:
-        """Apply the package-owned schema idempotently."""
+        """Apply the package-owned schema idempotently.
+
+        DDL runs statement-by-statement in **autocommit**, not inside a
+        transaction. Stock Postgres has transactional DDL and would accept
+        either, but Spanner's PostgreSQL dialect rejects DDL inside an explicit
+        transaction outright ("DDL statements are only allowed outside explicit
+        transactions"). Doing it the portable way costs nothing here and is the
+        difference between this backend running on all three clouds or only on
+        the one it was written against.
+
+        The consequence to know: schema application is therefore NOT atomic.
+        A failure part-way leaves earlier statements applied. Every statement is
+        `IF NOT EXISTS`, so re-running converges rather than conflicting.
+        """
         schema = Path(__file__).with_name("storage_postgres_schema.sql").read_text()
+        statements = [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
 
-        def apply(conn: Any) -> None:
-            conn.execute(schema, prepare=False)
-
-        self._run_transaction(apply)
+        with self._pool.connection() as conn:
+            previous_autocommit = conn.autocommit
+            conn.autocommit = True
+            try:
+                for statement in statements:
+                    conn.execute(statement, prepare=False)
+            finally:
+                conn.autocommit = previous_autocommit
 
     # Generic entity IO ------------------------------------------------------
 
