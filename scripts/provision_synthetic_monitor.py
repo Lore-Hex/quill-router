@@ -191,7 +191,10 @@ def provision(
             )
             created_output_file = True
             with os.fdopen(fd, "w", encoding="utf-8") as output:
-                output.write(f"{raw_key}\n")
+                # Secret Manager preserves every byte from --data-file. Keep
+                # this file byte-identical to the key so env injection cannot
+                # change its lookup hash with a trailing newline.
+                output.write(raw_key)
         except Exception:
             store.delete_key(api_key.hash)
             if created_output_file:
