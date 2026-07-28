@@ -141,12 +141,13 @@ what the inline attempt already resolved:
 | `selected_endpoint_id` | STRING     | frozen (for the generation record)                 |
 | `model_id`           | STRING       | frozen                                             |
 | `selected_usage_type`| STRING       | frozen                                             |
-| `settle_body`        | STRING(MAX)  | raw `GatewaySettleRequest` JSON (audit/generation) |
+| `settle_body`        | STRING(MAX)  | allowlisted metadata needed to repair activity; never prompt/output/tool arguments |
 | `status`             | STRING       | `pending` / `done` / `dead` / `release_approved`   |
 | `attempts`           | INT64        |                                                    |
 | `next_attempt_at`    | TIMESTAMP    |                                                    |
 | `lease_owner` / `leased_until` | STRING / TIMESTAMP | drain lease                          |
 | `created_at` / `updated_at` | TIMESTAMP |                                                   |
+| `terminal_at`        | TIMESTAMP    | NULL until repair is complete; starts 30-day TTL   |
 
 DDL: guarded `CREATE TABLE` **and** a `CREATE INDEX` on `(status, next_attempt_at)`
 for the due-scan (a full-table scan under a whale burst is the very load the
@@ -178,7 +179,7 @@ lease-claims due `pending` rows and for each:
   store is currently unavailable, **PARK** the row (retry later) — never reroute to
   legacy, never dead-letter.
 - Applies the **frozen `actual_cost_micro`** through a **narrow finalize primitive**
-  (counter claim + `gateway_authorization` finalize + generation write), NOT the
+  (counter claim + `gateway_authorization` finalize + activity index), NOT the
   full `_settle_gateway_authorization` HTTP handler — which would re-run pricing
   and re-fire non-idempotent side effects (budget alerts, auto-refill, metadata
   broadcast, provider-benchmark samples) on every replay (SF7).
@@ -187,9 +188,16 @@ lease-claims due `pending` rows and for each:
   row that intended a charge → **`dead` + alert** (the reaper beat us — invariant
   violation, do not report "recovered"); deterministic non-retryable errors →
   `dead` (no page); transient → backoff. After `max_attempts` → `dead` + alert.
-- Accepted SF7 loss: drained generations never reach metadata-broadcast
+- Drained generations never reach metadata-broadcast
   destinations.
-- Accepted SF7 loss: drained refunds record no provider-error benchmark sample.
+- Drained refunds record no provider-error benchmark sample.
+- A Bigtable activity failure parks the row without consuming retry attempts.
+  The generation ID and benchmark ID are deterministic, so replay is
+  idempotent. Only a confirmed activity write allows the outbox to become
+  `done`, clear `settle_body`, and set the reservation, authorization, and
+  outbox terminal retention timestamps in the same transaction. The
+  authorization keeps only its content-free replay record so a client
+  idempotency key remains valid for the full window.
 - Final `ApplyOutcome` contract for the drain:
   `settled_now` → done. `already_settled_with_charge` means done for settle
   intent; for refund intent with a charged reservation, done plus the same

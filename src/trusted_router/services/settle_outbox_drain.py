@@ -107,6 +107,20 @@ def _resolve_row(
         )
         return
 
+    if outcome == ApplyOutcome.ACTIVITY_PENDING:
+        outbox.park(
+            row.authorization_id,
+            row.intent_kind,
+            lease_owner=lease_owner,
+            retry_after_seconds=60,
+            note="bigtable activity index pending",
+        )
+        logger.warning(
+            "settle outbox activity repair pending authorization_id=%s",
+            row.authorization_id,
+        )
+        return
+
     if outcome == ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
         if row.intent_kind == "refund" and row.actual_cost_micro > 0:

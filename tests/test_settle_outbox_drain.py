@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import _FakeTransaction, make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.schemas import GatewaySettleRequest
 from trusted_router.services import settle_outbox_apply as apply_mod
 from trusted_router.services import settle_outbox_drain as drain_mod
 from trusted_router.services.settle_outbox_apply import ApplyOutcome
@@ -382,9 +381,8 @@ def test_flag_on_successful_typed_settle_enqueues_frozen_done_row(
     assert row.selected_endpoint_id == ENDPOINT_ID
     assert row.model_id == MODEL_ID
     assert row.selected_usage_type == "Credits"
-    assert json.loads(row.settle_body or "{}") == GatewaySettleRequest(
-        **body
-    ).model_dump(exclude_none=True)
+    assert row.settle_body is None
+    assert row.terminal_at is not None
 
 
 def test_settle_emits_timing_line(
@@ -752,16 +750,16 @@ def test_lost_charge_recovery_end_to_end(
     _seed_credit(store, ws)
     key = _make_key(store, ws)
     auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
-    original = store.typed_finalize_gateway_authorization
+    original = store.typed_finalize_gateway_authorization_result
     state = {"crash": True}
 
-    def crash_once(*args: Any, **kwargs: Any) -> bool:
+    def crash_once(*args: Any, **kwargs: Any) -> Any:
         if state["crash"]:
             state["crash"] = False
             raise RuntimeError("crash after enqueue")
         return original(*args, **kwargs)
 
-    store.typed_finalize_gateway_authorization = crash_once
+    store.typed_finalize_gateway_authorization_result = crash_once
     client = _client(
         Settings(environment="test", settle_outbox_enabled=True),
         raise_server_exceptions=False,
@@ -790,7 +788,7 @@ def test_lost_charge_recovery_end_to_end(
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
 
 
-def test_drain_purges_only_old_done_rows_and_reports_count(
+def test_drain_leaves_terminal_rows_for_spanner_ttl(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
     store, db, _bt = fake_store
@@ -823,9 +821,9 @@ def test_drain_purges_only_old_done_rows_and_reports_count(
 
     result = drain_mod.drain_settle_outbox(10)
 
-    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 2, "reaped": 0}
-    assert ob.get("gwa-old-done-a", "settle") is None
-    assert ob.get("gwa-old-done-b", "settle") is None
+    assert result == {"claimed": 0, "outcomes": {}, "recovered_micro": 0, "purged": 0, "reaped": 0}
+    assert ob.get("gwa-old-done-a", "settle").status == "done"
+    assert ob.get("gwa-old-done-b", "settle").status == "done"
     assert ob.get("gwa-fresh-done", "settle").status == "done"
     assert ob.get("gwa-pending", "settle").status == "pending"
     assert ob.get("gwa-dead", "settle").status == "dead"

@@ -16,7 +16,7 @@ import logging
 import uuid
 from datetime import datetime
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from starlette.concurrency import run_in_threadpool
@@ -85,11 +85,48 @@ from trusted_router.storage import (
     typed_billing_store,
 )
 from trusted_router.storage_custom_models import is_custom_model_id, normalize_custom_model_id
-from trusted_router.storage_models import SettleOutboxRow
+from trusted_router.storage_models import SettleOutboxRow, TypedFinalizeResult
 from trusted_router.types import ErrorType, UsageType
 
 logger = logging.getLogger(__name__)
 REQUEST_METADATA_VERSION = 1
+_SETTLE_REPAIR_FIELDS = frozenset(
+    {
+        "authorization_id",
+        "actual_input_tokens",
+        "actual_output_tokens",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "request_id",
+        "finish_reason",
+        "status",
+        "streamed",
+        "usage_estimated",
+        "elapsed_seconds",
+        "first_token_seconds",
+        "first_byte_seconds",
+        "time_to_first_token_seconds",
+        "time_to_first_byte_seconds",
+        "cached_input_tokens",
+        "cached_tokens",
+        "reasoning_tokens",
+        "error_status",
+        "error_type",
+        "app",
+        "model",
+        "selected_model",
+        "endpoint",
+        "selected_endpoint",
+        "user",
+        "session_id",
+        "http_referer",
+        "app_categories",
+        "route_type",
+        "additional_cost_microdollars",
+    }
+)
 
 
 async def authorize_gateway(
@@ -1068,10 +1105,11 @@ def _settle_gateway_authorization(
     is_typed = _typed_store is not None
     intent_kind = "settle" if success else "refund"
     enqueue_ms = 0.0
+    outbox_enqueued = False
     if settings.settle_outbox_enabled:
         enqueue_start = perf_counter()
         try:
-            frozen_settle_body = dict(settle_body)
+            frozen_settle_body = _settle_repair_metadata(settle_body)
             if operator_cost is not None:
                 frozen_settle_body[PARTNER_OPERATOR_COST_SETTLE_FIELD] = operator_cost
             # §5.4 honest scope: durability starts only when this INSERT commits;
@@ -1093,6 +1131,7 @@ def _settle_gateway_authorization(
                 # sees rows whose inline attempt is dead >=60s, avoiding replays.
                 initial_delay_seconds=60,
             )
+            outbox_enqueued = True
         except Exception:
             logger.error(
                 "settle outbox enqueue failed authorization_id=%s",
@@ -1101,18 +1140,58 @@ def _settle_gateway_authorization(
             )
         enqueue_ms = (perf_counter() - enqueue_start) * 1000
 
+    if (
+        is_typed
+        and getattr(_typed_store, "request_record_write_mode", "legacy") == "typed"
+        and settings.settle_outbox_enabled
+        and not outbox_enqueued
+    ):
+        raise api_error(
+            503,
+            "Settlement durability is temporarily unavailable",
+            ErrorType.SERVICE_UNAVAILABLE,
+        )
+
     finalize_start = perf_counter()
+    finalize_result = TypedFinalizeResult(
+        finalized=False,
+        activity_indexed=False,
+    )
     if is_typed:
         assert _typed_store is not None
         # Typed finalize includes the Bigtable activity-index and benchmark
         # write inside the wrapper's index_after_commit.
-        finalized = _typed_store.typed_finalize_gateway_authorization(
-            authorization.id,
-            success=success,
-            actual_microdollars=actual_cost,
-            selected_usage_type=selected_usage_type,
-            generation=generation,
+        result_method = getattr(
+            _typed_store,
+            "typed_finalize_gateway_authorization_result",
+            None,
         )
+        if callable(result_method):
+            finalize_result = cast(
+                TypedFinalizeResult,
+                result_method(
+                    authorization.id,
+                    success=success,
+                    actual_microdollars=actual_cost,
+                    selected_usage_type=selected_usage_type,
+                    generation=generation,
+                ),
+            )
+        else:
+            finalized_legacy_contract = (
+                _typed_store.typed_finalize_gateway_authorization(
+                    authorization.id,
+                    success=success,
+                    actual_microdollars=actual_cost,
+                    selected_usage_type=selected_usage_type,
+                    generation=generation,
+                )
+            )
+            finalize_result = TypedFinalizeResult(
+                finalized=finalized_legacy_contract,
+                activity_indexed=finalized_legacy_contract,
+            )
+        finalized = finalize_result.finalized
     else:
         finalized = STORE.finalize_gateway_authorization(
             authorization.id,
@@ -1120,6 +1199,10 @@ def _settle_gateway_authorization(
             actual_microdollars=actual_cost,
             selected_usage_type=selected_usage_type,
             generation=generation,
+        )
+        finalize_result = TypedFinalizeResult(
+            finalized=finalized,
+            activity_indexed=finalized,
         )
     finalize_ms = (perf_counter() - finalize_start) * 1000
     if not finalized:
@@ -1137,7 +1220,11 @@ def _settle_gateway_authorization(
             }
         }
     mark_ms = 0.0
-    if settings.settle_outbox_enabled:
+    if (
+        settings.settle_outbox_enabled
+        and outbox_enqueued
+        and finalize_result.activity_indexed
+    ):
         mark_start = perf_counter()
         try:
             marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
@@ -1158,6 +1245,11 @@ def _settle_gateway_authorization(
                 exc_info=True,
             )
         mark_ms = (perf_counter() - mark_start) * 1000
+    elif finalized and settings.settle_outbox_enabled and outbox_enqueued:
+        logger.warning(
+            "settle activity index pending repair authorization_id=%s",
+            authorization.id,
+        )
 
     is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
     if (
@@ -1292,18 +1384,41 @@ def _settle_body_with_safe_attribution(
     return settle_body
 
 
-def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:
-    if body.app == "TrustedRouter Synthetic":
-        return True
-    metadata = body.metadata
-    if not isinstance(metadata, dict):
-        return False
+def _settle_repair_metadata(settle_body: dict[str, Any]) -> dict[str, Any]:
+    """Freeze only fields needed to reconstruct activity metadata.
+
+    The durable outbox is an operational repair log, not a content store.
+    Lenient request extras, trace dictionaries, and arbitrary metadata are
+    deliberately excluded. The one metadata bit retained marks synthetic
+    traffic so repaired rows stay out of public provider benchmarks.
+    """
+    frozen = {
+        key: value
+        for key, value in settle_body.items()
+        if key in _SETTLE_REPAIR_FIELDS
+    }
+    metadata = settle_body.get("metadata")
+    if isinstance(metadata, dict) and _synthetic_metadata_enabled(metadata):
+        frozen["metadata"] = {"trustedrouter_synthetic": "true"}
+    return frozen
+
+
+def _synthetic_metadata_enabled(metadata: dict[str, Any]) -> bool:
     return str(metadata.get("trustedrouter_synthetic")).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+
+
+def _is_synthetic_settlement(body: GatewaySettleRequest) -> bool:
+    if body.app == "TrustedRouter Synthetic":
+        return True
+    metadata = body.metadata
+    if not isinstance(metadata, dict):
+        return False
+    return _synthetic_metadata_enabled(metadata)
 
 
 def _gateway_candidate_payload(

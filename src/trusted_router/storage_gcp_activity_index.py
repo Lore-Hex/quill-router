@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, TypeAlias
 
 from trusted_router.storage_activity import generation_metrics, usage_bucket_key
 from trusted_router.storage_gcp_codec import json_body, reverse_time_key
 from trusted_router.storage_models import Generation
+
+FamilyNames: TypeAlias = str | tuple[str, ...]
 
 
 def write_generation(table: Any, family: str, generation: Generation) -> None:
@@ -25,7 +27,7 @@ def write_generation(table: Any, family: str, generation: Generation) -> None:
 
 def activity_generations(
     table: Any,
-    family: str,
+    family: FamilyNames,
     workspace_id: str,
     *,
     api_key_hash: str | None,
@@ -53,7 +55,7 @@ def activity_generations(
 
 def iter_activity_generations(
     table: Any,
-    family: str,
+    family: FamilyNames,
     workspace_id: str,
     *,
     api_key_hash: str | None,
@@ -90,7 +92,7 @@ def iter_activity_generations(
 
 def usage_series(
     table: Any,
-    family: str,
+    family: FamilyNames,
     workspace_id: str,
     *,
     start_day: str,
@@ -153,7 +155,7 @@ def usage_series(
 
 def _generations_from_rows(
     rows: Any,
-    family: str,
+    family: FamilyNames,
     *,
     api_key_hash: str | None,
 ) -> list[Generation]:
@@ -162,12 +164,12 @@ def _generations_from_rows(
 
 def _iter_generations_from_rows(
     rows: Any,
-    family: str,
+    family: FamilyNames,
     *,
     api_key_hash: str | None,
 ) -> Iterator[Generation]:
     for row in rows:
-        cells = row.cells.get(family, {}).get(b"body", [])
+        cells = _body_cells(row, family)
         if not cells:
             continue
         generation = Generation(**json.loads(cells[0].value.decode("utf-8")))
@@ -175,11 +177,32 @@ def _iter_generations_from_rows(
             yield generation
 
 
-def _generation_from_row(row: Any, family: str) -> Generation | None:
-    cells = row.cells.get(family, {}).get(b"body", [])
+def _generation_from_row(row: Any, family: FamilyNames) -> Generation | None:
+    cells = _body_cells(row, family)
     if not cells:
         return None
     return Generation(**json.loads(cells[0].value.decode("utf-8")))
+
+
+def generation_by_id(
+    table: Any,
+    family: FamilyNames,
+    generation_id: str,
+) -> Generation | None:
+    key = f"gen#{generation_id}".encode()
+    rows = table.read_rows(start_key=key, end_key=key + b"\x00", limit=1)
+    for row in rows:
+        return _generation_from_row(row, family)
+    return None
+
+
+def _body_cells(row: Any, families: FamilyNames) -> list[Any]:
+    ordered = (families,) if isinstance(families, str) else families
+    for family in ordered:
+        cells = row.cells.get(family, {}).get(b"body", [])
+        if cells:
+            return cells
+    return []
 
 
 def _bucket(buckets: dict[str, dict[str, Any]], bucket: str) -> dict[str, Any]:

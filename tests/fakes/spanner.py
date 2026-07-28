@@ -130,6 +130,11 @@ class FakeSpannerDatabase:
         self.reservations: dict[str, dict] = {}
         self.reservation_versions: dict[str, int] = {}
         self.reservation_idemp: dict[str, str] = {}  # idempotency_scope -> reservation_id
+        # tr_gateway_authorization: bounded per-request state keyed by
+        # authorization_id. Kept separate from generic tr_entities so tests
+        # catch accidental fallback writes after the typed cutover.
+        self.gateway_authorizations: dict[str, dict] = {}
+        self.gateway_authorization_versions: dict[str, int] = {}
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
@@ -177,6 +182,11 @@ class FakeSpannerDatabase:
                     current_version = 1 if key[1] in self.reservation_idemp else 0
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox":
                     current_version = self.settle_outbox_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "gateway_auth":
+                    current_version = self.gateway_authorization_versions.get(
+                        key[1],
+                        0,
+                    )
                 else:
                     current = self.rows.get(key)
                     current_version = current.version if current is not None else 0
@@ -228,6 +238,13 @@ class FakeSpannerDatabase:
                     _, rid, record = op
                     self.reservations[rid] = record
                     self.reservation_versions[rid] = new_version
+                elif op[0] in (
+                    "insert_gateway_authorization",
+                    "update_gateway_authorization",
+                ):
+                    _, authorization_id, record = op
+                    self.gateway_authorizations[authorization_id] = record
+                    self.gateway_authorization_versions[authorization_id] = new_version
                 elif op[0] == "insert_entity_dml":  # DML INSERT into tr_entities
                     _, kind, entity_id, body = op
                     self.rows[(kind, entity_id)] = _Row(body=body, version=new_version)
@@ -289,6 +306,24 @@ class _FakeTransaction:
         if version_key not in self.read_versions:
             self.read_versions[version_key] = self.db.settle_outbox_versions.get(pk, 0)
         rec = self.db.settle_outbox.get(pk)
+        return dict(rec) if rec is not None else None
+
+    def _gateway_authorization_current(
+        self,
+        authorization_id: str,
+    ) -> dict | None:
+        for op in reversed(self.pending_writes):
+            if op[0] in (
+                "insert_gateway_authorization",
+                "update_gateway_authorization",
+            ) and op[1] == authorization_id:
+                return dict(op[2])
+        version_key = ("gateway_auth", authorization_id)
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = (
+                self.db.gateway_authorization_versions.get(authorization_id, 0)
+            )
+        rec = self.db.gateway_authorizations.get(authorization_id)
         return dict(rec) if rec is not None else None
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
@@ -470,6 +505,7 @@ class _FakeTransaction:
             record["settled"] = False
             record["settled_usage_type"] = None
             record["actual_micro"] = None
+            record["terminal_at"] = None
             self.pending_writes.append(("insert_reservation", record))
             return 1
         if "UPDATE tr_reservation SET settled=true" in sql:
@@ -478,9 +514,88 @@ class _FakeTransaction:
             if rec is None or rec["settled"]:
                 return 0  # missing or already-claimed (replay)
             new = dict(
-                rec, settled=True, settled_usage_type=p["sut"], actual_micro=p["actual"]
+                rec,
+                settled=True,
+                settled_usage_type=p["sut"],
+                actual_micro=p["actual"],
+                terminal_at=p["terminal_at"],
             )
             self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
+        if sql.startswith("UPDATE tr_reservation SET terminal_at=@terminal_at"):
+            _require_pred(
+                sql,
+                "reservation_id=@rid AND settled=true AND terminal_at IS NULL",
+                "reservation-complete",
+            )
+            rec = self._reservation_current(p["rid"])
+            if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
+                return 0
+            new = dict(rec, terminal_at=p["terminal_at"])
+            self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
+        if sql.startswith("INSERT INTO tr_gateway_authorization"):
+            authorization_id = p["authorization_id"]
+            if authorization_id in self.db.gateway_authorizations:
+                raise FakeAlreadyExists(authorization_id)
+            version_key = ("gateway_auth", authorization_id)
+            if version_key not in self.read_versions:
+                self.read_versions[version_key] = 0
+            record = dict(p)
+            record["settled"] = False
+            record["terminal_at"] = None
+            self.pending_writes.append(
+                ("insert_gateway_authorization", authorization_id, record)
+            )
+            return 1
+        if sql.startswith(
+            "UPDATE tr_gateway_authorization SET settled=true, payload=@payload"
+        ):
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if rec is None:
+                return 0
+            new = dict(rec, settled=True, payload=p["payload"])
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
+            return 1
+        if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=@terminal_at"):
+            _require_pred(
+                sql,
+                "AND settled=true AND terminal_at IS NULL",
+                "authorization-complete",
+            )
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if (
+                rec is None
+                or not rec.get("settled")
+                or rec.get("terminal_at") is not None
+            ):
+                return 0
+            new = dict(rec, terminal_at=p["terminal_at"])
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
+            return 1
+        if sql.startswith(
+            "UPDATE tr_gateway_authorization SET settled=true, terminal_at=@terminal_at"
+        ):
+            _require_pred(sql, "AND settled=false", "authorization-reaper-close")
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if rec is None or rec.get("settled"):
+                return 0
+            new = dict(
+                rec,
+                settled=True,
+                terminal_at=p["terminal_at"],
+                payload=None,
+            )
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
             return 1
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
@@ -600,7 +715,8 @@ class _FakeTransaction:
             new = dict(
                 rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],
                 next_attempt_at=p["next_at"], lease_owner=None, leased_until=None,
-                updated_at=p["now"],
+                updated_at=p["now"], terminal_at=p["terminal_at"],
+                settle_body=None if p["done"] else rec.get("settle_body"),
             )
             self.pending_writes.append(("update_settle_outbox", pk, new))
             return 1
@@ -742,7 +858,9 @@ def _execute_settle_outbox_sql(
     predicates it relies on are present in the real query, so a dropped guard/
     status/key predicate fails a test rather than silently matching."""
     p = params
-    if sql.startswith("SELECT attempts, lease_owner FROM tr_settle_outbox"):
+    if sql.startswith("SELECT attempts, lease_owner FROM tr_settle_outbox") or sql.startswith(
+        "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"
+    ):
         _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark-read")
         _require_pred(sql, "status='pending'", "mark-read")
         pk = (p["aid"], p["kind"])
@@ -751,7 +869,12 @@ def _execute_settle_outbox_sql(
         rec = txn._settle_outbox_current(pk) if txn is not None else db.settle_outbox.get(pk)
         if rec is None or rec.get("status") != "pending":
             return []
-        return [[rec.get("attempts", 0), rec.get("lease_owner")]]
+        values = [rec.get("attempts", 0), rec.get("lease_owner")]
+        if sql.startswith(
+            "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"
+        ):
+            values.append(rec.get("reservation_id"))
+        return [values]
     if "WHERE status='pending' AND next_attempt_at <= @now" in sql:  # due scan
         now = p["now"]
         limit = int(p.get("limit", 100))
@@ -833,6 +956,20 @@ def _execute_sql(
     # generic branch (the substring-collision hazard the design flags).
     if "tr_settle_outbox" in sql:
         return _execute_settle_outbox_sql(db, txn, sql, params)
+    if "FROM tr_gateway_authorization" in sql:
+        authorization_id = params["authorization_id"]
+        rec = (
+            txn._gateway_authorization_current(authorization_id)
+            if txn is not None
+            else db.gateway_authorizations.get(authorization_id)
+        )
+        if rec is None:
+            return []
+        cols = [
+            col.strip()
+            for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
+        ]
+        return [[rec.get(col) for col in cols]]
     # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
     # contains the generic count substrings below.)
     if "key_shard!=0" in sql:
@@ -1028,7 +1165,14 @@ class FakeBigtableTable:
     def direct_row(self, key: bytes) -> _FakeDirectRow:
         return _FakeDirectRow(key, self)
 
-    def read_rows(self, *, start_key: bytes, end_key: bytes, limit: int) -> list[Any]:
+    def read_rows(
+        self,
+        *,
+        start_key: bytes,
+        end_key: bytes,
+        limit: int,
+        **_kwargs: Any,
+    ) -> list[Any]:
         with self.lock:
             self.reads.append((start_key, end_key, limit))
             keys = [key for key in sorted(self.rows) if start_key <= key < end_key]
@@ -1051,17 +1195,35 @@ class _FakeDirectRow:
         self.table = table
         self.cells: dict[str, dict[bytes, list[Any]]] = {}
 
-    def set_cell(self, family: str, qualifier: bytes, value: bytes) -> None:
+    def set_cell(
+        self,
+        family: str,
+        qualifier: bytes,
+        value: bytes,
+        timestamp: Any | None = None,
+    ) -> None:
+        _ = timestamp
         self.cells.setdefault(family, {})[qualifier] = [_FakeCell(value)]
 
     def commit(self) -> None:
         with self.table.lock:
             self.table.committed.append(self.key)
-            self.table.rows[self.key] = self.cells
+            merged = {
+                family: {
+                    qualifier: list(cells)
+                    for qualifier, cells in qualifiers.items()
+                }
+                for family, qualifiers in self.table.rows.get(self.key, {}).items()
+            }
+            for family, qualifiers in self.cells.items():
+                merged.setdefault(family, {}).update(qualifiers)
+            self.table.rows[self.key] = merged
 
 
 def make_fake_store(
-    *, ready_barrier: threading.Barrier | None = None
+    *,
+    ready_barrier: threading.Barrier | None = None,
+    request_record_write_mode: str = "legacy",
 ) -> tuple[Any, FakeSpannerDatabase, FakeBigtableTable]:
     from trusted_router.storage_gcp import SpannerBigtableStore
     from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -1085,6 +1247,7 @@ def make_fake_store(
     store._param_types = _ParamTypes
     store._database = db
     store._bt_table = bt
+    store.request_record_write_mode = request_record_write_mode
     from trusted_router.storage_gcp_credit_shards import CreditShardCountCache
 
     store._credit_shard_counts = CreditShardCountCache()
@@ -1105,7 +1268,9 @@ def make_fake_store(
     store.generation_store = SpannerGenerations(
         io,
         bt_table=bt,
-        generation_family=store.generation_family,
+        activity_family=store.activity_family,
+        benchmark_family=store.benchmark_family,
+        legacy_family=store.legacy_generation_family,
         add_usage_to_key=store.api_keys.add_usage,
     )
     store.byok_store = SpannerByok(io)

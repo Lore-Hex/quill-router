@@ -181,6 +181,12 @@ class Settings(BaseSettings):
     # a billing prod-behavior change — flip deliberately, per the design's
     # rollout section, after the shadow metrics are clean.
     settle_outbox_enabled: bool = False
+    # Expand/contract switch for per-request Spanner records. ``legacy`` keeps
+    # writing gateway authorizations and generation repair rows to tr_entities
+    # while every region learns to read the typed table. ``typed`` moves new
+    # authorizations to tr_gateway_authorization and uses the settle outbox as
+    # the bounded repair source for Bigtable activity metadata.
+    request_record_write_mode: str = "legacy"
     # Bigtable application profile name. The default profile uses
     # single-cluster routing; `tr-multi` enables
     # multi-cluster-routing-use-any once we have ≥3 BT clusters
@@ -282,6 +288,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_GOOGLE_ADS_CONVERSION_FEED_RETENTION_DAYS must be between 1 and 90"
             )
+        if self.request_record_write_mode not in {"legacy", "typed"}:
+            raise ValueError(
+                "TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'"
+            )
         if self.google_ads_conversion_feed_max_rows < 1:
             raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_MAX_ROWS must be positive")
         if ":" in self.google_ads_conversion_feed_username:
@@ -326,6 +336,11 @@ class Settings(BaseSettings):
                 missing.append("TR_SPANNER_DATABASE_ID")
             if not self.bigtable_instance_id:
                 missing.append("TR_BIGTABLE_INSTANCE_ID")
+        if self.request_record_write_mode == "typed" and not self.settle_outbox_enabled:
+            missing.append(
+                "TR_SETTLE_OUTBOX_ENABLED=true when "
+                "TR_REQUEST_RECORD_WRITE_MODE=typed"
+            )
         if not self.byok_kms_key_name:
             missing.append("TR_BYOK_KMS_KEY_NAME")
         # OAuth providers are independently optional in production. We DO

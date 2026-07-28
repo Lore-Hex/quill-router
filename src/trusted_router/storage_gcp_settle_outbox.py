@@ -19,6 +19,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from trusted_router.storage_gcp_counter_dml import complete_reservation_retention
+from trusted_router.storage_gcp_request_records import (
+    complete_gateway_authorization_retention,
+)
 from trusted_router.storage_models import SettleOutboxRow
 
 # Column order shared by INSERT and the row-tuple SELECTs (keep in sync with the
@@ -41,6 +45,7 @@ OUTBOX_COLUMNS = [
     "leased_until",
     "created_at",
     "updated_at",
+    "terminal_at",
 ]
 
 # Statuses that must FREEZE the hold — the reaper may not free-release a
@@ -104,6 +109,7 @@ def _row_from_tuple(values: Any) -> SettleOutboxRow:
         leased_until=_ts_str(d["leased_until"]),
         created_at=_ts_str(d["created_at"]) or "",
         updated_at=_ts_str(d["updated_at"]),
+        terminal_at=_ts_str(d["terminal_at"]),
     )
 
 
@@ -162,6 +168,7 @@ class SpannerSettleOutbox:
                 "leased_until": None,
                 "created_at": now,
                 "updated_at": now,
+                "terminal_at": None,
             }
             types = {
                 "authorization_id": pt.STRING, "intent_kind": pt.STRING,
@@ -172,6 +179,7 @@ class SpannerSettleOutbox:
                 "last_error": pt.STRING, "next_attempt_at": pt.TIMESTAMP,
                 "lease_owner": pt.STRING, "leased_until": pt.TIMESTAMP,
                 "created_at": pt.TIMESTAMP, "updated_at": pt.TIMESTAMP,
+                "terminal_at": pt.TIMESTAMP,
             }
             transaction.execute_update(
                 f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
@@ -305,36 +313,55 @@ class SpannerSettleOutbox:
 
         def txn(transaction: Any) -> str | None:
             rows = list(transaction.execute_sql(
-                "SELECT attempts, lease_owner FROM tr_settle_outbox "
+                "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
                 "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
                 params={"aid": authorization_id, "kind": intent_kind},
                 param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
             ))
             if not rows:
                 return None
-            attempts, cur_owner = int(rows[0][0] or 0), rows[0][1]
+            attempts, cur_owner, reservation_id = (
+                int(rows[0][0] or 0),
+                rows[0][1],
+                rows[0][2],
+            )
             if lease_owner is not None and cur_owner not in (None, lease_owner):
                 return None  # lost the lease to another worker
             next_attempts = attempts + 1
             if done:
-                new_status, next_at, err = "done", None, None
+                new_status, next_at, err, terminal_at = "done", None, None, now
             elif force_dead:
-                new_status, next_at, err = "dead", None, (error or "drain failed")[:1000]
+                new_status, next_at, err, terminal_at = (
+                    "dead",
+                    None,
+                    (error or "drain failed")[:1000],
+                    None,
+                )
             elif next_attempts >= max_attempts:
-                new_status, next_at, err = "dead", None, (error or "drain failed")[:1000]
+                new_status, next_at, err, terminal_at = (
+                    "dead",
+                    None,
+                    (error or "drain failed")[:1000],
+                    None,
+                )
             else:
                 new_status = "pending"
                 next_at = _iso_after_seconds(_backoff_seconds(next_attempts))
                 err = (error or "drain failed")[:1000]
+                terminal_at = None
             updated = transaction.execute_update(
                 "UPDATE tr_settle_outbox SET status=@status, attempts=@attempts, "
                 "last_error=@err, next_attempt_at=@next_at, lease_owner=NULL, "
-                "leased_until=NULL, updated_at=@now WHERE authorization_id=@aid "
+                "leased_until=NULL, updated_at=@now, terminal_at=@terminal_at, "
+                "settle_body=IF(@done, CAST(NULL AS STRING), settle_body) "
+                "WHERE authorization_id=@aid "
                 "AND intent_kind=@kind AND status='pending' "
                 "AND (lease_owner IS NULL OR lease_owner=@lease_owner)",
                 params={
                     "status": new_status, "attempts": next_attempts, "err": err,
                     "next_at": next_at, "now": now,
+                    "terminal_at": terminal_at,
+                    "done": done,
                     "aid": authorization_id, "kind": intent_kind,
                     "lease_owner": lease_owner,
                 },
@@ -343,9 +370,27 @@ class SpannerSettleOutbox:
                     "err": self._pt.STRING, "next_at": self._pt.TIMESTAMP,
                     "now": self._pt.TIMESTAMP, "aid": self._pt.STRING,
                     "kind": self._pt.STRING, "lease_owner": self._pt.STRING,
+                    "terminal_at": self._pt.TIMESTAMP,
+                    "done": self._pt.BOOL,
                 },
             )
-            return new_status if updated == 1 else None
+            if updated != 1:
+                return None
+            if done:
+                complete_gateway_authorization_retention(
+                    transaction,
+                    self._pt,
+                    authorization_id,
+                    terminal_at=now,
+                )
+                if reservation_id:
+                    complete_reservation_retention(
+                        transaction,
+                        self._pt,
+                        str(reservation_id),
+                        terminal_at=now,
+                    )
+            return new_status
 
         return self._database.run_in_transaction(txn)
 
@@ -425,21 +470,14 @@ class SpannerSettleOutbox:
         return _row_from_tuple(rows[0]) if rows else None
 
     def purge_done(self, *, older_than_days: int = 30) -> int:
-        cutoff = (
-            datetime.now(UTC).replace(microsecond=0) - timedelta(days=int(older_than_days))
-        ).isoformat().replace("+00:00", "Z")
+        """Compatibility no-op; Spanner TTL owns bounded terminal cleanup.
 
-        def txn(transaction: Any) -> int:
-            # Done is the only safe-to-delete status: pending/dead/release_approved
-            # guard or document holds, and release_approved cleanup stays manual.
-            return transaction.execute_update(
-                "DELETE FROM tr_settle_outbox WHERE status='done' "
-                "AND updated_at < @cutoff",
-                params={"cutoff": cutoff},
-                param_types={"cutoff": self._pt.TIMESTAMP},
-            )
-
-        return int(self._database.run_in_transaction(txn))
+        Existing production rows intentionally retain ``terminal_at=NULL`` and
+        are not deleted by this rollout. The argument remains to avoid breaking
+        older drain callers during the rolling deployment.
+        """
+        _ = older_than_days
+        return 0
 
 
 def _is_already_exists(exc: Exception) -> bool:

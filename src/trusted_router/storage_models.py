@@ -245,6 +245,9 @@ class SettleOutboxRow:
     leased_until: str | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str | None = None
+    # NULL while unresolved. Spanner row deletion policies ignore NULL, so a
+    # pending/dead row can never expire before settlement repair is complete.
+    terminal_at: str | None = None
 
 
 @dataclass
@@ -328,6 +331,13 @@ class GatewayAuthorization:
         # is always a UsageType at runtime regardless of construction path.
         if not isinstance(self.usage_type, UsageType):
             self.usage_type = UsageType.coerce(self.usage_type)
+
+
+@dataclass(frozen=True)
+class TypedFinalizeResult:
+    finalized: bool
+    activity_indexed: bool
+    request_record_typed: bool = False
 
 
 @dataclass
@@ -489,8 +499,11 @@ class Generation:
         if _is_synthetic_metadata(body.get("metadata")):
             app = "TrustedRouter Synthetic"
         return cls(
-            id=f"gen-{uuid.uuid4().hex}",
-            request_id=str(body.get("request_id") or f"req-{uuid.uuid4()}"),
+            id=generation_id_for_authorization(authorization.id),
+            request_id=str(
+                body.get("request_id")
+                or f"req-{uuid.uuid5(uuid.NAMESPACE_URL, authorization.id)}"
+            ),
             workspace_id=authorization.workspace_id,
             key_hash=authorization.key_hash,
             model=model_id or authorization.model_id,
@@ -507,7 +520,10 @@ class Generation:
             usage_estimated=bool(body.get("usage_estimated", False)),
             cached_input_tokens=int(body.get("cached_input_tokens") or body.get("cached_tokens") or 0),
             reasoning_tokens=int(body.get("reasoning_tokens") or 0),
-            tool_calls=_coerce_tool_calls(body.get("tool_calls")),
+            # Tool-call arguments are model output content, not activity
+            # metadata. The attested gateway returns them to the caller but the
+            # control-plane activity index never persists them.
+            tool_calls=None,
             provider=provider,
             elapsed_milliseconds=_seconds_to_milliseconds(elapsed),
             first_token_milliseconds=(
@@ -529,6 +545,7 @@ class Generation:
             app_categories=[str(item) for item in body.get("app_categories") or []],
             tags=dict(authorization.tags),
             operator_cost_microdollars=operator_cost_microdollars,
+            created_at=authorization.created_at,
         )
 
     def to_openrouter_generation(self) -> dict[str, Any]:
@@ -570,6 +587,17 @@ class Generation:
             "usage_type": self.usage_type,
             "usage_estimated": self.usage_estimated,
         }
+
+
+def generation_id_for_authorization(authorization_id: str) -> str:
+    """Return the stable generation id for one gateway authorization.
+
+    Settlement can commit while its HTTP response is lost.  The durable outbox
+    then rebuilds and re-indexes the same metadata.  A deterministic id makes
+    that repair idempotent in Bigtable instead of creating duplicate activity
+    rows on every replay.
+    """
+    return f"gen-{uuid.uuid5(uuid.NAMESPACE_URL, f'trustedrouter:{authorization_id}').hex}"
 
 
 # Redaction for provider error strings persisted on benchmark samples. Shared
@@ -634,7 +662,7 @@ class ProviderBenchmarkSample:
     @classmethod
     def from_generation(cls, generation: Generation) -> ProviderBenchmarkSample:
         return cls(
-            id=f"bench-{uuid.uuid4().hex}",
+            id=f"bench-{uuid.uuid5(uuid.NAMESPACE_URL, generation.id).hex}",
             model=generation.model,
             provider=generation.provider or _provider_from_model_id(generation.model),
             provider_name=generation.provider_name,

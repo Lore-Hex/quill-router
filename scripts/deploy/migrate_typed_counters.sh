@@ -133,6 +133,7 @@ if table_exists tr_reservation; then log "tr_reservation exists, skip"; else
     idempotency_fingerprint STRING(64),
     created_at TIMESTAMP OPTIONS (allow_commit_timestamp=true),
     expires_at TIMESTAMP,
+    terminal_at TIMESTAMP,
   ) PRIMARY KEY (reservation_id)"
 fi
 
@@ -217,6 +218,7 @@ if table_exists tr_settle_outbox; then log "tr_settle_outbox exists, skip"; else
     leased_until TIMESTAMP,
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
+    terminal_at TIMESTAMP,
   ) PRIMARY KEY (authorization_id, intent_kind)"
 fi
 

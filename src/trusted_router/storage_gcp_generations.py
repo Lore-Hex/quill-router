@@ -1,13 +1,16 @@
-"""Spanner-backed generation log + Bigtable activity index.
+"""Bigtable activity index with a legacy Spanner compatibility path.
 
-Sibling of InMemoryGenerations. add() runs:
+Sibling of InMemoryGenerations. The general ``add()`` path remains compatible
+with non-gateway callers and rolling legacy records:
   1. add_usage_to_key — roll cost into per-key counters (own txn).
   2. Spanner txn — generation row + workspace index entry.
-  3. Bigtable activity-index write (best-effort, repairable from Spanner).
+  3. Bigtable activity-index write.
   4. Provider-benchmark sample (Bigtable, best-effort).
 
-The user-facing reads (activity, activity_events) come from the Bigtable
-index, not Spanner."""
+The high-volume gateway path does not call ``add()``. Billing settles in typed
+Spanner tables and writes bounded Bigtable metadata directly. Its durable
+settle outbox retains repair inputs until ``index_after_commit`` succeeds.
+User-facing reads prefer bounded families and fall back to legacy cells."""
 
 from __future__ import annotations
 
@@ -26,6 +29,9 @@ from trusted_router.storage_activity import (
 )
 from trusted_router.storage_gcp_activity_index import (
     activity_generations as _bt_activity_generations,
+)
+from trusted_router.storage_gcp_activity_index import (
+    generation_by_id as _bt_generation_by_id,
 )
 from trusted_router.storage_gcp_activity_index import (
     iter_activity_generations as _bt_iter_activity_generations,
@@ -68,12 +74,29 @@ class SpannerGenerations:
         io: SpannerIO,
         *,
         bt_table: Any,
-        generation_family: str,
+        generation_family: str | None = None,
+        activity_family: str | None = None,
+        benchmark_family: str | None = None,
+        legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
     ) -> None:
         self._io = io
         self._bt_table = bt_table
-        self._family = generation_family
+        legacy = legacy_family or generation_family or "m"
+        self._activity_family = activity_family or generation_family or legacy
+        self._benchmark_family = benchmark_family or generation_family or legacy
+        self._legacy_family = legacy
+        # Retain the historical attribute for internal test doubles and rolling
+        # code that still constructs this adapter with one shared family.
+        self._family = legacy
+        self._activity_read_families = _ordered_families(
+            self._activity_family,
+            legacy,
+        )
+        self._benchmark_read_families = _ordered_families(
+            self._benchmark_family,
+            legacy,
+        )
         self._add_usage_to_key = add_usage_to_key
 
     def add(self, generation: Generation) -> None:
@@ -97,13 +120,17 @@ class SpannerGenerations:
         self._io.database.run_in_transaction(txn)
         self.index_after_commit(generation)
 
-    def index_after_commit(self, generation: Generation) -> None:
-        # Spanner is the source of truth for billing and generation metadata.
-        # Bigtable is the activity index optimized for high-volume reads;
-        # this post-transaction write is intentionally idempotent and can
-        # be repaired from generation_by_workspace if the process crashes.
+    def index_after_commit(self, generation: Generation) -> bool:
+        # Spanner remains the source of truth for billing. Bigtable owns bounded
+        # per-request activity metadata. Gateway callers retain a durable outbox
+        # row until this idempotent write succeeds; legacy add() callers can
+        # still repair from generation_by_workspace.
         try:
-            _bt_write_generation(self._bt_table, self._family, generation)
+            _bt_write_generation(
+                self._bt_table,
+                self._activity_family,
+                generation,
+            )
         except Exception as exc:
             log.exception(
                 "bigtable.activity_index_write_failed",
@@ -119,15 +146,30 @@ class SpannerGenerations:
                     "repairable_via": "reconcile_activity()",
                 },
             )
+            activity_indexed = False
+        else:
+            activity_indexed = True
         if generation.app != "TrustedRouter Synthetic":
             self.record_benchmark(ProviderBenchmarkSample.from_generation(generation))
+        return activity_indexed
 
     def get(self, generation_id: str) -> Generation | None:
+        generation = _bt_generation_by_id(
+            self._bt_table,
+            self._activity_families(),
+            generation_id,
+        )
+        if generation is not None:
+            return generation
         return self._io.read_entity("generation", generation_id, Generation)
 
     def record_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         try:
-            _bt_write_provider_benchmark(self._bt_table, self._family, sample)
+            _bt_write_provider_benchmark(
+                self._bt_table,
+                self._benchmark_family,
+                sample,
+            )
         except Exception as exc:
             log.exception(
                 "bigtable.benchmark_index_write_failed",
@@ -153,7 +195,7 @@ class SpannerGenerations:
     ) -> list[ProviderBenchmarkSample]:
         return _bt_provider_benchmark_samples(
             self._bt_table,
-            self._family,
+            self._benchmark_families(),
             date=date,
             provider=provider,
             model=model,
@@ -364,7 +406,7 @@ class SpannerGenerations:
     ) -> dict[str, Any]:
         return _bt_usage_series(
             self._bt_table,
-            self._family,
+            self._activity_families(),
             workspace_id,
             start_day=start_day,
             end_day=end_day,
@@ -389,7 +431,11 @@ class SpannerGenerations:
             if generation is None:
                 continue
             try:
-                _bt_write_generation(self._bt_table, self._family, generation)
+                _bt_write_generation(
+                    self._bt_table,
+                    self._activity_family,
+                    generation,
+                )
                 repaired += 1
             except Exception as exc:
                 log.exception(
@@ -418,7 +464,7 @@ class SpannerGenerations:
     ) -> list[Generation]:
         return _bt_activity_generations(
             self._bt_table,
-            self._family,
+            self._activity_families(),
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
@@ -435,11 +481,25 @@ class SpannerGenerations:
     ) -> Iterator[Generation]:
         return _bt_iter_activity_generations(
             self._bt_table,
-            self._family,
+            self._activity_families(),
             workspace_id,
             api_key_hash=api_key_hash,
             date=date,
             limit=limit,
+        )
+
+    def _activity_families(self) -> tuple[str, ...]:
+        return getattr(
+            self,
+            "_activity_read_families",
+            (getattr(self, "_family", "m"),),
+        )
+
+    def _benchmark_families(self) -> tuple[str, ...]:
+        return getattr(
+            self,
+            "_benchmark_read_families",
+            (getattr(self, "_family", "m"),),
         )
 
     def _tagged_activity_result(
@@ -555,3 +615,7 @@ def _activity_tag_cache_key(
     tag_value: str | None,
 ) -> storage_activity.ActivityTagCacheKey:
     return (workspace_id, api_key_hash, date, group_by, limit, tag_key, tag_value)
+
+
+def _ordered_families(primary: str, legacy: str) -> tuple[str, ...]:
+    return (primary,) if primary == legacy else (primary, legacy)
