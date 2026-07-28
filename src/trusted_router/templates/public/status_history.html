@@ -16,6 +16,7 @@
 
 {% block body %}
 {% set rollup = history.data %}
+{% set router_slo = snapshot.slo_classes["router_core"] %}
 <section class="status-page status-history-page">
   <div class="status-banner status-{{ snapshot.overall_status_class }}">
     <div>
@@ -23,11 +24,12 @@
       <p>{{ snapshot.summary.detail }}</p>
     </div>
     <div class="status-banner-metrics">
-      <span>{{ snapshot.overall_status_label }}</span>
-      <strong>{% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</strong>
-      <small>In region gateway overhead p50, {{ snapshot.headline_metrics.window }}</small>
+      <span>{{ snapshot.overall_status_label }} · Router Core</span>
+      <strong>{{ router_slo.target_uptime_percent }}%</strong>
+      <small>Availability target</small>
+      <small>In region gateway overhead p50: {% if snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds %}{{ snapshot.headline_metrics.in_region_gateway_overhead_p50_milliseconds }} ms{% else %}n/a{% endif %}</small>
       {% if snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds %}
-      <small>Global observed p50 {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
+      <small>Global observed gateway p50: {{ snapshot.headline_metrics.global_gateway_overhead_p50_milliseconds }} ms</small>
       {% endif %}
     </div>
   </div>

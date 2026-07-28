@@ -11,13 +11,11 @@ ROUTER_CORE_PROBES = {
     "gateway_authorize_settle",
     "provider_fallback",
 }
-PROVIDER_EFFECTIVE_PROBES = {"openai_sdk_pong", "responses_pong"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
 IMAGE_GENERATION_PROBES = {"image_generation"}
 
 SLO_PROBES: dict[str, set[str]] = {
     "router_core": ROUTER_CORE_PROBES,
-    "provider_effective": PROVIDER_EFFECTIVE_PROBES,
     "control_plane": CONTROL_PLANE_PROBES,
 }
 
@@ -29,11 +27,6 @@ SLO_DEFINITIONS: tuple[dict[str, str], ...] = (
             "Attested TLS, authorization, route candidates, provider fallback, "
             "and settlement/refund durability."
         ),
-    },
-    {
-        "id": "provider_effective",
-        "name": "Provider Effective",
-        "description": "Successful model responses after fallback has selected a provider.",
     },
     {
         "id": "control_plane",

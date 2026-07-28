@@ -5,7 +5,7 @@ monitor pages, find the matching section and follow the steps. Every entry
 came from a real incident; the linked commits are the receipts.
 
 Index:
-- [Router-core 5 9s page fires](#router-core-page)
+- [Router-core four-nines page fires](#router-core-page)
 - [Drain or disable one gateway region](#region-drain)
 - [Spanner or Bigtable is degraded](#storage-degraded)
 - [Provider returns 502 "provider error" via the gateway](#provider-502)
@@ -29,7 +29,7 @@ Index:
 
 ---
 
-## <a id="router-core-page"></a>Router-core 5 9s page fires
+## <a id="router-core-page"></a>Router-core four-nines page fires
 
 Scope first: router-core means attested TLS reachability, API key validation,
 gateway authorization, route-candidate fallback, and durable settle/refund. It
@@ -78,8 +78,8 @@ Provider emergency disable:
 2. Confirm `trustedrouter/auto`, `trustedrouter/cheap`, and
    `trustedrouter/monitor` still have at least three independent candidates if
    they are advertised as high availability.
-3. Watch `provider_effective`, not `router_core`, for the remaining provider
-   impact.
+3. Watch the affected provider row on `/status` and `/leaderboard`, not
+   `router_core`, for the remaining provider impact.
 
 ## <a id="storage-degraded"></a>Spanner or Bigtable is degraded
 

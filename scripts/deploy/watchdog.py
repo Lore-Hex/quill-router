@@ -148,10 +148,8 @@ def main() -> int:
     parser.add_argument(
         "--slo-class",
         default="router_core",
-        help=(
-            "SLO class to evaluate for rollback. Default router_core; "
-            "use provider_effective only when intentionally gating on upstream responses."
-        ),
+        choices=("router_core", "control_plane"),
+        help="SLO class to evaluate for rollback. Default: router_core.",
     )
     parser.add_argument(
         "--baseline-grace-sec",
