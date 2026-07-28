@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 PHALA_JULY_2026_EFFECTIVE_AT = datetime(2026, 7, 29, 18, 0, tzinfo=UTC)
 TOGETHER_MINIMAX_M27_RETIREMENT_AT = datetime(2026, 7, 27, 0, 0, tzinfo=UTC)
 BASETEN_JULY_2026_RETIREMENT_AT = datetime(2026, 7, 25, 0, 0, tzinfo=UTC)
+TINFOIL_KIMI_K26_RETIREMENT_AT = datetime(2026, 8, 3, 0, 0, tzinfo=UTC)
 PARASAIL_AUGUST_2026_RETIREMENT_AT = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
 FRIENDLI_QWEN3_235B_RETIREMENT_AT = datetime(2026, 8, 5, 0, 0, tzinfo=UTC)
 
@@ -55,6 +56,17 @@ _RETIREMENTS = (
             }
         ),
         effective_at=BASETEN_JULY_2026_RETIREMENT_AT,
+    ),
+    # Tinfoil announced that Kimi K2.6 retires on 2026-08-03 and that Kimi K3
+    # is still being prepared. The notice did not specify a time zone, so use
+    # 00:00 UTC as the conservative cutover. Other K2.6 providers are
+    # unaffected, and Tinfoil K3 must not be advertised until its live model
+    # feed publishes the route.
+    _Retirement(
+        provider="tinfoil",
+        model_ids=frozenset({"moonshotai/kimi-k2.6"}),
+        upstream_ids=frozenset({"kimi-k2-6"}),
+        effective_at=TINFOIL_KIMI_K26_RETIREMENT_AT,
     ),
     # Parasail announced that these three serverless routes retire on
     # 2026-08-04. The notice did not specify a time zone, so use 00:00 UTC as
