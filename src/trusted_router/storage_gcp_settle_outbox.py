@@ -197,17 +197,9 @@ class SpannerSettleOutbox:
             # An outbox intent is durable repair work: keep both referenced
             # records TTL-ineligible. This also re-disarms retention if a reaper
             # armed it immediately before this enqueue committed.
-            clear_gateway_authorization_retention(
-                transaction,
-                pt,
-                row.authorization_id,
+            self._defer_retention(
+                transaction, row.authorization_id, row.reservation_id
             )
-            if row.reservation_id:
-                clear_reservation_retention(
-                    transaction,
-                    pt,
-                    row.reservation_id,
-                )
 
         try:
             self._database.run_in_transaction(insert_txn)
@@ -255,17 +247,9 @@ class SpannerSettleOutbox:
             if refreshed == 1:
                 # Refresh is an outstanding intent too, so its referenced
                 # records must remain ineligible for retention TTL.
-                clear_gateway_authorization_retention(
-                    transaction,
-                    pt,
-                    row.authorization_id,
+                self._defer_retention(
+                    transaction, row.authorization_id, row.reservation_id
                 )
-                if row.reservation_id:
-                    clear_reservation_retention(
-                        transaction,
-                        pt,
-                        row.reservation_id,
-                    )
             return refreshed
 
         refreshed = self._database.run_in_transaction(refresh_txn)
@@ -443,6 +427,12 @@ class SpannerSettleOutbox:
                             str(reservation_id),
                             terminal_at=now,
                         )
+                else:
+                    # Skipping the arm is not enough: a winning claim (or a
+                    # rolling legacy finalize) may have ALREADY armed terminal_at
+                    # after this row was enqueued, so the shared records would
+                    # stay TTL-eligible while the sibling intent is outstanding.
+                    self._defer_retention(transaction, authorization_id, reservation_id)
             else:
                 # Non-terminal outcome (backoff to pending, or dead awaiting a
                 # human): repair work is still outstanding, so the referenced
@@ -451,20 +441,30 @@ class SpannerSettleOutbox:
                 # terminal_at on the reservation at claim time, so a row that
                 # later goes dead would otherwise keep a 30-day fuse on the very
                 # records its freeze exists to preserve.
-                clear_gateway_authorization_retention(
-                    transaction,
-                    self._pt,
-                    authorization_id,
-                )
-                if reservation_id:
-                    clear_reservation_retention(
-                        transaction,
-                        self._pt,
-                        str(reservation_id),
-                    )
+                self._defer_retention(transaction, authorization_id, reservation_id)
             return new_status
 
         return self._database.run_in_transaction(txn)
+
+    def _defer_retention(
+        self,
+        transaction: Any,
+        authorization_id: str,
+        reservation_id: Any,
+    ) -> None:
+        """Keep both referenced records TTL-ineligible.
+
+        THE INVARIANT: an outstanding (pending/dead) outbox intent always implies
+        its reservation and gateway authorization are ineligible for the 30-day
+        row-deletion policy — otherwise the frozen row outlives the very evidence
+        its freeze exists to preserve. Many paths ARM terminal_at (settle_atomic
+        does it on every winning claim, including the reaper's free-release, and
+        the flag-off settle path relies on that), so every path that leaves or
+        keeps an intent outstanding must disarm it here.
+        """
+        clear_gateway_authorization_retention(transaction, self._pt, authorization_id)
+        if reservation_id:
+            clear_reservation_retention(transaction, self._pt, str(reservation_id))
 
     def park(
         self,
@@ -481,7 +481,7 @@ class SpannerSettleOutbox:
 
         def txn(transaction: Any) -> bool:
             rows = list(transaction.execute_sql(
-                "SELECT attempts, lease_owner FROM tr_settle_outbox "
+                "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox "
                 "WHERE authorization_id=@aid AND intent_kind=@kind AND status='pending'",
                 params={"aid": authorization_id, "kind": intent_kind},
                 param_types={"aid": self._pt.STRING, "kind": self._pt.STRING},
@@ -489,6 +489,7 @@ class SpannerSettleOutbox:
             if not rows:
                 return False
             attempts, cur_owner = int(rows[0][0] or 0), rows[0][1]
+            parked_reservation_id = rows[0][2]
             if lease_owner is not None and cur_owner not in (None, lease_owner):
                 return False
             # §6: park != failure. A whole typed-backend outage must not walk
@@ -513,7 +514,13 @@ class SpannerSettleOutbox:
                     "lease_owner": self._pt.STRING,
                 },
             )
-            return updated == 1
+            if updated != 1:
+                return False
+            # A parked row is still an outstanding intent, and park() is reached
+            # AFTER a winning claim may have armed retention (e.g. the settle
+            # committed but its activity index has not), so disarm here too.
+            self._defer_retention(transaction, authorization_id, parked_reservation_id)
+            return True
 
         return bool(self._database.run_in_transaction(txn))
 

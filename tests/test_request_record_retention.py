@@ -753,3 +753,74 @@ def test_dead_outbox_row_disarms_claim_armed_retention(
     assert dead.terminal_at is None
     assert database.reservations[reservation_id]["terminal_at"] is None
     assert database.gateway_authorizations[authorization.id]["terminal_at"] is None
+
+
+def test_parked_outbox_row_disarms_claim_armed_retention(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    """park() keeps an intent outstanding without burning attempts, and it is
+    reached AFTER a winning claim may have armed terminal_at (e.g. the settle
+    committed but its activity index has not). A repair that parks for 30 days
+    must not let the TTL delete the records it is repairing."""
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-parked-retention"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+
+    database.reservations[reservation_id]["terminal_at"] = "2026-07-27T00:00:00Z"
+    database.gateway_authorizations[authorization.id][
+        "terminal_at"
+    ] = "2026-07-27T00:00:00Z"
+
+    assert outbox.park(authorization.id, "settle", lease_owner=None) is True
+
+    parked = outbox.get(authorization.id, "settle")
+    assert parked is not None and parked.status == "pending"
+    assert database.reservations[reservation_id]["terminal_at"] is None
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is None
+
+
+def test_sibling_completion_clears_already_armed_retention(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    """Skipping the arm is not enough when terminal_at was ALREADY armed after
+    enqueue (a winning claim does that): completing one intent while a sibling
+    is still pending must actively disarm the shared records."""
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-sibling-prearmed"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+    assert outbox.enqueue(_outbox_row(authorization, "refund")) == "inserted"
+
+    database.reservations[reservation_id]["terminal_at"] = "2026-07-27T00:00:00Z"
+    database.gateway_authorizations[authorization.id][
+        "terminal_at"
+    ] = "2026-07-27T00:00:00Z"
+
+    assert outbox.mark(authorization.id, "settle", done=True) == "done"
+
+    assert outbox.get(authorization.id, "refund").status == "pending"
+    assert database.reservations[reservation_id]["terminal_at"] is None
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is None
