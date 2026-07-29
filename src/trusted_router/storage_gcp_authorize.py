@@ -554,22 +554,31 @@ _OUTBOX_AVAILABILITY_CACHE_LOCK = threading.Lock()
 _OUTBOX_AVAILABILITY_PROBE_LOCK = threading.Lock()
 
 
-def _outbox_cache_key(database: Any) -> str:
-    """Stable, hashable identity for a Spanner database.
+def _outbox_cache_key(database: Any) -> str | None:
+    """Stable identity for a Spanner database, or None to skip caching.
 
     `Database.name` is the fully-qualified `projects/.../databases/...` path:
-    unique per database and stable for the process. `id()` is only a fallback
-    for test doubles that lack it. Either way the cache is bounded by the
-    number of distinct databases a process talks to (one, in practice).
+    unique per database and stable for the process, so the cache is bounded by
+    the number of databases a process talks to (one, in practice).
+
+    A database WITHOUT a name is not cached at all. `id()` would be the obvious
+    fallback, but object addresses are REUSED after garbage collection, so a
+    destroyed double's entry could be inherited by an unrelated database and
+    select stale SQL — present-then-absent would emit guarded DML against a
+    missing table and break settlement. Only test doubles lack a name, and for
+    them the probe is an in-memory call, so re-probing is strictly cheaper than
+    that risk.
     """
     name = getattr(database, "name", None)
     if isinstance(name, str) and name:
         return name
-    return f"id:{id(database)}"
+    return None
 
 
 def _cached_outbox_availability(database: Any, *, now: float) -> bool | None:
     key = _outbox_cache_key(database)
+    if key is None:
+        return None
     with _OUTBOX_AVAILABILITY_CACHE_LOCK:
         cached = _OUTBOX_AVAILABILITY_CACHE.get(key)
         if cached is None:
@@ -587,12 +596,12 @@ def _remember_outbox_availability(
     available: bool,
     now: float,
 ) -> None:
+    key = _outbox_cache_key(database)
+    if key is None:
+        return
     expires_at = float("inf") if available else now + _OUTBOX_ABSENT_CACHE_SECONDS
     with _OUTBOX_AVAILABILITY_CACHE_LOCK:
-        _OUTBOX_AVAILABILITY_CACHE[_outbox_cache_key(database)] = (
-            available,
-            expires_at,
-        )
+        _OUTBOX_AVAILABILITY_CACHE[key] = (available, expires_at)
 
 
 def _outbox_table_available(database: Any, param_types: Any) -> bool:

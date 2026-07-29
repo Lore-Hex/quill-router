@@ -19,6 +19,7 @@ from tests.test_billing_typed_enforcement import (
     _seed_credit,
     _typed,
 )
+from trusted_router import storage_gcp_authorize as authorize_mod
 from trusted_router.storage_gcp_authorize import (
     _REAP_SCAN_GUARDED_SQL,
     _REAP_SCAN_SQL,
@@ -68,6 +69,15 @@ class _ProxySnapshot:
         if isinstance(replacement, str):
             sql = replacement
         return self._snapshot.execute_sql(sql, params=params, param_types=param_types)
+
+
+@pytest.fixture(autouse=True)
+def _clear_outbox_availability_cache() -> Any:
+    """The availability cache is a process-global dict keyed by database name, so
+    one test's cached present/absent verdict must not leak into another."""
+    authorize_mod._OUTBOX_AVAILABILITY_CACHE.clear()
+    yield
+    authorize_mod._OUTBOX_AVAILABILITY_CACHE.clear()
 
 
 class _ProxyDatabase:
@@ -324,6 +334,7 @@ def test_settle_claim_arms_retention_when_outbox_table_missing() -> None:
     first = _expired_authorization(store, ws="ws_missing_claim_first")
     second = _expired_authorization(store, ws="ws_missing_claim_second")
     proxied = _ProxyDatabase(store._database, missing_table)
+    proxied.name = "projects/p/instances/i/databases/missing-claim"
 
     for auth in (first, second):
         result = settle_atomic(
@@ -408,6 +419,7 @@ def test_absent_availability_cache_can_flip_to_present(
     before_ddl = _expired_authorization(store, ws="ws_before_outbox_ddl")
     after_ddl = _expired_authorization(store, ws="ws_after_outbox_ddl")
     proxied = _ProxyDatabase(store._database, changing_availability)
+    proxied.name = "projects/p/instances/i/databases/ddl-flip"
 
     first = settle_atomic(
         proxied,
@@ -613,8 +625,11 @@ def test_availability_cache_works_for_unhashable_database() -> None:
     whose fake database happens to be hashable. Key on a stable string instead.
     """
 
-    class UnhashableProxyDatabase(_ProxyDatabase):
-        # Mirror the production type: comparable but unhashable.
+    class UnhashableNamedProxyDatabase(_ProxyDatabase):
+        # Mirror the production type exactly: comparable, UNHASHABLE, and
+        # carrying the fully-qualified database path the cache keys on.
+        name = "projects/p/instances/i/databases/d"
+
         def __eq__(self, other: object) -> bool:
             return self is other
 
@@ -631,7 +646,7 @@ def test_availability_cache_works_for_unhashable_database() -> None:
     store, _db, _ = make_fake_store()
     first_auth = _expired_authorization(store, ws="ws_unhashable_first")
     second_auth = _expired_authorization(store, ws="ws_unhashable_second")
-    proxied = UnhashableProxyDatabase(store._database, count_probes)
+    proxied = UnhashableNamedProxyDatabase(store._database, count_probes)
     assert proxied.__hash__ is None
 
     for authorization in (first_auth, second_auth):
@@ -647,3 +662,38 @@ def test_availability_cache_works_for_unhashable_database() -> None:
 
     # One probe for the whole process, not one per settle.
     assert probe_calls == 1
+
+
+def test_nameless_database_is_not_cached_by_reusable_id() -> None:
+    """A database without a stable name is deliberately NOT cached: id() would be
+    the obvious key, but addresses are reused after GC, so a destroyed double's
+    entry could be inherited by an unrelated database and select stale SQL (a
+    present-then-absent flip would emit guarded DML against a missing table).
+    Re-probing an in-memory double is strictly cheaper than that risk."""
+    probe_calls = 0
+
+    def count_probes(sql: str) -> None:
+        nonlocal probe_calls
+        if sql == GUARD_COUNT_SQL:
+            probe_calls += 1
+        return None
+
+    store, _db, _ = make_fake_store()
+    first = _expired_authorization(store, ws="ws_nameless_first")
+    second = _expired_authorization(store, ws="ws_nameless_second")
+    proxied = _ProxyDatabase(store._database, count_probes)
+    assert getattr(proxied, "name", None) is None
+
+    for authorization in (first, second):
+        result = settle_atomic(
+            proxied,
+            store._param_types,
+            reservation_id=authorization["reservation_id"],
+            actual_micro=900_000,
+            settled_usage_type="Credits",
+            success=True,
+        )
+        assert result["outcome"] == SettleOutcome.SETTLED
+
+    # Probed each time rather than trusting a reusable-id cache entry.
+    assert probe_calls == 2
