@@ -611,8 +611,11 @@ def test_embeddings_and_model_endpoints(
         for item in openai_endpoints
         if item["provider"] == "openai"
     }
-    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is False
-    assert openai_by_usage["Credits"]["zero_data_retention_scope"] is None
+    assert openai_by_usage["Credits"]["provider_zero_data_retention"] is True
+    assert (
+        openai_by_usage["Credits"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
     assert openai_by_usage["BYOK"]["provider_zero_data_retention"] is False
     assert openai_by_usage["BYOK"]["zero_data_retention_scope"] is None
 
@@ -1101,9 +1104,12 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     # for debugging/security and therefore must not satisfy strict ZDR routing.
     assert provider_flags["deepinfra"]["provider_zero_data_retention"] is False
     assert provider_flags["openai"]["provider_zero_data_retention"] is False
-    assert provider_flags["openai"]["prepaid_zero_data_retention"] is False
+    assert provider_flags["openai"]["prepaid_zero_data_retention"] is True
     assert provider_flags["openai"]["prepaid_zero_data_retention_effective_on"] == ("2026-07-28")
-    assert provider_flags["openai"]["zero_data_retention_scope"] is None
+    assert (
+        provider_flags["openai"]["zero_data_retention_scope"]
+        == "trustedrouter_prepaid"
+    )
     assert provider_flags["google-ai-studio"]["provider_zero_data_retention"] is False
     assert provider_flags["google-ai-studio"]["supports_byok"] is True
     assert provider_flags["google-vertex"]["provider_zero_data_retention"] is False
@@ -1119,6 +1125,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert "Not currently marked ZDR" in provider_flags["anthropic"]["provider_policy"]
     assert "Contracted Zero Data Retention" in provider_flags["openai"]["provider_policy"]
     assert "July 28, 2026" in provider_flags["openai"]["provider_policy"]
+    assert "verified on July 29, 2026" in provider_flags["openai"]["provider_policy"]
     assert "customer BYOK" in provider_flags["openai"]["provider_policy"]
     assert "Not currently marked ZDR" in provider_flags["google-ai-studio"]["provider_policy"]
     assert "contractual Zero Data Retention" in provider_flags["google-vertex"][
@@ -1176,7 +1183,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert "anthropic" not in zdr_providers
     assert "google-ai-studio" not in zdr_providers
     assert "google-vertex" in zdr_providers
-    assert "openai" not in zdr_providers
+    assert "openai" in zdr_providers
     assert "deepseek" not in zdr_providers
     assert "gmi" not in zdr_providers
     vertex_zdr = [item for item in zdr if item["provider"] == "google-vertex"]
@@ -1185,6 +1192,13 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
     assert all(
         item["zero_data_retention_scope"] == "trustedrouter_prepaid"
         for item in vertex_zdr
+    )
+    openai_zdr = [item for item in zdr if item["provider"] == "openai"]
+    assert openai_zdr
+    assert all(item["prepaid_zero_data_retention"] is True for item in openai_zdr)
+    assert all(
+        item["zero_data_retention_scope"] == "trustedrouter_prepaid"
+        for item in openai_zdr
     )
     credits = client.get("/v1/credits", headers=user_headers)
     assert credits.status_code == 200

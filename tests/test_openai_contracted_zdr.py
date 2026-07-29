@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
 
 from trusted_router.catalog import (
     MODELS,
@@ -33,31 +30,20 @@ def _first_party_openai_endpoints() -> tuple[ModelEndpoint, ModelEndpoint]:
     return credits, byok
 
 
-def _activate_openai_prepaid_zdr(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setitem(
-        PROVIDERS,
-        "openai",
-        replace(PROVIDERS["openai"], prepaid_zero_data_retention=True),
-    )
-
-
-def test_openai_zdr_contract_is_scheduled_but_not_active() -> None:
+def test_openai_zdr_contract_is_active_for_managed_prepaid_only() -> None:
     provider = PROVIDERS["openai"]
     credits, byok = _first_party_openai_endpoints()
 
     assert provider.provider_zero_data_retention is False
-    assert provider.prepaid_zero_data_retention is False
+    assert provider.prepaid_zero_data_retention is True
     assert provider.prepaid_zero_data_retention_effective_on == "2026-07-28"
-    assert endpoint_zero_data_retention(credits) is False
-    assert endpoint_privacy_tier(credits) == PRIVACY_TIER_STANDARD
+    assert endpoint_zero_data_retention(credits) is True
+    assert endpoint_privacy_tier(credits) == PRIVACY_TIER_ZERO_RETENTION
     assert endpoint_zero_data_retention(byok) is False
     assert endpoint_privacy_tier(byok) == PRIVACY_TIER_STANDARD
 
 
-def test_openai_zdr_activation_is_scoped_to_trustedrouter_prepaid_routes(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _activate_openai_prepaid_zdr(monkeypatch)
+def test_openai_zdr_activation_is_scoped_to_trustedrouter_prepaid_routes() -> None:
     credits, byok = _first_party_openai_endpoints()
 
     assert endpoint_zero_data_retention(credits) is True
@@ -66,10 +52,7 @@ def test_openai_zdr_activation_is_scoped_to_trustedrouter_prepaid_routes(
     assert endpoint_privacy_tier(byok) == PRIVACY_TIER_STANDARD
 
 
-def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _activate_openai_prepaid_zdr(monkeypatch)
+def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok() -> None:
     provider_shape = provider_to_openrouter_shape(PROVIDERS["openai"])
     assert provider_shape["provider_zero_data_retention"] is False
     assert provider_shape["prepaid_zero_data_retention"] is True
@@ -88,10 +71,7 @@ def test_openai_catalog_metadata_does_not_extend_tr_contract_to_byok(
     assert by_usage["BYOK"]["zero_data_retention_scope"] is None
 
 
-def test_openai_zdr_filter_selects_credits_and_never_inherits_byok(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _activate_openai_prepaid_zdr(monkeypatch)
+def test_openai_zdr_filter_selects_credits_and_never_inherits_byok() -> None:
     candidates = chat_route_endpoint_candidates(
         {
             "model": "openai/gpt-5.5",
@@ -109,10 +89,7 @@ def test_openai_zdr_filter_selects_credits_and_never_inherits_byok(
     )
 
 
-def test_zdr_alias_can_use_openai_only_through_contracted_credits_route(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    _activate_openai_prepaid_zdr(monkeypatch)
+def test_zdr_alias_can_use_openai_only_through_contracted_credits_route() -> None:
     candidates = chat_route_endpoint_candidates(
         {"model": ZDR_MODEL_ID, "provider": {"only": ["openai"]}},
         Settings(environment="test"),
@@ -123,15 +100,18 @@ def test_zdr_alias_can_use_openai_only_through_contracted_credits_route(
     assert all(endpoint.usage_type == "Credits" for _model, endpoint in candidates)
 
 
-def test_public_pages_explain_scheduled_openai_prepaid_scope(client: TestClient) -> None:
+def test_public_pages_explain_active_openai_prepaid_scope(client: TestClient) -> None:
     providers = client.get("/providers")
     assert providers.status_code == 200
-    assert "scheduled 2026-07-28" in providers.text
+    assert "prepaid only" in providers.text
+    assert "Contracted Zero Data Retention is active" in providers.text
     assert "July 28, 2026" in providers.text
+    assert "verified on July 29, 2026" in providers.text
     assert "customer BYOK credentials" in providers.text
 
     model = client.get("/models/openai/gpt-5.5")
     assert model.status_code == 200
     assert "Credits" in model.text
     assert "BYOK" in model.text
+    assert ">ZDR<" in model.text
     assert "no verified privacy claim" in model.text
