@@ -419,6 +419,7 @@ class SpannerSettleOutbox:
                         self._pt,
                         authorization_id,
                         terminal_at=now,
+                        outbox_available=True,
                     )
                     if reservation_id:
                         complete_reservation_retention(
@@ -426,6 +427,7 @@ class SpannerSettleOutbox:
                             self._pt,
                             str(reservation_id),
                             terminal_at=now,
+                            outbox_available=True,
                         )
                 else:
                     # Skipping the arm is not enough: a winning claim (or a

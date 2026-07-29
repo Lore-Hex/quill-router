@@ -31,6 +31,31 @@ from trusted_router.storage_gcp_counters import UNSHARDED
 # the retention helpers below. Keep this SQL list in sync with that tuple.
 _OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
 
+_CLAIM_RESERVATION_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
+    "settled_usage_type=@sut, terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_CLAIM_RESERVATION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
+    "settled_usage_type=@sut, terminal_at = IF("
+    "EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
+    "WHERE reservation_id=@rid AND settled=false"
+)
+_COMPLETE_RESERVATION_RETENTION_SQL = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL"
+)
+_COMPLETE_RESERVATION_RETENTION_GUARDED_SQL = (
+    "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
+    "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_reservation.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
+)
+
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
 KEY_ACCEPTED = "accepted"  # hold taken (row-count 1)
 KEY_NO_HOLD = "no_hold"  # uncapped key, or BYOK excluded from the cap: proceed
@@ -415,6 +440,7 @@ def claim_reservation(
     settled_usage_type: str,
     terminal_at: Any | None = None,
     defer_retention: bool = False,
+    outbox_available: bool = True,
 ) -> bool:
     """Claim a reservation for settle/refund: first caller wins.
 
@@ -427,12 +453,9 @@ def claim_reservation(
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
     count = transaction.execute_update(
-        "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
-        "settled_usage_type=@sut, terminal_at = IF("
-        "EXISTS (SELECT 1 FROM tr_settle_outbox o "
-        "WHERE o.authorization_id = tr_reservation.authorization_id "
-        f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
-        "WHERE reservation_id=@rid AND settled=false",
+        _CLAIM_RESERVATION_GUARDED_SQL
+        if outbox_available
+        else _CLAIM_RESERVATION_SQL,
         params={
             "rid": reservation_id,
             "actual": int(actual_micro),
@@ -455,14 +478,13 @@ def complete_reservation_retention(
     reservation_id: str,
     *,
     terminal_at: Any,
+    outbox_available: bool = True,
 ) -> int:
     """Start TTL only after all durable settlement repair work is complete."""
     return transaction.execute_update(
-        "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
-        "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
-        "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
-        "WHERE o.authorization_id = tr_reservation.authorization_id "
-        f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))",
+        _COMPLETE_RESERVATION_RETENTION_GUARDED_SQL
+        if outbox_available
+        else _COMPLETE_RESERVATION_RETENTION_SQL,
         params={
             "rid": reservation_id,
             "terminal_at": terminal_at,

@@ -21,7 +21,10 @@ debit. Replay is resume/no-execute: the caller must NOT re-run the LLM call
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import uuid
+import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -427,6 +430,7 @@ def settle_atomic(
     success: bool,
     guard_outbox: bool = False,
     mark_authorization_terminal: bool = False,
+    outbox_available: bool | None = None,
 ) -> dict:
     """Claim-gated settle/refund in ONE transaction (key then credit lock order).
 
@@ -446,12 +450,17 @@ def settle_atomic(
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
     terminal_at = utcnow()
+    resolved_outbox_available = (
+        _outbox_table_available(database, pt)
+        if outbox_available is None
+        else outbox_available
+    )
 
     def txn(transaction: Any) -> dict:
         res = read_reservation(transaction, pt, reservation_id)
         if res is None:
             return {"outcome": SettleOutcome.NOT_FOUND}
-        if guard_outbox:
+        if guard_outbox and resolved_outbox_available:
             aid = res.get("authorization_id")
             if aid:
                 # MF2: this strong read inside the read-write claim txn is the
@@ -470,6 +479,7 @@ def settle_atomic(
             actual_micro=book_actual,
             settled_usage_type=settled_usage_type,
             terminal_at=terminal_at,
+            outbox_available=resolved_outbox_available,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}  # replay, no double-apply
@@ -533,6 +543,87 @@ def _is_table_missing(exc: Exception) -> bool:
     )
 
 
+_OUTBOX_ABSENT_CACHE_SECONDS = 5.0
+_OUTBOX_AVAILABILITY_CACHE: weakref.WeakKeyDictionary[
+    Any, tuple[bool, float]
+] = weakref.WeakKeyDictionary()
+_OUTBOX_AVAILABILITY_CACHE_LOCK = threading.Lock()
+_OUTBOX_AVAILABILITY_PROBE_LOCK = threading.Lock()
+
+
+def _cached_outbox_availability(database: Any, *, now: float) -> bool | None:
+    with _OUTBOX_AVAILABILITY_CACHE_LOCK:
+        try:
+            cached = _OUTBOX_AVAILABILITY_CACHE.get(database)
+        except TypeError:
+            return None
+        if cached is None:
+            return None
+        available, expires_at = cached
+        if expires_at <= now:
+            _OUTBOX_AVAILABILITY_CACHE.pop(database, None)
+            return None
+        return available
+
+
+def _remember_outbox_availability(
+    database: Any,
+    *,
+    available: bool,
+    now: float,
+) -> None:
+    expires_at = float("inf") if available else now + _OUTBOX_ABSENT_CACHE_SECONDS
+    with _OUTBOX_AVAILABILITY_CACHE_LOCK:
+        try:
+            _OUTBOX_AVAILABILITY_CACHE[database] = (available, expires_at)
+        except TypeError:
+            # An unusual unhashable/non-weak-referenceable database wrapper
+            # still gets the correct variant; it simply cannot use this cache.
+            return
+
+
+def _outbox_table_available(database: Any, param_types: Any) -> bool:
+    """Return whether guarded SQL may reference the rollout-added outbox table.
+
+    A positive result is stable for the life of the process. A missing-table
+    result has a short TTL so a process deployed before the DDL automatically
+    adopts the guard shortly after the migration lands. Only the exact Spanner
+    table-missing shape selects unguarded SQL; transient/schema probe failures
+    fail toward the guarded variant and are not cached.
+    """
+    now = time.monotonic()
+    cached = _cached_outbox_availability(database, now=now)
+    if cached is not None:
+        return cached
+
+    # Serialize cache misses so concurrent first settles do not stampede the
+    # one process-level availability probe.
+    with _OUTBOX_AVAILABILITY_PROBE_LOCK:
+        now = time.monotonic()
+        cached = _cached_outbox_availability(database, now=now)
+        if cached is not None:
+            return cached
+        try:
+            with database.snapshot() as snapshot:
+                list(snapshot.execute_sql(
+                    GUARD_COUNT_SQL,
+                    params={"aid": ""},
+                    param_types={"aid": param_types.STRING},
+                ))
+        except Exception as exc:
+            if not _is_table_missing(exc):
+                log.warning(
+                    "tr_settle_outbox availability probe failed; using guarded SQL",
+                    exc_info=True,
+                )
+                return True
+            available = False
+        else:
+            available = True
+        _remember_outbox_availability(database, available=available, now=now)
+        return available
+
+
 # Reaper scan, two forms. The guarded form excludes holds with an outbox row
 # whose status is in GUARD_STATUSES IN THE SCAN so frozen holds never consume @limit and cannot
 # starve unguarded expired holds behind them (PR #116 review P2). The NOT
@@ -585,6 +676,11 @@ def reap_expired_reservations(
         # either. Unguarded free-release is exactly today's behavior; the guard
         # arms itself the moment the DDL is applied.
         guard_active = False
+    _remember_outbox_availability(
+        database,
+        available=guard_active,
+        now=time.monotonic(),
+    )
 
     scan_sql = _REAP_SCAN_GUARDED_SQL if guard_active else _REAP_SCAN_SQL
     with database.snapshot() as snapshot:
@@ -601,6 +697,7 @@ def reap_expired_reservations(
             database, pt, reservation_id=reservation_id, actual_micro=0,
             settled_usage_type="Credits", success=False, guard_outbox=guard_active,
             mark_authorization_terminal=True,
+            outbox_available=guard_active,
         )
         if result["outcome"] == SettleOutcome.SETTLED:
             reaped += 1
@@ -617,6 +714,7 @@ def typed_finalize_atomic(
     actual_micro: int,
     settled_usage_type: str,
     now: Any,
+    outbox_available: bool | None = None,
     authorization: GatewayAuthorization | None = None,
     auth_body_settled: str,
     generation_writes: list[tuple[str, str, str]] | None = None,
@@ -646,6 +744,11 @@ def typed_finalize_atomic(
     book_actual = actual_micro if success else 0
     book_to_byok = settled_usage_type == "BYOK"
     writes = generation_writes or []
+    resolved_outbox_available = (
+        _outbox_table_available(database, pt)
+        if outbox_available is None
+        else outbox_available
+    )
 
     def txn(transaction: Any) -> dict:
         res = read_reservation(transaction, pt, reservation_id)
@@ -657,6 +760,7 @@ def typed_finalize_atomic(
             settled_usage_type=settled_usage_type,
             terminal_at=now,
             defer_retention=True,
+            outbox_available=resolved_outbox_available,
         )
         if not won:
             return {"outcome": SettleOutcome.ALREADY_SETTLED}
@@ -713,6 +817,7 @@ def typed_finalize_atomic(
                 pt,
                 reservation_id,
                 terminal_at=now,
+                outbox_available=resolved_outbox_available,
             )
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")

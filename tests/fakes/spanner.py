@@ -533,26 +533,34 @@ class _FakeTransaction:
             return 1
         if "UPDATE tr_reservation SET settled=true" in sql:
             _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
-            _require_pred(
-                sql,
-                "terminal_at = IF(EXISTS (SELECT 1 FROM tr_settle_outbox o",
-                "reservation-claim-retention",
-            )
-            _require_pred(
-                sql,
-                "o.authorization_id = tr_reservation.authorization_id",
-                "reservation-claim-retention",
-            )
-            _require_pred(
-                sql,
-                f"o.status IN ({_GUARD_STATUS_SQL})",
-                "reservation-claim-retention",
-            )
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "terminal_at = IF(EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "reservation-claim-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_reservation.authorization_id",
+                    "reservation-claim-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "reservation-claim-retention",
+                )
+            else:
+                _require_pred(
+                    sql,
+                    "settled_usage_type=@sut, terminal_at=@terminal_at",
+                    "reservation-claim-retention-unguarded",
+                )
             rec = self._reservation_current(p["rid"])
             if rec is None or rec["settled"]:
                 return 0  # missing or already-claimed (replay)
             terminal_at = p["terminal_at"]
-            if self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
                 terminal_at = None
             new = dict(
                 rec,
@@ -569,25 +577,27 @@ class _FakeTransaction:
                 "reservation_id=@rid AND settled=true AND terminal_at IS NULL",
                 "reservation-complete",
             )
-            _require_pred(
-                sql,
-                "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
-                "reservation-complete-retention",
-            )
-            _require_pred(
-                sql,
-                "o.authorization_id = tr_reservation.authorization_id",
-                "reservation-complete-retention",
-            )
-            _require_pred(
-                sql,
-                f"o.status IN ({_GUARD_STATUS_SQL})",
-                "reservation-complete-retention",
-            )
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "reservation-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_reservation.authorization_id",
+                    "reservation-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "reservation-complete-retention",
+                )
             rec = self._reservation_current(p["rid"])
             if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
                 return 0
-            if self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(("update_reservation", p["rid"], new))
@@ -636,21 +646,23 @@ class _FakeTransaction:
                 "AND settled=true AND terminal_at IS NULL",
                 "authorization-complete",
             )
-            _require_pred(
-                sql,
-                "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
-                "authorization-complete-retention",
-            )
-            _require_pred(
-                sql,
-                "o.authorization_id = tr_gateway_authorization.authorization_id",
-                "authorization-complete-retention",
-            )
-            _require_pred(
-                sql,
-                f"o.status IN ({_GUARD_STATUS_SQL})",
-                "authorization-complete-retention",
-            )
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "authorization-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_gateway_authorization.authorization_id",
+                    "authorization-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "authorization-complete-retention",
+                )
             authorization_id = p["authorization_id"]
             rec = self._gateway_authorization_current(authorization_id)
             if (
@@ -659,7 +671,7 @@ class _FakeTransaction:
                 or rec.get("terminal_at") is not None
             ):
                 return 0
-            if self._has_guarded_outbox_intent(authorization_id):
+            if guarded and self._has_guarded_outbox_intent(authorization_id):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(
