@@ -3,57 +3,109 @@
 {% block hero %}
 <section class="public-hero marketing-hero">
   <div>
-    <div class="kicker">For inference providers</div>
+    <div class="kicker">Provider marketplace</div>
     <h1>List your models on TrustedRouter.</h1>
-    <p class="lead">Give us stable machine interfaces once. We will validate your routes, publish your models, monitor availability, and keep pricing current.</p>
+    <p class="lead">Send us your company and integration profile. We will review your privacy commitments, validate your routes, publish working models, monitor availability, and keep pricing current.</p>
     <div class="hero-actions">
-      <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
+      <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
       <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="Provider integration requirements">
-    <div><strong>1</strong><span>dedicated API key</span></div>
+    <div><strong>Verified</strong><span>company profile</span></div>
     <div><strong>1</strong><span>canonical catalog endpoint</span></div>
-    <div><strong>Hourly</strong><span>catalog refresh</span></div>
+    <div><strong>Separate</strong><span>secure key handoff</span></div>
   </div>
 </section>
 {% endblock %}
 
 {% block body %}
 <section class="public-proof-strip" aria-label="Provider onboarding flow">
-  <div><strong>Connect</strong><span>Send a restricted key and API base URL.</span></div>
-  <div><strong>Implement</strong><span>Copy the canonical catalog response exactly.</span></div>
-  <div><strong>Publish</strong><span>Expose models, prices, and lifecycle together.</span></div>
-  <div><strong>Verify</strong><span>We test, monitor, and list working routes.</span></div>
+  <div><strong>Apply</strong><span>Email your company and integration profile.</span></div>
+  <div><strong>Review</strong><span>We verify privacy, compliance, and API claims.</span></div>
+  <div><strong>Connect</strong><span>Exchange a restricted key through a separate secure channel.</span></div>
+  <div><strong>Publish</strong><span>We test, monitor, and list working routes.</span></div>
 </section>
 
 <section class="marketing-split" id="integration-contract" aria-label="Provider integration contract">
   <div class="marketing-copy">
-    <span class="eyebrow">Send one email</span>
-    <h2>Everything needed to connect.</h2>
-    <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. Include a technical contact who can answer routing and pricing questions.</p>
+    <span class="eyebrow">Marketplace application</span>
+    <h2>Tell us who operates the service.</h2>
+    <p>Email <a href="mailto:providers@trustedrouter.com">providers@trustedrouter.com</a> from your company domain. The application must identify the legal entity, responsible contacts, privacy terms, and service being offered.</p>
     <ul class="check-list">
-      <li><strong>Dedicated API key.</strong> A revocable production key scoped to inference and model discovery.</li>
-      <li><strong>OpenAI-compatible base URL.</strong> One HTTPS base such as <code>https://api.provider.com/v1</code>.</li>
-      <li><strong>Bearer authentication.</strong> Accept <code>Authorization: Bearer PROVIDER_API_KEY</code> for discovery and inference.</li>
-      <li><strong>Canonical catalog.</strong> Serve the exact response below from <code>GET /v1/models</code>.</li>
-      <li><strong>Chat inference.</strong> Serve OpenAI-compatible requests from <code>POST /v1/chat/completions</code>.</li>
+      <li><strong>Company identity.</strong> Legal name, brand or DBA, website, jurisdiction, entity type, and DUNS number.</li>
+      <li><strong>Company details.</strong> Registered address, operating address if different, business phone, and corporate tax ID such as EIN or VAT ID. Never send a personal tax identifier.</li>
+      <li><strong>Leadership.</strong> CEO name and title, authorized contract signer, and ownership or parent company where applicable.</li>
+      <li><strong>Contacts.</strong> Technical, security and privacy, legal, billing, and incident-response contacts.</li>
+      <li><strong>Policies.</strong> Privacy policy, terms, DPA, subprocessor list, security or trust center, and compliance reports or certifications.</li>
+      <li><strong>Data handling.</strong> Retention period, training use, zero-retention terms, serving regions, data residency, and confidential-compute or attestation evidence.</li>
     </ul>
-    <p class="small-copy">Never send an account password, owner credential, billing credential, or unrestricted administrative key.</p>
+    <p class="small-copy"><strong>Do not email an API key or any other credential.</strong> After the application is reviewed, TrustedRouter will arrange a separate secure handoff for a dedicated, revocable inference key.</p>
   </div>
   <div class="copy-terminal" aria-label="Provider onboarding email template">
-    <div class="code-head"><span>Email checklist</span><span>providers@trustedrouter.com</span></div>
-    <pre><code>Company:
+    <div class="code-head"><span>Application email</span><span>No credentials</span></div>
+    <pre><code>Legal company name:
+Brand / DBA:
+Website:
+Jurisdiction and entity type:
+DUNS number:
+Registered address:
+Operating address:
+Business phone:
+Corporate tax ID:
+CEO:
+Authorized contract signer:
+
 Technical contact:
+Security / privacy contact:
+Legal contact:
+Billing contact:
+Incident contact:
+
+Privacy policy:
+Terms of service:
+DPA:
+Subprocessor list:
+Security / trust center:
+Compliance reports:
+
+Data retention:
+Training use:
+ZDR terms:
+Serving regions / residency:
+Confidential compute evidence:
 
 API base URL:
 API documentation:
-Dedicated API key:
+Catalog endpoint:
+Deprecation feed or contact:
 
-Regions:
-Retention policy URL:
-Confidential compute URL:
-Deprecation feed or contact:</code></pre>
+API key: DO NOT INCLUDE</code></pre>
+  </div>
+</section>
+
+<section class="marketing-split" aria-label="Provider API requirements">
+  <div class="marketing-copy">
+    <span class="eyebrow">Integration profile</span>
+    <h2>Describe the API without sending secrets.</h2>
+    <ul class="check-list">
+      <li><strong>OpenAI-compatible base URL.</strong> One HTTPS base such as <code>https://api.provider.com/v1</code>.</li>
+      <li><strong>Authentication format.</strong> Describe bearer authentication and supported credential scopes without including a live key.</li>
+      <li><strong>Canonical catalog.</strong> Serve the exact response below from <code>GET /v1/models</code>.</li>
+      <li><strong>Chat inference.</strong> Serve OpenAI-compatible requests from <code>POST /v1/chat/completions</code>.</li>
+      <li><strong>Operational limits.</strong> Document rate limits, capacity tiers, timeout behavior, error contracts, maintenance notices, and support escalation.</li>
+    </ul>
+  </div>
+  <div class="marketing-copy">
+    <span class="eyebrow">Credential handoff</span>
+    <h2>Keys travel separately.</h2>
+    <p>The marketplace application is non-secret business and technical information. Once accepted, create a dedicated production credential restricted to model discovery and inference.</p>
+    <ul class="check-list">
+      <li>Use a revocable key created only for TrustedRouter.</li>
+      <li>Exclude account administration, billing, user management, and key creation permissions.</li>
+      <li>Deliver it only through the secure channel arranged during review.</li>
+      <li>Never place the key in email, support tickets, documents, chat, source code, or the catalog response.</li>
+    </ul>
   </div>
 </section>
 
@@ -69,7 +121,7 @@ Deprecation feed or contact:</code></pre>
       <li><strong>Use UTC timestamps.</strong> Lifecycle timestamps use RFC 3339, for example <code>2026-08-05T00:00:00Z</code>.</li>
       <li><strong>Use one row per billable tier.</strong> If rates or capabilities differ, publish a distinct stable model ID for that tier.</li>
     </ul>
-    <p><a href="/providers/apply/catalog.schema.json">Download the JSON Schema</a> and validate the response before emailing us.</p>
+    <p><a href="/providers/marketplace/catalog.schema.json">Download the JSON Schema</a> and validate the response before emailing us.</p>
   </div>
   <div class="copy-terminal" aria-label="Canonical provider catalog response">
     <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
@@ -171,8 +223,8 @@ curl --fail --silent --show-error \
 <section class="panel">
   <div class="panel-head"><h2>Ready to connect?</h2></div>
   <div class="panel-body">
-    <p>Send the integration details and dedicated key to <a href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">providers@trustedrouter.com</a>.</p>
-    <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D">Start provider integration</a>
+    <p>Send the company and integration profile, without credentials, to <a href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">providers@trustedrouter.com</a>. We will reply with review questions and secure key-delivery instructions.</p>
+    <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Apply to the marketplace</a>
   </div>
 </section>
 {% endblock %}

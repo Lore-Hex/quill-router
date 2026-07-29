@@ -106,7 +106,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/choose",
     "/models",
     "/providers",
-    "/providers/apply",
+    "/providers/marketplace",
     "/benchmarks",
     "/rankings",
     "/leaderboard",
@@ -1206,13 +1206,13 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
             ),
         ),
     ),
-    "providers/apply": PublicPage(
-        template="public/provider_apply.html",
-        title="List Your Models on TrustedRouter",
+    "providers/marketplace": PublicPage(
+        template="public/provider_marketplace.html",
+        title="TrustedRouter Provider Marketplace",
         description=(
-            "Give TrustedRouter a dedicated API key and one OpenAI-compatible API "
-            "base URL implementing our exact model catalog contract. We will "
-            "validate, list, monitor, and keep your routes current automatically."
+            "Apply to list your models in the TrustedRouter marketplace. Send "
+            "company, privacy, compliance, catalog, pricing, and API information "
+            "by email; credentials are exchanged separately through a secure channel."
         ),
         faq_items=(
             (
@@ -1224,8 +1224,8 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
                 "TrustedRouter refreshes provider catalogs automatically. The canonical GET /v1/models response includes availability, capabilities, pricing, and lifecycle in one document, so a separate pricing API is not required.",
             ),
             (
-                "What kind of API key should we send?",
-                "Create a dedicated, revocable production key scoped only to inference and model discovery. Do not send an account password, owner credential, billing credential, or unrestricted administrative key.",
+                "How should we provide an API key?",
+                "Do not include any API key or credential in the application email. After review, TrustedRouter will arrange a separate secure handoff for a dedicated, revocable production key scoped only to inference and model discovery.",
             ),
         ),
     ),
@@ -2537,7 +2537,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Homepage: https://{domain}/",
         f"- Models: https://{domain}/models",
         f"- Providers: https://{domain}/providers",
-        f"- Provider onboarding: https://{domain}/providers/apply",
+        f"- Provider marketplace: https://{domain}/providers/marketplace",
         f"- EU routing: https://{domain}/eu",
         f"- TrustedOS for AI clouds: https://{domain}/trustedos",
         f"- Benchmarks: https://{domain}/benchmarks",
@@ -2656,7 +2656,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Model catalog: https://{domain}/models",
             f"- Canonical live model API (public, no API key): https://{domain}/v1/models",
             f"- Provider transparency: https://{domain}/providers",
-            f"- Provider onboarding: https://{domain}/providers/apply",
+            f"- Provider marketplace: https://{domain}/providers/marketplace",
             f"- EU routing: https://{domain}/eu",
             f"- TrustedOS for AI clouds: https://{domain}/trustedos",
             "- Public status: https://status.trustedrouter.com/",

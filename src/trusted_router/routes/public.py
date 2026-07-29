@@ -634,12 +634,12 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def for_developers() -> str:
         return public_page_html(settings, "for-developers")
 
-    @public_html_route("/providers/apply")
-    async def provider_apply() -> str:
-        return public_page_html(settings, "providers/apply")
+    @public_html_route("/providers/marketplace")
+    async def provider_marketplace() -> str:
+        return public_page_html(settings, "providers/marketplace")
 
     @app.get(
-        "/providers/apply/catalog.schema.json",
+        "/providers/marketplace/catalog.schema.json",
         include_in_schema=False,
     )
     async def provider_catalog_schema() -> JSONResponse:
@@ -649,6 +649,30 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             headers={
                 "cache-control": "public, max-age=3600, stale-while-revalidate=86400"
             },
+        )
+
+    @app.api_route(
+        "/providers/apply",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    @app.api_route(
+        "/providers/apply/",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def legacy_provider_apply() -> RedirectResponse:
+        return RedirectResponse(url="/providers/marketplace", status_code=301)
+
+    @app.api_route(
+        "/providers/apply/catalog.schema.json",
+        methods=["GET", "HEAD"],
+        include_in_schema=False,
+    )
+    async def legacy_provider_catalog_schema() -> RedirectResponse:
+        return RedirectResponse(
+            url="/providers/marketplace/catalog.schema.json",
+            status_code=301,
         )
 
     @public_html_route("/apps")
