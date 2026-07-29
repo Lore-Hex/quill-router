@@ -66,17 +66,18 @@
     <div class="status-section-head">
       <div>
         <h2>Upstream provider health</h2>
-        <p>Continuously measured per provider from the rotation probe and real traffic over the {{ provider_health_window or "recent live window" }}. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
+        <p>Continuously measured per provider from the rotation probe and real traffic over the {{ provider_health_window or "recent live window" }}. Ranked by success rate, then p50 TTFT. Unsupported route and probe-configuration rows are shown separately, not counted as provider downtime. This is an informational provider watch — a flaky upstream model does NOT count against router-core uptime above. <a href="/leaderboard">Full leaderboard</a>.</p>
       </div>
     </div>
     <div class="leaderboard-table-wrap">
       <table class="leaderboard-table">
-        <thead><tr><th>Provider</th><th>Success</th><th>Error rate</th><th>Top error</th><th>Config excluded</th><th>Samples</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Success</th><th>p50 TTFT</th><th>Error rate</th><th>Top error</th><th>Config excluded</th><th>Samples</th></tr></thead>
         <tbody>
           {% for p in provider_health %}
           <tr>
             <td><a href="/providers/{{ p.provider }}">{{ p.provider }}</a></td>
             <td>{{ '%.2f'|format(p.uptime * 100) }}%</td>
+            <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if p.error_rate and p.error_rate > 0 %}<span class="pill warn">{{ '%.1f'|format(p.error_rate * 100) }}%</span>{% else %}0%{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code>{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>

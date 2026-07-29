@@ -176,6 +176,9 @@ def test_status_page_sorts_healthiest_provider_first() -> None:
 
     html = _status_page_html(_settings(), host="trustedrouter.com")
 
+    assert "Ranked by success rate, then p50 TTFT" in html
+    assert "<th>p50 TTFT</th>" in html
+    assert "500 ms" in html
     assert html.index('href="/providers/reliable"') < html.index(
         'href="/providers/flaky"'
     )
