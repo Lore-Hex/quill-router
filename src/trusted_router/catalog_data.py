@@ -264,20 +264,22 @@ PROVIDERS: dict[str, Provider] = {
         supports_embeddings=True,
         supports_prepaid=True,
         provider_zero_data_retention=False,
-        # Activation gate: flip only after the managed production key passes
-        # the store=true/create then retrieve-must-fail ZDR smoke on/after the
-        # contractual effective date. BYOK remains outside this flag.
-        prepaid_zero_data_retention=False,
+        # Verified 2026-07-29 against the managed production project:
+        # a Responses request with store=true succeeded, then retrieval
+        # returned 404. BYOK remains outside this account-scoped flag.
+        prepaid_zero_data_retention=True,
         prepaid_zero_data_retention_effective_on="2026-07-28",
         provider_policy=(
-            "Contracted Zero Data Retention is scheduled to begin for "
-            "TrustedRouter's managed OpenAI account on July 28, 2026. OpenAI remains "
-            "outside trustedrouter/zdr until live activation verification passes. "
-            "Once verified, the guarantee will apply only to TrustedRouter-funded "
-            "prepaid routes; customer BYOK credentials use the data controls on the "
-            "customer's own OpenAI organization or project."
+            "Contracted Zero Data Retention is active for TrustedRouter's managed "
+            "OpenAI account, effective July 28, 2026, and live enforcement was "
+            "verified on July 29, 2026. This guarantee applies only to "
+            "TrustedRouter-funded prepaid routes; customer BYOK credentials use the "
+            "data controls on the customer's own OpenAI organization or project."
         ),
-        provider_policy_url="https://platform.openai.com/docs/models/default-usage-policies-by-endpoint",
+        provider_policy_url=(
+            "https://developers.openai.com/api/docs/guides/your-data"
+            "#data-retention-controls-for-abuse-monitoring"
+        ),
         provider_headquarters_country=PROVIDER_JURISDICTION_US,
     ),
     "google-ai-studio": Provider(

@@ -488,7 +488,7 @@ def test_embeddings_data_collection_deny_soft_fallback_keeps_standard_model_endp
         endpoints_for_model,
     )
 
-    model_id = "openai/text-embedding-3-large"
+    model_id = "google/gemini-embedding-001"
     catalog_endpoints = endpoints_for_model(model_id)
     assert catalog_endpoints
     assert all(endpoint_privacy_tier(endpoint) < PRIVACY_TIER_NO_STORE for endpoint in catalog_endpoints)
@@ -525,7 +525,7 @@ def test_catalog_data_collection_deny_soft_fallback_and_satisfiable_filtering() 
         endpoints_for_model,
     )
 
-    standard_model_id = "openai/text-embedding-3-large"
+    standard_model_id = "google/gemini-embedding-001"
     standard_endpoints = endpoints_for_model(standard_model_id)
     assert standard_endpoints
     assert all(

@@ -286,11 +286,19 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
 
     # Endpoint rows still expose upstream-provider posture separately, so
     # dashboards can distinguish TR no-retention from provider ZDR/unknown.
-    openai_endpoint = next(
+    openai_endpoints = [
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
-    )
-    assert openai_endpoint["stores_content"] is True
-    assert openai_endpoint["provider_zero_data_retention"] is False
+    ]
+    by_usage = {
+        endpoint["usage_type"]: endpoint
+        for endpoint in openai_endpoints
+    }
+    assert by_usage["Credits"]["stores_content"] is False
+    assert by_usage["Credits"]["provider_zero_data_retention"] is True
+    assert by_usage["Credits"]["zero_data_retention_scope"] == "trustedrouter_prepaid"
+    assert by_usage["BYOK"]["stores_content"] is True
+    assert by_usage["BYOK"]["provider_zero_data_retention"] is False
+    assert by_usage["BYOK"]["zero_data_retention_scope"] is None
 
 
 @pytest.mark.parametrize(
@@ -636,11 +644,20 @@ def test_closed_provider_zdr_claims_are_route_scoped() -> None:
     assert all(endpoint_zero_data_retention(endpoint) is True for endpoint in vertex_endpoints)
 
     # OpenAI's guarantee is deliberately narrower: it belongs to
-    # TrustedRouter's managed prepaid account, starts on July 28, and is not
-    # activated until a live retention smoke passes.
+    # TrustedRouter's managed prepaid account, starts on July 28, and was
+    # activated only after a live retention smoke passed.
     assert PROVIDERS["openai"].provider_zero_data_retention is False
-    assert PROVIDERS["openai"].prepaid_zero_data_retention is False
+    assert PROVIDERS["openai"].prepaid_zero_data_retention is True
     assert PROVIDERS["openai"].prepaid_zero_data_retention_effective_on == "2026-07-28"
+    openai_endpoints = [
+        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "openai"
+    ]
+    assert any(endpoint.usage_type == "Credits" for endpoint in openai_endpoints)
+    assert any(endpoint.usage_type == "BYOK" for endpoint in openai_endpoints)
+    assert all(
+        endpoint_zero_data_retention(endpoint) is (endpoint.usage_type == "Credits")
+        for endpoint in openai_endpoints
+    )
 
 
 def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
@@ -1402,7 +1419,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
         endpoint.provider for _model, endpoint in zdr_endpoints
     }
     assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
-    assert "openai" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
+    assert "openai" in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
         endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_ZERO_RETENTION
         for _model, endpoint in zdr_endpoints
