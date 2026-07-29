@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-07-29T19:28:01Z",
+  "generated_at": "2026-07-29T20:05:45Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
@@ -34,8 +34,7 @@
         "max_tokens",
         "repetition_penalty",
         "presence_penalty",
-        "seed",
-        "min_p"
+        "seed"
       ],
       "title": "deepseek-ai/DeepSeek-V4-Flash",
       "model_type": "chat",
@@ -45,8 +44,7 @@
         "tools",
         "reasoning",
         "json_mode",
-        "structured_outputs",
-        "logprobs"
+        "structured_outputs"
       ]
     },
     {

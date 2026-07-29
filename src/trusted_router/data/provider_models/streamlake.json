@@ -64,9 +64,9 @@
       "context_length": 262144,
       "input_token_price_per_m": 740000,
       "output_token_price_per_m": 2960000,
-      "cached_input_token_price_per_m": 999900000
+      "cached_input_token_price_per_m": 150000
     }
   ],
-  "generated_at": "2026-07-29T19:28:01Z",
+  "generated_at": "2026-07-29T20:05:45Z",
   "model_count": 3
 }
