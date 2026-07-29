@@ -100,8 +100,9 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     assert "moonshotai/kimi-k3@kimi/byok" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@novita/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@novita/byok" in MODEL_ENDPOINTS
-    assert "moonshotai/kimi-k3@gmi/prepaid" not in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@gmi/prepaid" in MODEL_ENDPOINTS
     assert "moonshotai/kimi-k3@gmi/byok" in MODEL_ENDPOINTS
+    assert "moonshotai/kimi-k3@phala/prepaid" in MODEL_ENDPOINTS
     kimi_k3_routes = {
         (endpoint.provider, endpoint.usage_type)
         for endpoint in endpoints_for_model("moonshotai/kimi-k3")

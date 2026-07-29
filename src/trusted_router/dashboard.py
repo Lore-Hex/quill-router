@@ -29,11 +29,14 @@ from trusted_router.catalog import (
     ModelEndpoint,
     Provider,
     canonical_orchestration_model_id,
+    endpoint_confidential_compute,
+    endpoint_e2ee,
     endpoint_zero_data_retention,
     endpoints_for_model,
     meta_candidate_models,
     model_eu_focused_provider_available,
     model_open_weights,
+    model_provider_policy,
     model_us_provider_available,
     orchestration_primitive,
     orchestration_role,
@@ -2847,8 +2850,8 @@ def _model_view(model: Model, *, test_mode: bool = False) -> dict[str, object]:
     endpoint_postures = {
         (
             endpoint_zero_data_retention(endpoint),
-            PROVIDERS[endpoint.provider].provider_confidential_compute,
-            PROVIDERS[endpoint.provider].provider_e2ee,
+            endpoint_confidential_compute(endpoint),
+            endpoint_e2ee(endpoint),
         )
         for endpoint in endpoints
     }
@@ -3046,10 +3049,14 @@ def _model_detail_view(
                     endpoint_zero_data_retention(endpoint) if ep_provider else None
                 ),
                 "provider_confidential_compute": (
-                    ep_provider.provider_confidential_compute if ep_provider else None
+                    endpoint_confidential_compute(endpoint) if ep_provider else None
                 ),
-                "provider_e2ee": ep_provider.provider_e2ee if ep_provider else None,
-                "provider_policy": ep_provider.provider_policy if ep_provider else "",
+                "provider_e2ee": endpoint_e2ee(endpoint) if ep_provider else None,
+                "provider_policy": (
+                    model_provider_policy(endpoint.model_id, endpoint.provider)
+                    if ep_provider
+                    else ""
+                ),
                 "endpoint_id": endpoint.id,
             }
         )
@@ -3072,9 +3079,7 @@ def _model_detail_view(
         "context_length_int": model.context_length,
         "fixed_price": fixed_price,
         "prompt_price": _price(model.prompt_price_microdollars_per_million_tokens),
-        "completion_price": _price(
-            model.completion_price_microdollars_per_million_tokens
-        ),
+        "completion_price": _price(model.completion_price_microdollars_per_million_tokens),
         "minimum_charge": (
             format_money_precise(model.minimum_charge_microdollars)
             if model.minimum_charge_microdollars
@@ -3418,10 +3423,9 @@ def _best_measured_ttft(model_id: str) -> int | None:
 
 def _privacy_summary(model: Model) -> str:
     endpoints = endpoints_for_model(model.id)
-    providers = [PROVIDERS.get(endpoint.provider) for endpoint in endpoints]
-    if any(provider and provider.provider_e2ee for provider in providers):
+    if any(endpoint_e2ee(endpoint) for endpoint in endpoints):
         return "has provider E2EE route"
-    if any(provider and provider.provider_confidential_compute for provider in providers):
+    if any(endpoint_confidential_compute(endpoint) for endpoint in endpoints):
         return "has confidential-compute route"
     if any(endpoint_zero_data_retention(endpoint) is True for endpoint in endpoints):
         return "has ZDR route"

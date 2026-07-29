@@ -111,10 +111,12 @@ def test_dark_authoritative_manifest_rows_cannot_return_through_shared_snapshot(
 
 
 def test_gmi_only_credits_serves_allowlisted_models() -> None:
-    # GMI's /models listing is aspirational: 7d probes (2026-07-18) show four
+    # GMI's /models listing is aspirational: 7d probes (2026-07-18) showed four
     # models served on our account and ~45 listed phantoms with zero successes
-    # ever. Credits endpoints must stay within the verified set; BYOK uses the
-    # customer's own key and keeps GMI's full listing visible.
+    # ever. Kimi K3 joined the verified set after a direct visible-content
+    # canary passed on 2026-07-29. Credits endpoints must stay within the
+    # verified set; BYOK uses the customer's own key and keeps GMI's full
+    # listing visible.
     allow = _PROVIDER_SERVED_MODEL_ALLOWLIST["gmi"]
     gmi_credits = {
         e.model_id
@@ -124,6 +126,7 @@ def test_gmi_only_credits_serves_allowlisted_models() -> None:
     assert gmi_credits <= allow
     assert gmi_credits == {
         "deepseek/deepseek-v4-pro",
+        "moonshotai/kimi-k3",
         "z-ai/glm-5",
         "z-ai/glm-5.1",
         "z-ai/glm-5.2",

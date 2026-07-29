@@ -39,6 +39,7 @@ URL = "https://api.gmi-serving.com/v1/models"
 
 EXPECTED_MODELS = [
     "google/gemma-4-31b-it",
+    "moonshotai/kimi-k3",
     "z-ai/glm-5.2",
 ]
 
@@ -52,6 +53,7 @@ _NATIVE_TO_OR_ID = {
     "google/gemma-4-26b-a4b-it": "google/gemma-4-26b-a4b-it",
     "deepseek-ai/DeepSeek-V4-Pro": "deepseek/deepseek-v4-pro",
     "deepseek-ai/DeepSeek-V3.1": "deepseek/deepseek-v3.1",
+    "moonshotai/kimi-k3": "moonshotai/kimi-k3",
     "zai-org/GLM-5-FP8": "z-ai/glm-5",
     "zai-org/GLM-5.1-FP8": "z-ai/glm-5.1",
     "zai-org/GLM-5.2-FP8": "z-ai/glm-5.2",

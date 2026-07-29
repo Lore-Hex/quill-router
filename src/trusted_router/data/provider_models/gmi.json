@@ -1,9 +1,9 @@
 {
-  "_about": "Provider-native supplement for GMI Cloud models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.gmi-serving.com/v1/models on 2026-06-22. GMI exposes GLM 5.2 as zai-org/GLM-5.2-FP8.",
+  "_about": "Provider-native supplement for GMI Cloud models whose live /v1/models feed is ahead of the shared snapshot. Verified against https://api.gmi-serving.com/v1/models and direct chat canaries. Kimi K3 was promoted after a visible-content PONG canary succeeded on 2026-07-29.",
   "provider": "gmi",
   "source": "https://api.gmi-serving.com/v1/models",
-  "generated_at": "2026-06-22T00:00:00Z",
-  "model_count": 1,
+  "generated_at": "2026-07-29T21:30:00Z",
+  "model_count": 2,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -20,6 +20,34 @@
       "input_modalities": ["text"],
       "output_modalities": ["text"],
       "endpoints": ["chat/completions"],
+      "status": 1
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "upstream_id": "moonshotai/kimi-k3",
+      "display_name": "GMI Cloud Kimi K3",
+      "title": "moonshotai/kimi-k3",
+      "context_length": 262144,
+      "max_output_tokens": 65535,
+      "input_token_price_per_m": 3000000,
+      "output_token_price_per_m": 15000000,
+      "cached_input_token_price_per_m": 300000,
+      "model_type": "chat",
+      "features": [
+        "reasoning",
+        "function-calling",
+        "structured-outputs",
+        "serverless"
+      ],
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
       "status": 1
     }
   ]

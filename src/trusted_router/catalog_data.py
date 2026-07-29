@@ -86,6 +86,8 @@ PROVIDER_JURISDICTION_US = "US"
 class ModelProviderPrivacyOverride:
     privacy_tier: int
     provider_zero_data_retention: bool | None = None
+    provider_confidential_compute: bool | None = None
+    provider_e2ee: bool | None = None
     provider_policy: str | None = None
     provider_policy_url: str | None = None
 
@@ -143,6 +145,25 @@ _MODEL_PROVIDER_PRIVACY_OVERRIDES: dict[tuple[str, str], ModelProviderPrivacyOve
             "(capabilities.zdr.supported=false in their /v1/models). The "
             "route is served at standard tier and excluded from "
             "trustedrouter/zdr and provider.min_privacy=zdr routing."
+        ),
+    ),
+    (
+        "moonshotai/kimi-k3",
+        "phala",
+    ): ModelProviderPrivacyOverride(
+        privacy_tier=PRIVACY_TIER_STANDARD,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Phala currently serves this model through the upstream-author "
+            "pass-through route, not a phala/* Confidential AI endpoint. "
+            "TrustedRouter therefore makes no ZDR, confidential-compute, or "
+            "E2EE claim for this exact route."
+        ),
+        provider_policy_url=(
+            "https://docs.phala.com/phala-cloud/confidential-ai/"
+            "confidential-model/confidential-ai-api"
         ),
     ),
     **{
@@ -451,9 +472,7 @@ PROVIDERS: dict[str, Provider] = {
             "on every routed request. The route is therefore not classified as "
             "provider E2EE and is excluded from trustedrouter/e2e."
         ),
-        provider_policy_url=(
-            "https://docs.phala.com/phala-cloud/confidential-ai/verify/overview"
-        ),
+        provider_policy_url=("https://docs.phala.com/phala-cloud/confidential-ai/verify/overview"),
     ),
     # SiliconFlow — Chinese serverless inference with 200+ open-weight
     # models. OpenAI-compatible at api.siliconflow.com/v1.
@@ -746,9 +765,7 @@ PROVIDERS: dict[str, Provider] = {
             "No provider-ZDR claim is tracked. StreamLake's public privacy "
             "policy is linked for API data-handling review."
         ),
-        provider_policy_url=(
-            "https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54"
-        ),
+        provider_policy_url=("https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54"),
         provider_headquarters_country="SG",
     ),
     "neurometric": Provider(
@@ -1629,6 +1646,7 @@ _PROVIDER_SERVED_MODEL_ALLOWLIST: dict[str, frozenset[str]] = {
     "gmi": frozenset(
         {
             "deepseek/deepseek-v4-pro",
+            "moonshotai/kimi-k3",
             "z-ai/glm-5",
             "z-ai/glm-5.1",
             "z-ai/glm-5.2",
@@ -1659,11 +1677,6 @@ _PROVIDER_UNSERVED_CREDITS_MODELS: dict[str, frozenset[str]] = {
         {
             "anthropic/claude-opus-4.7",
             "openai/gpt-5.5",
-            # 2026-07-18: GMI's authenticated /models feed still advertises
-            # Kimi K3, but direct prepaid inference returns 404 "No matching
-            # target server found". Keep BYOK visible for accounts with
-            # different capacity while removing the broken operator route.
-            "moonshotai/kimi-k3",
             # 2026-07-15: the snapshot route returns 404 when pinned to GMI.
             # Keep the directly verified Baseten route.
             "nvidia/nemotron-3-ultra-550b-a55b",
