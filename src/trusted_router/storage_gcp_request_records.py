@@ -172,6 +172,20 @@ def complete_gateway_authorization_retention(
     )
 
 
+def clear_gateway_authorization_retention(
+    transaction: Any,
+    param_types: Any,
+    authorization_id: str,
+) -> int:
+    """Make an authorization TTL-ineligible while durable repair is outstanding."""
+    return transaction.execute_update(
+        "UPDATE tr_gateway_authorization SET terminal_at=NULL "
+        "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL",
+        params={"authorization_id": authorization_id},
+        param_types={"authorization_id": param_types.STRING},
+    )
+
+
 def close_reaped_gateway_authorization(
     transaction: Any,
     param_types: Any,

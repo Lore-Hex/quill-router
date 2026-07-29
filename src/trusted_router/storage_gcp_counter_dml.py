@@ -464,6 +464,20 @@ def complete_reservation_retention(
     )
 
 
+def clear_reservation_retention(
+    transaction: Any,
+    param_types: Any,
+    reservation_id: str,
+) -> int:
+    """Make a reservation TTL-ineligible while durable repair is outstanding."""
+    return transaction.execute_update(
+        "UPDATE tr_reservation SET terminal_at=NULL "
+        "WHERE reservation_id=@rid AND terminal_at IS NOT NULL",
+        params={"rid": reservation_id},
+        param_types={"rid": param_types.STRING},
+    )
+
+
 def insert_entity_dml(
     transaction: Any, param_types: Any, kind: str, entity_id: str, body_json: str
 ) -> None:

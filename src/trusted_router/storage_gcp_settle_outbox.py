@@ -19,8 +19,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from trusted_router.storage_gcp_counter_dml import complete_reservation_retention
+from trusted_router.storage_gcp_counter_dml import (
+    clear_reservation_retention,
+    complete_reservation_retention,
+)
 from trusted_router.storage_gcp_request_records import (
+    clear_gateway_authorization_retention,
     complete_gateway_authorization_retention,
 )
 from trusted_router.storage_models import SettleOutboxRow
@@ -63,6 +67,11 @@ _GUARD_STATUS_SQL = ", ".join(f"'{status}'" for status in GUARD_STATUSES)
 # GUARD_STATUSES; update the tuple, not the SQL literals.
 GUARD_COUNT_SQL = (
     "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
+    f"AND status IN ({_GUARD_STATUS_SQL})"
+)
+_SIBLING_GUARD_COUNT_SQL = (
+    "SELECT COUNT(*) FROM tr_settle_outbox WHERE authorization_id=@aid "  # noqa: S608
+    "AND intent_kind != @kind "
     f"AND status IN ({_GUARD_STATUS_SQL})"
 )
 
@@ -185,6 +194,20 @@ class SpannerSettleOutbox:
                 f"INSERT INTO tr_settle_outbox ({cols}) VALUES ({binds})",  # noqa: S608 - fixed column list
                 params=values, param_types=types,
             )
+            # An outbox intent is durable repair work: keep both referenced
+            # records TTL-ineligible. This also re-disarms retention if a reaper
+            # armed it immediately before this enqueue committed.
+            clear_gateway_authorization_retention(
+                transaction,
+                pt,
+                row.authorization_id,
+            )
+            if row.reservation_id:
+                clear_reservation_retention(
+                    transaction,
+                    pt,
+                    row.reservation_id,
+                )
 
         try:
             self._database.run_in_transaction(insert_txn)
@@ -201,7 +224,7 @@ class SpannerSettleOutbox:
         # holds the row; once the lease lapses (or the drain fails back to
         # pending) a later enqueue can refresh again.
         def refresh_txn(transaction: Any) -> int:
-            return transaction.execute_update(
+            refreshed = transaction.execute_update(
                 "UPDATE tr_settle_outbox SET settle_origin=@settle_origin, "
                 "reservation_id=@reservation_id, actual_cost_micro=@actual_cost_micro, "
                 "selected_endpoint_id=@selected_endpoint_id, model_id=@model_id, "
@@ -229,6 +252,21 @@ class SpannerSettleOutbox:
                     "authorization_id": pt.STRING, "intent_kind": pt.STRING,
                 },
             )
+            if refreshed == 1:
+                # Refresh is an outstanding intent too, so its referenced
+                # records must remain ineligible for retention TTL.
+                clear_gateway_authorization_retention(
+                    transaction,
+                    pt,
+                    row.authorization_id,
+                )
+                if row.reservation_id:
+                    clear_reservation_retention(
+                        transaction,
+                        pt,
+                        row.reservation_id,
+                    )
+            return refreshed
 
         refreshed = self._database.run_in_transaction(refresh_txn)
         if refreshed == 1:
@@ -377,18 +415,52 @@ class SpannerSettleOutbox:
             if updated != 1:
                 return None
             if done:
-                complete_gateway_authorization_retention(
+                sibling_rows = list(transaction.execute_sql(
+                    _SIBLING_GUARD_COUNT_SQL,
+                    params={"aid": authorization_id, "kind": intent_kind},
+                    param_types={
+                        "aid": self._pt.STRING,
+                        "kind": self._pt.STRING,
+                    },
+                ))
+                outstanding_siblings = (
+                    int(sibling_rows[0][0]) if sibling_rows else 0
+                )
+                # The PK is (authorization_id, intent_kind): settle and refund
+                # coexist by design, so shared records must outlive the last
+                # pending/dead intent, not merely the first one to finish.
+                if outstanding_siblings == 0:
+                    complete_gateway_authorization_retention(
+                        transaction,
+                        self._pt,
+                        authorization_id,
+                        terminal_at=now,
+                    )
+                    if reservation_id:
+                        complete_reservation_retention(
+                            transaction,
+                            self._pt,
+                            str(reservation_id),
+                            terminal_at=now,
+                        )
+            else:
+                # Non-terminal outcome (backoff to pending, or dead awaiting a
+                # human): repair work is still outstanding, so the referenced
+                # records must stay TTL-ineligible. This also disarms retention
+                # that a WINNING claim armed earlier — settle_atomic sets
+                # terminal_at on the reservation at claim time, so a row that
+                # later goes dead would otherwise keep a 30-day fuse on the very
+                # records its freeze exists to preserve.
+                clear_gateway_authorization_retention(
                     transaction,
                     self._pt,
                     authorization_id,
-                    terminal_at=now,
                 )
                 if reservation_id:
-                    complete_reservation_retention(
+                    clear_reservation_retention(
                         transaction,
                         self._pt,
                         str(reservation_id),
-                        terminal_at=now,
                     )
             return new_status
 

@@ -522,6 +522,66 @@ def test_online_key_split_keeps_history_and_windows_on_existing_shard() -> None:
     assert [row["month_usage"] for row in rows] == [29, 0, 0, 0]
 
 
+def test_key_reshard_derives_window_floors_inside_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, database, key = _seed(key_shards=1)
+    before_boundary = dt.datetime(2026, 7, 28, 23, 59, tzinfo=dt.UTC)
+    after_boundary = dt.datetime(2026, 7, 29, 0, 0, tzinfo=dt.UTC)
+    current_floors = window_floors(after_boundary)
+    key.limit_daily_microdollars = 19
+    store._write_entity("api_key", key.hash, key)
+    row = database.typed[KEY_LIMIT_TABLE][(key.hash, 0)]
+    row.update(
+        day_usage=19,
+        day_start=current_floors["daily"],
+    )
+    transaction_started = False
+
+    def boundary_now() -> dt.datetime:
+        return after_boundary if transaction_started else before_boundary
+
+    original_run_in_transaction = store._run_in_transaction
+
+    def run_after_boundary(func: Any, *, attempts: int = 8) -> Any:
+        nonlocal transaction_started
+        transaction_started = True
+        return original_run_in_transaction(func, attempts=attempts)
+
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_key_shard_admin.utcnow",
+        boundary_now,
+    )
+    monkeypatch.setattr(
+        "trusted_router.storage_gcp_authorize.utcnow",
+        lambda: after_boundary,
+    )
+    monkeypatch.setattr(store, "_run_in_transaction", run_after_boundary)
+
+    split = reshard_key_usage(store, key.hash, 4, apply=True)
+
+    assert split.ready and split.applied
+    rows = [
+        database.typed[KEY_LIMIT_TABLE][(key.hash, shard)]
+        for shard in range(4)
+    ]
+    assert sum(current["day_usage"] for current in rows) == 19
+    assert all(
+        current["day_start"] == current_floors["daily"] for current in rows
+    )
+    assert (
+        check_key_window_limits(
+            store._database,
+            store._param_types,
+            key_hash=key.hash,
+            estimate=1,
+            window_limits={"daily": 19},
+            shard_count=4,
+        )
+        == "daily"
+    )
+
+
 def test_key_usage_operator_refuses_lifetime_capped_or_undrained_key() -> None:
     store, database, key = _seed(key_shards=1)
     key.limit_microdollars = 1_000_000

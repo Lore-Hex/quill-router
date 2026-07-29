@@ -29,7 +29,12 @@ from trusted_router.storage_gcp_synthetic_index import (
     RETENTION_FAMILY_MAX_AGES,
     configure_retention_families,
 )
-from trusted_router.storage_models import CreditAccount, Generation, Workspace
+from trusted_router.storage_models import (
+    CreditAccount,
+    Generation,
+    SettleOutboxRow,
+    Workspace,
+)
 from trusted_router.types import UsageType
 
 MODEL_ID = "anthropic/claude-haiku-4.5"
@@ -117,6 +122,20 @@ def _settle_body(authorization_id: str) -> dict[str, Any]:
         "selected_model": MODEL_ID,
         "selected_endpoint": ENDPOINT_ID,
     }
+
+
+def _outbox_row(authorization: Any, intent_kind: str) -> SettleOutboxRow:
+    return SettleOutboxRow(
+        authorization_id=authorization.id,
+        intent_kind=intent_kind,
+        settle_origin="typed",
+        actual_cost_micro=0 if intent_kind == "refund" else 777_777,
+        reservation_id=authorization.credit_reservation_id,
+        selected_endpoint_id=ENDPOINT_ID,
+        model_id=MODEL_ID,
+        selected_usage_type="Credits",
+        settle_body=json.dumps(_settle_body(authorization.id)),
+    )
 
 
 def _outbox(store: Any) -> SpannerSettleOutbox:
@@ -481,6 +500,82 @@ def test_typed_reaper_compacts_unresolved_authorization(
     assert auth_row["terminal_at"] is not None
 
 
+def test_late_outbox_enqueue_disarms_reaper_retention(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-reaper-late-settle"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+        expires_at="2000-01-01T00:00:00Z",
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+
+    reaped = reap_expired_reservations(
+        store._database,
+        store._param_types,
+        now="2026-07-27T00:00:00Z",
+    )
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+    assert reaped == 1
+    assert database.reservations[reservation_id]["terminal_at"] is not None
+    assert database.gateway_authorizations[authorization.id][
+        "terminal_at"
+    ] is not None
+
+    assert _outbox(store).enqueue(_outbox_row(authorization, "settle")) == "inserted"
+
+    pending = _outbox(store).get(authorization.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.terminal_at is None
+    assert database.reservations[reservation_id]["terminal_at"] is None
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is None
+
+
+def test_retention_waits_for_last_sibling_outbox_intent(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-sibling-outbox-retention"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+    assert outbox.enqueue(_outbox_row(authorization, "refund")) == "inserted"
+
+    response = _client().post(
+        "/v1/internal/gateway/settle",
+        json=_settle_body(authorization.id),
+    )
+
+    assert response.status_code == 200, response.text
+    settled = outbox.get(authorization.id, "settle")
+    refund = outbox.get(authorization.id, "refund")
+    assert settled is not None and settled.status == "done"
+    assert refund is not None and refund.status == "pending"
+    assert database.reservations[reservation_id]["terminal_at"] is None
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is None
+
+    assert outbox.mark(authorization.id, "refund", done=True) == "done"
+    assert database.reservations[reservation_id]["terminal_at"] is not None
+    assert database.gateway_authorizations[authorization.id][
+        "terminal_at"
+    ] is not None
+
+
 def _generation(generation_id: str, *, cost: int) -> Generation:
     return Generation(
         id=generation_id,
@@ -616,3 +711,45 @@ def test_retention_migration_is_additive_and_dry_run_by_default() -> None:
     assert not any("delete from" in line for line in executable_lines)
     assert not any("drop table" in line for line in executable_lines)
     assert not any("update tr_" in line and "terminal_at" in line for line in executable_lines)
+
+
+def test_dead_outbox_row_disarms_claim_armed_retention(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    """A winning claim arms terminal_at at settle time (settle_atomic sets it on
+    the reservation). If that authorization's outbox row later goes dead — repair
+    unfinished, frozen for a human — the referenced records must be disarmed
+    again, or the 30-day TTL deletes the very evidence the freeze preserves."""
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-dead-row-retention"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+
+    # Stand in for the winning claim, which arms retention while the outbox row
+    # is still pending.
+    database.reservations[reservation_id]["terminal_at"] = "2026-07-27T00:00:00Z"
+    database.gateway_authorizations[authorization.id][
+        "terminal_at"
+    ] = "2026-07-27T00:00:00Z"
+
+    assert (
+        outbox.mark(authorization.id, "settle", done=False, force_dead=True)
+        == "dead"
+    )
+
+    dead = outbox.get(authorization.id, "settle")
+    assert dead is not None and dead.status == "dead"
+    assert dead.terminal_at is None
+    assert database.reservations[reservation_id]["terminal_at"] is None
+    assert database.gateway_authorizations[authorization.id]["terminal_at"] is None

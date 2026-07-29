@@ -535,6 +535,18 @@ class _FakeTransaction:
             new = dict(rec, terminal_at=p["terminal_at"])
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
+        if sql.startswith("UPDATE tr_reservation SET terminal_at=NULL"):
+            _require_pred(
+                sql,
+                "reservation_id=@rid AND terminal_at IS NOT NULL",
+                "reservation-clear",
+            )
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec.get("terminal_at") is None:
+                return 0
+            new = dict(rec, terminal_at=None)
+            self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
         if sql.startswith("INSERT INTO tr_gateway_authorization"):
             authorization_id = p["authorization_id"]
             if authorization_id in self.db.gateway_authorizations:
@@ -576,6 +588,21 @@ class _FakeTransaction:
             ):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
+            return 1
+        if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=NULL"):
+            _require_pred(
+                sql,
+                "authorization_id=@authorization_id AND terminal_at IS NOT NULL",
+                "authorization-clear",
+            )
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if rec is None or rec.get("terminal_at") is None:
+                return 0
+            new = dict(rec, terminal_at=None)
             self.pending_writes.append(
                 ("update_gateway_authorization", authorization_id, new)
             )
@@ -887,6 +914,34 @@ def _execute_settle_outbox_sql(
         ]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
+    if (
+        "SELECT COUNT(*) FROM tr_settle_outbox" in sql
+        and "intent_kind != @kind" in sql
+    ):
+        _require_pred(sql, "authorization_id=@aid", "sibling-guard")
+        _require_pred(sql, "intent_kind != @kind", "sibling-guard")
+        _require_pred(
+            sql,
+            f"status IN ({_GUARD_STATUS_SQL})",
+            "sibling-guard",
+        )
+        aid = p["aid"]
+        kind = p["kind"]
+        count = 0
+        for pk, committed in db.settle_outbox.items():
+            rec = (
+                txn._settle_outbox_current(pk)
+                if txn is not None
+                else committed
+            )
+            if (
+                rec is not None
+                and rec.get("authorization_id") == aid
+                and rec.get("intent_kind") != kind
+                and rec.get("status") in GUARD_STATUSES
+            ):
+                count += 1
+        return [[count]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
         _require_pred(sql, "authorization_id=@aid", "has_intent")
         _require_pred(sql, f"status IN ({_GUARD_STATUS_SQL})", "has_intent")
