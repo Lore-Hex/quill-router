@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TR_CONFORMANCE_POSTGRES_DSN: postgresql://postgres:tr@localhost:5432/postgres
+      # Spanner's PostgreSQL dialect, via PGAdapter + the Spanner emulator.
+      # Needs no GCP credentials, so it runs on every PR like any other
+      # service container.
+      TR_CONFORMANCE_SPANNER_PG_DSN: postgresql://localhost:5434/tr-conformance
     services:
       postgres:
         image: postgres:17
@@ -27,6 +31,13 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      spanner-pg:
+        # Spanner PG is a SUBSET of PostgreSQL, so passing against postgres:17
+        # does not imply passing against Spanner. This is what keeps the single
+        # PostgresStore honest across all three clouds.
+        image: gcr.io/cloud-spanner-pg-adapter/pgadapter-emulator:latest
+        ports:
+          - 5434:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
