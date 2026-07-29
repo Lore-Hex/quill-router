@@ -665,6 +665,8 @@ def _components(
             if _parse_time(sample.created_at) >= five_minute_cutoff
         ]
         status = _aggregate_status([sample.status for sample in current_samples])
+        if not current_samples and component_id == "image_generation":
+            status = _fresh_image_rollup_status(component_hour_rollups, now=now)
         if not current_samples and component_samples:
             status = "unknown"
         latencies = [
@@ -741,6 +743,28 @@ def _components(
             }
         )
     return rows
+
+
+def _fresh_image_rollup_status(
+    rollups: list[SyntheticRollup],
+    *,
+    now: dt.datetime,
+) -> str:
+    """Recover current low-cadence image status from its latest hourly rollup."""
+    latest = max(
+        (
+            rollup
+            for rollup in rollups
+            if rollup.last_checked_at is not None
+            and (now - _parse_time(rollup.last_checked_at)).total_seconds()
+            <= IMAGE_GENERATION_SAMPLE_TTL_SECONDS
+        ),
+        key=lambda rollup: str(rollup.last_checked_at),
+        default=None,
+    )
+    if latest is None:
+        return "unknown"
+    return _aggregate_status_counts(_rollup_status_counts(latest))
 
 
 def _latency_breakdown(samples: list[SyntheticProbeSample]) -> list[dict[str, Any]]:
