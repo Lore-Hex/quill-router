@@ -457,10 +457,10 @@ class SpannerSettleOutbox:
         THE INVARIANT: an outstanding (pending/dead) outbox intent always implies
         its reservation and gateway authorization are ineligible for the 30-day
         row-deletion policy — otherwise the frozen row outlives the very evidence
-        its freeze exists to preserve. Many paths ARM terminal_at (settle_atomic
-        does it on every winning claim, including the reaper's free-release, and
-        the flag-off settle path relies on that), so every path that leaves or
-        keeps an intent outstanding must disarm it here.
+        its freeze exists to preserve. The three retention-arming DML sites now
+        enforce that invariant structurally; these clears remain belt-and-braces
+        defense-in-depth for already-armed state and every path that leaves or
+        keeps an intent outstanding.
         """
         clear_gateway_authorization_retention(transaction, self._pt, authorization_id)
         if reservation_id:

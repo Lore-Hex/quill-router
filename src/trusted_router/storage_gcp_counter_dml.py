@@ -27,6 +27,10 @@ from typing import Any
 
 from trusted_router.storage_gcp_counters import UNSHARDED
 
+# Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
+# the retention helpers below. Keep this SQL list in sync with that tuple.
+_OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
+
 # reserve_key outcomes (the per-key spend-cap counterpart of reserve_credit).
 KEY_ACCEPTED = "accepted"  # hold taken (row-count 1)
 KEY_NO_HOLD = "no_hold"  # uncapped key, or BYOK excluded from the cap: proceed
@@ -423,8 +427,11 @@ def claim_reservation(
         None if defer_retention else (terminal_at or datetime.now(UTC))
     )
     count = transaction.execute_update(
-        "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "
-        "settled_usage_type=@sut, terminal_at=@terminal_at "
+        "UPDATE tr_reservation SET settled=true, actual_micro=@actual, "  # noqa: S608
+        "settled_usage_type=@sut, terminal_at = IF("
+        "EXISTS (SELECT 1 FROM tr_settle_outbox o "
+        "WHERE o.authorization_id = tr_reservation.authorization_id "
+        f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL})), NULL, @terminal_at) "
         "WHERE reservation_id=@rid AND settled=false",
         params={
             "rid": reservation_id,
@@ -451,8 +458,11 @@ def complete_reservation_retention(
 ) -> int:
     """Start TTL only after all durable settlement repair work is complete."""
     return transaction.execute_update(
-        "UPDATE tr_reservation SET terminal_at=@terminal_at "
-        "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL",
+        "UPDATE tr_reservation SET terminal_at=@terminal_at "  # noqa: S608
+        "WHERE reservation_id=@rid AND settled=true AND terminal_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+        "WHERE o.authorization_id = tr_reservation.authorization_id "
+        f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))",
         params={
             "rid": reservation_id,
             "terminal_at": terminal_at,

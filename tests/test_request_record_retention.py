@@ -21,7 +21,9 @@ from trusted_router.storage_gcp_activity_index import (
 )
 from trusted_router.storage_gcp_authorize import (
     AuthorizeOutcome,
+    SettleOutcome,
     reap_expired_reservations,
+    settle_atomic,
 )
 from trusted_router.storage_gcp_counters import CREDIT_BALANCE_TABLE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
@@ -466,6 +468,112 @@ def test_typed_enqueue_failure_rejects_without_charging(
         "total_usage"
     ] == 0
     assert _outbox(store).get(authorization.id, "settle") is None
+
+
+def test_legacy_rolling_finalize_defers_retention_until_outbox_done() -> None:
+    store, database, _bigtable = make_fake_store(
+        request_record_write_mode="legacy"
+    )
+    workspace_id = "ws-legacy-finalize-retention"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+
+    finalized = store.typed_finalize_gateway_authorization_result(
+        authorization.id,
+        success=True,
+        actual_microdollars=777_777,
+        selected_usage_type=UsageType.CREDITS,
+    )
+
+    assert finalized.finalized is True
+    assert finalized.request_record_typed is False
+    assert database.reservations[reservation_id]["settled"] is True
+    assert database.reservations[reservation_id]["terminal_at"] is None
+
+    assert outbox.mark(authorization.id, "settle", done=True) == "done"
+    assert database.reservations[reservation_id]["terminal_at"] is not None
+
+
+@pytest.mark.parametrize("outbox_status", ["pending", "dead"])
+def test_claim_with_outstanding_intent_defers_retention(
+    typed_request_store: tuple[Any, Any, Any],
+    outbox_status: str,
+) -> None:
+    store, database, _bigtable = typed_request_store
+    workspace_id = f"ws-claim-retention-{outbox_status}"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+    outbox = _outbox(store)
+    assert outbox.enqueue(_outbox_row(authorization, "settle")) == "inserted"
+    database.settle_outbox[(authorization.id, "settle")][
+        "status"
+    ] = outbox_status
+
+    # Bypass the MF2 reaper guard to exercise the claim's structural column
+    # guard: the claim/release still wins, but retention must remain deferred.
+    result = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=reservation_id,
+        actual_micro=0,
+        settled_usage_type="Credits",
+        success=False,
+        guard_outbox=False,
+    )
+
+    assert result["outcome"] == SettleOutcome.SETTLED
+    assert database.reservations[reservation_id]["settled"] is True
+    assert database.reservations[reservation_id]["terminal_at"] is None
+
+
+def test_settle_without_outbox_still_arms_retention(
+    typed_request_store: tuple[Any, Any, Any],
+) -> None:
+    store, database, _bigtable = typed_request_store
+    workspace_id = "ws-no-outbox-retention"
+    _seed_credit(store, workspace_id)
+    key = _make_key(store, workspace_id)
+    outcome, authorization = _authorize(
+        store,
+        workspace_id=workspace_id,
+        key_hash=key.hash,
+    )
+    assert outcome == AuthorizeOutcome.ACCEPTED and authorization is not None
+    reservation_id = authorization.credit_reservation_id
+    assert reservation_id is not None
+    assert database.settle_outbox == {}
+
+    result = settle_atomic(
+        store._database,
+        store._param_types,
+        reservation_id=reservation_id,
+        actual_micro=777_777,
+        settled_usage_type="Credits",
+        success=True,
+        guard_outbox=False,
+    )
+
+    assert result["outcome"] == SettleOutcome.SETTLED
+    assert database.settle_outbox == {}
+    assert database.reservations[reservation_id]["terminal_at"] is not None
 
 
 def test_typed_reaper_compacts_unresolved_authorization(

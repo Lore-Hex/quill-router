@@ -28,6 +28,10 @@ from trusted_router.types import UsageType
 
 AUTHORIZATION_TABLE = "tr_gateway_authorization"
 
+# Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
+# the retention helpers below. Keep this SQL list in sync with that tuple.
+_OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
+
 
 def insert_gateway_authorization(
     transaction: Any,
@@ -158,9 +162,12 @@ def complete_gateway_authorization_retention(
     retries idempotent without extending the 30-day replay/audit window.
     """
     return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "
+        "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "  # noqa: S608
         "WHERE authorization_id=@authorization_id AND settled=true "
-        "AND terminal_at IS NULL",
+        "AND terminal_at IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+        "WHERE o.authorization_id = tr_gateway_authorization.authorization_id "
+        f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))",
         params={
             "authorization_id": authorization_id,
             "terminal_at": terminal_at,
