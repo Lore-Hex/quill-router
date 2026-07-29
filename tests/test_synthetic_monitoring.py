@@ -1061,6 +1061,40 @@ def test_image_generation_component_stays_current_between_six_hour_checks() -> N
     assert stale_component["status"] == "unknown"
 
 
+def test_image_generation_component_uses_fresh_rollup_when_raw_window_is_empty() -> None:
+    now = utcnow()
+    image_sample = _sample(
+        id="syn_image_rollup_only",
+        target="canonical",
+        probe_type="image_generation",
+        status="up",
+        created_at=(now - dt.timedelta(hours=4)).isoformat().replace("+00:00", "Z"),
+    )
+    rollup = new_rollup_for_sample(
+        image_sample,
+        period="hour",
+        component="image_generation",
+    )
+
+    snapshot = status_snapshot([], rollups=[rollup], now=now)
+    component = next(
+        row for row in snapshot["components"] if row["id"] == "image_generation"
+    )
+
+    assert component["status"] == "up"
+    assert component["last_checked_at"] == image_sample.created_at
+
+    stale_snapshot = status_snapshot(
+        [],
+        rollups=[rollup],
+        now=now + dt.timedelta(hours=4),
+    )
+    stale_component = next(
+        row for row in stale_snapshot["components"] if row["id"] == "image_generation"
+    )
+    assert stale_component["status"] == "unknown"
+
+
 def test_status_component_current_uses_latest_sample_per_probe() -> None:
     now = utcnow()
     samples = [
