@@ -92,6 +92,28 @@ def endpoint_zero_data_retention_scope(endpoint: ModelEndpoint) -> str | None:
     return "provider"
 
 
+def model_provider_confidential_compute(model_id: str, provider_slug: str) -> bool | None:
+    override = _model_provider_privacy_override(model_id, provider_slug)
+    if override is not None and override.provider_confidential_compute is not None:
+        return override.provider_confidential_compute
+    return PROVIDERS[provider_slug].provider_confidential_compute
+
+
+def model_provider_e2ee(model_id: str, provider_slug: str) -> bool | None:
+    override = _model_provider_privacy_override(model_id, provider_slug)
+    if override is not None and override.provider_e2ee is not None:
+        return override.provider_e2ee
+    return PROVIDERS[provider_slug].provider_e2ee
+
+
+def endpoint_confidential_compute(endpoint: ModelEndpoint) -> bool | None:
+    return model_provider_confidential_compute(endpoint.model_id, endpoint.provider)
+
+
+def endpoint_e2ee(endpoint: ModelEndpoint) -> bool | None:
+    return model_provider_e2ee(endpoint.model_id, endpoint.provider)
+
+
 def model_provider_zero_data_retention(model_id: str, provider_slug: str) -> bool | None:
     override = _model_provider_privacy_override(model_id, provider_slug)
     if override is not None and override.provider_zero_data_retention is not None:

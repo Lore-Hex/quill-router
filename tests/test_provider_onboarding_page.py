@@ -21,7 +21,13 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "DUNS number:" in response.text
     assert "Registered address:" in response.text
     assert "Business phone:" in response.text
-    assert "Corporate tax ID:" in response.text
+    assert "EIN / VAT / corporate tax ID:" in response.text
+    assert "Primary contact name:" in response.text
+    assert "Primary contact title:" in response.text
+    assert "Primary contact email:" in response.text
+    assert "Primary contact phone:" in response.text
+    assert "Company registration number:" in response.text
+    assert "Technical contact name / title / email / phone:" in response.text
     assert "CEO:" in response.text
     assert "Subprocessor list:" in response.text
     assert "Do not email an API key" in response.text

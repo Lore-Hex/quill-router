@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,20 +35,15 @@ def test_phala_retirements_switch_at_announced_instant() -> None:
         assert not provider_lifecycle.provider_model_retired(
             "phala", model_id, upstream_id, at=before
         )
-        assert provider_lifecycle.provider_model_retired(
-            "phala", model_id, upstream_id, at=_CUTOFF
-        )
+        assert provider_lifecycle.provider_model_retired("phala", model_id, upstream_id, at=_CUTOFF)
 
 
 def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(provider_lifecycle, "_utc_now", lambda: _CUTOFF)
 
-    glm_providers = {
-        endpoint.provider for endpoint in endpoints_for_model("z-ai/glm-4.7")
-    }
+    glm_providers = {endpoint.provider for endpoint in endpoints_for_model("z-ai/glm-4.7")}
     qwen_providers = {
-        endpoint.provider
-        for endpoint in endpoints_for_model("qwen/qwen3-30b-a3b-instruct-2507")
+        endpoint.provider for endpoint in endpoints_for_model("qwen/qwen3-30b-a3b-instruct-2507")
     }
 
     assert "phala" not in glm_providers
@@ -73,19 +70,13 @@ def test_public_catalog_uses_effective_price_and_active_routes(
     qwen_endpoints = endpoints_for_model("qwen/qwen-2.5-7b-instruct")
     assert qwen_endpoints
     assert all(endpoint.provider != "phala" for endpoint in qwen_endpoints)
-    assert qwen_price["trustedrouter"][
-        "prompt_price_microdollars_per_million_tokens"
-    ] == min(
-        endpoint.prompt_price_microdollars_per_million_tokens
-        for endpoint in qwen_endpoints
+    assert qwen_price["trustedrouter"]["prompt_price_microdollars_per_million_tokens"] == min(
+        endpoint.prompt_price_microdollars_per_million_tokens for endpoint in qwen_endpoints
     )
 
-    retired_qwen = model_to_openrouter_shape(
-        MODELS["qwen/qwen3-30b-a3b-instruct-2507"]
-    )
+    retired_qwen = model_to_openrouter_shape(MODELS["qwen/qwen3-30b-a3b-instruct-2507"])
     assert all(
-        endpoint["provider"] != "phala"
-        for endpoint in retired_qwen["trustedrouter"]["endpoints"]
+        endpoint["provider"] != "phala" for endpoint in retired_qwen["trustedrouter"]["endpoints"]
     )
 
 
@@ -97,9 +88,7 @@ def test_phala_hourly_parser_applies_announced_policy() -> None:
         "z-ai/glm-5.2": ModelPrice(300_000, 2_000_000),
     }
 
-    before = phala._apply_lifecycle_policy(
-        prices, at=_CUTOFF - timedelta(microseconds=1)
-    )
+    before = phala._apply_lifecycle_policy(prices, at=_CUTOFF - timedelta(microseconds=1))
     after = phala._apply_lifecycle_policy(prices, at=_CUTOFF)
 
     assert set(before) == set(prices)
@@ -110,8 +99,9 @@ def test_phala_hourly_parser_applies_announced_policy() -> None:
     assert after["z-ai/glm-5.2"] == prices["z-ai/glm-5.2"]
 
 
-def test_phala_parser_only_publishes_explicit_confidential_routes(
+def test_phala_parser_publishes_confidential_routes_and_verified_k3_pass_through(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     payload = {
         "data": [
@@ -122,6 +112,20 @@ def test_phala_parser_only_publishes_explicit_confidential_routes(
             {
                 "id": "openai/gpt-5.5",
                 "pricing": {"prompt": "0.000005", "completion": "0.00003"},
+            },
+            {
+                "id": "moonshotai/kimi-k3",
+                "name": "Kimi K3",
+                "context_length": 1_048_576,
+                "max_output_length": 65_535,
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+                "supported_features": ["reasoning", "tools"],
+                "pricing": {
+                    "prompt": "0.000003",
+                    "completion": "0.000015",
+                    "input_cache_read": "0.0000015",
+                },
             },
             {
                 "id": "unmapped/ordinary-pass-through",
@@ -154,8 +158,50 @@ def test_phala_parser_only_publishes_explicit_confidential_routes(
 
     result = phala.fetch()
 
-    assert set(result.prices) == {"z-ai/glm-5.2"}
+    assert set(result.prices) == {"moonshotai/kimi-k3", "z-ai/glm-5.2"}
     assert phala.UPSTREAM_ID_MAP["z-ai/glm-5.2"] == "phala/glm-5.2"
+    assert phala.UPSTREAM_ID_MAP["moonshotai/kimi-k3"] == "moonshotai/kimi-k3"
+    assert result.prices["moonshotai/kimi-k3"] == ModelPrice(
+        3_000_000,
+        15_000_000,
+        prompt_cached_micro_per_m=1_500_000,
+    )
+    assert (
+        phala._DISCOVERED_MANIFEST_ROWS["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
+    )
+    assert "openai/gpt-5.5" not in phala._DISCOVERED_MANIFEST_ROWS
+
+    manifest_path = tmp_path / "phala.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "phala",
+                "models": [
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "display_name": "GLM 5.2",
+                        "title": "phala/glm-5.2",
+                        "model_type": "chat",
+                        "input_modalities": ["text"],
+                        "output_modalities": ["text"],
+                        "endpoints": ["chat/completions"],
+                        "status": 1,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(phala, "MANIFEST_PATH", manifest_path)
+
+    phala.write_provider_manifest(result)
+
+    written = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows_by_id = {row["id"]: row for row in written["models"]}
+    assert rows_by_id["moonshotai/kimi-k3"]["upstream_id"] == "moonshotai/kimi-k3"
+    assert rows_by_id["moonshotai/kimi-k3"]["input_token_price_per_m"] == 3_000_000
+    assert "openai/gpt-5.5" not in rows_by_id
+    assert "unmapped/ordinary-pass-through" not in rows_by_id
 
 
 def test_non_confidential_phala_route_is_rejected_before_authorization(

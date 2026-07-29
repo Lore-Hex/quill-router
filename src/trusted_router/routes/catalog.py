@@ -11,6 +11,8 @@ from trusted_router.catalog import (
     PRIVACY_TIER_LABELS,
     PROVIDER_JURISDICTION_US,
     PROVIDERS,
+    endpoint_confidential_compute,
+    endpoint_e2ee,
     endpoint_privacy_tier,
     endpoint_stores_content,
     endpoint_zero_data_retention,
@@ -177,10 +179,8 @@ def register_catalog_routes(router: APIRouter) -> None:
                         "zero_data_retention_scope": endpoint_zero_data_retention_scope(endpoint),
                         "privacy_tier": endpoint_privacy_tier(endpoint),
                         "privacy_tier_label": PRIVACY_TIER_LABELS[endpoint_privacy_tier(endpoint)],
-                        "provider_confidential_compute": PROVIDERS[
-                            endpoint.provider
-                        ].provider_confidential_compute,
-                        "provider_e2ee": PROVIDERS[endpoint.provider].provider_e2ee,
+                        "provider_confidential_compute": endpoint_confidential_compute(endpoint),
+                        "provider_e2ee": endpoint_e2ee(endpoint),
                         "provider_headquarters_country": PROVIDERS[
                             endpoint.provider
                         ].provider_headquarters_country,
