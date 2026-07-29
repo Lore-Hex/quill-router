@@ -603,3 +603,47 @@ def test_guarded_rows_do_not_starve_unguarded() -> None:
     assert reap_expired_reservations(store._database, store._param_types, now=_NOW, limit=1) == 0
     _assert_frozen(db, ws_a, rid_a)
     _assert_frozen(db, ws_c, rid_c)
+
+
+def test_availability_cache_works_for_unhashable_database() -> None:
+    """The production google.cloud.spanner_v1.database.Database defines __eq__ and
+    sets __hash__ = None. A cache keyed on the database OBJECT therefore raised
+    TypeError on every lookup, silently never cached, and made every settle pay an
+    extra GUARD_COUNT_SQL probe round trip on the hot path — invisible to tests
+    whose fake database happens to be hashable. Key on a stable string instead.
+    """
+
+    class UnhashableProxyDatabase(_ProxyDatabase):
+        # Mirror the production type: comparable but unhashable.
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+        __hash__ = None  # type: ignore[assignment]
+
+    probe_calls = 0
+
+    def count_probes(sql: str) -> None:
+        nonlocal probe_calls
+        if sql == GUARD_COUNT_SQL:
+            probe_calls += 1
+        return None
+
+    store, _db, _ = make_fake_store()
+    first_auth = _expired_authorization(store, ws="ws_unhashable_first")
+    second_auth = _expired_authorization(store, ws="ws_unhashable_second")
+    proxied = UnhashableProxyDatabase(store._database, count_probes)
+    assert proxied.__hash__ is None
+
+    for authorization in (first_auth, second_auth):
+        result = settle_atomic(
+            proxied,
+            store._param_types,
+            reservation_id=authorization["reservation_id"],
+            actual_micro=900_000,
+            settled_usage_type="Credits",
+            success=True,
+        )
+        assert result["outcome"] == SettleOutcome.SETTLED
+
+    # One probe for the whole process, not one per settle.
+    assert probe_calls == 1

@@ -24,7 +24,6 @@ import logging
 import threading
 import time
 import uuid
-import weakref
 from collections.abc import Callable
 from typing import Any
 
@@ -544,24 +543,40 @@ def _is_table_missing(exc: Exception) -> bool:
 
 
 _OUTBOX_ABSENT_CACHE_SECONDS = 5.0
-_OUTBOX_AVAILABILITY_CACHE: weakref.WeakKeyDictionary[
-    Any, tuple[bool, float]
-] = weakref.WeakKeyDictionary()
+# Keyed by a STABLE STRING, never by the Database object itself: the production
+# google.cloud.spanner_v1.database.Database defines __eq__ and sets
+# __hash__ = None, so keying a (Weak)dict on it raises TypeError on every
+# get/set. A cache that swallowed that error silently never cached in prod and
+# every settle/refund paid an extra GUARD_COUNT_SQL probe round trip on the hot
+# path — invisible to tests, whose fake database happens to be hashable.
+_OUTBOX_AVAILABILITY_CACHE: dict[str, tuple[bool, float]] = {}
 _OUTBOX_AVAILABILITY_CACHE_LOCK = threading.Lock()
 _OUTBOX_AVAILABILITY_PROBE_LOCK = threading.Lock()
 
 
+def _outbox_cache_key(database: Any) -> str:
+    """Stable, hashable identity for a Spanner database.
+
+    `Database.name` is the fully-qualified `projects/.../databases/...` path:
+    unique per database and stable for the process. `id()` is only a fallback
+    for test doubles that lack it. Either way the cache is bounded by the
+    number of distinct databases a process talks to (one, in practice).
+    """
+    name = getattr(database, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    return f"id:{id(database)}"
+
+
 def _cached_outbox_availability(database: Any, *, now: float) -> bool | None:
+    key = _outbox_cache_key(database)
     with _OUTBOX_AVAILABILITY_CACHE_LOCK:
-        try:
-            cached = _OUTBOX_AVAILABILITY_CACHE.get(database)
-        except TypeError:
-            return None
+        cached = _OUTBOX_AVAILABILITY_CACHE.get(key)
         if cached is None:
             return None
         available, expires_at = cached
         if expires_at <= now:
-            _OUTBOX_AVAILABILITY_CACHE.pop(database, None)
+            _OUTBOX_AVAILABILITY_CACHE.pop(key, None)
             return None
         return available
 
@@ -574,12 +589,10 @@ def _remember_outbox_availability(
 ) -> None:
     expires_at = float("inf") if available else now + _OUTBOX_ABSENT_CACHE_SECONDS
     with _OUTBOX_AVAILABILITY_CACHE_LOCK:
-        try:
-            _OUTBOX_AVAILABILITY_CACHE[database] = (available, expires_at)
-        except TypeError:
-            # An unusual unhashable/non-weak-referenceable database wrapper
-            # still gets the correct variant; it simply cannot use this cache.
-            return
+        _OUTBOX_AVAILABILITY_CACHE[_outbox_cache_key(database)] = (
+            available,
+            expires_at,
+        )
 
 
 def _outbox_table_available(database: Any, param_types: Any) -> bool:
