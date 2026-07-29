@@ -17,6 +17,7 @@ from scripts.pricing.base import (
     PROVIDER_FETCH_TRANSPORT_RETRIES,
     PROVIDER_FETCH_UA,
     ModelPrice,
+    PriceTier,
     ProviderPricingResult,
     validate,
 )
@@ -35,6 +36,7 @@ EXPECTED_MODELS = [
     "deepseek/deepseek-v4-pro",
     "qwen/qwen3.7-max",
     "qwen/qwen3.7-plus",
+    "qwen/qwen3.7-flash",
 ]
 
 
@@ -77,6 +79,29 @@ def _price(native_id: str) -> ModelPrice | None:
         prompt, completion, cached = 2.50, 7.50, 0.25
     elif model.startswith("qwen3.7-plus"):
         prompt, completion, cached = 0.40, 1.60, 0.04
+    elif model.startswith("qwen3.7-flash"):
+        return ModelPrice(
+            tiers=[
+                PriceTier(
+                    max_prompt_tokens=32_000,
+                    prompt_micro_per_m=30_000,
+                    completion_micro_per_m=130_000,
+                    prompt_cached_micro_per_m=6_000,
+                ),
+                PriceTier(
+                    max_prompt_tokens=256_000,
+                    prompt_micro_per_m=100_000,
+                    completion_micro_per_m=400_000,
+                    prompt_cached_micro_per_m=20_000,
+                ),
+                PriceTier(
+                    max_prompt_tokens=None,
+                    prompt_micro_per_m=200_000,
+                    completion_micro_per_m=800_000,
+                    prompt_cached_micro_per_m=40_000,
+                ),
+            ]
+        )
     elif model.startswith("qwen3.6-plus"):
         prompt, completion, cached = 0.50, 3.00, 0.05
     elif model.startswith("qwen3.6-flash"):

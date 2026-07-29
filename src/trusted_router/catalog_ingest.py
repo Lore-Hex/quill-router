@@ -701,6 +701,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "alibaba",
         "kimi",
         "zai",
         "tinfoil",
