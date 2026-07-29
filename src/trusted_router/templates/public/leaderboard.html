@@ -58,7 +58,7 @@
             </td>
             <td>{{ p.model_count }}</td>
             <td>{% if p.p50_ttft_ms is not none %}{{ p.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if p.p50_tokens_per_second is not none and p.throughput_sample_count %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ p.throughput_sample_count }}</span>{% else %}—{% endif %}</td>
+            <td>{% if p.p50_tokens_per_second is not none and p.throughput_sample_count %}{{ '%.0f'|format(p.p50_tokens_per_second) }} tok/s{% else %}—{% endif %}</td>
             <td>{% if p.sample_count %}{{ '%.2f'|format(p.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.top_error %}<code>{{ p.top_error }}</code> {{ '%.0f'|format(p.error_rate * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if p.excluded_count %}{{ p.excluded_count }}{% if p.top_excluded %} <code>{{ p.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
@@ -98,7 +98,7 @@
             <td>{% if m.p50_ttft_ms is not none %}{{ m.p50_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p95_ttft_ms is not none %}{{ m.p95_ttft_ms }} ms{% else %}—{% endif %}</td>
             <td>{% if m.p50_ttfb_ms is not none %}{{ m.p50_ttfb_ms }} ms{% else %}—{% endif %}</td>
-            <td>{% if m.p50_tokens_per_second is not none and m.throughput_sample_count %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s <span class="lb-sample-count">n={{ m.throughput_sample_count }}</span>{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
+            <td>{% if m.p50_tokens_per_second is not none and m.throughput_sample_count %}{{ '%.0f'|format(m.p50_tokens_per_second) }} tok/s{% if m.throughput_sample_count < 3 %} <span class="lb-badge">warming</span>{% endif %}{% else %}—{% endif %}</td>
             <td>{% if m.sample_count %}{{ '%.2f'|format(m.uptime * 100) }}%{% else %}—{% endif %}</td>
             <td>{% if m.excluded_count %}{{ m.excluded_count }}{% if m.top_excluded %} <code>{{ m.top_excluded }}</code>{% endif %}{% else %}—{% endif %}</td>
             <td>{{ m.sample_count }}</td>

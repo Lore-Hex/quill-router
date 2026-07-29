@@ -91,7 +91,7 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "p50 TTFT" in body  # table header
     assert "Effective throughput" in body
     assert "200 tok/s" in body
-    assert "n=1" in body
+    assert "n=1" not in body
     assert "Ranked by measured success rate, then p50" in body
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
