@@ -1,11 +1,11 @@
-"""Canonical provider onboarding contract published on the provider apply page."""
+"""Canonical provider onboarding contract published on the marketplace page."""
 
 from __future__ import annotations
 
 from typing import Final
 
 PROVIDER_CATALOG_SCHEMA_URL: Final = (
-    "https://trustedrouter.com/providers/apply/catalog.schema.json"
+    "https://trustedrouter.com/providers/marketplace/catalog.schema.json"
 )
 
 PROVIDER_CATALOG_EXAMPLE: Final[dict[str, object]] = {

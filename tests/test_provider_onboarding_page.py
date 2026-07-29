@@ -11,12 +11,22 @@ from trusted_router.provider_contract import (
 def test_provider_onboarding_page_has_machine_readable_requirements(
     client: TestClient,
 ) -> None:
-    response = client.get("/providers/apply")
+    response = client.get("/providers/marketplace")
 
     assert response.status_code == 200
     assert "List your models on TrustedRouter." in response.text
     assert "providers@trustedrouter.com" in response.text
-    assert "Dedicated API key." in response.text
+    assert "Legal company name:" in response.text
+    assert "Privacy policy:" in response.text
+    assert "DUNS number:" in response.text
+    assert "Registered address:" in response.text
+    assert "Business phone:" in response.text
+    assert "Corporate tax ID:" in response.text
+    assert "CEO:" in response.text
+    assert "Subprocessor list:" in response.text
+    assert "Do not email an API key" in response.text
+    assert "API key: DO NOT INCLUDE" in response.text
+    assert "separate secure handoff" in response.text
     assert "OpenAI-compatible base URL." in response.text
     assert "Canonical catalog." in response.text
     assert "Copy this output exactly." in response.text
@@ -25,19 +35,22 @@ def test_provider_onboarding_page_has_machine_readable_requirements(
     assert "No separate pricing endpoint is required." in response.text
     assert "per_1m_tokens" in response.text
     assert "Do not invent a second format." in response.text
-    assert 'href="/providers/apply/catalog.schema.json"' in response.text
-    assert "unrestricted administrative key" in response.text
+    assert 'href="/providers/marketplace/catalog.schema.json"' in response.text
+    assert "Exclude account administration, billing, user management" in response.text
     assert (
-        'href="mailto:providers@trustedrouter.com?subject=Provider%20integration%20for%20%5Bcompany%5D"'
+        'href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D"'
         in response.text
     )
-    assert '<link rel="canonical" href="https://trustedrouter.com/providers/apply">' in response.text
+    assert (
+        '<link rel="canonical" href="https://trustedrouter.com/providers/marketplace">'
+        in response.text
+    )
 
 
 def test_provider_catalog_schema_is_public_and_matches_documented_example(
     client: TestClient,
 ) -> None:
-    response = client.get("/providers/apply/catalog.schema.json")
+    response = client.get("/providers/marketplace/catalog.schema.json")
 
     assert response.status_code == 200
     assert response.headers["cache-control"].startswith("public")
@@ -64,14 +77,32 @@ def test_provider_onboarding_page_is_discoverable(client: TestClient) -> None:
     llms = client.get("/llms.txt")
 
     assert providers.status_code == footer.status_code == sitemap.status_code == llms.status_code == 200
-    assert 'href="/providers/apply"' in providers.text
-    assert 'href="/providers/apply"' in footer.text
-    assert "<loc>https://trustedrouter.com/providers/apply</loc>" in sitemap.text
-    assert "Provider onboarding: https://trustedrouter.com/providers/apply" in llms.text
+    assert 'href="/providers/marketplace"' in providers.text
+    assert 'href="/providers/marketplace"' in footer.text
+    assert "<loc>https://trustedrouter.com/providers/marketplace</loc>" in sitemap.text
+    assert "Provider marketplace: https://trustedrouter.com/providers/marketplace" in llms.text
+    assert "https://trustedrouter.com/providers/apply" not in sitemap.text
+    assert "https://trustedrouter.com/providers/apply" not in llms.text
 
 
 def test_provider_onboarding_page_supports_head(client: TestClient) -> None:
-    response = client.head("/providers/apply")
+    response = client.head("/providers/marketplace")
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+
+
+def test_legacy_provider_apply_routes_redirect_permanently(client: TestClient) -> None:
+    page = client.get("/providers/apply", follow_redirects=False)
+    page_with_slash = client.get("/providers/apply/", follow_redirects=False)
+    schema = client.get(
+        "/providers/apply/catalog.schema.json",
+        follow_redirects=False,
+    )
+
+    assert page.status_code == 301
+    assert page.headers["location"] == "/providers/marketplace"
+    assert page_with_slash.status_code == 301
+    assert page_with_slash.headers["location"] == "/providers/marketplace"
+    assert schema.status_code == 301
+    assert schema.headers["location"] == "/providers/marketplace/catalog.schema.json"
