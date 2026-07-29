@@ -128,15 +128,23 @@ def test_wave2_manifests_publish_only_live_eligible_routes() -> None:
         for row in atlas_image_rows
     )
     assert all(row["upstream_id"] for raw in manifests.values() for row in raw["models"])
-    assert all(
-        row.get("routable") is False
-        and row.get("routable_reason") == "provider-canary-failed"
-        for row in manifests["streamlake"]["models"]
-    )
-
     route_providers = {endpoint.provider for endpoint in MODEL_ENDPOINTS.values()}
     assert {"inceptron", "morph", "atlas-cloud"}.issubset(route_providers)
-    assert "streamlake" not in route_providers
+    streamlake_route_models = {
+        endpoint.model_id
+        for endpoint in MODEL_ENDPOINTS.values()
+        if endpoint.provider == "streamlake"
+    }
+    streamlake_manifest_models = {
+        row["id"]
+        for row in manifests["streamlake"]["models"]
+        if row.get("routable") is not False
+    }
+    assert streamlake_route_models == streamlake_manifest_models
+    assert all(
+        row.get("routable") is not False or row.get("routable_reason")
+        for row in manifests["streamlake"]["models"]
+    )
 
 
 def test_wave2_exact_upstream_ids_are_committed() -> None:
