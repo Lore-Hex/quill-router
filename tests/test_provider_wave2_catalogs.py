@@ -47,6 +47,30 @@ def test_provider_owned_pricing_parsers_use_integer_microdollars() -> None:
     }
 
 
+def test_streamlake_parser_isolates_model_rows_on_live_one_line_page() -> None:
+    live_page_shape = (
+        r"<html><script>{\"content\":\""
+        r"\u003ctable\u003e"
+        r"\u003ctr\u003e\u003ctd\u003eKAT-Coder-Pro-V2.5\u003c/td\u003e"
+        r"\u003ctd\u003e0-256K\u003c/td\u003e"
+        r"\u003ctd\u003e$0.74\u003c/td\u003e"
+        r"\u003ctd\u003e$2.96\u003c/td\u003e"
+        r"\u003ctd\u003e-\u003c/td\u003e"
+        r"\u003ctd\u003e$0.15\u003c/td\u003e\u003c/tr\u003e"
+        r"\u003ctr\u003e\u003ctd\u003ePackage 7\u003c/td\u003e"
+        r"\u003ctd\u003e$999.9\u003c/td\u003e\u003c/tr\u003e"
+        r"\u003c/table\u003e\"}</script></html>"
+    )
+
+    assert streamlake_parser.parse(live_page_shape) == {
+        "kwaipilot/kat-coder-pro-v2.5": {
+            "prompt_micro_per_m": 740_000,
+            "completion_micro_per_m": 2_960_000,
+            "prompt_cached_micro_per_m": 150_000,
+        }
+    }
+
+
 def test_morph_checkpoint_fallback_covers_published_live_chat_catalog() -> None:
     prices = morph_parser.parse("Vercel Security Checkpoint")
 
