@@ -42,6 +42,7 @@ from trusted_router.storage_gcp_activity_index import (
 from trusted_router.storage_gcp_activity_index import (
     write_generation as _bt_write_generation,
 )
+from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_benchmark_index import (
     provider_benchmark_samples as _bt_provider_benchmark_samples,
 )
@@ -79,6 +80,7 @@ class SpannerGenerations:
         benchmark_family: str | None = None,
         legacy_family: str | None = None,
         add_usage_to_key: _AddUsageCallback,
+        analytics_outbox: SpannerAnalyticsOutbox | None = None,
     ) -> None:
         self._io = io
         self._bt_table = bt_table
@@ -98,6 +100,7 @@ class SpannerGenerations:
             legacy,
         )
         self._add_usage_to_key = add_usage_to_key
+        self._analytics_outbox = analytics_outbox
 
     def add(self, generation: Generation) -> None:
         # Two separate transactions instead of one fused one. Per-key
@@ -182,6 +185,26 @@ class SpannerGenerations:
                     # Benchmarks are not repairable — they're loss-tolerant
                     # observability data, not billing. Log and move on.
                     "loss_tolerated": True,
+                },
+            )
+        if self._analytics_outbox is None:
+            return
+        try:
+            # A separate transaction by construction. Do not move this into
+            # gateway settlement: analytics is best-effort; money is not.
+            self._analytics_outbox.enqueue(sample)
+        except Exception as exc:
+            log.exception(
+                "spanner.analytics_outbox_enqueue_failed",
+                extra={
+                    "event_id": sample.id,
+                    "model": sample.model,
+                    "provider": sample.provider,
+                    "status": sample.status,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    "loss_tolerated": True,
+                    "repairable_via": "clickhouse/reconcile_benchmark_samples.py",
                 },
             )
 

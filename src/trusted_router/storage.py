@@ -1295,6 +1295,9 @@ def create_store(settings: Any) -> Store:
             request_record_write_mode=getattr(
                 settings, "request_record_write_mode", "legacy"
             ),
+            analytics_outbox_enabled=getattr(
+                settings, "analytics_outbox_enabled", False
+            ),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 

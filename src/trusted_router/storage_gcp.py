@@ -40,6 +40,7 @@ from trusted_router.storage import (
     Workspace,
     iso_now,
 )
+from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
 from trusted_router.storage_gcp_auth_sessions import SpannerAuthSessions
 from trusted_router.storage_gcp_broadcast import SpannerBroadcastDestinations
@@ -132,6 +133,7 @@ class SpannerBigtableStore:
         generation_table: str,
         bigtable_app_profile_id: str = "",
         request_record_write_mode: str = "legacy",
+        analytics_outbox_enabled: bool = False,
     ) -> None:
         if not spanner_instance_id or not spanner_database_id or not bigtable_instance_id:
             raise ValueError("Spanner and Bigtable IDs are required")
@@ -245,6 +247,11 @@ class SpannerBigtableStore:
             benchmark_family=self.benchmark_family,
             legacy_family=self.legacy_generation_family,
             add_usage_to_key=self.api_keys.add_usage,
+            analytics_outbox=(
+                SpannerAnalyticsOutbox(self._database, self._param_types)
+                if analytics_outbox_enabled
+                else None
+            ),
         )
         self.byok_store = SpannerByok(io)
         self.custom_model_store = SpannerCustomModels(io)

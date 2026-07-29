@@ -25,9 +25,12 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
+import struct
 import subprocess
 from collections import Counter
+from typing import Any
 
 from google.cloud import bigtable
 from google.cloud.bigtable.row_set import RowSet
@@ -35,7 +38,7 @@ from google.cloud.bigtable.row_set import RowSet
 PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
 TABLE = "trustedrouter-generations"
-FAMILY = "m"
+FAMILIES = ("benchmark", "m")
 CH_DB = "tr"
 CH_TABLE = "provider_benchmark_samples"
 
@@ -44,8 +47,15 @@ def ch(sql: str, stdin: bytes | None = None) -> str:
     """Run a query through clickhouse-client on localhost."""
     password = os.environ["CH_PASSWORD"]
     cmd = [
-        "clickhouse-client", "--user", "tr", "--password", password,
-        "--database", CH_DB, "--query", sql,
+        "clickhouse-client",
+        "--user",
+        "tr",
+        "--password",
+        password,
+        "--database",
+        CH_DB,
+        "--query",
+        sql,
     ]
     result = subprocess.run(  # noqa: S603 - fixed argv, no shell, callers pass literal SQL
         cmd, input=stdin, capture_output=True, check=False
@@ -55,7 +65,30 @@ def ch(sql: str, stdin: bytes | None = None) -> str:
     return result.stdout.decode()
 
 
-def normalise(raw: dict) -> dict | None:
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            return None
+        # The ClickHouse column is Float32. Round here so backfill, outbox
+        # ingestion, and reconciliation fingerprint the same stored value.
+        return struct.unpack("!f", struct.pack("!f", parsed))[0]
+    except (OverflowError, TypeError, ValueError):
+        return None
+
+
+def normalise(raw: dict[str, Any]) -> dict[str, Any] | None:
     """Canonical row shape. Shared coercions matter: a historical string
     "429" must become the same UInt16 the query path compares against, or the
     two disagree by construction."""
@@ -68,11 +101,7 @@ def normalise(raw: dict) -> dict | None:
         parsed = parsed.replace(tzinfo=dt.UTC)
     parsed = parsed.astimezone(dt.UTC)
 
-    status_code = raw.get("error_status")
-    if isinstance(status_code, str):
-        status_code = int(status_code) if status_code.isdigit() else None
-    elif status_code is not None:
-        status_code = int(status_code)
+    status_code = _optional_int(raw.get("error_status"))
 
     provider, model = raw.get("provider"), raw.get("model")
     if not provider or not model:
@@ -91,10 +120,10 @@ def normalise(raw: dict) -> dict | None:
         "input_tokens": int(raw.get("input_tokens") or 0),
         "output_tokens": int(raw.get("output_tokens") or 0),
         "total_cost_microdollars": int(raw.get("total_cost_microdollars") or 0),
-        "speed_tokens_per_second": raw.get("speed_tokens_per_second"),
-        "elapsed_milliseconds": raw.get("elapsed_milliseconds"),
-        "first_token_milliseconds": raw.get("first_token_milliseconds"),
-        "ttfb_milliseconds": raw.get("ttfb_milliseconds"),
+        "speed_tokens_per_second": _optional_float(raw.get("speed_tokens_per_second")),
+        "elapsed_milliseconds": _optional_int(raw.get("elapsed_milliseconds")),
+        "first_token_milliseconds": _optional_int(raw.get("first_token_milliseconds")),
+        "ttfb_milliseconds": _optional_int(raw.get("ttfb_milliseconds")),
         "finish_reason": raw.get("finish_reason"),
         "error_type": raw.get("error_type"),
         "error_status": status_code,
@@ -131,7 +160,11 @@ def main() -> int:
     for index, row in enumerate(table.read_rows(row_set=rs)):
         if index >= args.limit:
             break
-        cells = row.cells.get(FAMILY, {}).get(b"body", [])
+        cells = []
+        for family in FAMILIES:
+            cells = row.cells.get(family, {}).get(b"body", [])
+            if cells:
+                break
         if not cells:
             continue
         try:
