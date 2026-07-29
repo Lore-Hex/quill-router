@@ -16,9 +16,24 @@ def _micro_per_m(raw: str) -> int:
     return int((Decimal(raw) * Decimal("1000000")).to_integral_value())
 
 
+def _pricing_rows(raw: str) -> list[str]:
+    # The live Next.js document serializes the entire article as one JSON
+    # string with escaped HTML tags. Isolate table rows before looking for
+    # prices so unrelated package prices cannot leak into a model row.
+    decoded = (
+        raw.replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\u0026", "&")
+    )
+    table_rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", decoded, re.IGNORECASE | re.DOTALL)
+    if not table_rows:
+        return raw.splitlines()
+    return [re.sub(r"<[^>]+>", " ", table_row) for table_row in table_rows]
+
+
 def parse(html: str) -> dict[str, dict[str, int]]:
     output: dict[str, dict[str, int]] = {}
-    for raw_line in html.splitlines():
+    for raw_line in _pricing_rows(html):
         line = re.sub(r"\s+", " ", raw_line)
         label = next((item for item in MODEL_IDS if item.casefold() in line.casefold()), None)
         if label is None:
