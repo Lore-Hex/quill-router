@@ -3,7 +3,7 @@
   "provider": "voyage",
   "source": "https://docs.voyageai.com/docs/embeddings",
   "pricing_source": "https://docs.voyageai.com/docs/pricing.md",
-  "generated_at": "2026-07-29T03:30:06Z",
+  "generated_at": "2026-07-29T19:28:01Z",
   "price_scale": "microdollars_per_million",
   "model_count": 1,
   "models": [

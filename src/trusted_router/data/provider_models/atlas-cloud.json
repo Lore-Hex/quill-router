@@ -3349,8 +3349,32 @@
       "input_token_price_per_m": 5000000,
       "output_token_price_per_m": 25000000,
       "cached_input_token_price_per_m": 500000
+    },
+    {
+      "display_name": "Doubao Seed Character",
+      "title": "bytedance/doubao-seed-character-260628",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "bytedance/doubao-seed-character-260628",
+      "upstream_id": "bytedance/doubao-seed-character-260628",
+      "context_length": 131072,
+      "max_output_tokens": 32768,
+      "input_token_price_per_m": 200000,
+      "output_token_price_per_m": 800000,
+      "cached_input_token_price_per_m": 40000
     }
   ],
-  "generated_at": "2026-07-29T03:30:06Z",
-  "model_count": 122
+  "generated_at": "2026-07-29T19:28:01Z",
+  "model_count": 123
 }

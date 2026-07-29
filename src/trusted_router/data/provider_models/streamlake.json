@@ -22,9 +22,7 @@
       "context_length": 262144,
       "input_token_price_per_m": 150000,
       "output_token_price_per_m": 600000,
-      "cached_input_token_price_per_m": 30000,
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 30000
     },
     {
       "display_name": "kat-coder-pro-v2",
@@ -45,9 +43,7 @@
       "context_length": 262144,
       "input_token_price_per_m": 300000,
       "output_token_price_per_m": 1200000,
-      "cached_input_token_price_per_m": 60000,
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 60000
     },
     {
       "display_name": "kat-coder-pro-v2.5",
@@ -68,11 +64,9 @@
       "context_length": 262144,
       "input_token_price_per_m": 740000,
       "output_token_price_per_m": 2960000,
-      "cached_input_token_price_per_m": 999900000,
-      "routable": false,
-      "routable_reason": "provider-canary-failed"
+      "cached_input_token_price_per_m": 999900000
     }
   ],
-  "generated_at": "2026-07-29T03:30:06Z",
+  "generated_at": "2026-07-29T19:28:01Z",
   "model_count": 3
 }
