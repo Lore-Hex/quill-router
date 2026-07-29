@@ -35,7 +35,7 @@
     <div class="status-section-head">
       <div>
         <h2>Providers</h2>
-        <p>Ranked by measured p50 time-to-first-token across all of a provider's models
+        <p>Ranked by measured success rate, then p50 time-to-first-token across all of a provider's models
           ({{ snapshot.provider_count }} providers · {{ snapshot.total_samples }} availability samples ·
           {{ snapshot.total_throughput_samples }} sustained throughput samples). Providers below the
           evidence floor remain visible as warming, but do not receive a rank.</p>
@@ -74,7 +74,7 @@
     <div class="status-section-head">
       <div>
         <h2>Models</h2>
-        <p>Qualified models are ranked by measured p50 TTFT. Thin availability and
+        <p>Qualified models are ranked by measured success rate, then p50 TTFT. Thin availability and
           throughput measurements stay visible below the ranked set as warming.</p>
       </div>
     </div>

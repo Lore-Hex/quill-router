@@ -24,6 +24,7 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
     scrub_provider_error_message,
 )
+from trusted_router.synthetic.components import is_router_origin_error
 from trusted_router.types import UsageType
 
 DEFAULT_SYNTHETIC_BILLING_CONCURRENCY = 2
@@ -656,7 +657,7 @@ async def gateway_billing_probe(
                     status="down",
                     latency_milliseconds=_elapsed_ms(started),
                     http_status=authorize.status_code,
-                    error_type="authorize_failed",
+                    error_type=_probe_response_error(authorize, operation="authorize"),
                     model=model,
                 )
             ]
@@ -681,6 +682,15 @@ async def gateway_billing_probe(
         )
         settle_data = settle.json().get("data", {}) if settle.content else {}
         ok = settle.status_code == 200 and bool(settle_data.get("settled"))
+        settle_error = (
+            None
+            if ok
+            else (
+                _probe_response_error(settle, operation="settle")
+                if settle.status_code != 200
+                else "settle_failed"
+            )
+        )
         return [
             _sample(
                 "gateway_authorize_settle",
@@ -690,7 +700,7 @@ async def gateway_billing_probe(
                 status="up" if ok else "down",
                 latency_milliseconds=_elapsed_ms(started),
                 http_status=settle.status_code,
-                error_type=None if ok else "settle_failed",
+                error_type=settle_error,
                 model=model,
                 selected_model=settle_data.get("model"),
                 selected_provider=settle_data.get("provider"),
@@ -750,7 +760,7 @@ async def gateway_fallback_probe(
                     status="routing_degraded",
                     latency_milliseconds=_elapsed_ms(started),
                     http_status=authorize.status_code,
-                    error_type="authorize_failed",
+                    error_type=_probe_response_error(authorize, operation="authorize"),
                     model=model,
                 )
             ]
@@ -796,6 +806,15 @@ async def gateway_fallback_probe(
             and bool(settle_data.get("settled"))
             and settle_data.get("endpoint_id") == expected_endpoint
         )
+        settle_error = (
+            None
+            if ok
+            else (
+                _probe_response_error(settle, operation="fallback_settle")
+                if settle.status_code != 200
+                else "fallback_settle_failed"
+            )
+        )
         return [
             _sample(
                 "provider_fallback",
@@ -805,7 +824,7 @@ async def gateway_fallback_probe(
                 status="up" if ok else "routing_degraded",
                 latency_milliseconds=_elapsed_ms(started),
                 http_status=settle.status_code,
-                error_type=None if ok else "fallback_settle_failed",
+                error_type=settle_error,
                 model=model,
                 selected_model=settle_data.get("model") or fallback.get("model"),
                 selected_provider=settle_data.get("provider") or fallback.get("provider"),
@@ -960,13 +979,14 @@ def _sse_line_error(line: str) -> tuple[str, int | None, str | None] | None:
         return None
     error_type = str(error.get("type") or "provider_error")
     message = str(error.get("message") or "") or None
+    source = str(error.get("source") or "") or None
     status_raw = error.get("status") or error.get("code") or error.get("status_code")
     status: int | None
     try:
         status = int(status_raw) if status_raw is not None else None
     except (TypeError, ValueError):
         status = None
-    return _rotation_error_type(error_type, status, message), status, message
+    return _rotation_error_type(error_type, status, message, source=source), status, message
 
 
 def _sse_line_finish_reason(line: str) -> str | None:
@@ -1062,16 +1082,27 @@ def _response_error(response: httpx.Response) -> tuple[str, int | None, str | No
     except ValueError:
         return f"http_{response.status_code}", response.status_code, None
     error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict) and isinstance(payload, dict):
+        detail = payload.get("detail")
+        error = detail.get("error") if isinstance(detail, dict) else None
     if not isinstance(error, dict):
         return f"http_{response.status_code}", response.status_code, None
     error_type = str(error.get("type") or f"http_{response.status_code}")
     message = str(error.get("message") or "") or None
+    source = str(error.get("source") or "") or None
     status_raw = error.get("status") or error.get("code") or error.get("status_code")
     try:
         status = int(status_raw) if status_raw is not None else response.status_code
     except (TypeError, ValueError):
         status = response.status_code
-    return _rotation_error_type(error_type, status, message), status, message
+    return _rotation_error_type(error_type, status, message, source=source), status, message
+
+
+def _probe_response_error(response: httpx.Response, *, operation: str) -> str:
+    error_type, _status, _message = _response_error(response)
+    if is_router_origin_error(error_type):
+        return error_type
+    return f"{operation}_{error_type}"
 
 
 _UNSUPPORTED_ROUTE_ERROR_TYPES = frozenset(
@@ -1128,9 +1159,29 @@ def _rotation_error_type(
     error_type: str,
     status: int | None,
     message: str | None,
+    *,
+    source: str | None = None,
 ) -> str:
     raw_type = error_type.casefold()
     raw_message = (message or "").casefold()
+    raw_source = (source or "").casefold()
+    if "workspace billing is paused" in raw_message:
+        return "monitor_workspace_paused"
+    if "database contention" in raw_message or "deadlock" in raw_message:
+        return "router_database_contention"
+    if "read-only mode" in raw_message or "planned maintenance" in raw_message:
+        return "router_maintenance"
+    if raw_source == "router" and any(
+        marker in raw_message
+        for marker in (
+            "insufficient credits",
+            "api key is disabled",
+            "api key expired",
+            "invalid api key",
+            "api key not found",
+        )
+    ):
+        return "monitor_account_unavailable"
     if raw_type in _UNSUPPORTED_ROUTE_ERROR_TYPES or any(
         marker in raw_message for marker in _UNSUPPORTED_ROUTE_MESSAGE_MARKERS
     ):
@@ -1140,6 +1191,8 @@ def _rotation_error_type(
         and any(marker in raw_message for marker in _PROBE_CONFIG_MESSAGE_MARKERS)
     ):
         return "probe_config_error"
+    if raw_source == "router":
+        return "router_error"
     if status in {401, 403}:
         return "provider_auth_config"
     return error_type
@@ -1508,7 +1561,7 @@ def _rotation_error_sample(
 
 
 def _rotation_error_excluded_from_uptime(error_type: str | None) -> bool:
-    return error_type in {
+    return is_router_origin_error(error_type) or error_type in {
         "unsupported_route",
         "probe_config_error",
         "provider_auth_config",

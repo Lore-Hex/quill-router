@@ -7,6 +7,12 @@ from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
 REGIONAL_GATEWAY_PROBES = {"tls_health", "attestation_nonce"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
 IMAGE_GENERATION_PROBES = {"image_generation"}
+MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
+    {
+        "monitor_account_unavailable",
+        "monitor_workspace_paused",
+    }
+)
 
 COMPONENT_PROBES: dict[str, set[str]] = {
     "canonical_api": REGIONAL_GATEWAY_PROBES,
@@ -80,6 +86,8 @@ COMPONENT_DEFINITIONS: tuple[dict[str, str], ...] = (
 
 
 def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
+    if sample.error_type in MONITOR_CONFIGURATION_ERROR_TYPES:
+        return []
     ids: list[str] = []
     if sample.target == "canonical" and sample.probe_type in REGIONAL_GATEWAY_PROBES:
         ids.append("canonical_api")
@@ -101,7 +109,20 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
 
 
 def sample_slo_class_ids(sample: SyntheticProbeSample) -> list[str]:
+    if sample.error_type in MONITOR_CONFIGURATION_ERROR_TYPES:
+        return []
     return _slo_class_ids(probe_type=sample.probe_type, target=sample.target)
+
+
+def is_router_origin_error(error_type: str | None) -> bool:
+    """Return whether a benchmark failure happened before provider invocation."""
+    return bool(
+        error_type
+        and (
+            error_type in MONITOR_CONFIGURATION_ERROR_TYPES
+            or error_type.startswith("router_")
+        )
+    )
 
 
 def rollup_slo_class_ids(rollup: SyntheticRollup) -> list[str]:
