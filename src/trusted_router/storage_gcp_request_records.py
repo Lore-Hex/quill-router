@@ -28,6 +28,24 @@ from trusted_router.types import UsageType
 
 AUTHORIZATION_TABLE = "tr_gateway_authorization"
 
+# Importing GUARD_STATUSES would cycle because storage_gcp_settle_outbox imports
+# the retention helpers below. Keep this SQL list in sync with that tuple.
+_OUTBOX_GUARD_STATUS_SQL = "'pending', 'dead'"
+
+_COMPLETE_GATEWAY_AUTHORIZATION_RETENTION_SQL = (
+    "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "
+    "WHERE authorization_id=@authorization_id AND settled=true "
+    "AND terminal_at IS NULL"
+)
+_COMPLETE_GATEWAY_AUTHORIZATION_RETENTION_GUARDED_SQL = (
+    "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "  # noqa: S608
+    "WHERE authorization_id=@authorization_id AND settled=true "
+    "AND terminal_at IS NULL "
+    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o "
+    "WHERE o.authorization_id = tr_gateway_authorization.authorization_id "
+    f"AND o.status IN ({_OUTBOX_GUARD_STATUS_SQL}))"
+)
+
 
 def insert_gateway_authorization(
     transaction: Any,
@@ -151,6 +169,7 @@ def complete_gateway_authorization_retention(
     authorization_id: str,
     *,
     terminal_at: Any,
+    outbox_available: bool = True,
 ) -> int:
     """Start the retention clock for a settled, replayable authorization.
 
@@ -158,9 +177,9 @@ def complete_gateway_authorization_retention(
     retries idempotent without extending the 30-day replay/audit window.
     """
     return transaction.execute_update(
-        "UPDATE tr_gateway_authorization SET terminal_at=@terminal_at "
-        "WHERE authorization_id=@authorization_id AND settled=true "
-        "AND terminal_at IS NULL",
+        _COMPLETE_GATEWAY_AUTHORIZATION_RETENTION_GUARDED_SQL
+        if outbox_available
+        else _COMPLETE_GATEWAY_AUTHORIZATION_RETENTION_SQL,
         params={
             "authorization_id": authorization_id,
             "terminal_at": terminal_at,
@@ -169,6 +188,20 @@ def complete_gateway_authorization_retention(
             "authorization_id": param_types.STRING,
             "terminal_at": param_types.TIMESTAMP,
         },
+    )
+
+
+def clear_gateway_authorization_retention(
+    transaction: Any,
+    param_types: Any,
+    authorization_id: str,
+) -> int:
+    """Make an authorization TTL-ineligible while durable repair is outstanding."""
+    return transaction.execute_update(
+        "UPDATE tr_gateway_authorization SET terminal_at=NULL "
+        "WHERE authorization_id=@authorization_id AND terminal_at IS NOT NULL",
+        params={"authorization_id": authorization_id},
+        param_types={"authorization_id": param_types.STRING},
     )
 
 

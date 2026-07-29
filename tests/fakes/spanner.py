@@ -301,6 +301,8 @@ class _FakeTransaction:
     def _settle_outbox_current(self, pk: tuple) -> dict | None:
         """In-txn view of a settle-outbox row (read-your-writes) + read version."""
         for op in reversed(self.pending_writes):
+            if op[0] == "delete_settle_outbox" and op[1] == pk:
+                return None
             if op[0] in ("insert_settle_outbox", "update_settle_outbox") and op[1] == pk:
                 return dict(op[2])
         version_key = ("outbox", pk)
@@ -308,6 +310,26 @@ class _FakeTransaction:
             self.read_versions[version_key] = self.db.settle_outbox_versions.get(pk, 0)
         rec = self.db.settle_outbox.get(pk)
         return dict(rec) if rec is not None else None
+
+    def _has_guarded_outbox_intent(self, authorization_id: str) -> bool:
+        """Evaluate the correlated pending/dead EXISTS against the in-txn view."""
+        pks = set(self.db.settle_outbox)
+        pks.update(
+            op[1]
+            for op in self.pending_writes
+            if op[0] in (
+                "insert_settle_outbox",
+                "update_settle_outbox",
+                "delete_settle_outbox",
+            )
+        )
+        return any(
+            rec is not None
+            and rec.get("authorization_id") == authorization_id
+            and rec.get("status") in GUARD_STATUSES
+            for pk in pks
+            if (rec := self._settle_outbox_current(pk)) is not None
+        )
 
     def _gateway_authorization_current(
         self,
@@ -511,15 +533,41 @@ class _FakeTransaction:
             return 1
         if "UPDATE tr_reservation SET settled=true" in sql:
             _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "terminal_at = IF(EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "reservation-claim-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_reservation.authorization_id",
+                    "reservation-claim-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "reservation-claim-retention",
+                )
+            else:
+                _require_pred(
+                    sql,
+                    "settled_usage_type=@sut, terminal_at=@terminal_at",
+                    "reservation-claim-retention-unguarded",
+                )
             rec = self._reservation_current(p["rid"])
             if rec is None or rec["settled"]:
                 return 0  # missing or already-claimed (replay)
+            terminal_at = p["terminal_at"]
+            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+                terminal_at = None
             new = dict(
                 rec,
                 settled=True,
                 settled_usage_type=p["sut"],
                 actual_micro=p["actual"],
-                terminal_at=p["terminal_at"],
+                terminal_at=terminal_at,
             )
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
@@ -529,10 +577,41 @@ class _FakeTransaction:
                 "reservation_id=@rid AND settled=true AND terminal_at IS NULL",
                 "reservation-complete",
             )
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "reservation-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_reservation.authorization_id",
+                    "reservation-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "reservation-complete-retention",
+                )
             rec = self._reservation_current(p["rid"])
             if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
                 return 0
+            if guarded and self._has_guarded_outbox_intent(str(rec["authorization_id"])):
+                return 0
             new = dict(rec, terminal_at=p["terminal_at"])
+            self.pending_writes.append(("update_reservation", p["rid"], new))
+            return 1
+        if sql.startswith("UPDATE tr_reservation SET terminal_at=NULL"):
+            _require_pred(
+                sql,
+                "reservation_id=@rid AND terminal_at IS NOT NULL",
+                "reservation-clear",
+            )
+            rec = self._reservation_current(p["rid"])
+            if rec is None or rec.get("terminal_at") is None:
+                return 0
+            new = dict(rec, terminal_at=None)
             self.pending_writes.append(("update_reservation", p["rid"], new))
             return 1
         if sql.startswith("INSERT INTO tr_gateway_authorization"):
@@ -567,6 +646,23 @@ class _FakeTransaction:
                 "AND settled=true AND terminal_at IS NULL",
                 "authorization-complete",
             )
+            guarded = "tr_settle_outbox" in sql
+            if guarded:
+                _require_pred(
+                    sql,
+                    "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                    "authorization-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    "o.authorization_id = tr_gateway_authorization.authorization_id",
+                    "authorization-complete-retention",
+                )
+                _require_pred(
+                    sql,
+                    f"o.status IN ({_GUARD_STATUS_SQL})",
+                    "authorization-complete-retention",
+                )
             authorization_id = p["authorization_id"]
             rec = self._gateway_authorization_current(authorization_id)
             if (
@@ -575,7 +671,24 @@ class _FakeTransaction:
                 or rec.get("terminal_at") is not None
             ):
                 return 0
+            if guarded and self._has_guarded_outbox_intent(authorization_id):
+                return 0
             new = dict(rec, terminal_at=p["terminal_at"])
+            self.pending_writes.append(
+                ("update_gateway_authorization", authorization_id, new)
+            )
+            return 1
+        if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=NULL"):
+            _require_pred(
+                sql,
+                "authorization_id=@authorization_id AND terminal_at IS NOT NULL",
+                "authorization-clear",
+            )
+            authorization_id = p["authorization_id"]
+            rec = self._gateway_authorization_current(authorization_id)
+            if rec is None or rec.get("terminal_at") is None:
+                return 0
+            new = dict(rec, terminal_at=None)
             self.pending_writes.append(
                 ("update_gateway_authorization", authorization_id, new)
             )
@@ -887,6 +1000,34 @@ def _execute_settle_outbox_sql(
         ]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
+    if (
+        "SELECT COUNT(*) FROM tr_settle_outbox" in sql
+        and "intent_kind != @kind" in sql
+    ):
+        _require_pred(sql, "authorization_id=@aid", "sibling-guard")
+        _require_pred(sql, "intent_kind != @kind", "sibling-guard")
+        _require_pred(
+            sql,
+            f"status IN ({_GUARD_STATUS_SQL})",
+            "sibling-guard",
+        )
+        aid = p["aid"]
+        kind = p["kind"]
+        count = 0
+        for pk, committed in db.settle_outbox.items():
+            rec = (
+                txn._settle_outbox_current(pk)
+                if txn is not None
+                else committed
+            )
+            if (
+                rec is not None
+                and rec.get("authorization_id") == aid
+                and rec.get("intent_kind") != kind
+                and rec.get("status") in GUARD_STATUSES
+            ):
+                count += 1
+        return [[count]]
     if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
         _require_pred(sql, "authorization_id=@aid", "has_intent")
         _require_pred(sql, f"status IN ({_GUARD_STATUS_SQL})", "has_intent")

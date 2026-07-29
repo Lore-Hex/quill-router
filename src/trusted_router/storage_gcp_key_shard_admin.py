@@ -212,9 +212,12 @@ def reshard_key_usage(
         return status
     target_count = status.target_shard_count
     pt = store._param_types
-    floors = window_floors(utcnow())
 
     def txn(transaction: Any) -> dict[str, int] | None:
+        # Derive floors per transaction attempt so a calendar-boundary crossing
+        # (including one during an abort retry) cannot rewrite a current window
+        # to a stale floor.
+        floors = window_floors(utcnow())
         key = store._read_entity_tx(transaction, "api_key", key_hash, ApiKey)
         if key is None:
             return None
