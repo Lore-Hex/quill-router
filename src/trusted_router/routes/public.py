@@ -1467,7 +1467,12 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
             for provider in leaderboard.get("providers", [])
             if provider.get("sample_count", 0) > 0
         ),
-        key=lambda p: (-p.get("error_rate", 0.0), p.get("provider", "")),
+        key=lambda p: (
+            p.get("error_rate", 0.0),
+            0 if p.get("p50_ttft_ms") is not None else 1,
+            p.get("p50_ttft_ms") or 0,
+            p.get("provider", ""),
+        ),
     )
     return render_template(
         "public/status.html",

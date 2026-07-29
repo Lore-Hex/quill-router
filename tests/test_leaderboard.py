@@ -78,6 +78,39 @@ def test_models_sorted_fastest_first_unmeasured_last() -> None:
     assert ordered[2] == "unknown/m"  # un-measured at the bottom
 
 
+def test_models_and_providers_rank_reliability_before_latency() -> None:
+    samples = [
+        _sample(provider="reliable", model="reliable/m", ttft=500),
+        _sample(
+            provider="reliable",
+            model="reliable/m",
+            ttft=520,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+        _sample(provider="flaky", model="flaky/m", ttft=50),
+        _sample(
+            provider="flaky",
+            model="flaky/m",
+            status="error",
+            error_type="ReadTimeout",
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+
+    assert [row["model"] for row in result["models"]] == [
+        "reliable/m",
+        "flaky/m",
+    ]
+    assert [row["provider"] for row in result["providers"]] == [
+        "reliable",
+        "flaky",
+    ]
+    assert result["models"][0]["uptime"] == 1.0
+    assert result["models"][1]["uptime"] == 0.5
+
+
 def test_min_samples_filters_thin_models() -> None:
     samples = [
         _sample(provider="a", model="a/keep", ttft=100),
@@ -387,6 +420,27 @@ def test_aggregate_excludes_unsupported_routes_from_uptime() -> None:
     assert provider["top_excluded"] == "unsupported_route"
     assert result["total_samples"] == 2
     assert result["excluded_samples"] == 1
+
+
+def test_aggregate_excludes_router_failures_from_provider_uptime() -> None:
+    samples = [
+        _sample(provider="openai", model="openai/gpt-5.4-nano", ttft=100),
+        _sample(
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+            status="error",
+            error_type="router_database_contention",
+            error_status=503,
+        ),
+    ]
+
+    result = aggregate_leaderboard(samples)
+    model = result["models"][0]
+
+    assert model["sample_count"] == 1
+    assert model["uptime"] == 1.0
+    assert model["excluded_count"] == 1
+    assert model["top_excluded"] == "router_database_contention"
 
 
 def test_aggregate_excluded_only_rows_do_not_surface_as_provider_errors() -> None:

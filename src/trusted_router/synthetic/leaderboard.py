@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from trusted_router.storage_models import ProviderBenchmarkSample
+from trusted_router.synthetic.components import is_router_origin_error
 
 NON_DOWNTIME_ERROR_TYPES = frozenset(
     {
@@ -232,7 +233,7 @@ class ProviderStats:
 
 
 def _sort_key(p50_ttft_ms: int | None) -> tuple[int, int]:
-    # Fastest measured TTFT first; un-measured (None) sink to the bottom.
+    # Latency breaks reliability ties; un-measured (None) sinks to the bottom.
     return (0 if p50_ttft_ms is not None else 1, p50_ttft_ms or 0)
 
 
@@ -314,6 +315,7 @@ def aggregate_leaderboard(
     models.sort(
         key=lambda stats: (
             0 if stats.rank_eligible else 1,
+            -stats.uptime,
             *_sort_key(stats.p50_ttft_ms),
             stats.model,
             stats.provider,
@@ -387,6 +389,7 @@ def _aggregate_providers(
     providers.sort(
         key=lambda stats: (
             0 if stats.rank_eligible else 1,
+            -stats.uptime,
             *_sort_key(stats.p50_ttft_ms),
             stats.provider,
         )
@@ -401,6 +404,8 @@ def _aggregate_providers(
 
 def _excluded_from_uptime(sample: ProviderBenchmarkSample) -> bool:
     if sample.status == "unsupported":
+        return True
+    if is_router_origin_error(sample.error_type):
         return True
     if sample.error_type in NON_DOWNTIME_ERROR_TYPES:
         return True

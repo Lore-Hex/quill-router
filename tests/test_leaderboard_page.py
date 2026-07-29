@@ -92,6 +92,7 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "Effective throughput" in body
     assert "200 tok/s" in body
     assert "n=1" in body
+    assert "Ranked by measured success rate, then p50" in body
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
 
@@ -154,3 +155,27 @@ def test_status_page_separates_config_exclusions_from_provider_errors() -> None:
     assert "Config excluded" in html
     assert "unsupported_route" in html
     assert "Unsupported route and probe-configuration rows" in html
+
+
+def test_status_page_sorts_healthiest_provider_first() -> None:
+    _seed("reliable", "reliable/model", ttft=500, ttfb=400)
+    _seed("flaky", "flaky/model", ttft=50, ttfb=40)
+    STORE.record_provider_benchmark(
+        ProviderBenchmarkSample(
+            id="bench-page-flaky-error",
+            model="flaky/model",
+            provider="flaky",
+            provider_name="Flaky",
+            status="error",
+            usage_type="Credits",
+            streamed=True,
+            error_type="ReadTimeout",
+            source="synthetic",
+        )
+    )
+
+    html = _status_page_html(_settings(), host="trustedrouter.com")
+
+    assert html.index('href="/providers/reliable"') < html.index(
+        'href="/providers/flaky"'
+    )

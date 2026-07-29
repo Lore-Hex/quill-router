@@ -45,6 +45,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
 from trusted_router.storage_models import ProviderBenchmarkSample, iso_now, utcnow
+from trusted_router.synthetic.components import sample_slo_class_ids
 from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
@@ -56,6 +57,8 @@ from trusted_router.synthetic.probes import (
     _sse_line_has_content,
     attestation_nonce_probe,
     choose_rotation_target,
+    gateway_billing_probe,
+    gateway_fallback_probe,
     image_generation_probe,
     openai_chat_pong_probe,
     provider_rotation_probe,
@@ -2496,6 +2499,79 @@ def test_sse_line_error_detects_openai_error_frames() -> None:
     assert _sse_line_error("data: [DONE]") is None
 
 
+def test_sse_line_error_distinguishes_router_failure_from_provider_failure() -> None:
+    assert _sse_line_error(
+        'data: {"error":{"message":"transient database contention",'
+        '"type":"service_unavailable","source":"router","status":503}}'
+    ) == ("router_database_contention", 503, "transient database contention")
+
+
+@pytest.mark.asyncio
+async def test_gateway_billing_probe_classifies_monitor_workspace_pause() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/v1/internal/gateway/authorize")
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "code": 503,
+                    "message": "Workspace billing is paused",
+                    "type": "service_unavailable",
+                    "source": "router",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        samples = await gateway_billing_probe(
+            client,
+            control_plane_base_url="https://trustedrouter.com",
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            internal_token="internal-test",  # noqa: S106 - test placeholder.
+            model="trustedrouter/monitor",
+        )
+
+    assert samples[0].error_type == "monitor_workspace_paused"
+    assert sample_slo_class_ids(samples[0]) == []
+    assert {component for _period, component in sample_rollup_ids(samples[0])} == {
+        "uncategorized"
+    }
+
+
+@pytest.mark.asyncio
+async def test_gateway_fallback_probe_classifies_router_contention() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/v1/internal/gateway/authorize")
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "code": 503,
+                    "message": (
+                        "The request was aborted due to transient database "
+                        "contention; retry."
+                    ),
+                    "type": "service_unavailable",
+                    "source": "router",
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        samples = await gateway_fallback_probe(
+            client,
+            control_plane_base_url="https://trustedrouter.com",
+            monitor_region="europe-west4",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            internal_token="internal-test",  # noqa: S106 - test placeholder.
+            model="trustedrouter/monitor",
+        )
+
+    assert samples[0].error_type == "router_database_contention"
+    assert sample_slo_class_ids(samples[0]) == ["router_core"]
+
+
 def test_sse_line_finish_reason_detects_length_stop() -> None:
     assert (
         _sse_line_finish_reason(
@@ -2782,6 +2858,37 @@ async def test_provider_rotation_probe_records_http_error() -> None:
     assert "rk-route5678" not in str(sample.error_message)
     assert sample.first_token_milliseconds is None
     assert sample.source == "synthetic"
+
+
+@pytest.mark.asyncio
+async def test_provider_rotation_probe_excludes_router_failure_from_uptime() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "code": 503,
+                    "message": "Workspace billing is paused",
+                    "type": "service_unavailable",
+                    "source": "router",
+                }
+            },
+        )
+
+    target = SyntheticTarget("rotation", "https://api.trustedrouter.com/v1", "us-central1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        sample = await provider_rotation_probe(
+            client,
+            target,
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            provider="openai",
+            model="openai/gpt-5.4-nano",
+        )
+
+    assert sample.status == "unsupported"
+    assert sample.error_type == "monitor_workspace_paused"
+    assert sample.error_status == 503
 
 
 @pytest.mark.asyncio
