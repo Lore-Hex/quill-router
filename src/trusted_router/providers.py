@@ -87,6 +87,10 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[tuple[str, ...], str]] = {
         ("STREAMLAKE_API_KEY",),
         "https://vanchin.streamlake.ai/api/gateway/v1/endpoints",
     ),
+    "neurometric": (
+        ("NEUROMETRIC_API_KEY",),
+        "https://wharf.neurometric.ai/v1",
+    ),
     # Alibaba Cloud Model Studio / DashScope — workspace-scoped OpenAI-compatible endpoint.
     "alibaba": (
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),

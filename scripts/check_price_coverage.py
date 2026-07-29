@@ -340,6 +340,12 @@ _DISCOVERABLE_MANIFEST_PROVIDERS: tuple[
         ("ALIBABA_API_KEY", "DASHSCOPE_API_KEY", "ALIYUN_API_KEY"),
         _alibaba_model_id,
     ),
+    (
+        "neurometric",
+        "https://wharf.neurometric.ai/v1/models",
+        ("NEUROMETRIC_API_KEY",),
+        _identity_model_id,
+    ),
 )
 
 _GLM_DISCOVERABLE_PROVIDER_APIS: tuple[tuple[str, str, tuple[str, ...]], ...] = (

@@ -700,6 +700,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "morph",
         "atlas-cloud",
         "streamlake",
+        "neurometric",
         "kimi",
         "zai",
         "tinfoil",

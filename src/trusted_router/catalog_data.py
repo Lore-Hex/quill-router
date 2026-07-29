@@ -751,6 +751,25 @@ PROVIDERS: dict[str, Provider] = {
         ),
         provider_headquarters_country="SG",
     ),
+    "neurometric": Provider(
+        slug="neurometric",
+        name="Neurometric AI",
+        supports_prepaid=True,
+        supports_byok=False,
+        stores_content=False,
+        provider_zero_data_retention=False,
+        provider_confidential_compute=False,
+        provider_e2ee=False,
+        provider_policy=(
+            "Neurometric states that TrustedRouter requests run with upstream "
+            "trace logging disabled: prompts and completions are not written "
+            "to observability or object storage, and only aggregate request "
+            "counts and token totals are retained. This is classified as "
+            "no-store, not contractual ZDR or confidential compute."
+        ),
+        provider_policy_url="https://www.neurometric.ai/privacy",
+        provider_headquarters_country=PROVIDER_JURISDICTION_US,
+    ),
     # DeepInfra — large open-weight catalog (Llama, Gemma 4, Qwen,
     # DeepSeek, etc.). OpenAI-compatible at api.deepinfra.com/v1/openai.
     # Pricing in the /v1/openai/models response under
@@ -943,6 +962,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "morph",
         "atlas-cloud",
         "streamlake",
+        "neurometric",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).

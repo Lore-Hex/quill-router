@@ -116,6 +116,7 @@ PROVIDER_SLUGS = [
     "morph",
     "atlas_cloud",
     "streamlake",
+    "neurometric",
     # First-party embedding providers. Their parsers feed committed provider
     # manifests that the runtime embedding catalog reads directly.
     "cohere",
