@@ -37,17 +37,27 @@ set -euo pipefail
 # that is this, not a bug. Probe another region.
 LOCATION="${LOCATION:-northeurope}"          # Postgres
 APP_LOCATION="${APP_LOCATION:-swedencentral}"  # ACR + Container Apps
-RG="${RG:-tr-canary}"
-PG_NAME="${PG_NAME:-tr-canary-pg}"
+# CANARY drives every resource name, so a second canary in another geography is
+# one env var, not a forked script:
+#   CANARY=tr-canary-apac LOCATION=southeastasia APP_LOCATION=southeastasia \
+#     bash scripts/deploy/azure_canary.sh
+#
+# See docs/storage-portability/coverage-map.md for which geographies are worth
+# having, and why canaries can be spread freely while standalone DEPLOYMENTS
+# cannot - each of those is a separate credit balance.
+CANARY="${CANARY:-tr-canary}"
+RG="${RG:-$CANARY}"
+PG_NAME="${PG_NAME:-$CANARY-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
-ACR="${ACR:-trcanaryswedencentralacr}"
-APP_ENV="${APP_ENV:-tr-canary-env}"
-APP="${APP:-tr-canary}"
+# ACR names are globally unique and alphanumeric-only.
+ACR="${ACR:-$(echo "${CANARY}${APP_LOCATION}acr" | tr -cd "[:alnum:]")}"
+APP_ENV="${APP_ENV:-$CANARY-env}"
+APP="${APP:-$CANARY}"
 IMAGE_TAG="${IMAGE_TAG:-canary}"
 # Bootstrap password location. Fixed, not $TMPDIR — these scripts run as
 # separate processes with different temp dirs.
-STATE_DIR="${STATE_DIR:-$HOME/.config/tr-canary}"
+STATE_DIR="${STATE_DIR:-$HOME/.config/$CANARY}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 
 log() { printf '\n=== %s\n' "$*" >&2; }

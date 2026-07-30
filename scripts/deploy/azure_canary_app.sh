@@ -10,17 +10,19 @@
 set -euo pipefail
 
 LOCATION="${LOCATION:-northeurope}"
-RG="${RG:-tr-canary}"
-PG_NAME="${PG_NAME:-tr-canary-pg}"
+CANARY="${CANARY:-tr-canary}"
+APP_LOCATION="${APP_LOCATION:-swedencentral}"
+RG="${RG:-$CANARY}"
+PG_NAME="${PG_NAME:-$CANARY-pg}"
 PG_ADMIN="${PG_ADMIN:-tradmin}"
 PG_DB="${PG_DB:-trustedrouter}"
-ACR="${ACR:-trcanaryswedencentralacr}"
-APP_ENV="${APP_ENV:-tr-canary-env}"
-APP="${APP:-tr-canary}"
+ACR="${ACR:-$(echo "${CANARY}${APP_LOCATION}acr" | tr -cd "[:alnum:]")}"
+APP_ENV="${APP_ENV:-$CANARY-env}"
+APP="${APP:-$CANARY}"
 IMAGE_TAG="${IMAGE_TAG:-canary}"
 # Bootstrap password location. Fixed, not $TMPDIR — these scripts run as
 # separate processes with different temp dirs.
-STATE_DIR="${STATE_DIR:-$HOME/.config/tr-canary}"
+STATE_DIR="${STATE_DIR:-$HOME/.config/$CANARY}"
 PW_FILE="${PW_FILE:-$STATE_DIR/pgpw}"
 
 log() { printf '\n=== %s\n' "$*" >&2; }
