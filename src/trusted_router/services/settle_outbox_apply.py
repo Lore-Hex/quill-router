@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
 _TRANSIENT_STORE_EXCS = transient_store_error_types()
 
+_ACTIVITY_PARK_NOTE = "bigtable activity index pending"
+
 
 class ApplyOutcome:
     SETTLED_NOW = "settled_now"
@@ -280,6 +282,22 @@ def _apply_typed(
                 return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:
+            # Deliberately index every available generation, including a genuine
+            # zero-cost reaper/refund race. This writes no billing state: the
+            # reservation already returned ALREADY_SETTLED, so no credit or key
+            # counter moves. It is not activity-ONLY though — index_after_commit
+            # also records a provider benchmark and, when enabled, enqueues an
+            # analytics-outbox event. Both are non-billing and at-least-once by
+            # design with stable ids, so a replay overwrites rather than
+            # duplicates. A park-note discriminator is unsound: inline settle,
+            # a lost lease before park(), and operator re-arm can all leave a
+            # repairable row without the note, causing silent destruction of its
+            # only typed payload. An accurate $0 activity row is better evidence
+            # than none; failure stays ACTIVITY_PENDING and preserves the body.
+            # The activity write is idempotent, so replay cannot duplicate it.
+            if generation is not None:
+                if not _index_generation_after_commit(typed_store, generation):
+                    return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE
         # Booked 0 while this row intended a real charge: the hold was resolved
         # WITHOUT our charge (reaper free-release, or a refund won the race).

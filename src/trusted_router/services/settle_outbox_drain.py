@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from collections import Counter
 from typing import Any, cast
 
-from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
+from trusted_router.services.settle_outbox_apply import (
+    _ACTIVITY_PARK_NOTE,
+    ApplyOutcome,
+    apply_frozen_settle,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_models import SettleOutboxRow
+from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
 
 logger = logging.getLogger(__name__)
+
+# Six hours is long enough to ride out a real Bigtable outage on 60-second
+# parks, but short enough that a permanently broken row cannot churn the drain
+# forever before an operator takes over.
+_ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -108,12 +118,102 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.ACTIVITY_PENDING:
+        now = dt.datetime.now(dt.UTC)
+        since = now
+        since_text = now.isoformat().replace("+00:00", "Z")
+        candidate_since_text = _activity_since_text(row.last_error)
+        if candidate_since_text is not None:
+            try:
+                candidate_since = dt.datetime.fromisoformat(
+                    candidate_since_text.replace("Z", "+00:00")
+                )
+                if (
+                    candidate_since.tzinfo is None
+                    or candidate_since.utcoffset() is None
+                ):
+                    raise ValueError("activity repair since must include a timezone")
+            except (OverflowError, ValueError):
+                # A malformed timestamp is a separate data bug. Start the
+                # window now instead of risking a premature terminal transition.
+                logger.warning(
+                    "settle outbox activity repair has malformed since; parking "
+                    "authorization_id=%s intent_kind=%s since=%r",
+                    row.authorization_id,
+                    row.intent_kind,
+                    candidate_since_text,
+                )
+            else:
+                if candidate_since > now:
+                    # A bad writer clock must not create a negative-age repair
+                    # window that can never expire; start its clock locally.
+                    logger.warning(
+                        "settle outbox activity repair has future since; clamping "
+                        "authorization_id=%s intent_kind=%s since=%r",
+                        row.authorization_id,
+                        row.intent_kind,
+                        candidate_since_text,
+                    )
+                else:
+                    since = candidate_since
+                    since_text = candidate_since_text
+
+        # last_error carries the continuous unrepaired-activity clock. The
+        # activity note survives PARK_TYPED_UNAVAILABLE below, making this a
+        # genuine overall bound instead of a per-outage window. Typed-store
+        # outage time deliberately counts: throughout that outage the activity
+        # index is genuinely still unrepaired.
+        age_seconds = (now - since).total_seconds()
+        if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
+            # Dead preserves settle_body, the only typed activity-repair
+            # evidence; done destroys it and makes the missing activity
+            # permanently unrecoverable. Dead is the existing human-review
+            # terminal, monitored by the status='dead' count and documented in
+            # the runbook, and stops a full apply every 60 seconds. Keeping
+            # terminal_at NULL is deliberate: the reservation and gateway
+            # authorization are repair evidence, so retention stays pinned only
+            # until an operator responds. Freezing the hold costs nothing
+            # because the reservation is already settled. After fixing
+            # Bigtable, the operator can set this row back to pending with
+            # next_attempt_at in the past for due() to reclaim it.
+            status = outbox.mark(
+                row.authorization_id,
+                row.intent_kind,
+                done=False,
+                error="activity_repair_expired",
+                lease_owner=lease_owner,
+                force_dead=True,
+            )
+            if status != "dead":
+                # The status='dead' monitor is the source of truth. A duplicate
+                # or contradictory page is worse than none; the worker that
+                # actually wins this row will emit the alert.
+                logger.warning(
+                    "settle outbox activity repair escalation skipped because "
+                    "row is no longer claimable by this owner "
+                    "authorization_id=%s intent_kind=%s",
+                    row.authorization_id,
+                    row.intent_kind,
+                )
+                return
+            logger.error(
+                "ALERT settle outbox activity repair expired "
+                "authorization_id=%s generation_id=%s request_id=%s "
+                "reservation_id=%s; CHARGE IS ALREADY APPLIED and Spanner is "
+                "correct; only the per-request Bigtable activity row is missing; "
+                "row is now dead with settle_body PRESERVED for repair; fix "
+                "Bigtable, then set the row back to pending to let the drain retry",
+                row.authorization_id,
+                generation_id_for_authorization(row.authorization_id),
+                _request_id(row),
+                row.reservation_id,
+            )
+            return
         outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=60,
-            note="bigtable activity index pending",
+            note=f"{_ACTIVITY_PARK_NOTE} since={since_text}",
         )
         logger.warning(
             "settle outbox activity repair pending authorization_id=%s",
@@ -132,14 +232,13 @@ def _resolve_row(
 
     if outcome == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
-        # Rare $0 race: money is correct and no alert is warranted, but this row
-        # did not write a Generation. reconcile_generation_activity can repair
-        # per-request records if needed; we intentionally avoid a bypass write
-        # primitive for this edge case.
+        # Rare $0 race: the money path is unchanged and no alert is warranted.
+        # Apply verified the idempotent Bigtable activity write before resolving
+        # without creating a Spanner billing Generation.
         logger.warning(
             "settle outbox warning: settle intent found reservation already zero-resolved "
             "authorization_id=%s reservation_id=%s likely reaper race; "
-            "no generation record was written by this row",
+            "activity index verified without a Spanner billing write",
             row.authorization_id,
             row.reservation_id,
         )
@@ -207,11 +306,15 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.PARK_TYPED_UNAVAILABLE:
+        note = "typed store unavailable"
+        activity_since_text = _activity_since_text(row.last_error)
+        if activity_since_text is not None:
+            note = f"{_ACTIVITY_PARK_NOTE} since={activity_since_text}"
         outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
-            note="typed store unavailable",
+            note=note,
         )
         logger.warning(
             "settle outbox parked typed row authorization_id=%s intent_kind=%s",
@@ -249,3 +352,22 @@ def _resolve_row(
             row.authorization_id,
             row.intent_kind,
         )
+
+
+def _activity_since_text(last_error: str | None) -> str | None:
+    if not isinstance(last_error, str):
+        return None
+    prefix = f"{_ACTIVITY_PARK_NOTE} since="
+    if not last_error.startswith(prefix):
+        return None
+    return last_error.removeprefix(prefix)
+
+
+def _request_id(row: SettleOutboxRow) -> str | None:
+    try:
+        body = json.loads(row.settle_body) if row.settle_body is not None else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(body, dict) or body.get("request_id") is None:
+        return None
+    return str(body["request_id"])

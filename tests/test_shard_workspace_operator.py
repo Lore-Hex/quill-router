@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import shard_workspace
+from tests.test_credit_row_sharding_increment4 import _seed
 from trusted_router.storage import InMemoryStore
+from trusted_router.storage_gcp_credit_shard_admin import (
+    inspect_credit_reshard,
+    reshard_credit_account,
+)
+from trusted_router.storage_gcp_key_shard_admin import inspect_key_usage_reshard
 
 
 def _args(*, workspace: str | None = None, owner_email: str | None = None) -> argparse.Namespace:
@@ -137,3 +143,63 @@ def test_online_split_preflights_then_prepares_and_finishes(
 
     assert shard_workspace.run_online_split(store, args) == 0
     assert calls == ["inspect", "prepare", "finish"]
+
+
+def _finish_args(*, shards: int) -> argparse.Namespace:
+    return argparse.Namespace(
+        workspace="ws-reshard",
+        shards=shards,
+        preserve_open_holds=False,
+        apply=True,
+    )
+
+
+def test_finish_refuses_to_unpause_a_workspace_that_never_resharded() -> None:
+    """`ready` means "nothing blocks a reshard", not "the reshard happened".
+
+    A drained, paused, healthy one-shard workspace inspected against a target of
+    16 has no blocking reasons at all, so gating the unpause on `ready` alone
+    resumed traffic while announcing 16 shards the ledger never adopted.
+    """
+    store, _database = _seed(shard_credits=[100], shard_usage=[20])
+
+    status = inspect_credit_reshard(store, "ws-reshard", 16)
+    assert status.ready, "precondition: nothing blocks a reshard"
+    assert not status.at_target, "precondition: the ledger is still at one shard"
+
+    assert shard_workspace.run_finish(store, _finish_args(shards=16)) == 1
+    assert store.get_workspace("ws-reshard").billing_paused is True
+
+
+def test_finish_unpauses_once_the_ledger_is_actually_at_the_target() -> None:
+    store, _database = _seed(shard_credits=[100], shard_usage=[20])
+    assert reshard_credit_account(store, "ws-reshard", 16, apply=True).applied
+
+    assert shard_workspace.run_finish(store, _finish_args(shards=16)) == 0
+    assert store.get_workspace("ws-reshard").billing_paused is False
+
+
+def test_finish_refuses_when_credit_is_at_target_but_a_key_is_not() -> None:
+    """The credit ledger and the per-key usage rows move independently.
+
+    `prepare` reshards both, so a run that reshards only the credit row is a
+    partially-applied state. Gating the unpause on the credit row alone would
+    resume traffic with a key still counting spend on one shard.
+    """
+    store, _database = _seed(shard_credits=[100], shard_usage=[20])
+    _raw, key = store.api_keys.create(
+        workspace_id="ws-reshard",
+        name="unlimited",
+        creator_user_id=None,
+        limit_microdollars=None,
+    )
+    assert reshard_credit_account(store, "ws-reshard", 16, apply=True).applied
+
+    credit = inspect_credit_reshard(store, "ws-reshard", 16)
+    assert credit.ready and credit.at_target, "precondition: credit row moved"
+    key_status = inspect_key_usage_reshard(store, key.hash, 16)
+    assert key_status.ready, "precondition: nothing blocks the key reshard"
+    assert not key_status.at_target, "precondition: the key never moved"
+
+    assert shard_workspace.run_finish(store, _finish_args(shards=16)) == 1
+    assert store.get_workspace("ws-reshard").billing_paused is True
