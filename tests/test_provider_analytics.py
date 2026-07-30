@@ -53,7 +53,8 @@ async def test_summary_uses_fixed_parameterized_provider_queries() -> None:
         assert request.url.params["param_days"] == "7"
         assert "{provider:String}" in request.content.decode()
         assert "neurometric" not in request.content.decode()
-        assert request.url.params["readonly"] == "2"
+        assert "readonly" not in request.url.params
+        assert "max_execution_time" not in request.url.params
     model_query = next(
         request.content.decode()
         for request in seen

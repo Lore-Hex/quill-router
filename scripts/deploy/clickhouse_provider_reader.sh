@@ -34,6 +34,7 @@ sed "s/__PASSWORD_SHA256__/${reader_hash}/g" >"$config" <<'XML'
       <readonly>1</readonly>
       <max_execution_time>60</max_execution_time>
       <max_memory_usage>536870912</max_memory_usage>
+      <max_result_bytes>536870912</max_result_bytes>
     </tr_provider_readonly>
   </profiles>
   <users>

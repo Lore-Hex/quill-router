@@ -138,5 +138,8 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
         assert "trustedrouter-clickhouse-provider-read-password" in content
 
     assert "<readonly>1</readonly>" in reader
+    assert "<max_execution_time>60</max_execution_time>" in reader
+    assert "<max_memory_usage>536870912</max_memory_usage>" in reader
+    assert "<max_result_bytes>536870912</max_result_bytes>" in reader
     assert "GRANT SELECT ON tr.provider_benchmark_samples" in reader
     assert "refusing configuration: $NAME has external IP" in reader
