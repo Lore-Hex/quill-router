@@ -712,6 +712,7 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
         "zai",
         "tinfoil",
         "xiaomi",
+        "alibaba",
         "meta",
     ):
         path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"

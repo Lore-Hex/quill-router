@@ -3,9 +3,9 @@
   "provider": "alibaba",
   "source": "https://ws-el6e4bpnggpx7g88.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models",
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
-  "generated_at": "2026-07-01T00:00:00Z",
+  "generated_at": "2026-07-30T21:15:39Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 72,
+  "model_count": 75,
   "models": [
     {
       "id": "z-ai/glm-5.2",
@@ -870,7 +870,7 @@
       "created": 1773662064,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 5000,
       "model_type": "chat",
       "endpoints": [
@@ -891,7 +891,7 @@
       "created": 1773661748,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 5000,
       "model_type": "chat",
       "endpoints": [
@@ -912,7 +912,7 @@
       "created": 1773661631,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 5000,
       "model_type": "chat",
       "endpoints": [
@@ -933,7 +933,7 @@
       "created": 1773661512,
       "context_length": 131072,
       "input_token_price_per_m": 50000,
-      "output_token_price_per_m": 200000,
+      "output_token_price_per_m": 400000,
       "cached_input_token_price_per_m": 5000,
       "model_type": "chat",
       "endpoints": [
@@ -2127,6 +2127,104 @@
       ],
       "output_modalities": [
         "text"
+      ]
+    },
+    {
+      "id": "qwen/qwen-plus-character",
+      "upstream_id": "qwen-plus-character",
+      "display_name": "Qwen Plus Character",
+      "title": "qwen-plus-character",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1784556825,
+      "input_token_price_per_m": 400000,
+      "output_token_price_per_m": 4000000,
+      "cached_input_token_price_per_m": 40000
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "upstream_id": "qwen3.7-flash",
+      "display_name": "Qwen3.7 Flash",
+      "title": "qwen3.7-flash",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1785220431,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 130000,
+      "cached_input_token_price_per_m": 6000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 30000,
+          "output_token_price_per_m": 130000,
+          "cached_input_token_price_per_m": 6000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-flash-2026-07-15",
+      "upstream_id": "qwen3.7-flash-2026-07-15",
+      "display_name": "Qwen3.7 Flash 2026 07 15",
+      "title": "qwen3.7-flash-2026-07-15",
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "created": 1785220365,
+      "context_length": 1048576,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 130000,
+      "cached_input_token_price_per_m": 6000,
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 30000,
+          "output_token_price_per_m": 130000,
+          "cached_input_token_price_per_m": 6000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 800000,
+          "cached_input_token_price_per_m": 40000
+        }
       ]
     }
   ]
