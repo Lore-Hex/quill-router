@@ -2,9 +2,9 @@
   "_about": "Provider-native Baseten Model API routes, capabilities, context windows, and account-billable prices refreshed hourly from Baseten's authenticated /v1/models feed.",
   "provider": "baseten",
   "source": "https://inference.baseten.co/v1/models",
-  "generated_at": "2026-07-30T16:29:14Z",
+  "generated_at": "2026-07-30T22:54:02Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 16,
+  "model_count": 17,
   "models": [
     {
       "id": "openai/gpt-oss-120b",
@@ -479,6 +479,38 @@
       "id": "sid/sid-1",
       "upstream_id": "sid/sid-1",
       "context_length": 32768,
+      "supported_features": [
+        "tools",
+        "json_mode",
+        "structured_outputs",
+        "reasoning"
+      ],
+      "supported_sampling_parameters": [
+        "temperature",
+        "stop"
+      ],
+      "input_token_price_per_m": 0,
+      "output_token_price_per_m": 0,
+      "cached_input_token_price_per_m": 0
+    },
+    {
+      "display_name": "Inkling Small",
+      "title": "thinkingmachines/inkling-small",
+      "model_type": "chat",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "endpoints": [
+        "chat/completions"
+      ],
+      "status": 1,
+      "id": "thinkingmachines/inkling-small",
+      "upstream_id": "thinkingmachines/inkling-small",
+      "context_length": 1048576,
       "supported_features": [
         "tools",
         "json_mode",
