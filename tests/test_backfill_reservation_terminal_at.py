@@ -154,3 +154,40 @@ def test_apply_processes_more_candidates_than_batch_in_multiple_batches(
     assert "batch 1: updated=2 running_total=2" in output
     assert "batch 2: updated=2 running_total=4" in output
     assert "batch 3: updated=1 running_total=5" in output
+
+
+def test_race_row_becomes_eligible_after_empty_select_is_still_armed(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A guarded row whose intent flips to release_approved between the empty
+    select and the status read must be re-selected and armed, not abandoned
+    behind a false "all excluded" STOP (review finding on #357)."""
+    import scripts.backfill_reservation_terminal_at as mod
+
+    store, database, _bigtable = make_fake_store()
+    _seed_reservation(database, "res-race")
+    _freeze(database, "res-race", "pending")
+
+    real_select = mod._select_batch
+    calls = {"n": 0}
+
+    def select_then_release(store_arg: Any, batch: int) -> list[str]:
+        ids = real_select(store_arg, batch)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            assert ids == [], "precondition: the frozen row is not selectable"
+            # Concurrent human action: the guard status leaves GUARD_STATUSES.
+            database.settle_outbox[("auth-res-race", "settle")]["status"] = (
+                "release_approved"
+            )
+        return ids
+
+    monkeypatch.setattr(mod, "_select_batch", select_then_release)
+
+    assert run_backfill(store, apply=True) == 0
+
+    assert database.reservations["res-race"]["terminal_at"] is not None
+    output = capsys.readouterr().out
+    assert "STOP" not in output
+    assert output.endswith("COMPLETE: no unarmed settled reservations remain\n")

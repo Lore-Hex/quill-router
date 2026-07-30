@@ -195,10 +195,25 @@ def run_backfill(
     # terminal_at IS NULL.
     batch_number = 0
     running_total = 0
+    empty_but_eligible = 0
     while True:
         reservation_ids = _select_batch(store, batch)
         if not reservation_ids:
             final = inspect_status(store)
+            if final.eligible:
+                # A row became eligible between the select and this status read
+                # (e.g. a human set a dead intent to release_approved). Re-select
+                # instead of stopping with a false "all excluded" message. Bound
+                # the retry so a pathological ping-pong cannot spin forever.
+                empty_but_eligible += 1
+                if empty_but_eligible <= 3:
+                    continue
+                _print_final(final, running_total)
+                print(
+                    "ERROR: select repeatedly returned no rows while "
+                    f"{final.eligible} eligible rows remain; re-run",
+                )
+                return 1
             _print_final(final, running_total)
             if final.candidates:
                 print(
@@ -208,6 +223,7 @@ def run_backfill(
             else:
                 print("COMPLETE: no unarmed settled reservations remain")
             return 0
+        empty_but_eligible = 0
 
         batch_number += 1
         updated = _arm_batch(store, reservation_ids)

@@ -351,3 +351,35 @@ def test_outbox_schema_uses_generated_shard_and_sparse_due_index() -> None:
     assert workflow.index("Smoke test prod") < workflow.index(
         "Retire legacy settle-outbox hotspot index"
     )
+
+
+def test_expired_lease_with_stale_owner_is_stolen_and_stale_worker_fenced() -> None:
+    """Crash recovery under the strict fence (#355): reclamation depends on
+    lease EXPIRY, not owner nullability. A crashed worker's row (owner still
+    set, lease expired) must be re-claimable, the steal must rewrite the owner,
+    and the stale worker's late mark must then lose the exact-match fence."""
+    store, db, _ = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-crash", cost=100))
+    [job_a] = ob.claim(lease_seconds=300)
+    stale_owner = job_a.lease_owner
+    assert stale_owner is not None
+
+    # Worker A "crashes": its lease expires with the owner still on the row.
+    db.settle_outbox[("gwa-crash", "settle")]["leased_until"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    [job_b] = ob.claim(lease_seconds=300)
+    assert job_b.lease_owner is not None
+    assert job_b.lease_owner != stale_owner
+
+    # A wakes up late: exact-match fence rejects it against B's ownership.
+    assert ob.mark("gwa-crash", "settle", done=True, lease_owner=stale_owner) is None
+    assert ob.get("gwa-crash", "settle").status == "pending"
+
+    # B, the legitimate owner, resolves normally.
+    assert (
+        ob.mark("gwa-crash", "settle", done=True, lease_owner=job_b.lease_owner)
+        == "done"
+    )

@@ -1523,6 +1523,13 @@ def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
     )
     assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
     assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    # Money: the settle's charge stands, the refund replay moved no counters.
+    credit = _typed_credit(db, ws)
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 777_777
+    key_row = _typed_key(db, key.hash)
+    assert key_row["reserved"] == 0
+    assert key_row["usage"] == 777_777
 
 
 def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
