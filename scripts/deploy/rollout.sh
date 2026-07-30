@@ -148,6 +148,18 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
+  # Analytics outbox → ClickHouse (docs/storage-portability/analytics-ingestion.md
+  # stage 1). Enqueue is a SEPARATE transaction from settle and is best-effort:
+  # analytics is not worth destabilising money code for, and
+  # clickhouse/reconcile_benchmark_samples.py replays from Bigtable to repair
+  # anything dropped. Table DDL applied 2026-07-28 with a 7-day ROW DELETION
+  # POLICY, so a dead drainer cannot grow it without bound the way
+  # tr_settle_outbox and tr_entities did (#334). Ingester + reconciler run on
+  # tr-clickhouse-1 under systemd.
+  #
+  # This is a SHADOW: nothing reads from ClickHouse. Remove this line to
+  # revert — the flag-off path does not touch the outbox at all.
+  "TR_ANALYTICS_OUTBOX_ENABLED=true"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the
