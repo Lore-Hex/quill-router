@@ -66,7 +66,7 @@
   <div class="leaderboard-table-wrap">
     <table class="leaderboard-table">
       <thead>
-        <tr><th>Model</th><th>Attempts</th><th>Completed</th><th>Failed</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 tok/s</th></tr>
+        <tr><th>Model</th><th>Attempts</th><th>Completed</th><th>Failed</th><th>Offered share</th><th>Completed share</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 tok/s</th></tr>
       </thead>
       <tbody>
         {% for row in summary.models %}
@@ -75,16 +75,19 @@
           <td>{{ row.attempts }}</td>
           <td>{{ row.completed }}</td>
           <td>{{ row.failed }}</td>
+          <td>{% if row.offered_traffic_share is not none %}{{ '%.2f'|format(row.offered_traffic_share * 100) }}% <span class="lb-badge">{{ row.active_organic_providers }} providers</span>{% else %}—{% endif %}</td>
+          <td>{% if row.completed_traffic_share is not none %}{{ '%.2f'|format(row.completed_traffic_share * 100) }}%{% else %}—{% endif %}</td>
           <td>{% if row.p50_ttft_ms is not none %}{{ '%.0f'|format(row.p50_ttft_ms) }} ms{% else %}—{% endif %}</td>
           <td>{% if row.p95_ttft_ms is not none %}{{ '%.0f'|format(row.p95_ttft_ms) }} ms{% else %}—{% endif %}</td>
           <td>{% if row.p50_tokens_per_second is not none %}{{ '%.1f'|format(row.p50_tokens_per_second) }}{% else %}—{% endif %}</td>
         </tr>
         {% else %}
-        <tr><td colspan="7">No request metadata in this period.</td></tr>
+        <tr><td colspan="9">No request metadata in this period.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+  <p class="small-copy">Offered share is your organic requests divided by all organic requests for the same canonical model. Completed share uses successful organic requests. Synthetic probes are excluded. Shares appear after at least {{ summary.minimum_traffic_share_samples }} model requests.</p>
 </section>
 
 <section class="panel">

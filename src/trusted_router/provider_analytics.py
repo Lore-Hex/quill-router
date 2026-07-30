@@ -16,6 +16,7 @@ import httpx
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MAX_PROVIDER_EXPORT_DAYS = 60
+MIN_TRAFFIC_SHARE_SAMPLES = 20
 
 
 def _identifier(value: str, *, label: str) -> str:
@@ -127,15 +128,32 @@ FORMAT JSON
         models_query = f"""  # noqa: S608 - identifiers are validated; values are bound.
 SELECT
   model,
-  count() AS attempts,
-  countIf(status = 'success') AS completed,
-  countIf(status != 'success') AS failed,
-  quantileTDigestIf(0.50)(first_token_milliseconds, first_token_milliseconds IS NOT NULL) AS p50_ttft_ms,
-  quantileTDigestIf(0.95)(first_token_milliseconds, first_token_milliseconds IS NOT NULL) AS p95_ttft_ms,
-  quantileTDigestIf(0.50)(speed_tokens_per_second, speed_tokens_per_second IS NOT NULL) AS p50_tokens_per_second
+  countIf(provider = {{provider:String}}) AS attempts,
+  countIf(provider = {{provider:String}} AND status = 'success') AS completed,
+  countIf(provider = {{provider:String}} AND status != 'success') AS failed,
+  countIf(provider = {{provider:String}} AND source = 'organic') AS provider_organic_requests,
+  countIf(source = 'organic') AS model_organic_requests,
+  countIf(
+    provider = {{provider:String}} AND source = 'organic' AND status = 'success'
+  ) AS provider_completed_organic_requests,
+  countIf(source = 'organic' AND status = 'success') AS model_completed_organic_requests,
+  uniqExactIf(provider, source = 'organic') AS active_organic_providers,
+  quantileTDigestIf(0.50)(
+    first_token_milliseconds,
+    provider = {{provider:String}} AND first_token_milliseconds IS NOT NULL
+  ) AS p50_ttft_ms,
+  quantileTDigestIf(0.95)(
+    first_token_milliseconds,
+    provider = {{provider:String}} AND first_token_milliseconds IS NOT NULL
+  ) AS p95_ttft_ms,
+  quantileTDigestIf(0.50)(
+    speed_tokens_per_second,
+    provider = {{provider:String}} AND speed_tokens_per_second IS NOT NULL
+  ) AS p50_tokens_per_second
 FROM {table} FINAL
-WHERE {where}
+WHERE created_at >= now() - toIntervalDay({{days:UInt8}})
 GROUP BY model
+HAVING attempts > 0
 ORDER BY attempts DESC, model
 LIMIT 250
 FORMAT JSON
@@ -174,9 +192,28 @@ FORMAT JSON
         attempts = int(total.get("attempts") or 0)
         completed = int(total.get("completed") or 0)
         total["completion_rate"] = completed / attempts if attempts else None
+        for row in models:
+            model_organic = int(row.get("model_organic_requests") or 0)
+            provider_organic = int(row.get("provider_organic_requests") or 0)
+            model_completed = int(row.get("model_completed_organic_requests") or 0)
+            provider_completed = int(
+                row.get("provider_completed_organic_requests") or 0
+            )
+            enough_samples = model_organic >= MIN_TRAFFIC_SHARE_SAMPLES
+            row["offered_traffic_share"] = (
+                provider_organic / model_organic
+                if enough_samples and model_organic
+                else None
+            )
+            row["completed_traffic_share"] = (
+                provider_completed / model_completed
+                if enough_samples and model_completed
+                else None
+            )
         return {
             "provider": provider,
             "days": days,
+            "minimum_traffic_share_samples": MIN_TRAFFIC_SHARE_SAMPLES,
             "totals": total,
             "models": models,
             "errors": errors,

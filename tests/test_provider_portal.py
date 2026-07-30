@@ -41,6 +41,9 @@ class _FakeAnalytics:
                     "attempts": 4,
                     "completed": 3,
                     "failed": 1,
+                    "active_organic_providers": 2,
+                    "offered_traffic_share": 0.25,
+                    "completed_traffic_share": 0.2,
                     "p50_ttft_ms": 120,
                     "p95_ttft_ms": 300,
                     "p50_tokens_per_second": 40,
@@ -50,6 +53,7 @@ class _FakeAnalytics:
                 {"error_type": "provider_error", "error_status": "503", "occurrences": 1}
             ],
             "daily": [],
+            "minimum_traffic_share_samples": 20,
         }
 
     async def open_csv_export(self, provider: str, *, days: int = 60) -> object:
@@ -87,6 +91,8 @@ def test_provider_portal_renders_only_granted_provider(
     assert "neurometric operations" in response.text
     assert "75.000%" in response.text
     assert "ibm-granite/granite-4.1-8b" in response.text
+    assert "25.00%" in response.text
+    assert "Offered share" in response.text
     assert "Prompts, outputs, customer identities" in response.text
     assert client.get("/provider?provider=together").status_code == 403
 

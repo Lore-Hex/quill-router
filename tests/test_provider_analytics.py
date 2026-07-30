@@ -14,7 +14,19 @@ async def test_summary_uses_fixed_parameterized_provider_queries() -> None:
         seen.append(request)
         query = request.content.decode()
         if "GROUP BY model" in query:
-            data = [{"model": "n/model", "attempts": 2, "completed": 2, "failed": 0}]
+            data = [
+                {
+                    "model": "n/model",
+                    "attempts": 30,
+                    "completed": 28,
+                    "failed": 2,
+                    "provider_organic_requests": 30,
+                    "model_organic_requests": 100,
+                    "provider_completed_organic_requests": 28,
+                    "model_completed_organic_requests": 80,
+                    "active_organic_providers": 3,
+                }
+            ]
         elif "GROUP BY error_type" in query:
             data = []
         elif "GROUP BY day" in query:
@@ -32,6 +44,9 @@ async def test_summary_uses_fixed_parameterized_provider_queries() -> None:
     result = await client.summary("neurometric", days=7)
 
     assert result["totals"]["completion_rate"] == 1
+    assert result["models"][0]["offered_traffic_share"] == 0.3
+    assert result["models"][0]["completed_traffic_share"] == 0.35
+    assert result["minimum_traffic_share_samples"] == 20
     assert len(seen) == 4
     for request in seen:
         assert request.url.params["param_provider"] == "neurometric"
@@ -39,6 +54,13 @@ async def test_summary_uses_fixed_parameterized_provider_queries() -> None:
         assert "{provider:String}" in request.content.decode()
         assert "neurometric" not in request.content.decode()
         assert request.url.params["readonly"] == "2"
+    model_query = next(
+        request.content.decode()
+        for request in seen
+        if "GROUP BY model" in request.content.decode()
+    )
+    assert "source = 'organic'" in model_query
+    assert "uniqExactIf(provider" in model_query
 
 
 @pytest.mark.anyio
