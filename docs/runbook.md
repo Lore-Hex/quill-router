@@ -518,7 +518,7 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
-| `resolved_zero_cost_elsewhere` | Benign $0 race (reaper free-release or a refund won); done, no page. A row already mid-activity-repair is NOT resolved here — it keeps retrying the index instead, so its payload survives. |
+| `resolved_zero_cost_elsewhere` | Benign $0 race (reaper free-release or a refund won); done, no page. The activity index is attempted first whenever the row carries a generation, so this outcome means the index SUCCEEDED; if it fails the row stays `activity_pending` and keeps its payload. |
 | `activity_pending` | Charge committed but the Bigtable activity-index write failed. Parks every 60s without burning attempts. After 6 hours of *continuous* activity failure the row goes `dead` with `ALERT settle outbox activity repair expired`. See below. |
 
 `activity_pending` is the one outcome where the terminal transition is NOT a
@@ -541,8 +541,11 @@ clobbering it, so typed-outage time counts toward the window and the six hours
 is a genuine bound; without that, alternating activity and typed failures would
 reset it forever, since `park()` never burns attempts. A generic apply error
 does rewrite `last_error` and restart the window, but that path burns an
-attempt, so `max_attempts=8` bounds it. A cluster of expired rows means Bigtable
-writes were failing for six continuous hours; a single one usually does not.
+attempt, so `max_attempts=8` bounds it. Read an expired row precisely: activity
+stayed unrepaired for six hours and the most recent index attempt failed. It
+does NOT prove Bigtable was failing throughout — typed-outage time ages the
+stamp too, so some of that window may be time Bigtable was never attempted.
+Check Bigtable health directly rather than inferring it from the alert.
 
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
 NULLs `settle_body`, and for a gateway/typed request that payload is normally
@@ -834,10 +837,11 @@ inspects, it never applies.) Then:
   `prepare --apply` with the same arguments; it is idempotent. The usual blocker
   is open holds that had not drained, and since settle keeps running while
   paused, waiting a few minutes and re-running is normally enough. Then run
-  `finish --apply`. When `prepare` fails on drain specifically it exits **2**
-  (retry shortly, nothing is wrong) rather than **1**; note that argument and
-  workspace-resolution errors also exit 2, so confirm from the printed
-  `BLOCKED:` lines rather than the code alone.
+  `finish --apply`. Exit **2** means the *credit ledger* was still draining
+  (retry shortly, nothing is wrong); an API-key drain blocker exits **1**, as do
+  argument and workspace-resolution errors. So read the printed `BLOCKED:` lines
+  rather than the exit code alone — a `wait for drain` reason on a key line is
+  just as retriable as one on the credit line, despite the different code.
 - **`at_target=True` but `ready=False`** → the transition DID land and
   verification found something else wrong. Re-running `prepare` will not help;
   it re-inspects and returns the same unready status. Read the `BLOCKED:` lines
