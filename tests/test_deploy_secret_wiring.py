@@ -124,6 +124,7 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
 def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
     secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     reader = (
         ROOT / "scripts/deploy/clickhouse_provider_reader.sh"
     ).read_text(encoding="utf-8")
@@ -143,3 +144,9 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
     assert "<max_result_bytes>536870912</max_result_bytes>" in reader
     assert "GRANT SELECT ON tr.provider_benchmark_samples" in reader
     assert "refusing configuration: $NAME has external IP" in reader
+    assert (
+        "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: "
+        "${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}" in workflow
+    )
+    assert '"trustedrouter-clickhouse-provider-read-password"' in workflow
+    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" in workflow

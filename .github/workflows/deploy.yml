@@ -262,6 +262,19 @@ jobs:
         run: bash scripts/deploy/secrets.sh
         continue-on-error: true   # secrets are managed locally; runner has none
 
+      - name: Push provider analytics reader credential
+        env:
+          TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: ${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}
+        run: |
+          if [ -z "${TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD:-}" ]; then
+            echo "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" >&2
+            exit 1
+          fi
+          source scripts/deploy/_lib.sh
+          ensure_secret_value \
+            "trustedrouter-clickhouse-provider-read-password" \
+            "$TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD"
+
       # Staged regional deploy. Deploy us-central1 first, gate on a
       # 3-min single-region synthetic watch; only proceed to the
       # secondary warm regions if us-central1 stays up. A bad change
