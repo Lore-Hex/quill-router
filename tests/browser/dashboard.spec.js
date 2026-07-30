@@ -98,20 +98,23 @@ test("wallet sign-in completes without email gate", async ({ page }) => {
       }),
     });
   });
-  await page.route("**/console/api-keys", async (route) => {
+  await page.route("**/provider", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "text/html",
-      body: "<main><h1>API Keys</h1><p>$0.00</p></main>",
+      body: "<main><h1>Provider operations</h1></main>",
     });
   });
 
-  await page.goto("/");
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.goto("/?reason=signin&next=%2Fprovider");
+  await expect(page.locator('a[data-provider="google"]')).toHaveAttribute(
+    "href",
+    "/auth/google/login?next=%2Fprovider",
+  );
   await page.getByRole("button", { name: /MetaMask/ }).click();
 
-  await expect(page).toHaveURL(/\/console\/api-keys$/);
-  await expect(page.getByRole("heading", { name: "API Keys" })).toBeVisible();
+  await expect(page).toHaveURL(/\/provider$/);
+  await expect(page.getByRole("heading", { name: "Provider operations" })).toBeVisible();
   expect(emailRequests).toBe(0);
 });
 
