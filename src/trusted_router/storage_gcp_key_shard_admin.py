@@ -63,6 +63,15 @@ class KeyUsageReshardResult:
     def ready(self) -> bool:
         return not self.reasons
 
+    @property
+    def at_target(self) -> bool:
+        """Whether this key's usage rows are ACTUALLY at the requested count.
+
+        See `CreditReshardResult.at_target`: `ready` only means "nothing blocks
+        a reshard", which is true before the reshard has happened.
+        """
+        return self.current_shard_count == self.target_shard_count
+
 
 def _typed_key_state(
     store: Any,

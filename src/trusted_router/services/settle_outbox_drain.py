@@ -14,9 +14,10 @@ from trusted_router.storage_models import SettleOutboxRow, generation_id_for_aut
 logger = logging.getLogger(__name__)
 
 # Six hours is long enough to ride out a real Bigtable outage on 60-second
-# parks, but short enough that a permanently broken row cannot pin retention or
-# churn the drain forever.
+# parks, but short enough that a permanently broken row cannot churn the drain
+# forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
+_ACTIVITY_PARK_NOTE = "bigtable activity index pending"
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -114,53 +115,86 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.ACTIVITY_PENDING:
-        try:
-            created_at = dt.datetime.fromisoformat(
-                row.created_at.replace("Z", "+00:00")
-            )
-            if created_at.tzinfo is None or created_at.utcoffset() is None:
-                raise ValueError("created_at must include a timezone")
-            age_seconds = (dt.datetime.now(dt.UTC) - created_at).total_seconds()
-        except (AttributeError, OverflowError, TypeError, ValueError):
-            # A malformed timestamp is a separate data bug. Park this row as
-            # before instead of risking a premature terminal transition.
-            logger.warning(
-                "settle outbox activity repair has malformed created_at; parking "
-                "authorization_id=%s intent_kind=%s created_at=%r",
-                row.authorization_id,
-                row.intent_kind,
-                row.created_at,
+        now = dt.datetime.now(dt.UTC)
+        since = now
+        since_text = now.isoformat().replace("+00:00", "Z")
+        if isinstance(row.last_error, str) and row.last_error.startswith(
+            _ACTIVITY_PARK_NOTE
+        ):
+            _note, since_marker, candidate_since_text = row.last_error.partition(
+                "since="
             )
         else:
-            if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
-                # Spanner, the billing source of truth, is already consistent.
-                # Done releases retention and stops permanent drain churn.
-                # Dead would be wrong: it is a guard status, and freezing a hold
-                # that is already settled only defers retention forever.
-                outbox.mark(
+            since_marker = ""
+            candidate_since_text = ""
+        if since_marker:
+            try:
+                candidate_since = dt.datetime.fromisoformat(
+                    candidate_since_text.replace("Z", "+00:00")
+                )
+                if (
+                    candidate_since.tzinfo is None
+                    or candidate_since.utcoffset() is None
+                ):
+                    raise ValueError("activity repair since must include a timezone")
+            except (OverflowError, ValueError):
+                # A malformed timestamp is a separate data bug. Start the
+                # window now instead of risking a premature terminal transition.
+                logger.warning(
+                    "settle outbox activity repair has malformed since; parking "
+                    "authorization_id=%s intent_kind=%s since=%r",
                     row.authorization_id,
                     row.intent_kind,
-                    done=True,
-                    lease_owner=lease_owner,
+                    candidate_since_text,
                 )
-                logger.error(
-                    "ALERT settle outbox activity repair expired "
-                    "authorization_id=%s generation_id=%s request_id=%s "
-                    "reservation_id=%s; CHARGE IS ALREADY APPLIED; only the "
-                    "Bigtable activity row is missing; repair with "
-                    "POST /internal/reconcile/generation-activity",
-                    row.authorization_id,
-                    generation_id_for_authorization(row.authorization_id),
-                    _request_id(row),
-                    row.reservation_id,
-                )
-                return
+            else:
+                since = candidate_since
+                since_text = candidate_since_text
+
+        # last_error is the activity-failure clock. PARK_TYPED_UNAVAILABLE
+        # deliberately overwrites it and restarts this window: typed-store
+        # outage time is not activity-failure time and must not consume this
+        # repair budget.
+        age_seconds = (now - since).total_seconds()
+        if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
+            # Dead preserves settle_body, the only typed activity-repair
+            # evidence; done destroys it and makes the missing activity
+            # permanently unrecoverable. Dead is the existing human-review
+            # terminal, monitored by the status='dead' count and documented in
+            # the runbook, and stops a full apply every 60 seconds. Keeping
+            # terminal_at NULL is deliberate: the reservation and gateway
+            # authorization are repair evidence, so retention stays pinned only
+            # until an operator responds. Freezing the hold costs nothing
+            # because the reservation is already settled. After fixing
+            # Bigtable, the operator can set this row back to pending with
+            # next_attempt_at in the past for due() to reclaim it.
+            outbox.mark(
+                row.authorization_id,
+                row.intent_kind,
+                done=False,
+                error="activity_repair_expired",
+                lease_owner=lease_owner,
+                force_dead=True,
+            )
+            logger.error(
+                "ALERT settle outbox activity repair expired "
+                "authorization_id=%s generation_id=%s request_id=%s "
+                "reservation_id=%s; CHARGE IS ALREADY APPLIED and Spanner is "
+                "correct; only the per-request Bigtable activity row is missing; "
+                "row is now dead with settle_body PRESERVED for repair; fix "
+                "Bigtable, then set the row back to pending to let the drain retry",
+                row.authorization_id,
+                generation_id_for_authorization(row.authorization_id),
+                _request_id(row),
+                row.reservation_id,
+            )
+            return
         outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
             retry_after_seconds=60,
-            note="bigtable activity index pending",
+            note=f"{_ACTIVITY_PARK_NOTE} since={since_text}",
         )
         logger.warning(
             "settle outbox activity repair pending authorization_id=%s",

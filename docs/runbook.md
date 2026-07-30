@@ -518,36 +518,62 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
-| `activity_pending` | Charge committed but the Bigtable activity index write failed. Parks every 60s without burning attempts for up to 6 hours, then escalates: marks the row `done` and emits `ALERT settle outbox activity repair expired`. See below. |
+| `activity_pending` | Charge committed but the Bigtable activity-index write failed. Parks every 60s without burning attempts. After 6 hours of *continuous* activity failure the row goes `dead` with `ALERT settle outbox activity repair expired`. See below. |
 
-`activity_pending` is the one outcome where a terminal transition is NOT a money
-problem. The charge already committed in Spanner (the billing source of truth)
-before the index attempt; only the per-request Bigtable activity row is missing,
-so the customer is billed correctly but the request may be absent from their
-activity view. The row escalates to `done` rather than `dead` deliberately —
-`dead` is a guard status that freezes the hold and keeps `terminal_at` NULL, and
-freezing an already-settled hold buys nothing while deferring retention forever.
+`activity_pending` is the one outcome where the terminal transition is NOT a
+money problem. The charge already committed in Spanner (the billing source of
+truth) *before* the index attempt — `ACTIVITY_PENDING` is only returned after
+typed finalize reported `SETTLED`. The customer is billed correctly; only the
+per-request Bigtable activity row is missing, so the request may be absent from
+their activity view.
 
-On `ALERT settle outbox activity repair expired`: the alert carries the
-`authorization_id`, `generation_id`, `request_id`, and `reservation_id`. Repair
-the missing activity row with the reconcile endpoint (see the
-[Spanner or Bigtable is degraded](#storage-degraded) section):
+Two things about this outcome are easy to get wrong:
 
-```bash
-curl -X POST https://trustedrouter.com/v1/internal/reconcile/generation-activity \
-  -H "Authorization: Bearer $TR_INTERNAL_GATEWAY_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"workspace_id":"<workspace_id>","date":"<YYYY-MM-DD>","limit":10000}'
-```
+**The window measures continuous activity failure, not row age.** It starts at
+the first `ACTIVITY_PENDING` observation, carried forward in the park note
+(`last_error` = `bigtable activity index pending since=<ts>`). A row that sat
+behind a typed-store outage for a day and then fails its Bigtable write once has
+a *fresh* window. A `park_typed_unavailable` in between resets it, deliberately:
+a typed-store outage is not activity-failure time and must not consume this
+budget. So a cluster of expired rows means Bigtable writes were failing for six
+continuous hours; a single one usually does not.
 
-Get `<workspace_id>` from the reservation named in the alert; `date` is the UTC
-day the generation was created and narrows the scan (omit it to sweep the
-workspace).
+**The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
+NULLs `settle_body`, and for a gateway/typed request that payload is the only
+repair evidence there is: typed finalize deliberately skips the generic
+`generation` / `generation_by_workspace` entity writes, and
+`POST /internal/reconcile/generation-activity` repairs by scanning
+`generation_by_workspace`. **That endpoint therefore repairs nothing for these
+rows** — it is for legacy `add()` callers. Do not reach for it here. `dead`
+preserves `settle_body`, stops the drain re-doing the full apply every 60s, and
+puts the row in the `status='dead'` queue that is already monitored above.
+Retention stays pinned (`terminal_at` NULL) on the reservation and gateway
+authorization, which is correct: those records are the evidence a human needs.
+Pinning is now bounded by operator response instead of unbounded.
 
-A single expired row is a transient Bigtable failure that outlived the window;
-repair it and move on. A *cluster* of them means Bigtable writes were failing
-for longer than 6 hours — check Bigtable health before repairing, or the repair
-writes will fail too.
+Repairing `ALERT settle outbox activity repair expired` (the alert carries
+`authorization_id`, `generation_id`, `request_id`, `reservation_id`):
+
+1. Fix the underlying Bigtable problem first — check the
+   `bigtable.activity_index_write_failed` logs for this `generation_id` and the
+   [Spanner or Bigtable is degraded](#storage-degraded) section. Re-driving the
+   row before Bigtable is healthy just fails again.
+2. Re-arm the row. `settle_body` is intact on a `dead` row, so the drain can
+   simply retry it — `due()` selects `status='pending' AND next_attempt_at <= now`:
+
+   ```bash
+   gcloud spanner databases execute-sql trusted-router \
+     --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+     --sql="UPDATE tr_settle_outbox SET status='pending', next_attempt_at=CURRENT_TIMESTAMP(),
+            lease_owner=NULL, leased_until=NULL, last_error=NULL
+            WHERE authorization_id='<authorization_id>' AND intent_kind='settle'
+            AND status='dead'"
+   ```
+
+   Clearing `last_error` restarts the six-hour window, which is what you want
+   after a fix. The row settles idempotently; it will not double-charge.
+3. Confirm the row reached `done` and the request appears in the workspace's
+   activity view.
 
 Monitoring signals:
 
@@ -742,11 +768,12 @@ key-minting path). Settle is deliberately NOT guarded, so in-flight work still
 finalizes — a paused workspace drains to zero holds rather than stranding
 money.
 
-The near-certain cause is a **reshard that ran `prepare` but never reached
-`finish`**: the runner died, the workflow was cancelled, or the operator walked
-away. `prepare` pauses the workspace first, and every one of its exits — success
-and failure alike — leaves it paused on purpose. This is fail-safe, not a bug:
-an unverified shard set must not take live traffic.
+The near-certain cause is a **reshard that ran `prepare --apply` but never
+reached `finish`**: the runner died, the workflow was cancelled, or the operator
+walked away. Once `prepare --apply` has paused the workspace, every subsequent
+exit — success and failure alike — leaves it paused on purpose. This is
+fail-safe, not a bug: an unverified shard set must not take live traffic. (A
+dry run, without `--apply`, returns before pausing and cannot cause this.)
 
 Confirm the cause before touching anything. The pause reason names it:
 
@@ -771,27 +798,39 @@ PYTHONPATH=src uv run python scripts/shard_workspace.py status --workspace <work
 ```
 
 `<N>` must be the SAME target shard count the interrupted run used. It prints
-`current_shards`, `target_shards`, `ready`, `applied`, the typed totals, open
-reservations, and a `BLOCKED:` line per unmet precondition, then one line per API
-key. Then:
+`current_shards`, `target_shards`, `ready`, `at_target`, `applied`, the typed
+totals, open reservations, and a `BLOCKED:` line per unmet precondition, then one
+line per API key. Booleans print as `True`/`False`.
 
-- **`ready=true` on the credit row and every key** → the transition already
-  landed; only the unpause is missing. Run `finish` with the same `--shards <N>`
-  (and the same `--preserve-open-holds` value). `finish` re-verifies the whole
-  shard set and only then clears `billing_paused`; it refuses with
-  `ERROR: refusing to unpause; ...` if anything is unclean.
-- **`ready=false`** → the transition did not complete. Re-run `prepare` with the
-  same arguments. It is idempotent and re-pauses; the usual blocker is open holds
-  that had not drained, and since settle keeps running while paused, waiting a
-  few minutes and re-running is normally enough. Then run `finish`.
-  `prepare` distinguishes the two cases by exit code: **2 = still draining**
-  (retry shortly, nothing is wrong), **1 = a real failure** (read the `BLOCKED:`
-  lines before retrying).
+**Read `at_target`, not `ready`.** `ready` only means "nothing blocks a
+reshard" — a drained, healthy, paused workspace still at 1 shard is `ready=True`
+against a target of 16. `at_target` is the one that says the ledger actually
+adopted the target count. (`applied` is always `False` here: `status` only
+inspects, it never applies.) Then:
 
-Both mutating operations need `--apply` locally, or `confirmation: APPLY` in the
-workflow dispatch; without it they dry-run and change nothing. `finish` without
-`--apply` is the ideal rehearsal — it runs the complete verification and prints
-`DRY-RUN: would unpause this verified workspace` without touching the pause.
+- **`at_target=True` and `ready=True` on the credit row and every key** → the
+  transition landed; only the unpause is missing. Run `finish --apply` with the
+  same `--shards <N>` and the same `--preserve-open-holds` value. `finish`
+  re-verifies the whole shard set and only then clears `billing_paused`,
+  refusing with `ERROR: refusing to unpause; ...` if anything is unclean or not
+  at the target.
+- **Anything else** → the transition did not complete. Re-run
+  `prepare --apply` with the same arguments; it is idempotent. The usual blocker
+  is open holds that had not drained, and since settle keeps running while
+  paused, waiting a few minutes and re-running is normally enough. Then run
+  `finish --apply`. When `prepare` fails on drain specifically it exits **2**
+  (retry shortly, nothing is wrong) rather than **1**; note that argument and
+  workspace-resolution errors also exit 2, so confirm from the printed
+  `BLOCKED:` lines rather than the code alone.
+
+Mutating operations need `--apply` locally, or `confirmation: APPLY` in the
+workflow. They differ: locally, omitting `--apply` runs a real dry run
+(`finish` without `--apply` performs the complete verification and prints
+`DRY-RUN: would unpause this verified workspace` without touching the pause —
+the ideal rehearsal). In the *workflow*, omitting `confirmation: APPLY` on a
+mutating operation is refused outright with
+`Mutation refused: type APPLY in confirmation` and exit 2 — it does not dry-run.
+Dispatch `operation: status` for a read-only look via the workflow.
 
 `finish` is the ONLY way back to serving traffic. Do not hand-clear
 `billing_paused` and do not hand-set shard columns — both bypass the shard-set
@@ -802,9 +841,10 @@ Two things that look like this but are not: the workflow serializes on
 `concurrency: production-billing-workspace-reshard`, so a second dispatch waits
 rather than racing a half-finished workspace — a queued run is expected, not a
 symptom. And a key with an exact lifetime cap (`limit_microdollars` set) is
-pinned to `usage_shards=1` by design; `status` prints
-`exact lifetime cap; keeping usage_shards=1` for it and that is not a `BLOCKED`
-condition.
+pinned to `usage_shards=1` by design, so it correctly reports
+`current_shards=1 target_shards=1 at_target=True` even when the workspace target
+is 16 — that is not a failure. (`prepare` prints
+`exact lifetime cap; keeping usage_shards=1` for such a key; `status` does not.)
 
 ---
 
