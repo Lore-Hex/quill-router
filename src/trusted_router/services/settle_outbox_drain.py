@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 from collections import Counter
 from typing import Any, cast
@@ -8,9 +9,14 @@ from typing import Any, cast
 from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
-from trusted_router.storage_models import SettleOutboxRow
+from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
 
 logger = logging.getLogger(__name__)
+
+# Six hours is long enough to ride out a real Bigtable outage on 60-second
+# parks, but short enough that a permanently broken row cannot pin retention or
+# churn the drain forever.
+_ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -108,6 +114,47 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.ACTIVITY_PENDING:
+        try:
+            created_at = dt.datetime.fromisoformat(
+                row.created_at.replace("Z", "+00:00")
+            )
+            if created_at.tzinfo is None or created_at.utcoffset() is None:
+                raise ValueError("created_at must include a timezone")
+            age_seconds = (dt.datetime.now(dt.UTC) - created_at).total_seconds()
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            # A malformed timestamp is a separate data bug. Park this row as
+            # before instead of risking a premature terminal transition.
+            logger.warning(
+                "settle outbox activity repair has malformed created_at; parking "
+                "authorization_id=%s intent_kind=%s created_at=%r",
+                row.authorization_id,
+                row.intent_kind,
+                row.created_at,
+            )
+        else:
+            if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
+                # Spanner, the billing source of truth, is already consistent.
+                # Done releases retention and stops permanent drain churn.
+                # Dead would be wrong: it is a guard status, and freezing a hold
+                # that is already settled only defers retention forever.
+                outbox.mark(
+                    row.authorization_id,
+                    row.intent_kind,
+                    done=True,
+                    lease_owner=lease_owner,
+                )
+                logger.error(
+                    "ALERT settle outbox activity repair expired "
+                    "authorization_id=%s generation_id=%s request_id=%s "
+                    "reservation_id=%s; CHARGE IS ALREADY APPLIED; only the "
+                    "Bigtable activity row is missing; repair with "
+                    "POST /internal/reconcile/generation-activity",
+                    row.authorization_id,
+                    generation_id_for_authorization(row.authorization_id),
+                    _request_id(row),
+                    row.reservation_id,
+                )
+                return
         outbox.park(
             row.authorization_id,
             row.intent_kind,
@@ -249,3 +296,13 @@ def _resolve_row(
             row.authorization_id,
             row.intent_kind,
         )
+
+
+def _request_id(row: SettleOutboxRow) -> str | None:
+    try:
+        body = json.loads(row.settle_body) if row.settle_body is not None else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(body, dict) or body.get("request_id") is None:
+        return None
+    return str(body["request_id"])

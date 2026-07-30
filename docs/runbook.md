@@ -25,6 +25,7 @@ Index:
 - [Settle outbox: flip, verify, monitor, roll back](#settle-outbox)
 - [Credit ledger operations (single typed book)](#credit-ledger)
 - [Sentry "Aborted ... deadlock/wounded" burst on gateway authorize](#authorize-deadlock-burst)
+- [One workspace 503s "Workspace billing is paused" (interrupted reshard)](#reshard-interrupted)
 - [DNS-vendor-split symptoms (Cloudflare vs Cloud DNS)](#dns-vendor-split)
 
 ---
@@ -517,6 +518,36 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
+| `activity_pending` | Charge committed but the Bigtable activity index write failed. Parks every 60s without burning attempts for up to 6 hours, then escalates: marks the row `done` and emits `ALERT settle outbox activity repair expired`. See below. |
+
+`activity_pending` is the one outcome where a terminal transition is NOT a money
+problem. The charge already committed in Spanner (the billing source of truth)
+before the index attempt; only the per-request Bigtable activity row is missing,
+so the customer is billed correctly but the request may be absent from their
+activity view. The row escalates to `done` rather than `dead` deliberately —
+`dead` is a guard status that freezes the hold and keeps `terminal_at` NULL, and
+freezing an already-settled hold buys nothing while deferring retention forever.
+
+On `ALERT settle outbox activity repair expired`: the alert carries the
+`authorization_id`, `generation_id`, `request_id`, and `reservation_id`. Repair
+the missing activity row with the reconcile endpoint (see the
+[Spanner or Bigtable is degraded](#storage-degraded) section):
+
+```bash
+curl -X POST https://trustedrouter.com/v1/internal/reconcile/generation-activity \
+  -H "Authorization: Bearer $TR_INTERNAL_GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_id":"<workspace_id>","date":"<YYYY-MM-DD>","limit":10000}'
+```
+
+Get `<workspace_id>` from the reservation named in the alert; `date` is the UTC
+day the generation was created and narrows the scan (omit it to sweep the
+workspace).
+
+A single expired row is a transient Bigtable failure that outlived the window;
+repair it and move on. A *cluster* of them means Bigtable writes were failing
+for longer than 6 hours — check Bigtable health before repairing, or the repair
+writes will fail too.
 
 Monitoring signals:
 
@@ -698,6 +729,82 @@ the operator. Before activating spreading on any workspace, confirm the
 credit-shard rebalance fix is deployed (a negative per-shard headroom from an
 overage settle must return a clean 402, never a `_RebalanceInvariantError`
 500 — fixed 2026-07).
+
+---
+
+## <a id="reshard-interrupted"></a>One workspace 503s "Workspace billing is paused" (interrupted reshard)
+
+Symptom: every request from exactly ONE workspace returns
+`503 Workspace billing is paused` with `Retry-After: 30`, while every other
+tenant is healthy. Key creation for that workspace fails the same way
+(`assert_workspace_billing_active` guards authorize/validate and every
+key-minting path). Settle is deliberately NOT guarded, so in-flight work still
+finalizes — a paused workspace drains to zero holds rather than stranding
+money.
+
+The near-certain cause is a **reshard that ran `prepare` but never reached
+`finish`**: the runner died, the workflow was cancelled, or the operator walked
+away. `prepare` pauses the workspace first, and every one of its exits — success
+and failure alike — leaves it paused on purpose. This is fail-safe, not a bug:
+an unverified shard set must not take live traffic.
+
+Confirm the cause before touching anything. The pause reason names it:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT body FROM tr_entities WHERE kind='workspace' AND id='<workspace_id>'"
+```
+
+`body` is the workspace JSON; read its `billing_paused` and
+`billing_pause_reason` fields. `"billing_pause_reason": "credit-row reshard
+prepare"` is the interrupted-reshard signature. Any other reason means someone
+paused this workspace for a different purpose — stop and find out why before
+unpausing.
+
+**Recovery.** Read the shard state first (read-only, safe at any time — this is
+the `status` operation of `.github/workflows/reshard-billing-workspace.yml`, or
+locally):
+
+```bash
+PYTHONPATH=src uv run python scripts/shard_workspace.py status --workspace <workspace_id> --shards <N>
+```
+
+`<N>` must be the SAME target shard count the interrupted run used. It prints
+`current_shards`, `target_shards`, `ready`, `applied`, the typed totals, open
+reservations, and a `BLOCKED:` line per unmet precondition, then one line per API
+key. Then:
+
+- **`ready=true` on the credit row and every key** → the transition already
+  landed; only the unpause is missing. Run `finish` with the same `--shards <N>`
+  (and the same `--preserve-open-holds` value). `finish` re-verifies the whole
+  shard set and only then clears `billing_paused`; it refuses with
+  `ERROR: refusing to unpause; ...` if anything is unclean.
+- **`ready=false`** → the transition did not complete. Re-run `prepare` with the
+  same arguments. It is idempotent and re-pauses; the usual blocker is open holds
+  that had not drained, and since settle keeps running while paused, waiting a
+  few minutes and re-running is normally enough. Then run `finish`.
+  `prepare` distinguishes the two cases by exit code: **2 = still draining**
+  (retry shortly, nothing is wrong), **1 = a real failure** (read the `BLOCKED:`
+  lines before retrying).
+
+Both mutating operations need `--apply` locally, or `confirmation: APPLY` in the
+workflow dispatch; without it they dry-run and change nothing. `finish` without
+`--apply` is the ideal rehearsal — it runs the complete verification and prints
+`DRY-RUN: would unpause this verified workspace` without touching the pause.
+
+`finish` is the ONLY way back to serving traffic. Do not hand-clear
+`billing_paused` and do not hand-set shard columns — both bypass the shard-set
+verification that is the entire point of the two-phase design, and a workspace
+serving on an unverified shard set can under-count spend across sub-ledgers.
+
+Two things that look like this but are not: the workflow serializes on
+`concurrency: production-billing-workspace-reshard`, so a second dispatch waits
+rather than racing a half-finished workspace — a queued run is expected, not a
+symptom. And a key with an exact lifetime cap (`limit_microdollars` set) is
+pinned to `usage_shards=1` by design; `status` prints
+`exact lifetime cap; keeping usage_shards=1` for it and that is not a `BLOCKED`
+condition.
 
 ---
 

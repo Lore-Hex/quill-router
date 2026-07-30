@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import re
@@ -524,6 +525,192 @@ def test_enqueue_failure_does_not_fail_settle(
 
 
 # Integration (drain + reaper)
+
+
+def test_activity_pending_under_age_bound_parks_without_burning_attempts(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-fresh")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.attempts == 0
+    assert pending.lease_owner is None
+    assert pending.last_error == "bigtable activity index pending"
+
+
+def test_activity_pending_over_age_bound_marks_done_and_alerts(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-expired")
+    ob = _outbox(store)
+    ob.enqueue(
+        _row(
+            auth,
+            settle_body=json.dumps(
+                _settle_json(auth.id, request_id="req-activity-expired")
+            ),
+        )
+    )
+    created_at = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = (
+        created_at.isoformat().replace("+00:00", "Z")
+    )
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+
+    with caplog.at_level(logging.ERROR, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["claimed"] == 1
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    completed = ob.get(auth.id, "settle")
+    assert completed is not None and completed.status == "done"
+    alerts = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "ALERT" in record.getMessage()
+    ]
+    assert len(alerts) == 1
+    assert f"authorization_id={auth.id}" in alerts[0]
+    assert "generation_id=gen-" in alerts[0]
+    assert "request_id=req-activity-expired" in alerts[0]
+    assert "CHARGE IS ALREADY APPLIED" in alerts[0]
+    assert "only the Bigtable activity row is missing" in alerts[0]
+    assert "POST /internal/reconcile/generation-activity" in alerts[0]
+
+
+def test_activity_pending_escalation_releases_retention(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-activity-retention"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    row = _row(auth)
+    ob = _outbox(store)
+    ob.enqueue(row)
+    monkeypatch.setattr(
+        apply_mod,
+        "_index_generation_after_commit",
+        lambda typed_store, generation: False,
+    )
+    assert apply_mod.apply_frozen_settle(row) == ApplyOutcome.ACTIVITY_PENDING
+    assert db.reservations[auth.credit_reservation_id]["settled"] is True
+    assert db.gateway_authorizations[auth.id]["settled"] is True
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+    created_at = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = (
+        created_at.isoformat().replace("+00:00", "Z")
+    )
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    assert ob.get(auth.id, "settle").status == "done"
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+
+
+def test_activity_pending_malformed_created_at_still_parks(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-malformed")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = "not-an-iso-timestamp"
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.attempts == 0
+    assert any(
+        f"authorization_id={auth.id}" in record.getMessage()
+        and "malformed created_at" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_activity_pending_naive_created_at_still_parks(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A timezone-less created_at parses fine but cannot be aged against an aware
+    now(). Treat it like any other malformed timestamp: park, never escalate on
+    an age we cannot actually compute."""
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-naive")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    naive = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = naive.replace(
+        tzinfo=None
+    ).isoformat()
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.attempts == 0
+    assert not [
+        record for record in caplog.records if record.levelno == logging.ERROR
+    ]
+    assert any(
+        f"authorization_id={auth.id}" in record.getMessage()
+        and "malformed created_at" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any, Any]) -> None:
