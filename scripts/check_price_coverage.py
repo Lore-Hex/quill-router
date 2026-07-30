@@ -238,7 +238,9 @@ def _alibaba_model_id(native_id: str) -> str | None:
         return f"qwen/{lowered}"
     if lowered.startswith("minimax-"):
         return f"minimax/{lowered}"
-    return None
+    if "/" in lowered:
+        return lowered
+    return f"alibaba/{lowered}"
 
 
 def _kimi_model_id(native_id: str) -> str | None:

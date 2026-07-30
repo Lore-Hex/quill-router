@@ -73,7 +73,14 @@ def _canonical_model_id(native_id: str) -> str | None:
         return f"qwen/{lowered}"
     if lowered.startswith("minimax-"):
         return f"minimax/{lowered}"
-    return None
+    # Keep every model returned by Alibaba's authenticated OpenAI-compatible
+    # catalog visible to the refresh system. Unknown families are namespaced
+    # to Alibaba and enter the manifest as non-routable ``awaiting-price``
+    # rows until a reviewed price rule exists; they must never be silently
+    # ignored or accidentally exposed as zero-cost routes.
+    if "/" in lowered:
+        return lowered
+    return f"alibaba/{lowered}"
 
 
 def _price(native_id: str) -> ModelPrice | None:
