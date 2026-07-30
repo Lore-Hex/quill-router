@@ -6,9 +6,9 @@ HTTP middleware registers in order from outermost to innermost:
   2. canonical_public_host — keeps marketing URLs off www/status aliases.
   3. public_pageview — captures signed first-party attribution and emits
                        metadata-only public pageview events.
-  4. rate_limit  — enforces per-(key|ip|internal-token) windowed limits
-                   via STORE.hit_rate_limit; logs structured 429s with
-                   the request_id from (1).
+  4. rate_limit  — enforces process-local limits for anonymous safe reads and
+                   shared per-(key|ip|internal-token) limits for other traffic;
+                   logs structured 429s with the request_id from (1).
   5. security_headers — sets HSTS so browsers remember to skip http://
                         on subsequent visits.
 
@@ -24,6 +24,7 @@ it could be reused by other ASGI services in the same project.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -44,6 +45,8 @@ from trusted_router.auth import get_authorization_bearer
 from trusted_router.config import Settings
 from trusted_router.errors import error_response
 from trusted_router.storage import STORE
+from trusted_router.storage_models import RateLimitHit
+from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.types import ErrorType
 
 log = logging.getLogger(__name__)
@@ -84,6 +87,7 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
     """
 
     app.add_middleware(GZipMiddleware, minimum_size=1_000, compresslevel=6)
+    public_read_rate_limits = InMemoryRateLimits(lock=threading.RLock())
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -241,7 +245,11 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         # drops the flag.
         if settings.read_only:
             return await call_next(request)
-        limited = _rate_limit_request(request, settings)
+        limited = _rate_limit_request(
+            request,
+            settings,
+            public_read_rate_limits=public_read_rate_limits,
+        )
         if limited is not None:
             return limited
         return await call_next(request)
@@ -277,7 +285,12 @@ def _canonical_public_url(settings: Settings, request: Request) -> str:
     return f"https://{settings.trusted_domain}{request.url.path}{suffix}"
 
 
-def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | None:
+def _rate_limit_request(
+    request: Request,
+    settings: Settings,
+    *,
+    public_read_rate_limits: InMemoryRateLimits,
+) -> JSONResponse | None:
     if not settings.rate_limit_enabled:
         return None
     path = request.url.path
@@ -290,21 +303,41 @@ def _rate_limit_request(request: Request, settings: Settings) -> JSONResponse | 
     internal_token = request.headers.get("x-trustedrouter-internal-token")
     user = request.headers.get("x-trustedrouter-user")
     ip = _client_ip(request)
-    if path.startswith(("/internal/", "/v1/internal/")):
+    # Public catalog and marketing reads are cacheable. A durable
+    # read-modify-write counter here turns one crawler into a single-row
+    # Spanner hotspot before the application can return the page. Use a
+    # process-local guard for safe anonymous reads; authenticated, internal,
+    # and state-changing requests remain on the shared application limiter.
+    public_read = (
+        request.method.upper() in {"GET", "HEAD", "OPTIONS"}
+        and not bearer
+        and not internal_token
+        and not user
+    )
+    hit_rate_limit: Callable[..., RateLimitHit]
+    if public_read:
+        namespace = "public_ip"
+        subject = _fingerprint(ip)
+        limit = settings.rate_limit_ip_per_window
+        hit_rate_limit = public_read_rate_limits.hit
+    elif path.startswith(("/internal/", "/v1/internal/")):
         namespace = "internal"
         subject = _fingerprint(internal_token or bearer or ip)
         limit = settings.rate_limit_internal_per_window
+        hit_rate_limit = STORE.hit_rate_limit
     elif bearer:
         namespace = "key"
         subject = _fingerprint(bearer)
         limit = settings.rate_limit_key_per_window
+        hit_rate_limit = STORE.hit_rate_limit
     else:
         namespace = "ip"
         subject = _fingerprint(user or ip)
         limit = settings.rate_limit_ip_per_window
+        hit_rate_limit = STORE.hit_rate_limit
 
     try:
-        hit = STORE.hit_rate_limit(
+        hit = hit_rate_limit(
             namespace=namespace,
             subject=subject,
             limit=limit,
