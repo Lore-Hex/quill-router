@@ -45,11 +45,26 @@ mechanisms, and only the second one costs a wallet.
 
 ## 3. Facts, checked
 
-**Aurora DSQL is available in all 16 regions probed**: `us-east-1`, `us-east-2`,
-`us-west-2`, `eu-west-1`, `eu-central-1`, `eu-west-3`, `eu-north-1`,
-`eu-south-1`, `ap-southeast-1`, `ap-southeast-2`, `ap-northeast-1`, `ap-south-1`,
-`sa-east-1`, `ca-central-1`, `af-south-1`, `me-central-1`. Geography is not the
-constraint.
+**Aurora DSQL is broadly available**, so geography is not the constraint — but
+the naive probe that produced that list had a **false positive**, and the
+mechanism is worth knowing.
+
+`aws dsql list-clusters` against a region the account has **not opted into**
+does not fail the way an unsupported-service call fails, so a
+grep-for-an-error probe scores it as available. `eu-south-1` (Milan) passed that
+probe and is in fact `not-opted-in`, which only surfaced when
+`aws ec2 describe-regions` was checked directly.
+
+**Check `OptInStatus` before believing any region is usable:**
+
+```bash
+aws ec2 describe-regions --query "Regions[?starts_with(RegionName,'eu-')].{r:RegionName,s:OptInStatus}" --output text
+```
+
+EU regions usable with no opt-in today: `eu-west-1` Ireland, `eu-central-1`
+Frankfurt, `eu-west-3` Paris, `eu-north-1` Stockholm. (`eu-west-2` is London and
+is not the EU.) Opt-in regions such as Milan, Spain and Zurich need an explicit
+account-level enable that does not take effect immediately.
 
 **Azure exposes 40+ physical regions, but this subscription is capacity-restricted
 per service and inconsistently**: Postgres refused in `westeurope`, fine in
@@ -71,11 +86,17 @@ residency claim survives:
 
 | Role | Region |
 |---|---|
-| DSQL primary | `eu-west-1` Ireland |
-| DSQL peer | `eu-central-1` Frankfurt |
-| DSQL witness | `eu-west-3` Paris |
-| Compute | Ireland + Frankfurt (active/active) |
-| Compute (optional 3rd) | `eu-north-1` Stockholm or `eu-south-1` Milan |
+| DSQL primary | `eu-west-1` **Dublin** |
+| DSQL peer | `eu-north-1` **Stockholm** |
+| DSQL witness | `eu-west-3` **Paris** (metadata only) |
+| Compute | Dublin + Stockholm (active/active) |
+
+Milan was the first choice for spread and had to be abandoned: it is an opt-in
+region and the enable does not take effect promptly. Dublin + Stockholm gives
+Atlantic-west plus Nordic-north — a wider spread than the conventional
+Dublin + Frankfurt pair, and it avoids crowding the Netherlands dot that GCP
+already occupies. Peer latency is roughly 40ms against Frankfurt's 25ms, which
+is the price of the spread and is paid on write quorum.
 
 This is what buys four nines — see
 [`aws-eu-and-azure-canary.md`](aws-eu-and-azure-canary.md) §2 for why serial
