@@ -30,7 +30,7 @@
 </head>
 <body class="console">
   <header class="console-topbar">
-    <a class="brand" href="{{ '/provider' if provider_mode else '/console/api-keys' }}">{% include "_brand.html" %}</a>
+    <a class="brand" href="{{ '/provider/' ~ selected_provider if provider_mode else '/console/api-keys' }}">{% include "_brand.html" %}</a>
     <nav class="console-topnav">
       <a href="/models">Models</a>
       <a href="https://trust.trustedrouter.com">Trust</a>
@@ -67,7 +67,7 @@
       {% if provider_mode %}
       <div class="sidebar-group">
         <div class="sidebar-label">Provider operations</div>
-        <a href="/provider?provider={{ selected_provider }}" class="sidebar-link active">Overview</a>
+        <a href="/provider/{{ selected_provider }}" class="sidebar-link active">Overview</a>
         <a href="#request-export" class="sidebar-link">Request export</a>
         <a href="/providers/marketplace" class="sidebar-link">Reliability contract</a>
       </div>

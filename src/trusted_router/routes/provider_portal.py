@@ -8,7 +8,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from trusted_router.auth import SESSION_COOKIE_NAME
 from trusted_router.config import Settings
@@ -82,13 +82,11 @@ def _client(settings: Settings) -> ProviderAnalyticsClient:
 def register_provider_portal_routes(app: FastAPI) -> None:
     settings: Settings = app.state.settings
 
-    @app.get("/provider", response_class=HTMLResponse, include_in_schema=False)
-    async def provider_portal(
-        context: ProviderPortalDep,
-        provider: str | None = Query(default=None),
-        days: int = Query(default=7, ge=1, le=MAX_PROVIDER_EXPORT_DAYS),
+    async def _render_provider_portal(
+        context: ProviderPortalContext,
+        grant: ProviderAccessGrant,
+        days: int,
     ) -> HTMLResponse:
-        grant = context.selected_grant(provider)
         try:
             summary = await _client(settings).summary(grant.provider, days=days)
         except (httpx.HTTPError, RuntimeError, ValueError):
@@ -112,7 +110,7 @@ def register_provider_portal_routes(app: FastAPI) -> None:
             user_email=context.user.email,
             workspaces=[],
             current_workspace_id="",
-            console_next_path="/provider",
+            console_next_path=f"/provider/{grant.provider}",
             provider_mode=True,
             grants=context.grants,
             selected_provider=grant.provider,
@@ -123,6 +121,23 @@ def register_provider_portal_routes(app: FastAPI) -> None:
         )
         return HTMLResponse(
             html,
+            headers={
+                "Cache-Control": "private, no-store",
+                "X-Robots-Tag": "noindex, nofollow",
+            },
+        )
+
+    @app.get("/provider", response_class=RedirectResponse, include_in_schema=False)
+    async def provider_portal_redirect(
+        context: ProviderPortalDep,
+        provider: str | None = Query(default=None),
+        days: int = Query(default=7, ge=1, le=MAX_PROVIDER_EXPORT_DAYS),
+    ) -> RedirectResponse:
+        grant = context.selected_grant(provider)
+        suffix = f"?days={days}" if days != 7 else ""
+        return RedirectResponse(
+            url=f"/provider/{grant.provider}{suffix}",
+            status_code=302,
             headers={
                 "Cache-Control": "private, no-store",
                 "X-Robots-Tag": "noindex, nofollow",
@@ -166,3 +181,12 @@ def register_provider_portal_routes(app: FastAPI) -> None:
                 "X-Robots-Tag": "noindex, nofollow",
             },
         )
+
+    @app.get("/provider/{provider}", response_class=HTMLResponse, include_in_schema=False)
+    async def provider_portal(
+        provider: str,
+        context: ProviderPortalDep,
+        days: int = Query(default=7, ge=1, le=MAX_PROVIDER_EXPORT_DAYS),
+    ) -> HTMLResponse:
+        grant = context.selected_grant(provider)
+        return await _render_provider_portal(context, grant, days)
