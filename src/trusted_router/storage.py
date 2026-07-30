@@ -1280,6 +1280,22 @@ def create_store(settings: Any) -> Store:
     backend = str(getattr(settings, "storage_backend", "memory")).lower()
     if backend == "memory":
         return InMemoryStore()
+    if backend == "postgres":
+        # Postgres-wire system of record for the non-GCP deployments. The same
+        # implementation runs on Azure Flexible Server / Citus, AWS Aurora DSQL,
+        # and Spanner's PostgreSQL dialect, which is why there is one backend
+        # here and not three.
+        from trusted_router.storage_postgres import PostgresStore
+
+        dsn = str(getattr(settings, "postgres_dsn", "") or "")
+        if not dsn:
+            raise ValueError(
+                "TR_STORAGE_BACKEND=postgres requires TR_POSTGRES_DSN. "
+                "Without it the process would start and fail on first query."
+            )
+        store = PostgresStore(dsn)
+        store.apply_schema()
+        return store
     if backend == "spanner-bigtable":
         from trusted_router.storage_gcp import SpannerBigtableStore
 

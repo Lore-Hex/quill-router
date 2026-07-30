@@ -2,9 +2,50 @@ CREATE TABLE IF NOT EXISTS tr_entities (
     kind TEXT NOT NULL,
     id TEXT NOT NULL,
     body JSONB NOT NULL,
+    indexed_at TIMESTAMPTZ,
+    index_date TEXT,
+    index_target TEXT,
+    index_probe_type TEXT,
+    index_monitor_region TEXT,
+    index_period TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (kind, id)
 );
+
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS indexed_at TIMESTAMPTZ;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_date TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_target TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_probe_type TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_monitor_region TEXT;
+ALTER TABLE tr_entities ADD COLUMN IF NOT EXISTS index_period TEXT;
+
+CREATE INDEX IF NOT EXISTS tr_entities_recent
+    ON tr_entities (kind, indexed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS tr_entities_day_recent
+    ON tr_entities (kind, index_date, indexed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS tr_entities_day_probe_target_recent
+    ON tr_entities (
+        kind,
+        index_date,
+        index_target,
+        index_probe_type,
+        indexed_at DESC,
+        id DESC
+    );
+CREATE INDEX IF NOT EXISTS tr_entities_target_recent
+    ON tr_entities (kind, index_target, indexed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS tr_entities_probe_target_recent
+    ON tr_entities (
+        kind,
+        index_probe_type,
+        index_target,
+        indexed_at DESC,
+        id DESC
+    );
+CREATE INDEX IF NOT EXISTS tr_entities_monitor_recent
+    ON tr_entities (kind, index_monitor_region, indexed_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS tr_entities_period_recent
+    ON tr_entities (kind, index_period, indexed_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS tr_credit_balance (
     workspace_id TEXT NOT NULL,

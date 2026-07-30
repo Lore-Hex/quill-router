@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     enable_live_providers: bool = False
     local_keys_file: Path = Path("~/.quill_cloud_keys.private").expanduser()
     storage_backend: str = "memory"
+    # Postgres-wire system of record for the non-GCP deployments. One
+    # implementation covers Azure (Flexible Server / Citus), AWS (Aurora DSQL)
+    # and Spanner's PostgreSQL dialect — see
+    # docs/storage-portability/multi-cloud-separation.md.
+    postgres_dsn: str = ""
     gcp_project_id: str = "quill-cloud-proxy"
     spanner_instance_id: str | None = None
     spanner_database_id: str | None = None

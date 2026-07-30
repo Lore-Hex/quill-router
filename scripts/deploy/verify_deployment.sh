@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Self-test a TrustedRouter deployment on any cloud.
+#
+#   bash scripts/deploy/verify_deployment.sh https://tr-canary.....azurecontainerapps.io
+#
+# Cloud-agnostic on purpose: the Azure canary and the AWS EU region run the same
+# checks, so "it works on Azure" and "it works on AWS" mean the same thing. A
+# per-cloud bespoke smoke test would let the two drift and would not be evidence
+# of anything.
+#
+# COSTS NOTHING. Every check below is a free endpoint. Inference probes spend
+# real provider money and are deliberately excluded — a deploy check that bills
+# per run will get switched off.
+#
+# Exits non-zero on the first hard failure so it can gate a rollout.
+set -uo pipefail
+
+BASE="${1:-}"
+[ -n "$BASE" ] || { echo "usage: $0 <base-url>" >&2; exit 2; }
+BASE="${BASE%/}"
+
+pass=0; fail=0; warn=0
+ok()   { printf '  PASS  %s\n' "$*"; pass=$((pass+1)); }
+bad()  { printf '  FAIL  %s\n' "$*"; fail=$((fail+1)); }
+soft() { printf '  WARN  %s\n' "$*"; warn=$((warn+1)); }
+
+code() { curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$1" 2>/dev/null; }
+body() { curl -s --max-time 20 "$1" 2>/dev/null; }
+
+printf '\n=== verifying %s\n\n' "$BASE"
+
+# 1. Liveness. If this fails nothing else is meaningful.
+if [ "$(code "$BASE/health")" = "200" ]; then
+  ok "/health responds 200"
+else
+  bad "/health did not return 200 — the container is not serving"
+  echo; echo "  $pass passed, $fail failed, $warn warnings"; exit 1
+fi
+
+# 2. The app renders. Catches a booted process that cannot template or read
+#    static assets — a class of failure /health cannot see.
+[ "$(code "$BASE/")" = "200" ] && ok "/ renders" || bad "/ did not return 200"
+
+# 3. Database round-trip. This is the check that actually proves the deployment
+#    reached ITS OWN database: /status.json reads synthetic probe samples, so a
+#    200 here means the store is wired, reachable and queryable. A deployment
+#    whose DSN is wrong passes checks 1 and 2 and fails this one.
+status_code="$(code "$BASE/status.json")"
+if [ "$status_code" = "200" ]; then
+  ok "/status.json responds 200 (database read path works)"
+  if body "$BASE/status.json" | grep -q '"overall_status"'; then
+    ok "status payload is well-formed"
+  else
+    bad "status payload missing overall_status — served, but wrong shape"
+  fi
+else
+  bad "/status.json returned $status_code — store not reachable or not implemented"
+fi
+
+# 4. Auth is actually enforced. A deployment that serves inference endpoints
+#    unauthenticated is worse than one that is down, so an unauthenticated call
+#    MUST be rejected. 404 is acceptable: it means the route is not mounted here
+#    at all, which is true for a control-plane-only deployment.
+auth_code="$(code "$BASE/v1/chat/completions")"
+case "$auth_code" in
+  401|403) ok "unauthenticated /v1/chat/completions rejected ($auth_code)" ;;
+  404|405) soft "/v1/chat/completions not served here ($auth_code) — control-plane-only deployment" ;;
+  200)     bad "unauthenticated inference returned 200 — AUTH IS NOT ENFORCED" ;;
+  *)       soft "unauthenticated /v1/chat/completions returned $auth_code" ;;
+esac
+
+# 5. TLS. Cheap to check, and a silent downgrade is the kind of thing nobody
+#    notices until it is in a compliance questionnaire.
+case "$BASE" in
+  https://*) ok "served over TLS" ;;
+  *)         bad "not HTTPS" ;;
+esac
+
+printf '\n  %s passed, %s failed, %s warnings\n\n' "$pass" "$fail" "$warn"
+[ "$fail" -eq 0 ] || exit 1
