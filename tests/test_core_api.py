@@ -1079,7 +1079,7 @@ def test_models_providers_credits_and_zdr(client: TestClient, user_headers: dict
         "alibaba",
     }.issubset(provider_flags)
     assert provider_flags["openai"]["supports_prepaid"] is True
-    assert provider_flags["alibaba"]["supports_prepaid"] is False
+    assert provider_flags["alibaba"]["supports_prepaid"] is True
     assert provider_flags["alibaba"]["supports_byok"] is False
     assert provider_flags["deepseek"]["supports_byok"] is True
     assert provider_flags["kimi"]["supports_byok"] is True

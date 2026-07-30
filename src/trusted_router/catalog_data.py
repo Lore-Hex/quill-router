@@ -875,7 +875,7 @@ PROVIDERS: dict[str, Provider] = {
     "alibaba": Provider(
         slug="alibaba",
         name="Alibaba Cloud Model Studio",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "No provider-ZDR claim is tracked here. Alibaba Cloud Model Studio "
@@ -985,6 +985,7 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "atlas-cloud",
         "streamlake",
         "neurometric",
+        "alibaba",
         "nebius",
         "minimax",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).

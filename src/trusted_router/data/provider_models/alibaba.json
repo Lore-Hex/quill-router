@@ -5,8 +5,94 @@
   "price_source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
   "generated_at": "2026-07-01T00:00:00Z",
   "price_scale": "microdollars_per_million",
-  "model_count": 72,
+  "model_count": 74,
   "models": [
+    {
+      "id": "qwen/qwen3.7-flash",
+      "upstream_id": "qwen3.7-flash",
+      "display_name": "Qwen3.7 Flash",
+      "title": "qwen3.7-flash",
+      "created": 1784505600,
+      "context_length": 1048576,
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 130000,
+      "cached_input_token_price_per_m": 6000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 30000,
+          "output_token_price_per_m": 130000,
+          "cached_input_token_price_per_m": 6000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ]
+    },
+    {
+      "id": "qwen/qwen3.7-flash-2026-07-15",
+      "upstream_id": "qwen3.7-flash-2026-07-15",
+      "display_name": "Qwen3.7 Flash 2026 07 15",
+      "title": "qwen3.7-flash-2026-07-15",
+      "created": 1784073600,
+      "context_length": 1048576,
+      "input_token_price_per_m": 30000,
+      "output_token_price_per_m": 130000,
+      "cached_input_token_price_per_m": 6000,
+      "model_type": "chat",
+      "endpoints": [
+        "chat/completions"
+      ],
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "price_tiers": [
+        {
+          "max_prompt_tokens": 32000,
+          "input_token_price_per_m": 30000,
+          "output_token_price_per_m": 130000,
+          "cached_input_token_price_per_m": 6000
+        },
+        {
+          "max_prompt_tokens": 256000,
+          "input_token_price_per_m": 100000,
+          "output_token_price_per_m": 400000,
+          "cached_input_token_price_per_m": 20000
+        },
+        {
+          "max_prompt_tokens": null,
+          "input_token_price_per_m": 200000,
+          "output_token_price_per_m": 800000,
+          "cached_input_token_price_per_m": 40000
+        }
+      ]
+    },
     {
       "id": "z-ai/glm-5.2",
       "upstream_id": "glm-5.2",

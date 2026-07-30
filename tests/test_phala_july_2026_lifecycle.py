@@ -49,8 +49,8 @@ def test_phala_retirement_is_provider_scoped(monkeypatch: pytest.MonkeyPatch) ->
     assert "phala" not in glm_providers
     assert glm_providers
     assert "phala" not in qwen_providers
-    # Phala is currently the only live route for this exact Qwen revision.
-    assert not qwen_providers
+    # Alibaba still serves this exact Qwen revision after the Phala route retires.
+    assert qwen_providers == {"alibaba"}
 
 
 def test_non_confidential_phala_qwen_route_is_not_published() -> None:
