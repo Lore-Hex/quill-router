@@ -9,6 +9,7 @@
     <div class="hero-actions">
       <a class="btn primary" href="mailto:providers@trustedrouter.com?subject=Provider%20marketplace%20application%20for%20%5Bcompany%5D">Email providers@trustedrouter.com</a>
       <a class="btn" href="#integration-contract">View requirements <span aria-hidden="true">↓</span></a>
+      <a class="btn" href="/provider">Provider sign in</a>
     </div>
   </div>
   <div class="public-hero-metrics" aria-label="Provider integration requirements">
@@ -119,21 +120,24 @@ API key: DO NOT INCLUDE</code></pre>
 
 <section class="marketing-split" aria-labelledby="canonical-contract-heading">
   <div class="marketing-copy">
-    <span class="eyebrow">Canonical contract v1</span>
+    <span class="eyebrow">Provider Reliability Contract v2</span>
     <h2 id="canonical-contract-heading">Copy this output exactly.</h2>
-    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put availability, capabilities, prices, and lifecycle in each model row.</p>
+    <p>Do not design a custom catalog or pricing format. Return one unpaginated JSON document from <code>GET /v1/models</code>. Put capabilities, prices, lifecycle, model deadlines, regions, and overload semantics in the machine-readable response.</p>
     <ul class="check-list">
       <li><strong>Use exact decimal strings.</strong> Every price is USD per one million tokens. Use <code>"0.50"</code>, never a JSON float.</li>
       <li><strong>Use <code>null</code> when a cache rate does not apply.</strong> Do not omit required fields.</li>
       <li><strong>Use lowercase stable IDs.</strong> The format is <code>provider/model-name</code>. Never recycle an ID for a different model.</li>
       <li><strong>Use UTC timestamps.</strong> Lifecycle timestamps use RFC 3339, for example <code>2026-08-05T00:00:00Z</code>.</li>
       <li><strong>Use one row per billable tier.</strong> If rates or capabilities differ, publish a distinct stable model ID for that tier.</li>
+      <li><strong>Separate overload from account quota.</strong> Return <code>503</code> for temporary serving capacity, <code>429</code> for request rate limits, and a stable account-quota error code when TrustedRouter must provision more quota.</li>
+      <li><strong>Always send <code>Retry-After</code>.</strong> Fast, explicit backpressure lets TrustedRouter roll over immediately instead of letting requests hang.</li>
+      <li><strong>Publish model deadlines.</strong> First-token, completion, and stream-idle budgets are evaluated per model rather than with one global timeout.</li>
     </ul>
-    <p><a href="/providers/marketplace/catalog.schema.json">Download the JSON Schema</a> and validate the response before emailing us.</p>
+    <p><a href="/providers/marketplace/catalog.v2.schema.json">Download the v2 JSON Schema</a>. The <a href="/providers/marketplace/catalog.schema.json">v1 schema</a> remains supported for existing integrations.</p>
   </div>
   <div class="copy-terminal" aria-label="Canonical provider catalog response">
     <div class="code-head"><span>GET /v1/models</span><span>application/json</span></div>
-    <pre><code>{{ provider_catalog_example_json }}</code></pre>
+    <pre><code>{{ provider_catalog_v2_example_json }}</code></pre>
   </div>
 </section>
 

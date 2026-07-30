@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     clickhouse_user: str = ""
     clickhouse_password: str = ""
     clickhouse_benchmark_table: str = "provider_benchmark_samples"
+    # Private, read-only provider portal connection. This intentionally uses a
+    # separate ClickHouse account from ingestion and is reachable only through
+    # the service's VPC egress path.
+    provider_analytics_clickhouse_url: str = ""
+    provider_analytics_clickhouse_user: str = "tr_provider_read"
+    provider_analytics_clickhouse_password: str = ""
+    provider_analytics_clickhouse_database: str = "tr"
+    provider_analytics_clickhouse_table: str = "provider_benchmark_samples"
     # Stage 1 live analytics outbox. This is intentionally off by default and
     # must remain off until the shadow ingester and reconciler are observed.
     analytics_outbox_enabled: bool = False

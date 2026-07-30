@@ -219,6 +219,9 @@ class ModelEndpoint:
     published_completion_price_microdollars_per_million_tokens: int = 0
     price_tiers: tuple[PriceTier, ...] = ()
     published_price_tiers: tuple[PriceTier, ...] = ()
+    first_token_timeout_seconds: float | None = None
+    completion_timeout_seconds: float | None = None
+    stream_idle_timeout_seconds: float | None = None
 
     @property
     def is_byok(self) -> bool:

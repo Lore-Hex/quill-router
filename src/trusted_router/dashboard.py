@@ -55,7 +55,10 @@ from trusted_router.content.legal import (
 from trusted_router.measured import measured_for_model, measured_for_provider
 from trusted_router.money import MICRODOLLARS_PER_DOLLAR, format_money_precise
 from trusted_router.og import OG_DESCRIPTION, OG_IMAGE_HEIGHT, OG_IMAGE_WIDTH, OG_TITLE
-from trusted_router.provider_contract import PROVIDER_CATALOG_EXAMPLE
+from trusted_router.provider_contract import (
+    PROVIDER_CATALOG_EXAMPLE,
+    PROVIDER_CATALOG_V2_EXAMPLE,
+)
 from trusted_router.regions import configured_regions, region_map_payload
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -1576,6 +1579,10 @@ def public_page_html(settings: Settings, page_key: str, *, site_url: str | None 
             static_version=_static_version(settings),
             provider_catalog_example_json=json.dumps(
                 PROVIDER_CATALOG_EXAMPLE,
+                indent=2,
+            ),
+            provider_catalog_v2_example_json=json.dumps(
+                PROVIDER_CATALOG_V2_EXAMPLE,
                 indent=2,
             ),
         )

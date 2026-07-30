@@ -40,6 +40,13 @@ from trusted_router.pricing import (
 from trusted_router.provider_lifecycle import provider_model_retired
 
 
+def _positive_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    return parsed if parsed > 0 else None
+
+
 def _endpoint(
     model: Model,
     *,
@@ -762,6 +769,9 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
             )
             context_length = _as_positive_int(raw_model.get("context_length"))
             name = str(raw_model.get("display_name") or raw_model.get("title") or model_id)
+            reliability = raw_model.get("reliability")
+            if not isinstance(reliability, dict):
+                reliability = {}
 
             model = Model(
                 id=model_id,
@@ -800,6 +810,15 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     published_completion_price_microdollars_per_million_tokens=completion_price,
                     price_tiers=tiers,
                     published_price_tiers=tiers,
+                    first_token_timeout_seconds=_positive_float(
+                        reliability.get("first_token_timeout_seconds")
+                    ),
+                    completion_timeout_seconds=_positive_float(
+                        reliability.get("completion_timeout_seconds")
+                    ),
+                    stream_idle_timeout_seconds=_positive_float(
+                        reliability.get("stream_idle_timeout_seconds")
+                    ),
                 )
             if provider.supports_byok:
                 byok_id = f"{model_id}@{provider_slug}/byok"
@@ -815,6 +834,15 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                     published_completion_price_microdollars_per_million_tokens=completion_price,
                     price_tiers=tiers,
                     published_price_tiers=tiers,
+                    first_token_timeout_seconds=_positive_float(
+                        reliability.get("first_token_timeout_seconds")
+                    ),
+                    completion_timeout_seconds=_positive_float(
+                        reliability.get("completion_timeout_seconds")
+                    ),
+                    stream_idle_timeout_seconds=_positive_float(
+                        reliability.get("stream_idle_timeout_seconds")
+                    ),
                 )
     return models, endpoints
 

@@ -20,6 +20,7 @@ def _sample(
     elapsed_milliseconds: int | None = None,
     error_type: str | None = None,
     error_status: int | None = None,
+    error_message: str | None = None,
     source: str = "organic",
     created_at: str = "2026-06-04T00:00:00Z",
 ) -> ProviderBenchmarkSample:
@@ -38,6 +39,7 @@ def _sample(
         elapsed_milliseconds=elapsed_milliseconds,
         error_type=error_type,
         error_status=error_status,
+        error_message=error_message,
         source=source,
         created_at=created_at,
     )
@@ -62,6 +64,81 @@ def test_aggregate_computes_per_model_metrics() -> None:
     assert model["p50_tokens_per_second"] is None
     assert model["throughput_sample_count"] == 0
     assert result["total_samples"] == 4
+
+
+def test_public_metrics_separate_completion_provider_and_capacity_ownership() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="router_error",
+            error_status=503,
+            created_at="2026-06-04T00:00:02Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == round(1 / 3, 4)
+    assert model["provider_availability"] == 0.5
+    assert model["capacity_acceptance_rate"] == 0.5
+    assert model["availability_within_deadline"] == 0.5
+    assert model["failure_owners"] == {"provider": 1, "trustedrouter": 1}
+    assert model["failure_classes"] == {
+        "provider_capacity": 1,
+        "router_fault": 1,
+    }
+
+
+def test_account_quota_does_not_lower_provider_availability() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            error_type="rate_limit_error",
+            error_status=429,
+            error_message="account quota exceeded",
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["completion_rate"] == 0.5
+    assert model["provider_availability"] == 1
+    assert model["failure_owners"] == {"trustedrouter": 1}
+
+
+def test_failed_partial_stream_counts_once_against_first_token_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            status="error",
+            ttft=200,
+            error_type="stream_interrupted",
+            error_status=502,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["deadline_sample_count"] == 2
+    assert model["availability_within_deadline"] == 0.5
 
 
 def test_models_sorted_fastest_first_unmeasured_last() -> None:

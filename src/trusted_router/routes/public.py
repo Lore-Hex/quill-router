@@ -86,7 +86,10 @@ from trusted_router.dashboard import (
     subprocessors_json,
 )
 from trusted_router.og import OG_PNG_PATH
-from trusted_router.provider_contract import PROVIDER_CATALOG_SCHEMA
+from trusted_router.provider_contract import (
+    PROVIDER_CATALOG_SCHEMA,
+    PROVIDER_CATALOG_V2_SCHEMA,
+)
 from trusted_router.services.email import EmailMessage, get_email_service
 from trusted_router.storage import STORE
 from trusted_router.storage_custom_models import normalize_custom_model_id
@@ -645,6 +648,19 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
     async def provider_catalog_schema() -> JSONResponse:
         return JSONResponse(
             PROVIDER_CATALOG_SCHEMA,
+            media_type="application/schema+json",
+            headers={
+                "cache-control": "public, max-age=3600, stale-while-revalidate=86400"
+            },
+        )
+
+    @app.get(
+        "/providers/marketplace/catalog.v2.schema.json",
+        include_in_schema=False,
+    )
+    async def provider_catalog_v2_schema() -> JSONResponse:
+        return JSONResponse(
+            PROVIDER_CATALOG_V2_SCHEMA,
             media_type="application/schema+json",
             headers={
                 "cache-control": "public, max-age=3600, stale-while-revalidate=86400"

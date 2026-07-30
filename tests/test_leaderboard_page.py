@@ -92,7 +92,10 @@ def test_leaderboard_page_renders_measurements() -> None:
     assert "Effective throughput" in body
     assert "200 tok/s" in body
     assert "n=1" not in body
-    assert "Ranked by measured success rate, then p50" in body
+    assert "Ranked by provider-attributed availability, then p50" in body
+    assert "Capacity accepted" in body
+    assert "Provider availability" in body
+    assert "p95 TTFB" in body
     assert "cerebras" in body  # seeded provider row
     assert "meta/llama-3.3-70b" in body  # seeded model row
 

@@ -30,7 +30,7 @@
 </head>
 <body class="console">
   <header class="console-topbar">
-    <a class="brand" href="/console/api-keys">{% include "_brand.html" %}</a>
+    <a class="brand" href="{{ '/provider' if provider_mode else '/console/api-keys' }}">{% include "_brand.html" %}</a>
     <nav class="console-topnav">
       <a href="/models">Models</a>
       <a href="https://trust.trustedrouter.com">Trust</a>
@@ -64,6 +64,14 @@
   </header>
   <div class="console-shell">
     <aside class="console-sidebar" aria-label="Workspace navigation">
+      {% if provider_mode %}
+      <div class="sidebar-group">
+        <div class="sidebar-label">Provider operations</div>
+        <a href="/provider?provider={{ selected_provider }}" class="sidebar-link active">Overview</a>
+        <a href="#request-export" class="sidebar-link">Request export</a>
+        <a href="/providers/marketplace" class="sidebar-link">Reliability contract</a>
+      </div>
+      {% else %}
       <div class="sidebar-group">
         <div class="sidebar-label">Workspace</div>
         <a href="/console/api-keys" class="sidebar-link {{ 'active' if active == 'api-keys' else '' }}">API Keys</a>
@@ -82,6 +90,7 @@
           <button type="submit">Sign out</button>
         </form>
       </div>
+      {% endif %}
     </aside>
     <main class="console-main">
       <header class="console-page-head">

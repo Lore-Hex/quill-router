@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from trusted_router.config import Settings, get_settings
+from trusted_router.provider_reliability import model_deadlines
 from trusted_router.storage_models import ProviderBenchmarkSample, SyntheticProbeSample
 from trusted_router.synthetic.probes import (
     DEFAULT_SYNTHETIC_BILLING_CONCURRENCY,
@@ -209,6 +210,7 @@ async def _rotation_pass(
                     api_key=api_key,
                     provider=provider,
                     model=model,
+                    default_timeout_seconds=settings.synthetic_monitor_timeout_seconds,
                 )
             )
         if not probes:
@@ -245,8 +247,18 @@ async def _throughput_pass(
     if picked is None:
         return []
     provider, model = picked
+    effective_timeout_seconds = max(
+        timeout_seconds,
+        model_deadlines(
+            model,
+            provider=provider,
+            default_first_token_seconds=settings.synthetic_monitor_timeout_seconds,
+        ).completion_seconds,
+    )
     target = SyntheticTarget("throughput", settings.api_base_url, monitor_region)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(effective_timeout_seconds)
+    ) as client:
         return [
             await provider_throughput_probe(
                 client,
@@ -257,7 +269,7 @@ async def _throughput_pass(
                 model=model,
                 max_tokens=max_tokens,
                 minimum_output_tokens=minimum_output_tokens,
-                total_timeout_seconds=timeout_seconds,
+                total_timeout_seconds=effective_timeout_seconds,
             )
         ]
 
