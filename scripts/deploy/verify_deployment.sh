@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Self-test a TrustedRouter deployment on any cloud.
 #
-#   bash scripts/deploy/verify_deployment.sh https://tr-canary.....azurecontainerapps.io
+#   bash scripts/deploy/verify_deployment.sh [--expect-monitor] https://tr-canary.....azurecontainerapps.io
 #
 # Cloud-agnostic on purpose: the Azure canary and the AWS EU region run the same
 # checks, so "it works on Azure" and "it works on AWS" mean the same thing. A
@@ -15,8 +15,25 @@
 # Exits non-zero on the first hard failure so it can gate a rollout.
 set -uo pipefail
 
-BASE="${1:-}"
-[ -n "$BASE" ] || { echo "usage: $0 <base-url>" >&2; exit 2; }
+BASE=""
+EXPECT_MONITOR=0
+for arg in "$@"; do
+  case "$arg" in
+    --expect-monitor) EXPECT_MONITOR=1 ;;
+    -*) echo "unknown option: $arg" >&2; exit 2 ;;
+    *)
+      [ -z "$BASE" ] || {
+        echo "usage: $0 [--expect-monitor] <base-url>" >&2
+        exit 2
+      }
+      BASE="$arg"
+      ;;
+  esac
+done
+[ -n "$BASE" ] || {
+  echo "usage: $0 [--expect-monitor] <base-url>" >&2
+  exit 2
+}
 BASE="${BASE%/}"
 
 pass=0; fail=0; warn=0
@@ -48,10 +65,84 @@ fi
 status_code="$(code "$BASE/status.json")"
 if [ "$status_code" = "200" ]; then
   ok "/status.json responds 200 (database read path works)"
-  if body "$BASE/status.json" | grep -q '"overall_status"'; then
+  status_payload="$(body "$BASE/status.json")"
+  if printf '%s' "$status_payload" | grep -q '"overall_status"'; then
     ok "status payload is well-formed"
   else
     bad "status payload missing overall_status — served, but wrong shape"
+  fi
+  if [ "$EXPECT_MONITOR" -eq 1 ]; then
+    monitor_result="$(
+      printf '%s' "$status_payload" | python3 -c '
+import datetime as dt
+import json
+import sys
+
+MAX_AGE_SECONDS = 30 * 60
+
+
+def parse_time(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+try:
+    payload = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+    print(f"invalid status JSON: {exc}")
+    raise SystemExit(1)
+
+data = payload.get("data", payload)
+if not isinstance(data, dict):
+    print("status payload has no data object")
+    raise SystemExit(1)
+
+now = dt.datetime.now(dt.timezone.utc)
+candidates = []
+freshness = data.get("monitor_freshness")
+if isinstance(freshness, dict):
+    latest = parse_time(freshness.get("latest_sample_at"))
+    if latest is not None:
+        candidates.append(latest)
+    else:
+        age = freshness.get("latest_sample_age_seconds")
+        if isinstance(age, (int, float)) and not isinstance(age, bool) and age >= 0:
+            candidates.append(now - dt.timedelta(seconds=age))
+
+current = data.get("current")
+checks = current.get("checks") if isinstance(current, dict) else None
+if isinstance(checks, list):
+    for check in checks:
+        if isinstance(check, dict):
+            created_at = parse_time(check.get("created_at"))
+            if created_at is not None:
+                candidates.append(created_at)
+
+if not candidates:
+    print("no synthetic sample timestamp found")
+    raise SystemExit(1)
+
+latest = max(candidates)
+age_seconds = max((now - latest).total_seconds(), 0)
+if age_seconds > MAX_AGE_SECONDS:
+    print(f"newest sample is {int(age_seconds)}s old (limit {MAX_AGE_SECONDS}s)")
+    raise SystemExit(1)
+
+print(f"newest sample is {int(age_seconds)}s old")
+'
+    )"
+    if [ "$?" -eq 0 ]; then
+      ok "synthetic monitor is fresh ($monitor_result)"
+    else
+      bad "synthetic monitor is stale or missing — $monitor_result"
+    fi
   fi
 else
   bad "/status.json returned $status_code — store not reachable or not implemented"

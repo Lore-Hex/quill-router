@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import re
 import secrets
 import uuid
 from collections.abc import Callable
@@ -79,6 +80,91 @@ from trusted_router.types import UsageType
 
 T = TypeVar("T")
 
+_AWS_DSQL_IAM_AUTH = "aws-dsql"
+_AWS_DSQL_HOST_RE = re.compile(
+    r"^[^.]+\.dsql\.(?P<region>[a-z0-9-]+)\.on\.aws$",
+    re.IGNORECASE,
+)
+
+
+class _IamTokenConnectionPool(ConnectionPool):
+    """Connection pool that obtains a new password for every connection.
+
+    ``psycopg_pool`` resolves ``self.kwargs`` immediately before opening each
+    physical connection. Updating the password here therefore covers initial
+    fill, growth, idle replacement, and reconnects without reaching into
+    psycopg internals.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        token_provider: Callable[[], str],
+        **kwargs: Any,
+    ) -> None:
+        self._token_provider = token_provider
+        connection_kwargs = kwargs.get("kwargs")
+        if connection_kwargs is None:
+            kwargs["kwargs"] = {}
+        elif not isinstance(connection_kwargs, dict):
+            raise TypeError("IAM token pool requires static connection kwargs")
+        else:
+            kwargs["kwargs"] = dict(connection_kwargs)
+        super().__init__(*args, **kwargs)
+
+    def _connect(self, timeout: float | None = None) -> Any:
+        if not isinstance(self.kwargs, dict):  # Defensive: fixed in __init__.
+            raise TypeError("IAM token pool requires mutable connection kwargs")
+        self.kwargs["password"] = self._token_provider()
+        return super()._connect(timeout)
+
+
+def _aws_dsql_connection_details(
+    dsn: str,
+    *,
+    region_override: str = "",
+) -> tuple[str, str]:
+    params = psycopg.conninfo.conninfo_to_dict(dsn)
+    hostname = str(params.get("host") or "").rstrip(".")
+    if not hostname:
+        raise ValueError("AWS DSQL IAM auth requires a hostname in TR_POSTGRES_DSN")
+    if params.get("password"):
+        raise ValueError(
+            "TR_POSTGRES_DSN must not contain a password when "
+            "TR_POSTGRES_IAM_AUTH=aws-dsql"
+        )
+
+    region = region_override.strip()
+    if not region:
+        match = _AWS_DSQL_HOST_RE.fullmatch(hostname)
+        if match is None:
+            raise ValueError(
+                "Could not infer the AWS region from TR_POSTGRES_DSN host "
+                f"{hostname!r}; set TR_POSTGRES_IAM_REGION"
+            )
+        region = match.group("region")
+    return hostname, region
+
+
+def _aws_dsql_token_provider(hostname: str, region: str) -> Callable[[], str]:
+    # Infrastructure SDK imports stay inside the selected adapter path so
+    # ordinary Postgres deployments do not import or initialize boto3.
+    import boto3
+
+    client = boto3.client("dsql", region_name=region)
+
+    def generate_token() -> str:
+        return cast(
+            str,
+            client.generate_db_connect_admin_auth_token(
+                Hostname=hostname,
+                Region=region,
+                ExpiresIn=900,
+            ),
+        )
+
+    return generate_token
+
 
 def _split_sql_statements(schema: str) -> list[str]:
     """Split a schema file into statements, ignoring semicolons in comments.
@@ -111,18 +197,38 @@ class PostgresStore:
         pool_min_size: int = 0,
         pool_max_size: int = 4,
         transaction_attempts: int = 8,
+        postgres_iam_auth: str = "",
+        postgres_iam_region: str = "",
     ) -> None:
         if not dsn:
             raise ValueError("Postgres DSN is required")
         if transaction_attempts < 1:
             raise ValueError("transaction_attempts must be positive")
         self._transaction_attempts = transaction_attempts
-        self._pool = ConnectionPool(
-            conninfo=dsn,
-            min_size=pool_min_size,
-            max_size=pool_max_size,
-            open=True,
-        )
+        if not postgres_iam_auth:
+            self._pool = ConnectionPool(
+                conninfo=dsn,
+                min_size=pool_min_size,
+                max_size=pool_max_size,
+                open=True,
+            )
+        elif postgres_iam_auth == _AWS_DSQL_IAM_AUTH:
+            hostname, region = _aws_dsql_connection_details(
+                dsn,
+                region_override=postgres_iam_region,
+            )
+            self._pool = _IamTokenConnectionPool(
+                conninfo=dsn,
+                token_provider=_aws_dsql_token_provider(hostname, region),
+                min_size=pool_min_size,
+                max_size=pool_max_size,
+                open=True,
+            )
+        else:
+            raise ValueError(
+                "Unsupported TR_POSTGRES_IAM_AUTH value "
+                f"{postgres_iam_auth!r}; expected 'aws-dsql' or empty"
+            )
 
     def close(self) -> None:
         """Close the connection pool."""

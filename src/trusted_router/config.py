@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # and Spanner's PostgreSQL dialect — see
     # docs/storage-portability/multi-cloud-separation.md.
     postgres_dsn: str = ""
+    # Aurora DSQL passwords are short-lived IAM tokens. ``aws-dsql`` refreshes
+    # the token for every physical pool connection; empty preserves ordinary
+    # static-password Postgres behaviour.
+    postgres_iam_auth: str = ""
+    # Normally inferred from ``<id>.dsql.<region>.on.aws``. This override is
+    # available for endpoints whose hostname does not encode the AWS region.
+    postgres_iam_region: str = ""
     gcp_project_id: str = "quill-cloud-proxy"
     spanner_instance_id: str | None = None
     spanner_database_id: str | None = None
