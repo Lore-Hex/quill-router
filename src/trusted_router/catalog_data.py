@@ -875,7 +875,7 @@ PROVIDERS: dict[str, Provider] = {
     "alibaba": Provider(
         slug="alibaba",
         name="Alibaba Cloud Model Studio",
-        supports_prepaid=False,
+        supports_prepaid=True,
         supports_byok=False,
         provider_policy=(
             "No provider-ZDR claim is tracked here. Alibaba Cloud Model Studio "
@@ -987,6 +987,10 @@ GATEWAY_PREPAID_PROVIDER_SLUGS = frozenset(
         "neurometric",
         "nebius",
         "minimax",
+        # Alibaba Cloud Model Studio — Frankfurt workspace. The production
+        # key is entitled to inference and its provider-native catalog is
+        # refreshed from the workspace-scoped /models endpoint.
+        "alibaba",
         # Cohere — embeddings only for now (native /v2/embed in the enclave).
         "cohere",
         # Voyage — embeddings only (OpenAI-shaped /v1/embeddings in the enclave).

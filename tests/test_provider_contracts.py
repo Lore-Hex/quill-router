@@ -709,22 +709,29 @@ def test_baseten_catalog_exposes_glm_52_fast_router() -> None:
     } == {220_500}
 
 
-def test_alibaba_catalog_is_staged_but_not_routable_until_entitled() -> None:
+def test_alibaba_catalog_is_routable_after_workspace_entitlement() -> None:
     from trusted_router.catalog import GATEWAY_PREPAID_PROVIDER_SLUGS, PROVIDERS
 
-    # Alibaba /models works, but the current workspace key returns
-    # AccessDenied.Unpurchased for sampled chat calls. Keep the provider and
-    # manifest staged, but do not publish user-routable endpoints until the
-    # Model Studio workspace is entitled to the selected models.
     assert "alibaba" in PROVIDERS
-    assert PROVIDERS["alibaba"].supports_prepaid is False
+    assert PROVIDERS["alibaba"].supports_prepaid is True
     assert PROVIDERS["alibaba"].supports_byok is False
-    assert "alibaba" not in GATEWAY_PREPAID_PROVIDER_SLUGS
-    assert not [
+    assert "alibaba" in GATEWAY_PREPAID_PROVIDER_SLUGS
+    endpoints = [
         endpoint
-        for endpoint in endpoints_for_model("qwen/qwen3.5-397b-a17b")
+        for endpoint in endpoints_for_model("qwen/qwen3.7-flash")
         if endpoint.provider == "alibaba"
     ]
+    assert {endpoint.usage_type for endpoint in endpoints} == {"Credits"}
+    assert {endpoint.upstream_id for endpoint in endpoints} == {"qwen3.7-flash"}
+    snapshot_endpoints = [
+        endpoint
+        for endpoint in endpoints_for_model("qwen/qwen3.7-flash-2026-07-15")
+        if endpoint.provider == "alibaba"
+    ]
+    assert {endpoint.usage_type for endpoint in snapshot_endpoints} == {"Credits"}
+    assert {endpoint.upstream_id for endpoint in snapshot_endpoints} == {
+        "qwen3.7-flash-2026-07-15"
+    }
 
 
 @pytest.mark.asyncio
