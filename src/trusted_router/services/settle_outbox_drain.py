@@ -121,16 +121,8 @@ def _resolve_row(
         now = dt.datetime.now(dt.UTC)
         since = now
         since_text = now.isoformat().replace("+00:00", "Z")
-        if isinstance(row.last_error, str) and row.last_error.startswith(
-            _ACTIVITY_PARK_NOTE
-        ):
-            _note, since_marker, candidate_since_text = row.last_error.partition(
-                "since="
-            )
-        else:
-            since_marker = ""
-            candidate_since_text = ""
-        if since_marker:
+        candidate_since_text = _activity_since_text(row.last_error)
+        if candidate_since_text is not None:
             try:
                 candidate_since = dt.datetime.fromisoformat(
                     candidate_since_text.replace("Z", "+00:00")
@@ -165,13 +157,11 @@ def _resolve_row(
                     since = candidate_since
                     since_text = candidate_since_text
 
-        # last_error is the activity-failure clock. PARK_TYPED_UNAVAILABLE
-        # deliberately overwrites it and restarts this window: typed-store
-        # outage time is not activity-failure time and must not consume this
-        # repair budget. A generic mark(done=False) also overwrites it and
-        # starts a fresh uninterrupted run, but that burns an attempt, so
-        # max_attempts=8 bounds the repair overall: this is six hours per
-        # uninterrupted run, not an absolute six-hour window.
+        # last_error carries the continuous unrepaired-activity clock. The
+        # activity note survives PARK_TYPED_UNAVAILABLE below, making this a
+        # genuine overall bound instead of a per-outage window. Typed-store
+        # outage time deliberately counts: throughout that outage the activity
+        # index is genuinely still unrepaired.
         age_seconds = (now - since).total_seconds()
         if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
             # Dead preserves settle_body, the only typed activity-repair
@@ -242,14 +232,13 @@ def _resolve_row(
 
     if outcome == ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
-        # Rare $0 race: money is correct and no alert is warranted, but this row
-        # did not write a Generation. reconcile_generation_activity can repair
-        # per-request records if needed; we intentionally avoid a bypass write
-        # primitive for this edge case.
+        # Rare $0 race: the money path is unchanged and no alert is warranted.
+        # Apply verified the idempotent Bigtable activity write before resolving
+        # without creating a Spanner billing Generation.
         logger.warning(
             "settle outbox warning: settle intent found reservation already zero-resolved "
             "authorization_id=%s reservation_id=%s likely reaper race; "
-            "no generation record was written by this row",
+            "activity index verified without a Spanner billing write",
             row.authorization_id,
             row.reservation_id,
         )
@@ -317,11 +306,15 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.PARK_TYPED_UNAVAILABLE:
+        note = "typed store unavailable"
+        activity_since_text = _activity_since_text(row.last_error)
+        if activity_since_text is not None:
+            note = f"{_ACTIVITY_PARK_NOTE} since={activity_since_text}"
         outbox.park(
             row.authorization_id,
             row.intent_kind,
             lease_owner=lease_owner,
-            note="typed store unavailable",
+            note=note,
         )
         logger.warning(
             "settle outbox parked typed row authorization_id=%s intent_kind=%s",
@@ -359,6 +352,15 @@ def _resolve_row(
             row.authorization_id,
             row.intent_kind,
         )
+
+
+def _activity_since_text(last_error: str | None) -> str | None:
+    if not isinstance(last_error, str):
+        return None
+    prefix = f"{_ACTIVITY_PARK_NOTE} since="
+    if not last_error.startswith(prefix):
+        return None
+    return last_error.removeprefix(prefix)
 
 
 def _request_id(row: SettleOutboxRow) -> str | None:

@@ -523,29 +523,33 @@ Outcome cheat-sheet:
 
 `activity_pending` is the one outcome where the terminal transition is NOT a
 money problem. The charge already committed in Spanner (the billing source of
-truth) *before* the index attempt — `ACTIVITY_PENDING` is only returned after
-typed finalize reported `SETTLED`. The customer is billed correctly; only the
-per-request Bigtable activity row is missing, so the request may be absent from
-their activity view.
+truth) *before* the index attempt. It is reached both from a fresh `SETTLED`
+finalize and from the `ALREADY_SETTLED` replay branches, so seeing it on a
+replay is normal. The customer is billed correctly; only the per-request
+Bigtable activity row is missing, so the request may be absent from their
+activity view.
 
 Two things about this outcome are easy to get wrong:
 
-**The window measures continuous activity failure, not row age.** It starts at
-the first `ACTIVITY_PENDING` observation, carried forward in the park note
-(`last_error` = `bigtable activity index pending since=<ts>`). A row that sat
-behind a typed-store outage for a day and then fails its Bigtable write once has
-a *fresh* window. Anything that rewrites `last_error` restarts it — a
-`park_typed_unavailable`, or any generic apply error — which is deliberate for
-the outage case: typed-store-outage time is not activity-failure time. So read
-the bound as **six hours per uninterrupted run**, not six hours absolute; the
-overall bound comes from `max_attempts=8`, because a generic error (unlike a
-park) burns an attempt. A cluster of expired rows means Bigtable writes were
-failing for six continuous hours; a single one usually does not.
+**The window measures continuous unrepaired-activity time, not row age.** It
+starts at the first `ACTIVITY_PENDING` observation and is carried forward in the
+park note (`last_error` = `bigtable activity index pending since=<ts>`). A row
+that sat behind a typed-store outage for a day and then fails its Bigtable write
+once has a *fresh* window — the clock is about the activity failure, not the
+row. A `park_typed_unavailable` **preserves** an existing stamp rather than
+clobbering it, so typed-outage time counts toward the window and the six hours
+is a genuine bound; without that, alternating activity and typed failures would
+reset it forever, since `park()` never burns attempts. A generic apply error
+does rewrite `last_error` and restart the window, but that path burns an
+attempt, so `max_attempts=8` bounds it. A cluster of expired rows means Bigtable
+writes were failing for six continuous hours; a single one usually does not.
 
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
-NULLs `settle_body`, and for a gateway/typed request that payload is the only
-repair evidence there is: typed finalize deliberately skips the generic
-`generation` / `generation_by_workspace` entity writes, and
+NULLs `settle_body`, and for a gateway/typed request that payload is normally
+the only repair evidence there is: typed finalize skips the generic
+`generation` / `generation_by_workspace` entity writes (the legacy
+request-record compatibility fallback still writes them, so a rolling-legacy
+workspace may have them), and
 `POST /internal/reconcile/generation-activity` repairs by scanning
 `generation_by_workspace`. **That endpoint therefore repairs nothing for these
 rows** — it is for legacy `add()` callers. Do not reach for it here. `dead`

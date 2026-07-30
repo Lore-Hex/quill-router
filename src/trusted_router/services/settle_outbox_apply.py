@@ -60,12 +60,6 @@ class ApplyOutcome:
     ERROR = "error"
 
 
-def activity_repair_in_progress(row: SettleOutboxRow) -> bool:
-    return isinstance(row.last_error, str) and row.last_error.startswith(
-        _ACTIVITY_PARK_NOTE
-    )
-
-
 def normalized_prompt_accounting(
     provider_slug: str, body: GatewaySettleRequest
 ) -> tuple[int, int, int, int]:
@@ -288,12 +282,16 @@ def _apply_typed(
                 return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:
-            # Resolving a settled row NULLs settle_body, permanently destroying
-            # the typed repair payload. The park note distinguishes "settled,
-            # activity index missing" from the genuine zero-cost reaper/refund
-            # race, where this row wrote no Generation and an index call would
-            # be a bypass write.
-            if generation is not None and activity_repair_in_progress(row):
+            # Deliberately index every available generation, including a genuine
+            # zero-cost reaper/refund race. This writes only the Bigtable
+            # activity index, never a Spanner billing record, so the money path
+            # is untouched. A park-note discriminator is unsound: inline settle,
+            # a lost lease before park(), and operator re-arm can all leave a
+            # repairable row without the note, causing silent destruction of its
+            # only typed payload. An accurate $0 activity row is better evidence
+            # than none; failure stays ACTIVITY_PENDING and preserves the body.
+            # The activity write is idempotent, so replay cannot duplicate it.
+            if generation is not None:
                 if not _index_generation_after_commit(typed_store, generation):
                     return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE

@@ -203,6 +203,17 @@ def _settle_json(auth_id: str, *, request_id: str = "req-settle") -> dict[str, A
     }
 
 
+def _zero_cost_settle_json(auth_id: str) -> dict[str, Any]:
+    body = _settle_json(auth_id)
+    body.update(
+        actual_input_tokens=0,
+        actual_output_tokens=0,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    return body
+
+
 def _row(
     auth: GatewayAuthorization,
     *,
@@ -594,6 +605,170 @@ def test_activity_pending_second_cycle_preserves_original_since(
     )
     assert second_since == first_since
     assert second_row.attempts == 0
+
+
+def test_typed_park_preserves_expired_activity_window(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-typed-outage")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    activity_note = (
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
+        f"{since.isoformat().replace('+00:00', 'Z')}"
+    )
+    db.settle_outbox[(auth.id, "settle")]["last_error"] = activity_note
+    outcomes = iter(
+        [
+            ApplyOutcome.PARK_TYPED_UNAVAILABLE,
+            ApplyOutcome.ACTIVITY_PENDING,
+        ]
+    )
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: next(outcomes),
+    )
+
+    first = drain_mod.drain_settle_outbox(10)
+
+    assert first["outcomes"] == {ApplyOutcome.PARK_TYPED_UNAVAILABLE: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.attempts == 0
+    assert pending.last_error == activity_note
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    second = drain_mod.drain_settle_outbox(10)
+
+    assert second["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    dead = ob.get(auth.id, "settle")
+    assert dead is not None and dead.status == "dead"
+    assert dead.last_error == "activity_repair_expired"
+    assert dead.settle_body is not None
+
+
+def test_typed_park_without_activity_stamp_uses_plain_note(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, _db, _bt = fake_store
+    auth = _bare_authorization("gwa-typed-outage-plain-note")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.PARK_TYPED_UNAVAILABLE,
+    )
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.PARK_TYPED_UNAVAILABLE: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.attempts == 0
+    assert pending.last_error == "typed store unavailable"
+    assert "since=" not in pending.last_error
+
+
+def test_inline_zero_cost_activity_failure_keeps_payload_without_park_note(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-activity-inline-zero-fails"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    monkeypatch.setattr(
+        store.generation_store,
+        "index_after_commit",
+        lambda generation: False,
+    )
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_zero_cost_settle_json(auth.id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cost_microdollars"] == 0
+    ob = _outbox(store)
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.last_error is None
+    assert pending.settle_body is not None
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.settle_body is not None
+
+
+def test_inline_zero_cost_without_park_note_resolves_after_index_succeeds(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, bt = fake_store
+    ws = "ws-activity-inline-zero-repaired"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    original_index = store.generation_store.index_after_commit
+    index_attempts: list[str] = []
+
+    def fail_inline_only(generation: Any) -> bool:
+        index_attempts.append(generation.id)
+        if len(index_attempts) == 1:
+            return False
+        return original_index(generation)
+
+    monkeypatch.setattr(
+        store.generation_store,
+        "index_after_commit",
+        fail_inline_only,
+    )
+    client = _client(Settings(environment="test", settle_outbox_enabled=True))
+
+    response = client.post(
+        "/v1/internal/gateway/settle",
+        json=_zero_cost_settle_json(auth.id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["cost_microdollars"] == 0
+    ob = _outbox(store)
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.last_error is None
+    assert bt.committed == []
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {
+        ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1
+    }
+    completed = ob.get(auth.id, "settle")
+    assert completed is not None and completed.status == "done"
+    assert len(index_attempts) == 2
+    assert bt.committed
 
 
 def test_zero_cost_activity_pending_keeps_retrying_and_preserves_payload(
@@ -1069,7 +1244,7 @@ def test_drain_reap_limit_respected(fake_store: tuple[Any, Any, Any]) -> None:
     assert again["reaped"] == 0
 
 
-def test_zero_cost_settle_reaper_race_resolves_done_with_warning(
+def test_zero_cost_settle_reaper_race_indexes_activity_and_resolves_done(
     fake_store: tuple[Any, Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1104,14 +1279,14 @@ def test_zero_cost_settle_reaper_race_resolves_done_with_warning(
     assert _typed_credit(db, ws) == credit_before
     assert _typed_key(db, key.hash) == key_before
     assert _generation_count(db) == 0
-    assert bt.committed == []
+    assert bt.committed
     messages = [rec.message for rec in caplog.records]
     assert any(
         "settle intent found reservation already zero-resolved" in msg
         and f"authorization_id={auth.id}" in msg
         and f"reservation_id={auth.credit_reservation_id}" in msg
         and "likely reaper race" in msg
-        and "no generation record was written by this row" in msg
+        and "activity index verified without a Spanner billing write" in msg
         for msg in messages
     )
     assert not any("ALERT" in msg for msg in messages)
@@ -1173,6 +1348,7 @@ def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
     key_before = dict(_typed_key(db, key.hash))
     generation_count_before = _generation_count(db)
     committed_before = list(bt.committed)
+    activity_rows_before = set(bt.rows)
     assert generation_count_before == 1
     caplog.set_level(logging.WARNING)
 
@@ -1186,13 +1362,14 @@ def test_duplicate_zero_cost_settle_replay_resolves_done_with_warning(
     assert _typed_credit(db, ws) == credit_before
     assert _typed_key(db, key.hash) == key_before
     assert _generation_count(db) == generation_count_before
-    assert bt.committed == committed_before
+    assert len(bt.committed) > len(committed_before)
+    assert set(bt.rows) == activity_rows_before
     messages = [rec.message for rec in caplog.records]
     assert any(
         "settle intent found reservation already zero-resolved" in msg
         and f"authorization_id={auth.id}" in msg
         and f"reservation_id={auth.credit_reservation_id}" in msg
-        and "no generation record was written by this row" in msg
+        and "activity index verified without a Spanner billing write" in msg
         for msg in messages
     )
     assert not any("ALERT" in msg for msg in messages)
