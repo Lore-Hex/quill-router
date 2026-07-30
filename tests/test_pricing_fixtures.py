@@ -205,6 +205,19 @@ def _row_tiers(row: dict) -> list[tuple[float, float]]:
     ]
 
 
+def test_thinkingmachines_discount_uses_current_not_struck_original() -> None:
+    fixture = (FIXTURE_DIR / "thinkingmachines.html").read_text(encoding="utf-8")
+    module = importlib.import_module("scripts.pricing.parsers.thinkingmachines")
+
+    row = module.parse(fixture)["thinkingmachines/inkling"]
+
+    assert row == {
+        "prompt_micro_per_m": 3_740_000,
+        "completion_micro_per_m": 9_360_000,
+        "prompt_cached_micro_per_m": 748_000,
+    }
+
+
 def test_novita_fixture_keeps_qwen_235b_prices_in_true_microdollars() -> None:
     """Novita's `/models` feed reports prices 100x smaller than its public
     pricing table. The parser source of truth must preserve true

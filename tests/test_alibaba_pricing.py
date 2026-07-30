@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from scripts.pricing import refresh
 from scripts.pricing.providers import alibaba
 
 
@@ -152,3 +153,60 @@ def test_manifest_refresh_appends_new_models_with_tiered_prices(
     }
     assert by_id["qwen/qwen3.7-plus"]["display_name"] == "Qwen3.7 Plus"
     assert len(by_id["qwen/qwen3.7-plus"]["price_tiers"]) == 2
+
+
+def test_unknown_live_model_is_discovered_but_held_until_priced(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    manifest_path = tmp_path / "alibaba.json"
+    manifest_path.write_text(
+        json.dumps({"provider": "alibaba", "models": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:  # noqa: ANN002, ANN003
+            return FakeResponse(
+                {
+                    "data": [
+                        *_expected_model_rows(),
+                        {"id": "new-frontier-model", "created": 9},
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(alibaba, "MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(alibaba.httpx, "Client", FakeClient)
+
+    result = alibaba.fetch()
+    alibaba.write_provider_manifest(result)
+
+    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {row["id"]: row for row in raw["models"]}
+    unresolved = by_id["alibaba/new-frontier-model"]
+    assert unresolved["upstream_id"] == "new-frontier-model"
+    assert unresolved["routable"] is False
+    assert unresolved["routable_reason"] == "awaiting-price"
+    assert unresolved["unresolved_since"]
+    assert "input_token_price_per_m" not in unresolved
+    assert "output_token_price_per_m" not in unresolved
+
+
+def test_alibaba_is_wired_to_hourly_refresh() -> None:
+    workflow = (
+        Path(__file__).parents[1] / ".github" / "workflows" / "refresh-prices.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "alibaba" in refresh.PROVIDER_SLUGS
+    assert 'cron: "0 * * * *"' in workflow
+    assert "ALIBABA_API_KEY:trustedrouter-alibaba-api-key" in workflow

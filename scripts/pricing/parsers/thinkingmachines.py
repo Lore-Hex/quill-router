@@ -19,7 +19,16 @@ def _microdollars_per_million(text: str) -> int:
 
 
 def _price_span(cell: Tag, mode: str) -> Tag:
-    span = cell.select_one(f".price-{mode}") or cell.select_one(".price-old")
+    # Discounted rows use ``<s class=price-original>`` for the crossed-out
+    # list price and ``.price-current`` for the amount actually charged.
+    # Prefer the explicit current value before consulting the legacy toggle
+    # classes; otherwise parsing the whole cell picks the struck-through
+    # amount first and creates a false 2x price spike.
+    span = (
+        cell.select_one(".price-current")
+        or cell.select_one(f".price-{mode}")
+        or cell.select_one(".price-old")
+    )
     if isinstance(span, Tag):
         return span
     # The current server-rendered table puts the active dollar price directly
@@ -43,7 +52,9 @@ def parse(html: str) -> dict[str, dict[str, int]]:
             continue
         input_span = _price_span(cells[6], mode)
         output_span = _price_span(cells[7], mode)
-        cache_span = input_span.select_one(".price-cached")
+        cache_span = input_span.select_one(".price-cached") or cells[6].select_one(
+            ".price-cached"
+        )
         if cache_span is None:
             raise ValueError("Inkling 256K pricing row has no cached-input rate")
         return {
