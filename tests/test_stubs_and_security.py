@@ -581,11 +581,69 @@ def test_rate_limit_returns_stable_openrouter_style_error(
     )
     limited_client = TestClient(limited_app)
     headers = {"x-forwarded-for": "203.0.113.9"}
-    assert limited_client.get("/v1/models", headers=headers).status_code == 200
-    second = limited_client.get("/v1/models", headers=headers)
+    assert limited_client.post("/v1/signup", headers=headers, json={}).status_code == 400
+    second = limited_client.post("/v1/signup", headers=headers, json={})
     assert second.status_code == 429
     assert second.json()["error"]["type"] == "rate_limited"
     assert second.headers["retry-after"]
+
+
+def test_unauthenticated_public_reads_do_not_write_rate_limit_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crawler must not turn cacheable catalog reads into a Spanner hot row."""
+    from trusted_router import middleware
+
+    calls: list[dict[str, object]] = []
+    original_hit_rate_limit = middleware.STORE.hit_rate_limit
+
+    def track_write(*_args, **kwargs):
+        calls.append(kwargs)
+        return original_hit_rate_limit(*_args, **kwargs)
+
+    app = create_app(Settings(environment="test", rate_limit_enabled=True))
+    client = TestClient(app)
+    monkeypatch.setattr(middleware.STORE, "hit_rate_limit", track_write)
+    headers = {"x-forwarded-for": "199.203.99.122"}
+
+    for path in (
+        "/",
+        "/models",
+        "/providers",
+        "/compare/models",
+        "/models/openai/gpt-5.2",
+        "/docs",
+    ):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+    assert calls == []
+
+
+def test_unauthenticated_public_reads_remain_locally_rate_limited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from trusted_router import storage_rate_limits
+
+    monkeypatch.setattr(
+        storage_rate_limits,
+        "utcnow",
+        lambda: dt.datetime(2026, 7, 30, 0, 18, 30, tzinfo=dt.UTC),
+    )
+    app = create_app(
+        Settings(
+            environment="test",
+            rate_limit_enabled=True,
+            rate_limit_ip_per_window=1,
+            rate_limit_window_seconds=60,
+        )
+    )
+    client = TestClient(app)
+    headers = {"x-forwarded-for": "199.203.99.122"}
+
+    assert client.get("/models", headers=headers).status_code == 200
+    second = client.get("/providers", headers=headers)
+    assert second.status_code == 429
+    assert second.json()["error"]["type"] == "rate_limited"
 
 
 def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
@@ -610,10 +668,10 @@ def test_rate_limit_fails_open_on_store_error(monkeypatch) -> None:
     monkeypatch.setattr(middleware.STORE, "hit_rate_limit", boom)
     # Even an aggressive limit + a raising store: both requests pass through
     # (fail-open) — not 429, and crucially not 500.
-    first = client.get("/v1/models")
-    second = client.get("/v1/models")
-    assert first.status_code == 200
-    assert second.status_code == 200
+    first = client.post("/v1/signup", json={})
+    second = client.post("/v1/signup", json={})
+    assert first.status_code == 400
+    assert second.status_code == 400
 
 
 def test_production_config_fails_closed() -> None:

@@ -42,15 +42,18 @@ policy:
   incident immediately.
 - Successful billing calls taking at least 10 seconds are counted. More than
   two per minute for three consecutive minutes opens one incident.
-- More than 10 Spanner aborts per minute for three consecutive minutes opens
-  one early-pressure incident. The main contention policy remains at 100 per
-  minute for 10 minutes.
+- The general Spanner contention policy remains at 100 aborted commits per
+  minute for 10 minutes. It is intentionally separate because metadata,
+  rate-limit, and maintenance transactions must not be reported as
+  customer-facing billing degradation.
 
 Every condition reduces all regions and revisions into one time series. The
 log-based `5xx` policy rate-limits notifications to one every 30 minutes and
 auto-closes after 30 quiet minutes. Metric policies do not renotify while an
-incident remains open. The alerts use status, latency, path, and aggregate
-transaction metadata only; they never inspect or export prompts or outputs.
+incident remains open. Unauthenticated safe reads use a process-local
+rate-limit counter so a crawler cannot create a transactional Spanner hot row.
+The alerts use status, latency, path, and aggregate transaction metadata only;
+they never inspect or export prompts or outputs.
 
 ## Alert response
 
@@ -63,9 +66,11 @@ but does not repair transaction contention.
 ### Transaction contention
 
 Inspect Spanner transaction and lock insights. A high abort ratio or lock-wait
-rate generally means transactions repeatedly update the same keys. Check the
-billing shard distribution and recent schema or settlement changes before
-raising capacity again.
+rate generally means transactions repeatedly update the same keys. Decode the
+reported row key before assuming the billing ledger is involved. Check the
+billing shard distribution only when the hot row belongs to a billing table;
+otherwise repair the specific metadata or worker access pattern before raising
+capacity.
 
 ### Latency and API failures
 

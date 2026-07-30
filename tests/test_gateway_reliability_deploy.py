@@ -20,7 +20,7 @@ def test_gateway_5xx_alert_is_immediate_and_debounced() -> None:
     assert "autoClose: 1800s" in policy
 
 
-def test_gateway_pressure_alert_warns_before_original_spanner_page() -> None:
+def test_gateway_pressure_alert_only_tracks_the_billing_path() -> None:
     pressure = (DEPLOY / "gateway-alerts" / "billing-pressure.yaml").read_text(
         encoding="utf-8"
     )
@@ -30,11 +30,12 @@ def test_gateway_pressure_alert_warns_before_original_spanner_page() -> None:
 
     assert "trustedrouter_gateway_billing_slow" in pressure
     assert "thresholdValue: 2" in pressure
-    assert pressure.count("duration: 180s") == 2
-    assert "thresholdValue: 0.166666667" in pressure
-    assert pressure.count("crossSeriesReducer: REDUCE_SUM") == 2
+    assert pressure.count("duration: 180s") == 1
+    assert pressure.count("crossSeriesReducer: REDUCE_SUM") == 1
     assert pressure.count("groupByFields:") == 0
     assert "EVALUATION_MISSING_DATA_INACTIVE" in pressure
+    assert "commit_attempt_count" not in pressure
+    assert 'resource.type = "spanner_instance"' not in pressure
 
     assert "thresholdValue: 1.666666667" in original
     assert "duration: 600s" in original

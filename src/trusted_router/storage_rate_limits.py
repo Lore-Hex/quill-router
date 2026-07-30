@@ -1,7 +1,7 @@
-"""Token-bucket rate limit counter for the in-memory store.
+"""Token-bucket rate limit counter for local/test and anonymous safe reads.
 
 Lives in its own module so storage.py doesn't carry the bucket-cleanup
-loop. Production Spanner version is in storage_gcp_rate_limits."""
+loop. Shared production counters are in storage_gcp_rate_limits."""
 
 from __future__ import annotations
 
