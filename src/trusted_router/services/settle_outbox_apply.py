@@ -276,6 +276,11 @@ def _apply_typed(
             return ApplyOutcome.RESERVATION_MISSING
         actual_micro = int(reservation.get("actual_micro") or 0)
         if actual_micro > 0:
+            # Refunds never carry a generation, so requiring one here made the
+            # benign charged-settle-beats-refund replay unreachable and
+            # dead-lettered it, pinning retention on a non-problem (issue #356).
+            if not success:
+                return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
             if generation is None:
                 return ApplyOutcome.INVALID_ROW
             if not _index_generation_after_commit(typed_store, generation):

@@ -1421,6 +1421,86 @@ def test_lost_charge_recovery_end_to_end(
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
 
 
+def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-drain-sibling-refund"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    ob = _outbox(store)
+    settle_row = _row(auth, cost=777_777)
+    refund_row = _row(auth, intent="refund", cost=777_777)
+    ob.enqueue(settle_row)
+    ob.enqueue(refund_row, initial_delay_seconds=60)
+
+    settled = drain_mod.drain_settle_outbox(10)
+
+    assert settled["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    assert ob.get(auth.id, "settle").status == "done"
+    assert ob.get(auth.id, "refund").status == "pending"
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+    db.settle_outbox[(auth.id, "refund")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        refunded = drain_mod.drain_settle_outbox(10)
+
+    assert refunded["outcomes"] == {
+        ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE: 1
+    }
+    completed_refund = ob.get(auth.id, "refund")
+    assert completed_refund is not None and completed_refund.status == "done"
+    assert any(
+        "kept charge beat refund intent" in record.getMessage()
+        and f"authorization_id={auth.id}" in record.getMessage()
+        for record in caplog.records
+    )
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+
+
+def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-drain-malformed-settle"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    assert (
+        apply_mod.apply_frozen_settle(_row(auth, cost=777_777))
+        == ApplyOutcome.SETTLED_NOW
+    )
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=777_777))
+
+    def fail_to_build_generation(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        apply_mod,
+        "_frozen_generation",
+        fail_to_build_generation,
+    )
+
+    drained = drain_mod.drain_settle_outbox(10)
+
+    assert drained["outcomes"] == {ApplyOutcome.INVALID_ROW: 1}
+    malformed = ob.get(auth.id, "settle")
+    assert malformed is not None and malformed.status == "dead"
+    assert malformed.last_error == "invalid_row"
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+
+
 def test_drain_leaves_terminal_rows_for_spanner_ttl(
     fake_store: tuple[Any, Any, Any],
 ) -> None:
