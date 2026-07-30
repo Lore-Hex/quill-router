@@ -6,7 +6,11 @@ import logging
 from collections import Counter
 from typing import Any, cast
 
-from trusted_router.services.settle_outbox_apply import ApplyOutcome, apply_frozen_settle
+from trusted_router.services.settle_outbox_apply import (
+    _ACTIVITY_PARK_NOTE,
+    ApplyOutcome,
+    apply_frozen_settle,
+)
 from trusted_router.storage import STORE
 from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
 from trusted_router.storage_models import SettleOutboxRow, generation_id_for_authorization
@@ -17,7 +21,6 @@ logger = logging.getLogger(__name__)
 # parks, but short enough that a permanently broken row cannot churn the drain
 # forever before an operator takes over.
 _ACTIVITY_REPAIR_MAX_AGE_SECONDS = 6 * 60 * 60
-_ACTIVITY_PARK_NOTE = "bigtable activity index pending"
 
 # SF7 / §6: the drain fires NONE of the inline post-settle side effects:
 # auto-refill, budget-alert emails, metadata broadcast, or provider-error
@@ -148,13 +151,27 @@ def _resolve_row(
                     candidate_since_text,
                 )
             else:
-                since = candidate_since
-                since_text = candidate_since_text
+                if candidate_since > now:
+                    # A bad writer clock must not create a negative-age repair
+                    # window that can never expire; start its clock locally.
+                    logger.warning(
+                        "settle outbox activity repair has future since; clamping "
+                        "authorization_id=%s intent_kind=%s since=%r",
+                        row.authorization_id,
+                        row.intent_kind,
+                        candidate_since_text,
+                    )
+                else:
+                    since = candidate_since
+                    since_text = candidate_since_text
 
         # last_error is the activity-failure clock. PARK_TYPED_UNAVAILABLE
         # deliberately overwrites it and restarts this window: typed-store
         # outage time is not activity-failure time and must not consume this
-        # repair budget.
+        # repair budget. A generic mark(done=False) also overwrites it and
+        # starts a fresh uninterrupted run, but that burns an attempt, so
+        # max_attempts=8 bounds the repair overall: this is six hours per
+        # uninterrupted run, not an absolute six-hour window.
         age_seconds = (now - since).total_seconds()
         if age_seconds > _ACTIVITY_REPAIR_MAX_AGE_SECONDS:
             # Dead preserves settle_body, the only typed activity-repair
@@ -168,7 +185,7 @@ def _resolve_row(
             # because the reservation is already settled. After fixing
             # Bigtable, the operator can set this row back to pending with
             # next_attempt_at in the past for due() to reclaim it.
-            outbox.mark(
+            status = outbox.mark(
                 row.authorization_id,
                 row.intent_kind,
                 done=False,
@@ -176,6 +193,18 @@ def _resolve_row(
                 lease_owner=lease_owner,
                 force_dead=True,
             )
+            if status != "dead":
+                # The status='dead' monitor is the source of truth. A duplicate
+                # or contradictory page is worse than none; the worker that
+                # actually wins this row will emit the alert.
+                logger.warning(
+                    "settle outbox activity repair escalation skipped because "
+                    "row is no longer claimable by this owner "
+                    "authorization_id=%s intent_kind=%s",
+                    row.authorization_id,
+                    row.intent_kind,
+                )
+                return
             logger.error(
                 "ALERT settle outbox activity repair expired "
                 "authorization_id=%s generation_id=%s request_id=%s "

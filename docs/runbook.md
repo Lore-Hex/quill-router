@@ -518,6 +518,7 @@ Outcome cheat-sheet:
 | `reservation_missing` | Dead plus alert; investigate missing reservation state. |
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
+| `resolved_zero_cost_elsewhere` | Benign $0 race (reaper free-release or a refund won); done, no page. A row already mid-activity-repair is NOT resolved here — it keeps retrying the index instead, so its payload survives. |
 | `activity_pending` | Charge committed but the Bigtable activity-index write failed. Parks every 60s without burning attempts. After 6 hours of *continuous* activity failure the row goes `dead` with `ALERT settle outbox activity repair expired`. See below. |
 
 `activity_pending` is the one outcome where the terminal transition is NOT a
@@ -533,10 +534,13 @@ Two things about this outcome are easy to get wrong:
 the first `ACTIVITY_PENDING` observation, carried forward in the park note
 (`last_error` = `bigtable activity index pending since=<ts>`). A row that sat
 behind a typed-store outage for a day and then fails its Bigtable write once has
-a *fresh* window. A `park_typed_unavailable` in between resets it, deliberately:
-a typed-store outage is not activity-failure time and must not consume this
-budget. So a cluster of expired rows means Bigtable writes were failing for six
-continuous hours; a single one usually does not.
+a *fresh* window. Anything that rewrites `last_error` restarts it — a
+`park_typed_unavailable`, or any generic apply error — which is deliberate for
+the outage case: typed-store-outage time is not activity-failure time. So read
+the bound as **six hours per uninterrupted run**, not six hours absolute; the
+overall bound comes from `max_attempts=8`, because a generic error (unlike a
+park) burns an attempt. A cluster of expired rows means Bigtable writes were
+failing for six continuous hours; a single one usually does not.
 
 **The row goes `dead`, not `done` — and that is the point.** `mark(done=True)`
 NULLs `settle_body`, and for a gateway/typed request that payload is the only
@@ -567,11 +571,19 @@ Repairing `ALERT settle outbox activity repair expired` (the alert carries
      --sql="UPDATE tr_settle_outbox SET status='pending', next_attempt_at=CURRENT_TIMESTAMP(),
             lease_owner=NULL, leased_until=NULL, last_error=NULL
             WHERE authorization_id='<authorization_id>' AND intent_kind='settle'
-            AND status='dead'"
+            AND status='dead' AND last_error='activity_repair_expired'"
    ```
 
-   Clearing `last_error` restarts the six-hour window, which is what you want
-   after a fix. The row settles idempotently; it will not double-charge.
+   The `last_error='activity_repair_expired'` predicate is load-bearing: it scopes
+   the re-arm to THIS cause, so a mistyped or stale authorization id cannot
+   silently resurrect an `already_released_free`, `reservation_missing`, or
+   `invalid_row` dead row — those are money questions that must stay frozen for a
+   human. If the statement reports 0 rows updated, you have the wrong row or the
+   wrong cause; do not widen the predicate to make it match.
+
+   Clearing `last_error` restarts the repair window, which is what you want after
+   a fix. Replay is safe: the row hits the reservation claim gate, sees the prior
+   charge, and only retries the index — it will not double-charge.
 3. Confirm the row reached `done` and the request appears in the workspace's
    activity view.
 
@@ -765,8 +777,8 @@ Symptom: every request from exactly ONE workspace returns
 tenant is healthy. Key creation for that workspace fails the same way
 (`assert_workspace_billing_active` guards authorize/validate and every
 key-minting path). Settle is deliberately NOT guarded, so in-flight work still
-finalizes — a paused workspace drains to zero holds rather than stranding
-money.
+finalizes rather than stranding money. It does not follow that holds always
+reach zero — see the frozen-hold case below.
 
 The near-certain cause is a **reshard that ran `prepare --apply` but never
 reached `finish`**: the runner died, the workflow was cancelled, or the operator
@@ -814,7 +826,7 @@ inspects, it never applies.) Then:
   re-verifies the whole shard set and only then clears `billing_paused`,
   refusing with `ERROR: refusing to unpause; ...` if anything is unclean or not
   at the target.
-- **Anything else** → the transition did not complete. Re-run
+- **`at_target=False`** → the transition did not complete. Re-run
   `prepare --apply` with the same arguments; it is idempotent. The usual blocker
   is open holds that had not drained, and since settle keeps running while
   paused, waiting a few minutes and re-running is normally enough. Then run
@@ -822,6 +834,30 @@ inspects, it never applies.) Then:
   (retry shortly, nothing is wrong) rather than **1**; note that argument and
   workspace-resolution errors also exit 2, so confirm from the printed
   `BLOCKED:` lines rather than the code alone.
+- **`at_target=True` but `ready=False`** → the transition DID land and
+  verification found something else wrong. Re-running `prepare` will not help;
+  it re-inspects and returns the same unready status. Read the `BLOCKED:` lines
+  and fix the named condition.
+
+**If the holds never drain, stop waiting and check the settle outbox.** A
+`pending` or `dead` outbox row deliberately excludes its reservation from the
+reaper (`_REAP_SCAN_GUARDED_SQL`), so a frozen row pins an unsettled hold
+indefinitely and `wait for drain` can never succeed on its own:
+
+```bash
+gcloud spanner databases execute-sql trusted-router \
+  --instance=trusted-router-nam6 --project=quill-cloud-proxy \
+  --sql="SELECT o.authorization_id, o.intent_kind, o.status, o.last_error
+         FROM tr_settle_outbox o JOIN tr_reservation r
+           ON r.authorization_id = o.authorization_id
+         WHERE r.workspace_id='<workspace_id>' AND r.settled=false
+           AND o.status IN ('pending','dead')"
+```
+
+Resolve those rows first — see
+[Settle outbox](#settle-outbox) — then re-run `prepare --apply`. This is a
+correctness feature, not a deadlock to force past: the hold is frozen because a
+money question about it is still open.
 
 Mutating operations need `--apply` locally, or `confirmation: APPLY` in the
 workflow. They differ: locally, omitting `--apply` runs a real dry run

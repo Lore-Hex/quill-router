@@ -596,6 +596,80 @@ def test_activity_pending_second_cycle_preserves_original_since(
     assert second_row.attempts == 0
 
 
+def test_zero_cost_activity_pending_keeps_retrying_and_preserves_payload(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    ws = "ws-activity-zero-retry"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=0))
+    monkeypatch.setattr(
+        apply_mod,
+        "_index_generation_after_commit",
+        lambda typed_store, generation: False,
+    )
+
+    first = drain_mod.drain_settle_outbox(10)
+    first_row = ob.get(auth.id, "settle")
+    assert first["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    assert first_row is not None and first_row.status == "pending"
+    assert first_row.settle_body is not None
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    second = drain_mod.drain_settle_outbox(10)
+
+    second_row = ob.get(auth.id, "settle")
+    assert second["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    assert second_row is not None and second_row.status == "pending"
+    assert second_row.settle_body is not None
+
+
+def test_zero_cost_activity_pending_resolves_after_index_succeeds(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, bt = fake_store
+    ws = "ws-activity-zero-repaired"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=0))
+    original_index = store.generation_store.index_after_commit
+    index_attempts: list[str] = []
+
+    def fail_once(generation: Any) -> bool:
+        index_attempts.append(generation.id)
+        if len(index_attempts) == 1:
+            return False
+        return original_index(generation)
+
+    monkeypatch.setattr(store.generation_store, "index_after_commit", fail_once)
+
+    first = drain_mod.drain_settle_outbox(10)
+    assert first["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    assert bt.committed == []
+    db.settle_outbox[(auth.id, "settle")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    second = drain_mod.drain_settle_outbox(10)
+
+    completed = ob.get(auth.id, "settle")
+    assert second["outcomes"] == {
+        ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE: 1
+    }
+    assert completed is not None and completed.status == "done"
+    assert len(index_attempts) == 2
+    assert bt.committed
+
+
 def test_activity_pending_old_row_with_new_window_still_parks(
     fake_store: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -685,6 +759,47 @@ def test_activity_pending_over_window_marks_dead_preserves_payload_and_alerts(
     assert "settle_body PRESERVED" in alerts[0]
     assert "set the row back to pending to let the drain retry" in alerts[0]
     assert "reconcile/generation-activity" not in alerts[0]
+
+
+def test_activity_pending_lost_lease_skips_false_alert(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-lost-lease")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    db.settle_outbox[(auth.id, "settle")]["last_error"] = (
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
+        f"{since.isoformat().replace('+00:00', 'Z')}"
+    )
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+    monkeypatch.setattr(SpannerSettleOutbox, "mark", lambda *args, **kwargs: None)
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    assert not [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "ALERT" in record.getMessage()
+    ]
+    assert any(
+        record.levelno == logging.WARNING
+        and "escalation skipped" in record.getMessage()
+        and f"authorization_id={auth.id}" in record.getMessage()
+        and "intent_kind=settle" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_activity_pending_escalation_keeps_retention_pinned(
@@ -817,6 +932,54 @@ def test_activity_pending_malformed_or_naive_since_still_parks(
         for record in caplog.records
     )
     assert not [record for record in caplog.records if record.levelno == logging.ERROR]
+
+
+def test_activity_pending_future_since_is_clamped(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    auth = _bare_authorization("gwa-activity-future")
+    ob = _outbox(store)
+    ob.enqueue(_row(auth))
+    created_at = dt.datetime.now(dt.UTC) - dt.timedelta(
+        seconds=drain_mod._ACTIVITY_REPAIR_MAX_AGE_SECONDS + 1
+    )
+    future_since = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
+    db.settle_outbox[(auth.id, "settle")]["created_at"] = (
+        created_at.isoformat().replace("+00:00", "Z")
+    )
+    db.settle_outbox[(auth.id, "settle")]["last_error"] = (
+        f"{drain_mod._ACTIVITY_PARK_NOTE} since="
+        f"{future_since.isoformat().replace('+00:00', 'Z')}"
+    )
+    monkeypatch.setattr(
+        drain_mod,
+        "apply_frozen_settle",
+        lambda row: ApplyOutcome.ACTIVITY_PENDING,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        result = drain_mod.drain_settle_outbox(10)
+
+    assert result["outcomes"] == {ApplyOutcome.ACTIVITY_PENDING: 1}
+    pending = ob.get(auth.id, "settle")
+    assert pending is not None and pending.status == "pending"
+    assert pending.last_error is not None
+    stamped_since = dt.datetime.fromisoformat(
+        pending.last_error.removeprefix(
+            f"{drain_mod._ACTIVITY_PARK_NOTE} since="
+        ).replace("Z", "+00:00")
+    )
+    assert stamped_since < future_since
+    assert any(
+        record.levelno == logging.WARNING
+        and "future since" in record.getMessage()
+        and f"authorization_id={auth.id}" in record.getMessage()
+        and "intent_kind=settle" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_drain_reaps_expired_unguarded_holds(fake_store: tuple[Any, Any, Any]) -> None:

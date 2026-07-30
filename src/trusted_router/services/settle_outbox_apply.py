@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
 _TRANSIENT_STORE_EXCS = transient_store_error_types()
 
+_ACTIVITY_PARK_NOTE = "bigtable activity index pending"
+
 
 class ApplyOutcome:
     SETTLED_NOW = "settled_now"
@@ -56,6 +58,12 @@ class ApplyOutcome:
     PARK_TYPED_UNAVAILABLE = "park_typed_unavailable"
     INVALID_ROW = "invalid_row"
     ERROR = "error"
+
+
+def activity_repair_in_progress(row: SettleOutboxRow) -> bool:
+    return isinstance(row.last_error, str) and row.last_error.startswith(
+        _ACTIVITY_PARK_NOTE
+    )
 
 
 def normalized_prompt_accounting(
@@ -280,6 +288,14 @@ def _apply_typed(
                 return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE
         if row.actual_cost_micro == 0:
+            # Resolving a settled row NULLs settle_body, permanently destroying
+            # the typed repair payload. The park note distinguishes "settled,
+            # activity index missing" from the genuine zero-cost reaper/refund
+            # race, where this row wrote no Generation and an index call would
+            # be a bypass write.
+            if generation is not None and activity_repair_in_progress(row):
+                if not _index_generation_after_commit(typed_store, generation):
+                    return ApplyOutcome.ACTIVITY_PENDING
             return ApplyOutcome.RESOLVED_ZERO_COST_ELSEWHERE
         # Booked 0 while this row intended a real charge: the hold was resolved
         # WITHOUT our charge (reaper free-release, or a refund won the race).
