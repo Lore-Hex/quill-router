@@ -77,6 +77,25 @@ from trusted_router.types import UsageType
 T = TypeVar("T")
 
 
+def _split_sql_statements(schema: str) -> list[str]:
+    """Split a schema file into statements, ignoring semicolons in comments.
+
+    Splitting the raw text on ';' looks fine until a `--` comment contains one,
+    at which point the comment's tail is handed to the server as a statement and
+    fails with a syntax error naming a random English word. That is a genuinely
+    confusing way to discover you cannot write prose in your own schema file, so
+    strip line comments first.
+
+    Deliberately not a full SQL parser: this file is ours, it has no dollar-quoted
+    bodies or string literals containing semicolons, and DSQL forbids the stored
+    procedures that would introduce them.
+    """
+    without_comments = "\n".join(
+        line.split("--", 1)[0] for line in schema.splitlines()
+    )
+    return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
+
+
 class PostgresStore:
     """Psycopg-backed Store implementation for the first portability increment."""
 
@@ -130,16 +149,46 @@ class PostgresStore:
         `IF NOT EXISTS`, so re-running converges rather than conflicting.
         """
         schema = Path(__file__).with_name("storage_postgres_schema.sql").read_text()
-        statements = [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
+        statements = _split_sql_statements(schema)
 
         with self._pool.connection() as conn:
             previous_autocommit = conn.autocommit
             conn.autocommit = True
             try:
                 for statement in statements:
-                    conn.execute(statement, prepare=False)
+                    self._execute_ddl(conn, statement)
             finally:
                 conn.autocommit = previous_autocommit
+
+    @staticmethod
+    def _execute_ddl(conn: Any, statement: str) -> None:
+        """Run one DDL statement, tolerating Aurora DSQL's async-index rule.
+
+        DSQL builds indexes asynchronously and rejects a plain `CREATE INDEX`
+        with "unsupported mode. please use CREATE INDEX ASYNC." Stock Postgres
+        and Spanner's PG dialect both reject the `ASYNC` keyword, so neither
+        spelling is portable on its own.
+
+        Rather than branch on a configured dialect — which would mean the DSN
+        has to declare what it is, and would be wrong the first time someone
+        pointed it somewhere new — try the portable form and fall back only on
+        the specific error DSQL raises. The backend then adapts to whatever it
+        is actually connected to.
+
+        DSQL's ASYNC build returns immediately and completes in the background.
+        That is acceptable here: these indexes serve read paths that are correct
+        (just slower) while the index is still building.
+        """
+        try:
+            conn.execute(statement, prepare=False)
+            return
+        except psycopg.errors.FeatureNotSupported:
+            head = statement.lstrip()[:12].upper()
+            if not head.startswith("CREATE INDEX"):
+                raise
+        conn.execute(
+            statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False
+        )
 
     # Generic entity IO ------------------------------------------------------
 
