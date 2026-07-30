@@ -98,10 +98,10 @@
             "verbosity",
             "reasoning_effort"
           ],
-          "status": -5,
-          "uptime_last_30m": 74.31192660550458,
-          "uptime_last_5m": 61.81818181818181,
-          "uptime_last_1d": 95.04599280112677,
+          "status": -2,
+          "uptime_last_30m": 88.46960167714884,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 92.17598262356448,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -123,6 +123,22 @@
           "quantization": "unknown"
         },
         {
+          "name": "deepinfra | anthropic/claude-fable-5",
+          "model_id": "anthropic/claude-fable-5",
+          "model_name": "Anthropic: Claude Fable 5",
+          "provider_name": "deepinfra",
+          "tag": "deepinfra",
+          "tr_provider_slug": "deepinfra",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.00001",
+            "completion": "0.00005"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
           "name": "gmi | anthropic/claude-fable-5",
           "model_id": "anthropic/claude-fable-5",
           "model_name": "Anthropic: Claude Fable 5",
@@ -134,22 +150,6 @@
             "prompt": "0.00001",
             "completion": "0.00005",
             "input_cache_read": "0.000001"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "deepinfra | anthropic/claude-fable-5",
-          "model_id": "anthropic/claude-fable-5",
-          "model_name": "Anthropic: Claude Fable 5",
-          "provider_name": "deepinfra",
-          "tag": "deepinfra",
-          "tr_provider_slug": "deepinfra",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.00001",
-            "completion": "0.00005"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -225,9 +225,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89406779661016,
+          "uptime_last_30m": 99.90212870075851,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.89001132930514,
+          "uptime_last_1d": 99.90801659574262,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -319,7 +319,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.77827050997783,
+          "uptime_last_1d": 99.7541487400123,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -412,7 +412,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.8340458608628,
+          "uptime_last_1d": 96.91049522944117,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -448,10 +448,10 @@
             "response_format",
             "verbosity"
           ],
-          "status": -5,
+          "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 84.82293423271501,
+          "uptime_last_1d": 65.70048309178745,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -544,9 +544,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.924861463323,
-          "uptime_last_5m": 99.89572471324296,
-          "uptime_last_1d": 99.84028367334689,
+          "uptime_last_30m": 99.92109675510406,
+          "uptime_last_5m": 99.94438264738599,
+          "uptime_last_1d": 98.43253311258277,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -587,7 +587,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": null,
+          "uptime_last_1d": 97.71386430678466,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -695,9 +695,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95214478378142,
-          "uptime_last_5m": 99.96953077391835,
-          "uptime_last_1d": 99.49147155419006,
+          "uptime_last_30m": 99.93522896560658,
+          "uptime_last_5m": 99.96461429582449,
+          "uptime_last_1d": 99.33774359988365,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -736,7 +736,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.80434782608695,
+          "uptime_last_1d": 83.3144154370034,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -843,10 +843,10 @@
             "verbosity",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 89.58479943701619,
+          "status": 0,
+          "uptime_last_30m": 99.90167158308752,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 94.62089471550209,
+          "uptime_last_1d": 94.03092680986475,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -883,9 +883,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 95.29915477959935,
-          "uptime_last_5m": 99.64182289285169,
-          "uptime_last_1d": 97.93320040319209,
+          "uptime_last_30m": 99.89697988396682,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.04118427187379,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -993,9 +993,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 97.49403341288783,
-          "uptime_last_5m": 92.73084479371316,
-          "uptime_last_1d": 99.54491464874236,
+          "uptime_last_30m": 99.90512333965845,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.17208005680772,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1017,6 +1017,22 @@
           "quantization": "unknown"
         },
         {
+          "name": "deepinfra | anthropic/claude-opus-5",
+          "model_id": "anthropic/claude-opus-5",
+          "model_name": "Claude Opus 5",
+          "provider_name": "deepinfra",
+          "tag": "deepinfra",
+          "tr_provider_slug": "deepinfra",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000005",
+            "completion": "0.000025"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
           "name": "gmi | anthropic/claude-opus-5",
           "model_id": "anthropic/claude-opus-5",
           "model_name": "Claude Opus 5",
@@ -1028,22 +1044,6 @@
             "prompt": "0.000005",
             "completion": "0.000025",
             "input_cache_read": "0.0000005"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "deepinfra | anthropic/claude-opus-5",
-          "model_id": "anthropic/claude-opus-5",
-          "model_name": "Claude Opus 5",
-          "provider_name": "deepinfra",
-          "tag": "deepinfra",
-          "tr_provider_slug": "deepinfra",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000005",
-            "completion": "0.000025"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -1214,10 +1214,10 @@
             "structured_outputs",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 87.1205906480722,
-          "uptime_last_5m": 76.10619469026548,
-          "uptime_last_1d": 99.39034201634098,
+          "status": 0,
+          "uptime_last_30m": 99.6,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.69755380089798,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1264,10 +1264,10 @@
             "top_k",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 86.45161290322581,
+          "status": 0,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 71.38888888888889,
+          "uptime_last_1d": 82.82828282828282,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1360,9 +1360,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90701227105923,
-          "uptime_last_5m": 99.97343604728384,
-          "uptime_last_1d": 99.63837844291224,
+          "uptime_last_30m": 99.76930443109602,
+          "uptime_last_5m": 99.69378381137084,
+          "uptime_last_1d": 99.45546881081022,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1401,9 +1401,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 96.80365296803653,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.88979039891818,
+          "uptime_last_30m": 98.93617021276596,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.76765881830298,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1511,9 +1511,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.98752183678562,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.15797931433116,
+          "uptime_last_1d": 98.861999365994,
           "supports_implicit_caching": false,
           "tr_provider_slug": "anthropic",
           "pricing_source": "provider_direct"
@@ -1535,6 +1535,22 @@
           "quantization": "unknown"
         },
         {
+          "name": "deepinfra | anthropic/claude-sonnet-5",
+          "model_id": "anthropic/claude-sonnet-5",
+          "model_name": "Anthropic: Claude Sonnet 5",
+          "provider_name": "deepinfra",
+          "tag": "deepinfra",
+          "tr_provider_slug": "deepinfra",
+          "context_length": 1000000,
+          "pricing": {
+            "prompt": "0.000002",
+            "completion": "0.00001"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
           "name": "gmi | anthropic/claude-sonnet-5",
           "model_id": "anthropic/claude-sonnet-5",
           "model_name": "Anthropic: Claude Sonnet 5",
@@ -1546,22 +1562,6 @@
             "prompt": "0.000002",
             "completion": "0.00001",
             "input_cache_read": "0.0000002"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "deepinfra | anthropic/claude-sonnet-5",
-          "model_id": "anthropic/claude-sonnet-5",
-          "model_name": "Anthropic: Claude Sonnet 5",
-          "provider_name": "deepinfra",
-          "tag": "deepinfra",
-          "tr_provider_slug": "deepinfra",
-          "context_length": 1000000,
-          "pricing": {
-            "prompt": "0.000002",
-            "completion": "0.00001"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -1638,7 +1638,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.97417688831504,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -1704,7 +1704,7 @@
             "repetition_penalty"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -1777,8 +1777,8 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.91308882322267,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.90069513406156,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -1849,9 +1849,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.89795918367346,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87304380617184,
+          "uptime_last_1d": 99.86556881196438,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -1892,7 +1892,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.7229916897507,
+          "uptime_last_1d": 99.67320261437908,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -1974,8 +1974,8 @@
             "repetition_penalty"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
@@ -2065,9 +2065,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.67491166077738,
+          "uptime_last_30m": 99.72789115646259,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.83464056669125,
+          "uptime_last_1d": 99.84670413898826,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -2108,7 +2108,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99946837778138,
+          "uptime_last_1d": 99.99950303017792,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -2141,10 +2141,10 @@
             "tool_choice",
             "max_tokens"
           ],
-          "status": 0,
-          "uptime_last_30m": 96.85279187817258,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 96.66364959154915,
+          "status": -2,
+          "uptime_last_30m": 94.1908713692946,
+          "uptime_last_5m": 95,
+          "uptime_last_1d": 97.17214262237209,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -2234,9 +2234,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.94539825499578,
-          "uptime_last_5m": 97.40820734341253,
-          "uptime_last_1d": 96.65270696771061,
+          "uptime_last_30m": 97.99370574350905,
+          "uptime_last_5m": 98.4313725490196,
+          "uptime_last_1d": 97.9638396611331,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -2278,9 +2278,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92531740104556,
-          "uptime_last_5m": 99.91438356164383,
-          "uptime_last_1d": 99.9452756769298,
+          "uptime_last_30m": 99.96232102486813,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.92606417526898,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -2312,9 +2312,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 96.53179190751445,
-          "uptime_last_5m": 97.2972972972973,
-          "uptime_last_1d": 99.10896130346232,
+          "uptime_last_30m": 99.26289926289927,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.94321649177644,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -2351,9 +2351,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96976720749772,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95136793525865,
+          "uptime_last_30m": 99.99014729789644,
+          "uptime_last_5m": 99.96514464970373,
+          "uptime_last_1d": 99.94938738330798,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -2387,10 +2387,10 @@
             "structured_outputs",
             "max_tokens"
           ],
-          "status": -2,
-          "uptime_last_30m": 93.54624715693708,
-          "uptime_last_5m": 97.16981132075472,
-          "uptime_last_1d": 94.39977053350958,
+          "status": 0,
+          "uptime_last_30m": 97.11633418921588,
+          "uptime_last_5m": 98.64457831325302,
+          "uptime_last_1d": 94.517938817554,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -2511,9 +2511,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.4824016563147,
-          "uptime_last_5m": 99.55947136563876,
-          "uptime_last_1d": 98.70134364216999,
+          "uptime_last_30m": 97.8643216080402,
+          "uptime_last_5m": 98.01980198019803,
+          "uptime_last_1d": 98.71153346631314,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -2546,10 +2546,10 @@
             "tool_choice",
             "max_tokens"
           ],
-          "status": -2,
-          "uptime_last_30m": 92.97820823244552,
-          "uptime_last_5m": 99.04761904761905,
-          "uptime_last_1d": 92.24699360857844,
+          "status": 0,
+          "uptime_last_30m": 96.63182346109176,
+          "uptime_last_5m": 95.54140127388536,
+          "uptime_last_1d": 92.30814938055201,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -2640,9 +2640,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.66636373822001,
-          "uptime_last_5m": 99.59501127525427,
-          "uptime_last_1d": 98.91493626122772,
+          "uptime_last_30m": 98.20759554764562,
+          "uptime_last_5m": 99.27826046982025,
+          "uptime_last_1d": 98.94009137804825,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -2680,9 +2680,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.63664225850533,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 93.66423712099325,
+          "uptime_last_30m": 99.9979677533259,
+          "uptime_last_5m": 99.99661005457811,
+          "uptime_last_1d": 93.6206446394032,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek",
           "pricing_source": "provider_direct"
@@ -2724,9 +2724,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 97.03995333916595,
-          "uptime_last_5m": 97.58534554537886,
-          "uptime_last_1d": 97.65125692373242,
+          "uptime_last_30m": 97.41045498547919,
+          "uptime_last_5m": 97.97120418848168,
+          "uptime_last_1d": 97.55134826775542,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -2759,10 +2759,10 @@
             "response_format",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.71848665811358,
-          "uptime_last_5m": 99.93080496886225,
-          "uptime_last_1d": 99.7797823283478,
+          "status": -2,
+          "uptime_last_30m": 84.36976221166762,
+          "uptime_last_5m": 87.79080040049473,
+          "uptime_last_1d": 99.19253981205755,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -2801,9 +2801,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.70827098010861,
-          "uptime_last_5m": 99.98751170777396,
-          "uptime_last_1d": 99.57848941979476,
+          "uptime_last_30m": 99.83435684887412,
+          "uptime_last_5m": 99.90071391423572,
+          "uptime_last_1d": 99.58451849624987,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -2846,9 +2846,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.62905541200114,
-          "uptime_last_5m": 98.26802338168434,
-          "uptime_last_1d": 90.81132599923858,
+          "uptime_last_30m": 97.79345541879316,
+          "uptime_last_5m": 97.23961661341853,
+          "uptime_last_1d": 94.3639399077314,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -2882,10 +2882,10 @@
             "response_format",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 97.27237176562602,
-          "uptime_last_5m": 95.79787234042553,
-          "uptime_last_1d": 97.45101637002911,
+          "status": -2,
+          "uptime_last_30m": 83.17394167543075,
+          "uptime_last_5m": 91.37476701587505,
+          "uptime_last_1d": 96.85881166173473,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -3060,9 +3060,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.14185361432133,
-          "uptime_last_5m": 96.78510998307954,
-          "uptime_last_1d": 99.24829861827182,
+          "uptime_last_30m": 99.09330213512723,
+          "uptime_last_5m": 99.74511469838573,
+          "uptime_last_1d": 99.26212013415997,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -3100,9 +3100,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89707108609548,
-          "uptime_last_5m": 99.9896265560166,
-          "uptime_last_1d": 97.32323542426674,
+          "uptime_last_30m": 99.99611691955228,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.29094831166304,
           "supports_implicit_caching": true,
           "tr_provider_slug": "deepseek",
           "pricing_source": "provider_direct"
@@ -3143,10 +3143,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": null,
+          "status": -2,
+          "uptime_last_30m": 88.35978835978835,
           "uptime_last_5m": null,
-          "uptime_last_1d": 92.69852242288084,
+          "uptime_last_1d": 92.43723882238352,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -3179,10 +3179,10 @@
             "response_format",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 98.0375782881002,
-          "uptime_last_5m": 99.1991991991992,
-          "uptime_last_1d": 98.09918132040845,
+          "status": -2,
+          "uptime_last_30m": 94.53673574242166,
+          "uptime_last_5m": 95.32237673830595,
+          "uptime_last_1d": 98.19535540204532,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -3223,9 +3223,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.84403547079008,
-          "uptime_last_5m": 99.90875912408758,
-          "uptime_last_1d": 99.59269308887316,
+          "uptime_last_30m": 99.82971009517009,
+          "uptime_last_5m": 99.81882234524409,
+          "uptime_last_1d": 99.62116717069249,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -3267,10 +3267,10 @@
             "top_logprobs",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 98.3560794044665,
-          "uptime_last_5m": 97.93510324483776,
-          "uptime_last_1d": 95.81474159841854,
+          "status": -2,
+          "uptime_last_30m": 88.40453356582388,
+          "uptime_last_5m": 78.98305084745762,
+          "uptime_last_1d": 96.11663650445131,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -3305,9 +3305,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.28646934460888,
-          "uptime_last_5m": 99.13793103448276,
-          "uptime_last_1d": 98.22451548966765,
+          "uptime_last_30m": 95.09132420091323,
+          "uptime_last_5m": 97.2,
+          "uptime_last_1d": 98.59142903573209,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -3348,9 +3348,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.66765358993338,
-          "uptime_last_5m": 99.19540229885058,
-          "uptime_last_1d": 90.04502155693193,
+          "uptime_last_30m": 97.33130003812428,
+          "uptime_last_5m": 97.93388429752066,
+          "uptime_last_1d": 91.05157329056505,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -3535,9 +3535,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9944715746798,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.87555662705279,
+          "uptime_last_30m": 99.98606109885004,
+          "uptime_last_5m": 99.98529195469922,
+          "uptime_last_1d": 99.87881765259677,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -3578,9 +3578,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.46168262407177,
-          "uptime_last_5m": 99.41763727121464,
-          "uptime_last_1d": 97.29905180402936,
+          "uptime_last_30m": 99.75789034971395,
+          "uptime_last_5m": 99.87869897599369,
+          "uptime_last_1d": 97.78370845150563,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -3712,9 +3712,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.66288771167137,
-          "uptime_last_5m": 99.68976215098242,
-          "uptime_last_1d": 99.27741403176864,
+          "uptime_last_30m": 99.82136717640552,
+          "uptime_last_5m": 99.799053317853,
+          "uptime_last_1d": 99.31100652855055,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -3755,9 +3755,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90618789119279,
-          "uptime_last_5m": 99.93142465283731,
-          "uptime_last_1d": 98.90617952781794,
+          "uptime_last_30m": 99.39427466181662,
+          "uptime_last_5m": 99.13732145382549,
+          "uptime_last_1d": 99.10653785485226,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -3897,10 +3897,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.93333333333334,
-          "uptime_last_5m": 95.06172839506173,
-          "uptime_last_1d": 94.92615969115754,
+          "status": 0,
+          "uptime_last_30m": 98.79518072289156,
+          "uptime_last_5m": 96.99248120300751,
+          "uptime_last_1d": 93.97650660935614,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -3973,9 +3973,9 @@
             "stop"
           ],
           "status": 0,
-          "uptime_last_30m": 99.65386624869383,
-          "uptime_last_5m": 99.69040247678018,
-          "uptime_last_1d": 99.45820221644549,
+          "uptime_last_30m": 98.63155333900984,
+          "uptime_last_5m": 98.97229669347631,
+          "uptime_last_1d": 99.33979977573169,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -4107,9 +4107,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.69417126409212,
-          "uptime_last_5m": 99.79032258064517,
-          "uptime_last_1d": 99.72252777017734,
+          "uptime_last_30m": 99.80556773098665,
+          "uptime_last_5m": 99.81383572864696,
+          "uptime_last_1d": 99.7168780411406,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -4150,10 +4150,10 @@
             "structured_outputs",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 97.95908355001717,
-          "uptime_last_5m": 98.15809929365643,
-          "uptime_last_1d": 98.09678681033886,
+          "status": -2,
+          "uptime_last_30m": 87.09845735027223,
+          "uptime_last_5m": 86.40332389956042,
+          "uptime_last_1d": 96.96550863193643,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -4285,9 +4285,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.80127442302168,
-          "uptime_last_5m": 99.85224930984874,
-          "uptime_last_1d": 99.44436470559071,
+          "uptime_last_30m": 99.74920284522933,
+          "uptime_last_5m": 99.70396168915977,
+          "uptime_last_1d": 99.4583580090659,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -4329,9 +4329,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.92957244574193,
-          "uptime_last_5m": 99.00895749952355,
-          "uptime_last_1d": 98.66853179480273,
+          "uptime_last_30m": 98.68175147691497,
+          "uptime_last_5m": 97.66540555504291,
+          "uptime_last_1d": 98.52240040978762,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -4564,9 +4564,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.80842911877394,
+          "uptime_last_30m": 99.29010884997633,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.71317842001359,
+          "uptime_last_1d": 99.70309921296412,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -4640,9 +4640,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 96.25595941040108,
-          "uptime_last_5m": 97.93571217929814,
-          "uptime_last_1d": 95.20978939094333,
+          "uptime_last_30m": 96.1768851303735,
+          "uptime_last_5m": 96.40256959314775,
+          "uptime_last_1d": 94.98112528527494,
           "supports_implicit_caching": false,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -4774,9 +4774,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9840552750465,
+          "uptime_last_30m": 99.77744807121661,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94815213491209,
+          "uptime_last_1d": 99.93941912943917,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -4818,9 +4818,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.59111436592212,
-          "uptime_last_5m": 99.57339232106179,
-          "uptime_last_1d": 98.79313991195777,
+          "uptime_last_30m": 98.95103181216606,
+          "uptime_last_5m": 99.0422867246206,
+          "uptime_last_1d": 98.75237177579626,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -4842,6 +4842,22 @@
           "quantization": "unknown"
         },
         {
+          "name": "deepinfra | google/gemini-3.5-flash",
+          "model_id": "google/gemini-3.5-flash",
+          "model_name": "Google: Gemini 3.5 Flash",
+          "provider_name": "deepinfra",
+          "tag": "deepinfra",
+          "tr_provider_slug": "deepinfra",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000015",
+            "completion": "0.000009"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
           "name": "gmi | google/gemini-3.5-flash",
           "model_id": "google/gemini-3.5-flash",
           "model_name": "Google: Gemini 3.5 Flash",
@@ -4853,22 +4869,6 @@
             "prompt": "0.0000015",
             "completion": "0.000009",
             "input_cache_read": "0.00000015"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "deepinfra | google/gemini-3.5-flash",
-          "model_id": "google/gemini-3.5-flash",
-          "model_name": "Google: Gemini 3.5 Flash",
-          "provider_name": "deepinfra",
-          "tag": "deepinfra",
-          "tr_provider_slug": "deepinfra",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000015",
-            "completion": "0.000009"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -4969,9 +4969,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96260905691733,
-          "uptime_last_5m": 99.98058629392351,
-          "uptime_last_1d": 99.85607133311724,
+          "uptime_last_30m": 99.61289609025052,
+          "uptime_last_5m": 99.51762523191094,
+          "uptime_last_1d": 99.8609656140281,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -5011,9 +5011,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.84784813795102,
-          "uptime_last_5m": 99.88045427375971,
-          "uptime_last_1d": 99.73159478354613,
+          "uptime_last_30m": 99.84234123269448,
+          "uptime_last_5m": 99.39566299324565,
+          "uptime_last_1d": 99.79611195080003,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -5113,9 +5113,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.87628131338047,
-          "uptime_last_5m": 99.9285459092533,
-          "uptime_last_1d": 98.7231131124104,
+          "uptime_last_30m": 97.37232178951623,
+          "uptime_last_5m": 96.67030567685589,
+          "uptime_last_1d": 98.79463845583413,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-ai-studio",
           "pricing_source": "provider_direct"
@@ -5155,9 +5155,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.49560154689559,
-          "uptime_last_5m": 96.5783992859268,
-          "uptime_last_1d": 98.8199757069491,
+          "uptime_last_30m": 96.15044041571515,
+          "uptime_last_5m": 98.48518111964873,
+          "uptime_last_1d": 98.80664691657297,
           "supports_implicit_caching": true,
           "tr_provider_slug": "google-vertex",
           "pricing_source": "provider_direct"
@@ -5244,9 +5244,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99221850439655,
+          "uptime_last_30m": 99.91521471872483,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99085940878953,
+          "uptime_last_1d": 99.99138386683369,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -5333,9 +5333,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96197718631178,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.52245485492861,
+          "uptime_last_30m": 96.90230341540905,
+          "uptime_last_5m": 98.90710382513662,
+          "uptime_last_1d": 99.51960059729407,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -5370,10 +5370,10 @@
             "response_format",
             "repetition_penalty"
           ],
-          "status": -2,
-          "uptime_last_30m": 87.89378439265798,
-          "uptime_last_5m": 68.37822671156005,
-          "uptime_last_1d": 89.50088311455688,
+          "status": -5,
+          "uptime_last_30m": 76.15737593473827,
+          "uptime_last_5m": 49.68613277534716,
+          "uptime_last_1d": 89.3239911944538,
           "supports_implicit_caching": false,
           "tr_provider_slug": "nebius",
           "pricing_source": "provider_direct"
@@ -5405,9 +5405,9 @@
             "repetition_penalty"
           ],
           "status": -2,
-          "uptime_last_30m": 81.18605958403597,
-          "uptime_last_5m": 93.99806389157793,
-          "uptime_last_1d": 80.77637017971945,
+          "uptime_last_30m": 80.82283314242076,
+          "uptime_last_5m": 93.72019077901432,
+          "uptime_last_1d": 80.56808710788158,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -5445,9 +5445,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.50184676579221,
-          "uptime_last_5m": 99.39144736842105,
-          "uptime_last_1d": 99.32337597790517,
+          "uptime_last_30m": 99.82854693527646,
+          "uptime_last_5m": 99.79330301777594,
+          "uptime_last_1d": 99.36594661004355,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -5515,9 +5515,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9888455103179,
+          "uptime_last_30m": 99.78199258774798,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95066859159836,
+          "uptime_last_1d": 99.95037424382241,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -5585,7 +5585,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99962951985773,
+          "uptime_last_1d": 99.99936611571557,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -5658,9 +5658,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91694614114951,
-          "uptime_last_5m": 99.99209985779744,
-          "uptime_last_1d": 99.7603698093868,
+          "uptime_last_30m": 99.01891898925234,
+          "uptime_last_5m": 99.67921300256629,
+          "uptime_last_1d": 99.75442622552718,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -5700,9 +5700,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.19761626050867,
-          "uptime_last_5m": 99.39858667869494,
-          "uptime_last_1d": 98.2940629822094,
+          "uptime_last_30m": 97.8550279140203,
+          "uptime_last_5m": 98.01268498942918,
+          "uptime_last_1d": 97.64131430714332,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -5734,9 +5734,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.59919839679358,
+          "uptime_last_30m": 99.81953078002807,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 81.00037378468633,
+          "uptime_last_1d": 88.60966155975596,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -5859,7 +5859,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99145369268845,
+          "uptime_last_1d": 99.98601925041673,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras",
           "pricing_source": "provider_direct"
@@ -5900,9 +5900,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91192014092778,
-          "uptime_last_5m": 99.83050847457628,
-          "uptime_last_1d": 97.70143294304457,
+          "uptime_last_30m": 95.23909395973155,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.5716168950163,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -5940,9 +5940,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.98423088366557,
-          "uptime_last_5m": 96.75324675324676,
-          "uptime_last_1d": 98.38090757777445,
+          "uptime_last_30m": 95.38206403878046,
+          "uptime_last_5m": 97.5,
+          "uptime_last_1d": 98.00812205938867,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -5982,9 +5982,9 @@
             "logit_bias"
           ],
           "status": -2,
-          "uptime_last_30m": 80.65902578796562,
-          "uptime_last_5m": 76.36986301369863,
-          "uptime_last_1d": 92.73896529895839,
+          "uptime_last_30m": 89.93764172335601,
+          "uptime_last_5m": 79.80085348506401,
+          "uptime_last_1d": 93.02571513021775,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -6021,9 +6021,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97961596477639,
-          "uptime_last_5m": 99.9721293199554,
-          "uptime_last_1d": 99.86265682373904,
+          "uptime_last_30m": 99.33073061907419,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.84526298644099,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -6065,9 +6065,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.55845423199531,
-          "uptime_last_5m": 94.87750556792874,
-          "uptime_last_1d": 97.51572132729356,
+          "uptime_last_30m": 97.23903366178163,
+          "uptime_last_5m": 95.76271186440678,
+          "uptime_last_1d": 97.56587515348141,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -6101,9 +6101,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 98.47462203023758,
-          "uptime_last_5m": 98.88059701492537,
-          "uptime_last_1d": 96.84828733726847,
+          "uptime_last_30m": 98.85634359058746,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.3591557653448,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -6138,10 +6138,10 @@
             "min_p",
             "response_format"
           ],
-          "status": 0,
-          "uptime_last_30m": 96.05809128630706,
-          "uptime_last_5m": 97.32142857142857,
-          "uptime_last_1d": 84.95343274466894,
+          "status": -2,
+          "uptime_last_30m": 93.44106463878326,
+          "uptime_last_5m": 78.31858407079646,
+          "uptime_last_1d": 86.39327213455731,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -6179,10 +6179,10 @@
             "tool_choice",
             "tools"
           ],
-          "status": 0,
-          "uptime_last_30m": 95.76612903225806,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 83.13499697685923,
+          "status": -2,
+          "uptime_last_30m": 94.17858904785396,
+          "uptime_last_5m": 87.42331288343557,
+          "uptime_last_1d": 85.79796900053447,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -6314,9 +6314,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.42528735632183,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.90778553550257,
+          "uptime_last_1d": 99.88201460069317,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -6403,7 +6403,7 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -6476,9 +6476,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.21742602427094,
-          "uptime_last_5m": 99.9211212911838,
-          "uptime_last_1d": 98.96900211450176,
+          "uptime_last_30m": 98.37285513849571,
+          "uptime_last_5m": 99.97973188175001,
+          "uptime_last_1d": 99.16706199309546,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -6550,7 +6550,7 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
@@ -6620,9 +6620,9 @@
             "structured_outputs"
           ],
           "status": -2,
-          "uptime_last_30m": 94.65532286212914,
-          "uptime_last_5m": 98.83720930232558,
-          "uptime_last_1d": 99.06870106239141,
+          "uptime_last_30m": 94.48060075093866,
+          "uptime_last_5m": 97.09119496855347,
+          "uptime_last_1d": 98.74986131583535,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -6706,9 +6706,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.88686229900128,
-          "uptime_last_5m": 92.2759758108851,
-          "uptime_last_1d": 98.40320047383089,
+          "uptime_last_30m": 98.74577477317203,
+          "uptime_last_5m": 95.94594594594594,
+          "uptime_last_1d": 97.70321144806357,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -6856,9 +6856,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.79669347631814,
+          "uptime_last_30m": 98.6682107701216,
+          "uptime_last_5m": 89.91228070175438,
+          "uptime_last_1d": 99.75899406217255,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -6895,9 +6895,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.8070953436807,
-          "uptime_last_5m": 98.72881355932203,
-          "uptime_last_1d": 96.67059658992974,
+          "uptime_last_30m": 97.2982975573649,
+          "uptime_last_5m": 92.71137026239067,
+          "uptime_last_1d": 95.69555132627572,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -6935,9 +6935,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.13297150610583,
-          "uptime_last_5m": 97.31903485254692,
-          "uptime_last_1d": 95.04295619478866,
+          "uptime_last_30m": 99.20954003407155,
+          "uptime_last_5m": 97.31182795698925,
+          "uptime_last_1d": 96.23967521710948,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -6974,9 +6974,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 97.82608695652173,
           "uptime_last_5m": null,
-          "uptime_last_1d": 95.3835839478977,
+          "uptime_last_1d": 97.09419717320692,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -7097,9 +7097,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.7537891545975,
-          "uptime_last_5m": 96.3963963963964,
-          "uptime_last_1d": 99.70544110023584,
+          "uptime_last_30m": 98.16947150870978,
+          "uptime_last_5m": 98.56887298747765,
+          "uptime_last_1d": 99.67173212763805,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -7182,9 +7182,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.39125622578861,
-          "uptime_last_5m": 99.20318725099602,
-          "uptime_last_1d": 99.0411215137285,
+          "uptime_last_30m": 98.63264730758388,
+          "uptime_last_5m": 99.53183520599251,
+          "uptime_last_1d": 99.07177691731009,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -7395,7 +7395,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.98512624102926,
+          "uptime_last_1d": 99.98535388671232,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -7467,7 +7467,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.72860635696821,
+          "uptime_last_1d": 98.50452577725305,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -7539,7 +7539,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.38750510412413,
+          "uptime_last_1d": 99.39281942977824,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -7611,9 +7611,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.85228951255539,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93510707332901,
+          "uptime_last_1d": 99.91925420245174,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -7651,9 +7651,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 98.53658536585365,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.83053952551067,
+          "uptime_last_1d": 99.8287354193668,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -7696,8 +7696,8 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.87235249621786,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.90696494269886,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -7891,9 +7891,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7229064039409,
-          "uptime_last_5m": 99.64788732394366,
-          "uptime_last_1d": 98.7367499610108,
+          "uptime_last_30m": 96.93686184621797,
+          "uptime_last_5m": 96.56398104265402,
+          "uptime_last_1d": 98.86068318481857,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -7932,10 +7932,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.77848101265823,
-          "uptime_last_5m": 87.03703703703704,
-          "uptime_last_1d": 96.02334349016165,
+          "status": -5,
+          "uptime_last_30m": 77.3851590106007,
+          "uptime_last_5m": 91.93548387096774,
+          "uptime_last_1d": 94.75775271311629,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -7968,9 +7968,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.9478357380688,
+          "uptime_last_30m": 98.61351819757365,
+          "uptime_last_5m": 99.3103448275862,
+          "uptime_last_1d": 96.99724747685379,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -8002,9 +8002,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 98.9888238424694,
-          "uptime_last_5m": 99.42396313364056,
-          "uptime_last_1d": 98.87551772906355,
+          "uptime_last_30m": 98.87218045112782,
+          "uptime_last_5m": 99.72067039106145,
+          "uptime_last_1d": 98.90658756218576,
           "supports_implicit_caching": false,
           "tr_provider_slug": "minimax",
           "pricing_source": "provider_direct"
@@ -8036,9 +8036,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 96.97232111357003,
+          "uptime_last_30m": 96.1730449251248,
+          "uptime_last_5m": 99.00990099009901,
+          "uptime_last_1d": 96.81500632598052,
           "supports_implicit_caching": false,
           "tr_provider_slug": "minimax",
           "pricing_source": "provider_direct"
@@ -8076,9 +8076,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.97758552890286,
-          "uptime_last_5m": 99.43181818181817,
-          "uptime_last_1d": 99.03176108082484,
+          "uptime_last_30m": 99.67509025270758,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.0487732156082,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -8201,9 +8201,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.85151763740771,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.84061904008081,
+          "uptime_last_30m": 99.01567626686109,
+          "uptime_last_5m": 99.28571428571429,
+          "uptime_last_1d": 98.75102072559008,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -8234,9 +8234,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.1900905192949,
-          "uptime_last_5m": 98.78419452887537,
-          "uptime_last_1d": 99.10302320776806,
+          "uptime_last_30m": 99.2173603699751,
+          "uptime_last_5m": 99.59349593495935,
+          "uptime_last_1d": 99.15398427147775,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -8290,9 +8290,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.76525821596243,
-          "uptime_last_5m": 99.63536918869644,
-          "uptime_last_1d": 99.16580332496645,
+          "uptime_last_30m": 99.89831585637114,
+          "uptime_last_5m": 99.8502994011976,
+          "uptime_last_1d": 99.24010125295516,
           "supports_implicit_caching": false,
           "tr_provider_slug": "minimax",
           "pricing_source": "provider_direct"
@@ -8329,9 +8329,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.39455095862765,
-          "uptime_last_5m": 99.79838709677419,
-          "uptime_last_1d": 99.3969596185756,
+          "uptime_last_30m": 99.46561936646923,
+          "uptime_last_5m": 99.49238578680203,
+          "uptime_last_1d": 99.43295829783638,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -8373,9 +8373,9 @@
             "top_logprobs"
           ],
           "status": -2,
-          "uptime_last_30m": 94.44444444444444,
-          "uptime_last_5m": 91.22807017543859,
-          "uptime_last_1d": 94.58588823522095,
+          "uptime_last_30m": 92.67585206671501,
+          "uptime_last_5m": 95.91836734693877,
+          "uptime_last_1d": 94.94457302960166,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -8414,10 +8414,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 97.37274220032842,
-          "uptime_last_5m": 97.10982658959537,
-          "uptime_last_1d": 87.69861092853074,
+          "status": -2,
+          "uptime_last_30m": 93.52831362787803,
+          "uptime_last_5m": 95.23809523809523,
+          "uptime_last_1d": 86.79522437371529,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -8587,9 +8587,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.68354430379746,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.85361607849343,
+          "uptime_last_30m": 99.78902953586498,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.87666284908818,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -8659,7 +8659,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97900945623996,
+          "uptime_last_1d": 99.97844130645683,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -8727,9 +8727,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.8280309544282,
-          "uptime_last_5m": 99.8468606431853,
-          "uptime_last_1d": 99.90568810397995,
+          "uptime_last_30m": 99.85701519213583,
+          "uptime_last_5m": 99.7920997920998,
+          "uptime_last_1d": 99.9026998517764,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -8797,9 +8797,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.925205684368,
-          "uptime_last_5m": 99.8314796090327,
-          "uptime_last_1d": 99.8736318358747,
+          "uptime_last_30m": 99.86505681818181,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.89923232933711,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -8869,7 +8869,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99163914552068,
+          "uptime_last_1d": 99.9909551374819,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -8941,7 +8941,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99194338887919,
+          "uptime_last_1d": 99.99414436101966,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -9008,9 +9008,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97993176801124,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.86187412603346,
+          "uptime_last_30m": 99.91205520227304,
+          "uptime_last_5m": 99.95612110574812,
+          "uptime_last_1d": 99.84133043151286,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -9045,10 +9045,10 @@
             "logprobs",
             "top_logprobs"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.77611006879299,
-          "uptime_last_5m": 84.43579766536965,
-          "uptime_last_1d": 74.75067879153558,
+          "status": -5,
+          "uptime_last_30m": 73.21248741188319,
+          "uptime_last_5m": 57.793764988009585,
+          "uptime_last_1d": 72.20538420395792,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -9132,9 +9132,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.96577296063892,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99614181582682,
+          "uptime_last_1d": 99.99592346994238,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -9205,9 +9205,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95173745173746,
+          "uptime_last_30m": 99.9910881383121,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.90335579904254,
+          "uptime_last_1d": 99.89899326687156,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
           "pricing_source": "provider_direct"
@@ -9278,9 +9278,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.56505720380065,
-          "uptime_last_5m": 99.63503649635037,
-          "uptime_last_1d": 98.17512074230082,
+          "uptime_last_30m": 99.11554921540656,
+          "uptime_last_5m": 99.67105263157895,
+          "uptime_last_1d": 98.01501330705209,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -9348,8 +9348,8 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "mistral",
@@ -9417,9 +9417,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.96400654426468,
-          "uptime_last_5m": 96.02122015915118,
-          "uptime_last_1d": 98.16271212568888,
+          "uptime_last_30m": 99.27994380049174,
+          "uptime_last_5m": 99.03225806451613,
+          "uptime_last_1d": 98.35017948745757,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -9490,9 +9490,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.12670748940178,
-          "uptime_last_5m": 98.35164835164835,
-          "uptime_last_1d": 99.2119938312977,
+          "uptime_last_30m": 99.91063449508489,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.31543519192478,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -9581,9 +9581,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.78571428571429,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.65292134972246,
+          "uptime_last_1d": 99.64137214137214,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -9617,9 +9617,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99454963646075,
+          "uptime_last_30m": 99.88690981057393,
+          "uptime_last_5m": 99.6078431372549,
+          "uptime_last_1d": 99.99165545368255,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
           "pricing_source": "provider_direct"
@@ -9660,9 +9660,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.79934788061199,
+          "uptime_last_30m": 99.95378500785654,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91437290297114,
+          "uptime_last_1d": 99.917848791894,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -9697,9 +9697,9 @@
             "max_tokens"
           ],
           "status": 0,
-          "uptime_last_30m": 99.74312869252503,
+          "uptime_last_30m": 99.92833253702818,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.37656586843792,
+          "uptime_last_1d": 99.39196416842341,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -9874,9 +9874,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.12023460410558,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 97.5538495011345,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.85664089950808,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -9917,9 +9917,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.79123173277662,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.7013092147503,
+          "uptime_last_1d": 99.75103961479536,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -9962,7 +9962,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 0.1142204454597373,
+          "uptime_last_1d": 4.810126582278481,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -9996,9 +9996,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.46949602122017,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.83872018767106,
+          "uptime_last_1d": 99.95265911352183,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
           "pricing_source": "provider_direct"
@@ -10037,9 +10037,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.46153846153847,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.15106117353308,
+          "uptime_last_30m": 99.75429975429975,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.2227857978931,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -10081,9 +10081,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.57081545064378,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.81435144079425,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.79554485646919,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -10118,9 +10118,9 @@
             "max_tokens"
           ],
           "status": 0,
-          "uptime_last_30m": 99.80582524271846,
-          "uptime_last_5m": 97.82608695652173,
-          "uptime_last_1d": 96.79607358970841,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 96.78953717418193,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -10160,9 +10160,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.78991596638656,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 92.1184916191725,
+          "uptime_last_1d": 91.87285910521466,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -10201,23 +10201,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "wafer | moonshotai/kimi-k2.6",
-          "model_id": "Kimi-K2.6",
-          "model_name": "MoonshotAI: Kimi K2.6",
-          "provider_name": "wafer",
-          "tag": "wafer",
-          "tr_provider_slug": "wafer",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000114",
-            "completion": "0.0000048",
-            "input_cache_read": "0.00000019"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "baseten | moonshotai/kimi-k2.6",
           "model_id": "moonshotai/Kimi-K2.6",
           "model_name": "MoonshotAI: Kimi K2.6",
@@ -10229,6 +10212,23 @@
             "prompt": "0.00000095",
             "completion": "0.000004",
             "input_cache_read": "0.00000016"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
+          "name": "wafer | moonshotai/kimi-k2.6",
+          "model_id": "Kimi-K2.6",
+          "model_name": "MoonshotAI: Kimi K2.6",
+          "provider_name": "wafer",
+          "tag": "wafer",
+          "tr_provider_slug": "wafer",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000114",
+            "completion": "0.0000048",
+            "input_cache_read": "0.00000019"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -10286,23 +10286,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "inceptron | moonshotai/kimi-k2.6",
-          "model_id": "moonshotai/Kimi-K2.6",
-          "model_name": "MoonshotAI: Kimi K2.6",
-          "provider_name": "inceptron",
-          "tag": "inceptron",
-          "tr_provider_slug": "inceptron",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.0000006",
-            "completion": "0.00000341",
-            "input_cache_read": "0.0000002"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "cloudflare-workers-ai | moonshotai/kimi-k2.6",
           "model_id": "moonshotai/kimi-k2.6",
           "model_name": "MoonshotAI: Kimi K2.6",
@@ -10314,6 +10297,23 @@
             "prompt": "0.00000095",
             "completion": "0.000004",
             "input_cache_read": "0.00000016"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
+          "name": "inceptron | moonshotai/kimi-k2.6",
+          "model_id": "moonshotai/Kimi-K2.6",
+          "model_name": "MoonshotAI: Kimi K2.6",
+          "provider_name": "inceptron",
+          "tag": "inceptron",
+          "tr_provider_slug": "inceptron",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.0000006",
+            "completion": "0.00000341",
+            "input_cache_read": "0.0000002"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -10404,9 +10404,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.64501042429707,
+          "uptime_last_30m": 98.55072463768117,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.45919669441575,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -10449,7 +10449,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 97.73954790958192,
+          "uptime_last_1d": 96.60262417994376,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -10483,9 +10483,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91050119331743,
+          "uptime_last_30m": 99.9267935578331,
+          "uptime_last_5m": 99.29577464788733,
+          "uptime_last_1d": 99.97789566755084,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
           "pricing_source": "provider_direct"
@@ -10519,7 +10519,7 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -10562,9 +10562,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.86052442815016,
+          "uptime_last_30m": 99.84227129337539,
+          "uptime_last_5m": 99.35064935064936,
+          "uptime_last_1d": 99.90663577578755,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -10608,7 +10608,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.68367487278229,
+          "uptime_last_1d": 99.70890148613452,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -10643,7 +10643,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94272026661112,
+          "uptime_last_1d": 99.94668657034707,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -10683,16 +10683,16 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.05825242718447,
-          "uptime_last_5m": 94.73684210526315,
-          "uptime_last_1d": 99.40759318515956,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.21195652173913,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
         },
         {
           "name": "gmi | moonshotai/kimi-k2.7-code",
-          "model_id": "moonshotai/Kimi-K2.7-Code",
+          "model_id": "moonshotai/kimi-k2.7-code",
           "model_name": "MoonshotAI: Kimi K2.7 Code",
           "provider_name": "gmi",
           "tag": "gmi",
@@ -10742,23 +10742,6 @@
           "quantization": "unknown"
         },
         {
-          "name": "inceptron | moonshotai/kimi-k2.7-code",
-          "model_id": "moonshotai/Kimi-K2.7-Code",
-          "model_name": "MoonshotAI: Kimi K2.7 Code",
-          "provider_name": "inceptron",
-          "tag": "inceptron",
-          "tr_provider_slug": "inceptron",
-          "context_length": 262144,
-          "pricing": {
-            "prompt": "0.00000072",
-            "completion": "0.0000035",
-            "input_cache_read": "0.00000015"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
           "name": "cloudflare-workers-ai | moonshotai/kimi-k2.7-code",
           "model_id": "moonshotai/kimi-k2.7-code",
           "model_name": "MoonshotAI: Kimi K2.7 Code",
@@ -10770,6 +10753,23 @@
             "prompt": "0.00000095",
             "completion": "0.000004",
             "input_cache_read": "0.00000019"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
+          "name": "inceptron | moonshotai/kimi-k2.7-code",
+          "model_id": "moonshotai/Kimi-K2.7-Code",
+          "model_name": "MoonshotAI: Kimi K2.7 Code",
+          "provider_name": "inceptron",
+          "tag": "inceptron",
+          "tr_provider_slug": "inceptron",
+          "context_length": 262144,
+          "pricing": {
+            "prompt": "0.00000072",
+            "completion": "0.0000035",
+            "input_cache_read": "0.00000015"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -10862,9 +10862,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 93.45152354570637,
-          "uptime_last_5m": 96.7741935483871,
-          "uptime_last_1d": 96.17240162046765,
+          "uptime_last_30m": 89.38646946042181,
+          "uptime_last_5m": 83.3984375,
+          "uptime_last_1d": 94.92611204066388,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -10903,10 +10903,10 @@
             "structured_outputs",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 95.29472595656671,
-          "uptime_last_5m": 96.74267100977198,
-          "uptime_last_1d": 96.05333576251694,
+          "status": -2,
+          "uptime_last_30m": 85.33852898197759,
+          "uptime_last_5m": 66.43356643356644,
+          "uptime_last_1d": 95.41880858784396,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -10941,9 +10941,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.57518234947673,
-          "uptime_last_5m": 98.3841684822077,
-          "uptime_last_1d": 99.66675652290125,
+          "uptime_last_30m": 99.92652461425422,
+          "uptime_last_5m": 99.95507637017072,
+          "uptime_last_1d": 99.45146794947166,
           "supports_implicit_caching": false,
           "tr_provider_slug": "kimi",
           "pricing_source": "provider_direct"
@@ -10982,9 +10982,9 @@
             "reasoning_effort"
           ],
           "status": -5,
-          "uptime_last_30m": 27.467811158798284,
-          "uptime_last_5m": 6.748466257668712,
-          "uptime_last_1d": 33.691824497953746,
+          "uptime_last_30m": 78.57142857142857,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 36.15150821922285,
           "supports_implicit_caching": false,
           "tr_provider_slug": "nebius",
           "pricing_source": "provider_direct"
@@ -11025,9 +11025,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 92.61941448382126,
-          "uptime_last_5m": 95.23809523809523,
-          "uptime_last_1d": 93.81846986911955,
+          "uptime_last_30m": 92.9994175888177,
+          "uptime_last_5m": 89.00565885206144,
+          "uptime_last_1d": 93.51346817428826,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -11249,7 +11249,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.99709234705746,
+          "uptime_last_1d": 99.99727965179544,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -11390,9 +11390,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9618320610687,
-          "uptime_last_5m": 99.74160206718346,
-          "uptime_last_1d": 99.99242137173172,
+          "uptime_last_30m": 99.88372093023256,
+          "uptime_last_5m": 99.6268656716418,
+          "uptime_last_1d": 99.9888977295857,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -11431,10 +11431,10 @@
             "tools",
             "logit_bias"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.57567185289957,
-          "uptime_last_5m": 98.70967741935483,
-          "uptime_last_1d": 97.00478381425394,
+          "status": -2,
+          "uptime_last_30m": 89.73913043478261,
+          "uptime_last_5m": 87.14285714285714,
+          "uptime_last_1d": 97.88169113122967,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -11473,9 +11473,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90430622009569,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.19693527336008,
+          "uptime_last_30m": 99.50124688279301,
+          "uptime_last_5m": 98.57142857142858,
+          "uptime_last_1d": 99.89289114566805,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -11545,9 +11545,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7624703087886,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.72293724433803,
+          "uptime_last_1d": 99.6697703289882,
           "supports_implicit_caching": false,
           "tr_provider_slug": "nebius",
           "pricing_source": "provider_direct"
@@ -11595,8 +11595,8 @@
         "input_cache_read": "0.00000012"
       },
       "top_provider": {
-        "context_length": 262144,
-        "max_completion_tokens": 16384,
+        "context_length": 512288,
+        "max_completion_tokens": null,
         "is_moderated": false
       },
       "per_request_limits": null,
@@ -11637,9 +11637,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.71942221760366,
-          "uptime_last_5m": 99.4306049822064,
-          "uptime_last_1d": 97.6394362434039,
+          "uptime_last_30m": 99.20973942759504,
+          "uptime_last_5m": 99.47848761408083,
+          "uptime_last_1d": 98.04804122148974,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -11947,9 +11947,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.35591338145476,
-          "uptime_last_5m": 99.06790945406125,
-          "uptime_last_1d": 99.48213164746916,
+          "uptime_last_30m": 99.35994792796701,
+          "uptime_last_5m": 99.36890418818129,
+          "uptime_last_1d": 99.44957819848548,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -12050,9 +12050,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 99.13362161499064,
-          "uptime_last_5m": 99.39572982409024,
-          "uptime_last_1d": 99.27375581891533,
+          "uptime_last_30m": 99.30634585162305,
+          "uptime_last_5m": 99.73395410708346,
+          "uptime_last_1d": 99.26192814255738,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -12137,9 +12137,9 @@
             "top_p"
           ],
           "status": 0,
-          "uptime_last_30m": 97.48249319983795,
-          "uptime_last_5m": 93.87264717661193,
-          "uptime_last_1d": 99.44254199183312,
+          "uptime_last_30m": 99.383810621509,
+          "uptime_last_5m": 99.4723331431831,
+          "uptime_last_1d": 99.51767412861801,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -12230,9 +12230,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.91902834008097,
+          "uptime_last_30m": 99.8721673445671,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95523659392344,
+          "uptime_last_1d": 99.95388034044694,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -12356,9 +12356,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.97716204455253,
-          "uptime_last_5m": 99.93240959783711,
-          "uptime_last_1d": 99.9647867154615,
+          "uptime_last_30m": 99.98736638579761,
+          "uptime_last_5m": 99.99265192152252,
+          "uptime_last_1d": 99.96746237287242,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13111,9 +13111,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.65870307167235,
+          "uptime_last_30m": 99.75990396158463,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.908622152601,
+          "uptime_last_1d": 99.89034085716897,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13147,9 +13147,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.65870307167235,
+          "uptime_last_30m": 99.75990396158463,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.908622152601,
+          "uptime_last_1d": 99.89034085716897,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13290,9 +13290,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 97.8386542367585,
-          "uptime_last_5m": 97.2766217870257,
-          "uptime_last_1d": 98.21394834533822,
+          "uptime_last_30m": 99.18245829592173,
+          "uptime_last_5m": 99.53886693017128,
+          "uptime_last_1d": 98.3012535161041,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13356,9 +13356,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 97.8386542367585,
-          "uptime_last_5m": 97.2766217870257,
-          "uptime_last_1d": 98.21394834533822,
+          "uptime_last_30m": 99.18245829592173,
+          "uptime_last_5m": 99.53886693017128,
+          "uptime_last_1d": 98.3012535161041,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13414,9 +13414,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 97.8386542367585,
-          "uptime_last_5m": 97.2766217870257,
-          "uptime_last_1d": 98.21394834533822,
+          "uptime_last_30m": 99.18245829592173,
+          "uptime_last_5m": 99.53886693017128,
+          "uptime_last_1d": 98.3012535161041,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13519,9 +13519,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.29633128641159,
-          "uptime_last_5m": 99.159301573615,
-          "uptime_last_1d": 86.5801126180831,
+          "uptime_last_30m": 98.47304584994939,
+          "uptime_last_5m": 98.18680481487124,
+          "uptime_last_1d": 94.30938725753111,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13555,9 +13555,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.29633128641159,
-          "uptime_last_5m": 99.159301573615,
-          "uptime_last_1d": 86.5801126180831,
+          "uptime_last_30m": 98.47304584994939,
+          "uptime_last_5m": 98.18680481487124,
+          "uptime_last_1d": 94.30938725753111,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13591,9 +13591,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.29633128641159,
-          "uptime_last_5m": 99.159301573615,
-          "uptime_last_1d": 86.5801126180831,
+          "uptime_last_30m": 98.47304584994939,
+          "uptime_last_5m": 98.18680481487124,
+          "uptime_last_1d": 94.30938725753111,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13695,10 +13695,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.04068280204643,
-          "uptime_last_5m": 93.51431167651067,
-          "uptime_last_1d": 96.60535303219383,
+          "status": 0,
+          "uptime_last_30m": 96.52066550621382,
+          "uptime_last_5m": 98.15106484968842,
+          "uptime_last_1d": 96.13697626603191,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13731,10 +13731,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 91.04068280204643,
-          "uptime_last_5m": 93.51431167651067,
-          "uptime_last_1d": 96.60535303219383,
+          "status": 0,
+          "uptime_last_30m": 96.52066550621382,
+          "uptime_last_5m": 98.15106484968842,
+          "uptime_last_1d": 96.13697626603191,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13869,9 +13869,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.29718875502009,
+          "uptime_last_1d": 99.70579582230069,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -13931,9 +13931,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.29718875502009,
+          "uptime_last_1d": 99.70579582230069,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14056,9 +14056,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.19049333813467,
-          "uptime_last_5m": 96.72862453531599,
-          "uptime_last_1d": 97.37555352697308,
+          "uptime_last_30m": 99.17865639515125,
+          "uptime_last_5m": 99.23836389280677,
+          "uptime_last_1d": 97.69702717529186,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14122,9 +14122,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.19049333813467,
-          "uptime_last_5m": 96.72862453531599,
-          "uptime_last_1d": 97.37555352697308,
+          "uptime_last_30m": 99.17865639515125,
+          "uptime_last_5m": 99.23836389280677,
+          "uptime_last_1d": 97.69702717529186,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14180,9 +14180,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.19049333813467,
-          "uptime_last_5m": 96.72862453531599,
-          "uptime_last_1d": 97.37555352697308,
+          "uptime_last_30m": 99.17865639515125,
+          "uptime_last_5m": 99.23836389280677,
+          "uptime_last_1d": 97.69702717529186,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14337,7 +14337,7 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -14399,7 +14399,7 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -14512,9 +14512,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.63751266917069,
-          "uptime_last_5m": 99.56381138602693,
-          "uptime_last_1d": 99.20861906123484,
+          "uptime_last_30m": 99.6170901048601,
+          "uptime_last_5m": 99.78859892112553,
+          "uptime_last_1d": 99.27108431465854,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14580,9 +14580,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.63751266917069,
-          "uptime_last_5m": 99.56381138602693,
-          "uptime_last_1d": 99.20861906123484,
+          "uptime_last_30m": 99.6170901048601,
+          "uptime_last_5m": 99.78859892112553,
+          "uptime_last_1d": 99.27108431465854,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14639,9 +14639,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.63751266917069,
-          "uptime_last_5m": 99.56381138602693,
-          "uptime_last_1d": 99.20861906123484,
+          "uptime_last_30m": 99.6170901048601,
+          "uptime_last_5m": 99.78859892112553,
+          "uptime_last_1d": 99.27108431465854,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14801,10 +14801,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 86.67048054919908,
-          "uptime_last_5m": 65.23163313055686,
-          "uptime_last_1d": 94.0510774636593,
+          "status": -5,
+          "uptime_last_30m": 77.64692164179104,
+          "uptime_last_5m": 48.77501725327812,
+          "uptime_last_1d": 90.53956590619086,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14869,10 +14869,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 86.67048054919908,
-          "uptime_last_5m": 65.23163313055686,
-          "uptime_last_1d": 94.0510774636593,
+          "status": -5,
+          "uptime_last_30m": 77.64692164179104,
+          "uptime_last_5m": 48.77501725327812,
+          "uptime_last_1d": 90.53956590619086,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -14928,10 +14928,10 @@
             "tool_choice",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 86.67048054919908,
-          "uptime_last_5m": 65.23163313055686,
-          "uptime_last_1d": 94.0510774636593,
+          "status": -5,
+          "uptime_last_30m": 77.64692164179104,
+          "uptime_last_5m": 48.77501725327812,
+          "uptime_last_1d": 90.53956590619086,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -15092,9 +15092,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 86.10952419815555,
-          "uptime_last_5m": 81.97477699169487,
-          "uptime_last_1d": 85.11049490869371,
+          "uptime_last_30m": 86.35736460848568,
+          "uptime_last_5m": 87.4639307470343,
+          "uptime_last_1d": 84.8645001266354,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -15160,9 +15160,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 86.10952419815555,
-          "uptime_last_5m": 81.97477699169487,
-          "uptime_last_1d": 85.11049490869371,
+          "uptime_last_30m": 86.35736460848568,
+          "uptime_last_5m": 87.4639307470343,
+          "uptime_last_1d": 84.8645001266354,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -15219,9 +15219,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 86.10952419815555,
-          "uptime_last_5m": 81.97477699169487,
-          "uptime_last_1d": 85.11049490869371,
+          "uptime_last_30m": 86.35736460848568,
+          "uptime_last_5m": 87.4639307470343,
+          "uptime_last_1d": 84.8645001266354,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -15343,9 +15343,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.86352645323532,
-          "uptime_last_5m": 99.95886466474701,
-          "uptime_last_1d": 99.91409539893493,
+          "uptime_last_30m": 99.99299450068304,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.8930367371016,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras",
           "pricing_source": "provider_direct"
@@ -15386,9 +15386,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.99519063134987,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.7169984579779,
+          "uptime_last_30m": 99.37254417906149,
+          "uptime_last_5m": 99.97569511958001,
+          "uptime_last_1d": 99.1346213373936,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -15429,9 +15429,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 98.8795518207283,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91551221174888,
+          "uptime_last_1d": 99.90532096193903,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -15471,10 +15471,10 @@
             "repetition_penalty",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.69947407963937,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.5304613655835,
+          "status": -2,
+          "uptime_last_30m": 91.0809322811525,
+          "uptime_last_5m": 91.44827586206897,
+          "uptime_last_1d": 97.71839260759205,
           "supports_implicit_caching": false,
           "tr_provider_slug": "nebius",
           "pricing_source": "provider_direct"
@@ -15514,10 +15514,10 @@
             "top_logprobs",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": 99.420966208625,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.21993394506609,
+          "status": -2,
+          "uptime_last_30m": 94.10189982728842,
+          "uptime_last_5m": 92.0541494997057,
+          "uptime_last_1d": 97.2260741023318,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -15560,9 +15560,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 90.40790312300828,
-          "uptime_last_5m": 90.52189562087582,
-          "uptime_last_1d": 92.40133901469376,
+          "uptime_last_30m": 92.40866873065016,
+          "uptime_last_5m": 93.4841628959276,
+          "uptime_last_1d": 92.12355729109261,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -15595,9 +15595,9 @@
             "reasoning_effort"
           ],
           "status": -5,
-          "uptime_last_30m": 54.579131508540854,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 66.1038996679382,
+          "uptime_last_30m": 79.19828760459234,
+          "uptime_last_5m": 80.81975827640568,
+          "uptime_last_1d": 66.38852817573768,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -15636,10 +15636,10 @@
             "response_format",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 89.74920200638394,
-          "uptime_last_5m": 81.26115407495539,
-          "uptime_last_1d": 90.12201005779616,
+          "status": 0,
+          "uptime_last_30m": 99.46839929119905,
+          "uptime_last_5m": 99.28486293206198,
+          "uptime_last_1d": 91.08553887133843,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -15795,9 +15795,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9856146155506,
+          "uptime_last_30m": 99.3097678309977,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91148963479446,
+          "uptime_last_1d": 99.88937175948782,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -15839,7 +15839,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.46398986453562,
+          "uptime_last_1d": 99.93179949050207,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -15878,9 +15878,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.97893850042124,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.58936213572449,
+          "uptime_last_1d": 99.61673333861121,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -15922,10 +15922,10 @@
             "top_logprobs",
             "reasoning_effort"
           ],
-          "status": -2,
-          "uptime_last_30m": 85.5804835547811,
-          "uptime_last_5m": 85.11080332409972,
-          "uptime_last_1d": 83.18445318326665,
+          "status": -5,
+          "uptime_last_30m": 75.68142534237468,
+          "uptime_last_5m": 97.667638483965,
+          "uptime_last_1d": 83.36890586385081,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -15958,9 +15958,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 95.69168630090878,
-          "uptime_last_5m": 99.52606635071089,
-          "uptime_last_1d": 96.3226771045072,
+          "uptime_last_30m": 99.96673320026613,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 96.4748957159821,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -16000,7 +16000,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 95.8041958041958,
+          "uptime_last_1d": 96.49122807017544,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -16171,9 +16171,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.995947807764,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.99461584019814,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -16273,7 +16273,7 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": null,
+          "uptime_last_30m": 100,
           "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
@@ -16430,7 +16430,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.9972229164931,
+          "uptime_last_1d": 99.99855169017756,
           "supports_implicit_caching": false,
           "tr_provider_slug": "openai",
           "pricing_source": "provider_direct"
@@ -16515,7 +16515,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 39.44124897288414,
+          "uptime_last_1d": 31.839622641509436,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -16581,9 +16581,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.96839443742098,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95015612019823,
+          "uptime_last_1d": 99.97667924044286,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -16654,9 +16654,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.17840375586854,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.69303792971137,
+          "uptime_last_30m": 99.77616116396194,
+          "uptime_last_5m": 99.17864476386036,
+          "uptime_last_1d": 99.64374072241465,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -16727,9 +16727,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96456413890857,
+          "uptime_last_30m": 99.33797909407666,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.98073787814745,
+          "uptime_last_1d": 98.9798522412627,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -16799,9 +16799,9 @@
             "tools"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7,
+          "uptime_last_30m": 98.96810506566605,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.8666820495071,
+          "uptime_last_1d": 99.80290647255144,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -16839,9 +16839,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 95.48954895489548,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 97.52511639304092,
+          "uptime_last_30m": 98.02371541501977,
+          "uptime_last_5m": 89.74358974358975,
+          "uptime_last_1d": 97.59537572254335,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -16881,9 +16881,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.56353869397347,
-          "uptime_last_5m": 99.1822429906542,
-          "uptime_last_1d": 99.77083072913707,
+          "uptime_last_30m": 99.75745816153287,
+          "uptime_last_5m": 99.81203007518798,
+          "uptime_last_1d": 99.74676487216534,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -16970,9 +16970,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.84176604530894,
+          "uptime_last_30m": 98.78419452887537,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.83335916912107,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -17012,7 +17012,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 96.43916913946587,
+          "uptime_last_1d": 99.75592747559274,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -17048,7 +17048,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.38949938949939,
+          "uptime_last_1d": 99.2603550295858,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -17152,9 +17152,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96331621423332,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96815747575626,
+          "uptime_last_1d": 99.97032296357466,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -17291,9 +17291,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.89459418762235,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.85976252842191,
+          "uptime_last_30m": 99.70387714344741,
+          "uptime_last_5m": 99.2691839220463,
+          "uptime_last_1d": 99.85376282722403,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -17410,9 +17410,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.98648648648648,
-          "uptime_last_5m": 98.52941176470588,
-          "uptime_last_1d": 93.89700678572915,
+          "uptime_last_30m": 98.80546075085324,
+          "uptime_last_5m": 98.61111111111111,
+          "uptime_last_1d": 97.24026817732965,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -17497,8 +17497,8 @@
           ],
           "status": 0,
           "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 99.55429497568882,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.60991919754805,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -17538,9 +17538,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.97172236503856,
+          "uptime_last_30m": 99.87908101571948,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.23264339549604,
+          "uptime_last_1d": 99.14168507415589,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -17627,9 +17627,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.96066089693156,
+          "uptime_last_30m": 99.63406520292747,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.45906413683684,
+          "uptime_last_1d": 99.12556285434758,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -17668,7 +17668,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 90.75572780120825,
+          "uptime_last_1d": 99.92837702334909,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -17708,9 +17708,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.93738259236068,
+          "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94671833373698,
+          "uptime_last_1d": 99.96398415302733,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -17880,9 +17880,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.45247148288973,
-          "uptime_last_5m": 99.3127147766323,
-          "uptime_last_1d": 94.79914165070721,
+          "uptime_last_30m": 96.92695214105794,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 94.85367613186966,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -17919,10 +17919,10 @@
             "logprobs",
             "top_logprobs"
           ],
-          "status": 0,
-          "uptime_last_30m": 98.56611789697291,
-          "uptime_last_5m": 94.70198675496688,
-          "uptime_last_1d": 95.13216888534977,
+          "status": -2,
+          "uptime_last_30m": 94.54926624737946,
+          "uptime_last_5m": 96.07843137254902,
+          "uptime_last_1d": 94.91008896460345,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -17962,9 +17962,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 95.62745955400086,
-          "uptime_last_5m": 99.40828402366864,
-          "uptime_last_1d": 99.14434914621295,
+          "uptime_last_30m": 98.96470588235294,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.19185122885712,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -18054,7 +18054,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.95003747189608,
+          "uptime_last_1d": 99.94685091682169,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -18158,9 +18158,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.18422841604351,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.26730644618286,
+          "uptime_last_30m": 98.70211102423768,
+          "uptime_last_5m": 99.84012789768185,
+          "uptime_last_1d": 98.85256485502994,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -18198,9 +18198,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.00771775082691,
-          "uptime_last_5m": 99.68553459119497,
-          "uptime_last_1d": 96.9586027278335,
+          "uptime_last_30m": 99.0977986286539,
+          "uptime_last_5m": 99.44852941176471,
+          "uptime_last_1d": 96.96484179712205,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -18339,10 +18339,10 @@
             "logprobs",
             "top_logprobs"
           ],
-          "status": -2,
-          "uptime_last_30m": 93.2214331826985,
-          "uptime_last_5m": 92.11711711711712,
-          "uptime_last_1d": 98.45026107912706,
+          "status": 0,
+          "uptime_last_30m": 97.6009139375476,
+          "uptime_last_5m": 95.28795811518324,
+          "uptime_last_1d": 97.95071128030455,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -18445,10 +18445,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 85.29411764705883,
+          "status": 0,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 88.52350107955489,
+          "uptime_last_1d": 87.74907749077491,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -18486,10 +18486,10 @@
             "logprobs",
             "top_logprobs"
           ],
-          "status": 0,
-          "uptime_last_30m": 98.66666666666667,
-          "uptime_last_5m": 97.46835443037975,
-          "uptime_last_1d": 99.61295124674358,
+          "status": -2,
+          "uptime_last_30m": 94.87179487179486,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.43763443646823,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -18525,7 +18525,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 88.86622636622636,
+          "uptime_last_1d": 86.43284574468085,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -18648,9 +18648,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.87421383647799,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.69750867815561,
+          "uptime_last_30m": 98.49699398797596,
+          "uptime_last_5m": 98.35164835164835,
+          "uptime_last_1d": 99.02787467014468,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -18689,9 +18689,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.76635514018692,
+          "uptime_last_30m": 99.74358974358975,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.66000644537544,
+          "uptime_last_1d": 99.64969877479184,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -18726,10 +18726,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": 0,
-          "uptime_last_30m": 98.48771266540642,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 96.4634847613571,
+          "status": -2,
+          "uptime_last_30m": 93.07116104868915,
+          "uptime_last_5m": 93.65079365079364,
+          "uptime_last_1d": 96.68335276234885,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -18851,9 +18851,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 94.77741855259886,
+          "uptime_last_30m": 98.89746416758544,
+          "uptime_last_5m": 97.77777777777777,
+          "uptime_last_1d": 95.923272475156,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -18895,9 +18895,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.95287958115183,
+          "uptime_last_30m": 99.86301369863013,
           "uptime_last_5m": null,
-          "uptime_last_1d": 98.16651560274505,
+          "uptime_last_1d": 99.28075396825396,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -19037,10 +19037,10 @@
             "tool_choice",
             "structured_outputs"
           ],
-          "status": 0,
-          "uptime_last_30m": 97.79735682819384,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 73.39242999859293,
+          "status": -5,
+          "uptime_last_30m": 33.82352941176471,
+          "uptime_last_5m": 33.33333333333333,
+          "uptime_last_1d": 71.72602116281716,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -19113,9 +19113,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 97.83275232055105,
+          "uptime_last_30m": 99.90485252140819,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 97.73929773929774,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -19157,9 +19157,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 97.04684317718942,
-          "uptime_last_5m": 99.39393939393939,
-          "uptime_last_1d": 99.10863208058053,
+          "uptime_last_30m": 99.77142857142857,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.88521651448097,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -19197,9 +19197,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 97.6632335794792,
+          "uptime_last_30m": 99.42363112391931,
+          "uptime_last_5m": 98.0392156862745,
+          "uptime_last_1d": 98.10039962774401,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -19357,9 +19357,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.80824544582933,
-          "uptime_last_5m": 99.83108108108108,
-          "uptime_last_1d": 99.75122994142379,
+          "uptime_last_30m": 98.41004184100419,
+          "uptime_last_5m": 99.16666666666667,
+          "uptime_last_1d": 99.59239130434783,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -19395,9 +19395,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 98.87174763988027,
-          "uptime_last_5m": 98.93048128342245,
-          "uptime_last_1d": 98.5624151683093,
+          "uptime_last_30m": 97.94112642504679,
+          "uptime_last_5m": 97.53424657534246,
+          "uptime_last_1d": 98.45374012054891,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -19436,9 +19436,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.11699723826261,
-          "uptime_last_5m": 99.37888198757764,
-          "uptime_last_1d": 99.26999248623049,
+          "uptime_last_30m": 99.27641099855282,
+          "uptime_last_5m": 99.34640522875817,
+          "uptime_last_1d": 99.13290447552173,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -19476,9 +19476,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90850869167429,
+          "uptime_last_30m": 99.7558295690392,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.76455516507107,
+          "uptime_last_1d": 99.76029748510788,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -19552,9 +19552,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 96.07843137254902,
-          "uptime_last_5m": 93.33333333333333,
-          "uptime_last_1d": 98.99387964570371,
+          "uptime_last_30m": 96.30337794773742,
+          "uptime_last_5m": 91.41414141414141,
+          "uptime_last_1d": 99.18021080293639,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -19590,9 +19590,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.44012944983818,
-          "uptime_last_5m": 94.73684210526315,
-          "uptime_last_1d": 93.65254660671557,
+          "uptime_last_30m": 97.25864123957092,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 93.98864303896613,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -19628,9 +19628,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.27586206896551,
-          "uptime_last_5m": 98.07692307692307,
-          "uptime_last_1d": 99.30990602975724,
+          "uptime_last_30m": 99.27310488058151,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.44586086685051,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -19752,9 +19752,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 97.90291262135923,
-          "uptime_last_5m": 97.90575916230367,
-          "uptime_last_1d": 97.29561574515742,
+          "uptime_last_30m": 96.79376083188909,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 97.06372893258427,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -19796,9 +19796,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 96.79660817336003,
-          "uptime_last_5m": 97.36191261335532,
-          "uptime_last_1d": 98.27043751510757,
+          "uptime_last_30m": 98.74822443181817,
+          "uptime_last_5m": 97.68025078369907,
+          "uptime_last_1d": 98.37656679133555,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -19831,10 +19831,10 @@
             "structured_outputs",
             "response_format"
           ],
-          "status": -2,
-          "uptime_last_30m": 93.82871536523929,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.00019678260442,
+          "status": 0,
+          "uptime_last_30m": 98.37209302325581,
+          "uptime_last_5m": 98.93617021276596,
+          "uptime_last_1d": 97.52891231152101,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -19975,9 +19975,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.23664122137404,
+          "uptime_last_30m": 98.88268156424581,
           "uptime_last_5m": null,
-          "uptime_last_1d": 97.32380721724388,
+          "uptime_last_1d": 97.20047449584817,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -20115,9 +20115,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.8158379373849,
+          "uptime_last_30m": 99.56331877729258,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.39193543867515,
+          "uptime_last_1d": 99.26903502644447,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -20148,10 +20148,10 @@
             "response_format",
             "reasoning_effort"
           ],
-          "status": 0,
-          "uptime_last_30m": null,
+          "status": -5,
+          "uptime_last_30m": 62.071651090342684,
           "uptime_last_5m": null,
-          "uptime_last_1d": 70.1217092207964,
+          "uptime_last_1d": 63.622743811086536,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -20190,9 +20190,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.77333652465295,
+          "uptime_last_30m": 98.81516587677726,
+          "uptime_last_5m": 96.19047619047619,
+          "uptime_last_1d": 98.74919551165459,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -20291,9 +20291,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.85191766622242,
-          "uptime_last_5m": 99.93917274939173,
-          "uptime_last_1d": 99.95218779882626,
+          "uptime_last_30m": 99.8408548368762,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.94582210366345,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -20365,7 +20365,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.95203236772404,
+          "uptime_last_1d": 99.9523496176624,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -20435,9 +20435,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 100,
+          "uptime_last_1d": 99.98414208690136,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -20511,7 +20511,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 91.87604312328025,
+          "uptime_last_1d": 92.41415143356478,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -20552,7 +20552,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.10256021814877,
+          "uptime_last_1d": 98.32070980307293,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -20701,9 +20701,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95719910974148,
-          "uptime_last_5m": 99.8435054773083,
-          "uptime_last_1d": 99.98570488103076,
+          "uptime_last_30m": 99.99074930619797,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.97762854979464,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -20770,9 +20770,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.95719910974148,
-          "uptime_last_5m": 99.8435054773083,
-          "uptime_last_1d": 99.98570488103076,
+          "uptime_last_30m": 99.99074930619797,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.97762854979464,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -20839,9 +20839,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96397622430806,
+          "uptime_last_30m": 99.65753424657534,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.93004403110983,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -20908,9 +20908,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.96397622430806,
+          "uptime_last_30m": 99.65753424657534,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.93004403110983,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21043,7 +21043,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 94.61578672242551,
+          "uptime_last_1d": 96.0136375557304,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21111,7 +21111,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 94.61578672242551,
+          "uptime_last_1d": 96.0136375557304,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21179,7 +21179,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 93.78698224852072,
+          "uptime_last_1d": 94.19642857142857,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21247,7 +21247,7 @@
           "status": 0,
           "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 93.78698224852072,
+          "uptime_last_1d": 94.19642857142857,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21361,9 +21361,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.75066001760047,
+          "uptime_last_30m": 99.97466173415091,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97015691216427,
+          "uptime_last_1d": 99.96618337848376,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21434,9 +21434,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.75066001760047,
+          "uptime_last_30m": 99.97466173415091,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97015691216427,
+          "uptime_last_1d": 99.96618337848376,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21507,9 +21507,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.40184883088635,
+          "uptime_last_30m": 99.97839706200044,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91617067650263,
+          "uptime_last_1d": 99.91236701309883,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21580,9 +21580,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.40184883088635,
+          "uptime_last_30m": 99.97839706200044,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.91617067650263,
+          "uptime_last_1d": 99.91236701309883,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21713,9 +21713,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92346548293281,
-          "uptime_last_5m": 99.94229659549913,
-          "uptime_last_1d": 99.88125109612488,
+          "uptime_last_30m": 99.88511616032679,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.8902317952717,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21786,9 +21786,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92346548293281,
-          "uptime_last_5m": 99.94229659549913,
-          "uptime_last_1d": 99.88125109612488,
+          "uptime_last_30m": 99.88511616032679,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.8902317952717,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21859,9 +21859,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.88385598141696,
+          "uptime_last_30m": 99.92337164750957,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93605873123946,
+          "uptime_last_1d": 99.94444547323198,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -21932,9 +21932,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.88385598141696,
+          "uptime_last_30m": 99.92337164750957,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.93605873123946,
+          "uptime_last_1d": 99.94444547323198,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -22081,9 +22081,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.98360252521111,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -22153,9 +22153,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": null,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.98360252521111,
+          "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "grok",
           "pricing_source": "provider_direct"
@@ -22582,9 +22582,9 @@
             "max_tokens"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.36305732484077,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.63416864825315,
+          "uptime_last_1d": 99.81187037261805,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -22616,9 +22616,9 @@
             "top_k"
           ],
           "status": 0,
-          "uptime_last_30m": 96.42857142857143,
-          "uptime_last_5m": 97.91666666666666,
-          "uptime_last_1d": 98.11821166961354,
+          "uptime_last_30m": 99.63702359346642,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 98.41736519454523,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -22684,9 +22684,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": null,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 98.92940513563552,
+          "uptime_last_30m": 100,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.45513727710161,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -22758,9 +22758,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.88249118683902,
+          "uptime_last_30m": 99.78118161925602,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.89750970386847,
+          "uptime_last_1d": 99.89093209432193,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -22797,9 +22797,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.73226238286479,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.18179898648648,
+          "uptime_last_30m": 99.27140255009107,
+          "uptime_last_5m": 98.96907216494846,
+          "uptime_last_1d": 99.32216076849502,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -22830,10 +22830,10 @@
             "tool_choice",
             "top_k"
           ],
-          "status": -2,
-          "uptime_last_30m": 94.44444444444444,
+          "status": 0,
+          "uptime_last_30m": 96.17486338797814,
           "uptime_last_5m": null,
-          "uptime_last_1d": 95.37037037037037,
+          "uptime_last_1d": 95.80647933316146,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -22916,9 +22916,9 @@
             "top_k"
           ],
           "status": 0,
-          "uptime_last_30m": 97.99749687108886,
-          "uptime_last_5m": 96.36363636363636,
-          "uptime_last_1d": 96.02893703084283,
+          "uptime_last_30m": 97.2463768115942,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 94.49361995631682,
           "supports_implicit_caching": true,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -22992,7 +22992,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97066158134076,
+          "uptime_last_1d": 99.9679538535491,
           "supports_implicit_caching": false,
           "tr_provider_slug": "cerebras",
           "pricing_source": "provider_direct"
@@ -23033,9 +23033,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 99.92784125075165,
+          "uptime_last_30m": 99.79090433873498,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.84129920193872,
+          "uptime_last_1d": 99.85724519973863,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -23072,9 +23072,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.72401103955842,
+          "uptime_last_30m": 99.2372234935164,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.6592323545616,
+          "uptime_last_1d": 99.66287069523119,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -23106,10 +23106,10 @@
             "top_k",
             "response_format"
           ],
-          "status": -5,
-          "uptime_last_30m": 76.02230483271374,
-          "uptime_last_5m": 83.09859154929578,
-          "uptime_last_1d": 84.28467932585984,
+          "status": -2,
+          "uptime_last_30m": 82.32081911262799,
+          "uptime_last_5m": 79.66101694915254,
+          "uptime_last_1d": 84.74871658868325,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -23215,10 +23215,10 @@
             "structured_outputs",
             "logit_bias"
           ],
-          "status": -2,
-          "uptime_last_30m": 89.58185683912119,
-          "uptime_last_5m": 94.1747572815534,
-          "uptime_last_1d": 93.06032029785578,
+          "status": 0,
+          "uptime_last_30m": 98.80288857655214,
+          "uptime_last_5m": 97.75051124744377,
+          "uptime_last_1d": 95.65732041133388,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -23253,10 +23253,10 @@
             "tools",
             "tool_choice"
           ],
-          "status": -2,
-          "uptime_last_30m": 85.39325842696628,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 79.45385848408519,
+          "status": 0,
+          "uptime_last_30m": 98.64406779661017,
+          "uptime_last_5m": 98.63013698630137,
+          "uptime_last_1d": 81.12742074750216,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -23345,9 +23345,9 @@
             "logit_bias"
           ],
           "status": 0,
-          "uptime_last_30m": 100,
+          "uptime_last_30m": 99.02676399026764,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.94354390316924,
+          "uptime_last_1d": 99.92167101827675,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -23381,9 +23381,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 98.56711915535445,
-          "uptime_last_5m": 99.48453608247422,
-          "uptime_last_1d": 99.17893544733862,
+          "uptime_last_30m": 99.31506849315068,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.20066897857794,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -23425,9 +23425,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 98.59943977591037,
-          "uptime_last_5m": 98.18181818181819,
-          "uptime_last_1d": 98.5406427221172,
+          "uptime_last_30m": 99.1764705882353,
+          "uptime_last_5m": 98.52941176470588,
+          "uptime_last_1d": 98.1260517056754,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -23460,9 +23460,9 @@
             "max_tokens"
           ],
           "status": 0,
-          "uptime_last_30m": 99.9063419855499,
-          "uptime_last_5m": 99.86625055728935,
-          "uptime_last_1d": 97.00297749161206,
+          "uptime_last_30m": 99.95658780117212,
+          "uptime_last_5m": 99.8114985862394,
+          "uptime_last_1d": 97.25526872499918,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -23499,9 +23499,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.1891891891892,
-          "uptime_last_5m": 98.50746268656717,
-          "uptime_last_1d": 99.53936889233286,
+          "uptime_last_30m": 98.89589905362776,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.53775038520801,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -23533,9 +23533,9 @@
             "top_k"
           ],
           "status": 0,
-          "uptime_last_30m": 99.60894537455701,
-          "uptime_last_5m": 99.2462311557789,
-          "uptime_last_1d": 99.1847496421148,
+          "uptime_last_30m": 99.09373060211048,
+          "uptime_last_5m": 98.66429207479965,
+          "uptime_last_1d": 99.1537343885248,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -23652,7 +23652,7 @@
           ],
           "status": 0,
           "uptime_last_30m": 100,
-          "uptime_last_5m": 100,
+          "uptime_last_5m": null,
           "uptime_last_1d": 100,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
@@ -23759,9 +23759,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.59183673469387,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.66468091178254,
+          "uptime_last_30m": 99.24812030075188,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.6682075753057,
           "supports_implicit_caching": false,
           "tr_provider_slug": "crusoe",
           "pricing_source": "provider_direct"
@@ -23802,9 +23802,9 @@
             "structured_outputs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.32885906040269,
-          "uptime_last_5m": 99.51219512195122,
-          "uptime_last_1d": 99.73142081341125,
+          "uptime_last_30m": 98.49874895746456,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.72609215539056,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -23846,7 +23846,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97147339894451,
+          "uptime_last_1d": 99.95368161019566,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -23878,9 +23878,9 @@
             "top_logprobs"
           ],
           "status": 0,
-          "uptime_last_30m": 99.6661101836394,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.31229513464875,
+          "uptime_last_30m": 97.76119402985076,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.49327616449035,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -23921,10 +23921,10 @@
             "logprobs",
             "top_logprobs"
           ],
-          "status": 0,
-          "uptime_last_30m": 96.98492462311557,
-          "uptime_last_5m": 90.32258064516128,
-          "uptime_last_1d": 96.72690392771528,
+          "status": -2,
+          "uptime_last_30m": 93.75,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 96.37286224393911,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -23957,9 +23957,9 @@
             "max_tokens"
           ],
           "status": 0,
-          "uptime_last_30m": 99.7752808988764,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.19628647214854,
+          "uptime_last_30m": 99.8896247240618,
+          "uptime_last_5m": 99.35897435897436,
+          "uptime_last_1d": 98.201964445166,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -23996,9 +23996,9 @@
             "tool_choice"
           ],
           "status": 0,
-          "uptime_last_30m": 99.33110367892976,
-          "uptime_last_5m": 97.43589743589743,
-          "uptime_last_1d": 99.65085082141938,
+          "uptime_last_30m": 99.46902654867257,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 99.49560215098587,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -24043,7 +24043,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": null,
-          "uptime_last_1d": 99.8660007309051,
+          "uptime_last_1d": 99.33623254749371,
           "supports_implicit_caching": false,
           "tr_provider_slug": "wafer",
           "pricing_source": "provider_direct"
@@ -24076,9 +24076,9 @@
             "response_format"
           ],
           "status": 0,
-          "uptime_last_30m": 99.53307392996109,
-          "uptime_last_5m": 99.31972789115646,
-          "uptime_last_1d": 99.61080586080587,
+          "uptime_last_30m": 99.510603588907,
+          "uptime_last_5m": 98.61111111111111,
+          "uptime_last_1d": 99.61556116593987,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
@@ -24191,7 +24191,7 @@
       "pricing": {
         "prompt": "0.00000075",
         "completion": "0.0000024",
-        "input_cache_read": "0.00000012987"
+        "input_cache_read": "0.00000011557"
       },
       "top_provider": {
         "context_length": 1024000,
@@ -24237,9 +24237,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.81039658713857,
-          "uptime_last_5m": 98.9795918367347,
-          "uptime_last_1d": 98.81439276011925,
+          "uptime_last_30m": 96.13821138211382,
+          "uptime_last_5m": 98.09885931558935,
+          "uptime_last_1d": 98.88169359364386,
           "supports_implicit_caching": false,
           "tr_provider_slug": "deepinfra",
           "pricing_source": "provider_direct"
@@ -24281,9 +24281,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.79548011044074,
+          "uptime_last_30m": 99.8663101604278,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 98.54160841075964,
+          "uptime_last_1d": 98.67706567979802,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -24325,9 +24325,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.12087912087912,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 95.91505171325049,
+          "uptime_last_30m": 96.9620253164557,
+          "uptime_last_5m": 95.55555555555556,
+          "uptime_last_1d": 95.6994571826148,
           "supports_implicit_caching": false,
           "tr_provider_slug": "fireworks",
           "pricing_source": "provider_direct"
@@ -24368,9 +24368,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.48773254246429,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.09185243749205,
+          "uptime_last_30m": 99.55103262496259,
+          "uptime_last_5m": 99.18032786885246,
+          "uptime_last_1d": 99.1288480174849,
           "supports_implicit_caching": false,
           "tr_provider_slug": "friendli",
           "pricing_source": "provider_direct"
@@ -24407,9 +24407,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.5105950955381,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 98.81498962870548,
+          "uptime_last_30m": 98.6764705882353,
+          "uptime_last_5m": 99.07146876758583,
+          "uptime_last_1d": 98.90119580937599,
           "supports_implicit_caching": false,
           "tr_provider_slug": "gmi",
           "pricing_source": "provider_direct"
@@ -24425,7 +24425,7 @@
             "prompt": "0.0000014",
             "completion": "0.0000044",
             "input_cache_read": "0.00000026",
-            "discount": 0.5
+            "discount": 0.556
           },
           "quantization": "fp8",
           "max_completion_tokens": 131072,
@@ -24448,9 +24448,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.77385468339655,
-          "uptime_last_5m": 99.84038308060654,
-          "uptime_last_1d": 98.68633694168932,
+          "uptime_last_30m": 99.88238061632558,
+          "uptime_last_5m": 99.84954864593782,
+          "uptime_last_1d": 98.61324168476251,
           "supports_implicit_caching": false,
           "tr_provider_slug": "novita",
           "pricing_source": "provider_direct"
@@ -24493,9 +24493,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 98.80514705882352,
-          "uptime_last_5m": null,
-          "uptime_last_1d": 94.457122622022,
+          "uptime_last_30m": 97.68767817548306,
+          "uptime_last_5m": 99.34354485776805,
+          "uptime_last_1d": 96.24218736548494,
           "supports_implicit_caching": false,
           "tr_provider_slug": "parasail",
           "pricing_source": "provider_direct"
@@ -24529,9 +24529,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.65272233753792,
-          "uptime_last_5m": 99.90400000000001,
-          "uptime_last_1d": 98.50477667375031,
+          "uptime_last_30m": 98.60294367585574,
+          "uptime_last_5m": 91.98301035306609,
+          "uptime_last_1d": 98.9639556356492,
           "supports_implicit_caching": false,
           "tr_provider_slug": "siliconflow",
           "pricing_source": "provider_direct"
@@ -24572,9 +24572,9 @@
             "reasoning_effort"
           ],
           "status": -2,
-          "uptime_last_30m": 85.58851183861869,
-          "uptime_last_5m": 97.00526102792392,
-          "uptime_last_1d": 90.49078844784923,
+          "uptime_last_30m": 92.14243672748675,
+          "uptime_last_5m": 100,
+          "uptime_last_1d": 91.49604225436154,
           "supports_implicit_caching": false,
           "tr_provider_slug": "together",
           "pricing_source": "provider_direct"
@@ -24612,9 +24612,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.37332139659803,
-          "uptime_last_5m": 98.30508474576271,
-          "uptime_last_1d": 98.82968917075328,
+          "uptime_last_30m": 98.12646370023418,
+          "uptime_last_5m": 99.67105263157895,
+          "uptime_last_1d": 98.86192673428401,
           "supports_implicit_caching": false,
           "tr_provider_slug": "venice",
           "pricing_source": "provider_direct"
@@ -24658,9 +24658,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.70845481049562,
-          "uptime_last_5m": 100,
-          "uptime_last_1d": 99.49821655280817,
+          "uptime_last_30m": null,
+          "uptime_last_5m": null,
+          "uptime_last_1d": 99.45154213446897,
           "supports_implicit_caching": false,
           "tr_provider_slug": "wafer",
           "pricing_source": "provider_direct"
@@ -24704,9 +24704,9 @@
             "reasoning_effort"
           ],
           "status": 0,
-          "uptime_last_30m": 99.90512333965845,
+          "uptime_last_30m": 98.7603305785124,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.25771971496437,
+          "uptime_last_1d": 99.17883211678831,
           "supports_implicit_caching": false,
           "tr_provider_slug": "wafer",
           "pricing_source": "provider_direct"
@@ -24848,6 +24848,23 @@
           "quantization": "unknown"
         },
         {
+          "name": "cloudflare-workers-ai | z-ai/glm-5.2",
+          "model_id": "z-ai/glm-5.2",
+          "model_name": "Z.ai: GLM 5.2",
+          "provider_name": "cloudflare-workers-ai",
+          "tag": "cloudflare-workers-ai",
+          "tr_provider_slug": "cloudflare-workers-ai",
+          "context_length": 1048576,
+          "pricing": {
+            "prompt": "0.0000014",
+            "completion": "0.0000044",
+            "input_cache_read": "0.00000026"
+          },
+          "pricing_source": "provider_direct",
+          "supported_parameters": [],
+          "quantization": "unknown"
+        },
+        {
           "name": "morph | z-ai/glm-5.2",
           "model_id": "morph-glm52-744b",
           "model_name": "Z.ai: GLM 5.2",
@@ -24875,23 +24892,6 @@
             "prompt": "0.00000094",
             "completion": "0.0000029",
             "input_cache_read": "0.00000017"
-          },
-          "pricing_source": "provider_direct",
-          "supported_parameters": [],
-          "quantization": "unknown"
-        },
-        {
-          "name": "cloudflare-workers-ai | z-ai/glm-5.2",
-          "model_id": "z-ai/glm-5.2",
-          "model_name": "Z.ai: GLM 5.2",
-          "provider_name": "cloudflare-workers-ai",
-          "tag": "cloudflare-workers-ai",
-          "tr_provider_slug": "cloudflare-workers-ai",
-          "context_length": 1048576,
-          "pricing": {
-            "prompt": "0.0000014",
-            "completion": "0.0000044",
-            "input_cache_read": "0.00000026"
           },
           "pricing_source": "provider_direct",
           "supported_parameters": [],
@@ -24978,7 +24978,7 @@
           "status": 0,
           "uptime_last_30m": 100,
           "uptime_last_5m": 100,
-          "uptime_last_1d": 99.97987421383647,
+          "uptime_last_1d": 99.97437080321903,
           "supports_implicit_caching": false,
           "tr_provider_slug": "zai",
           "pricing_source": "provider_direct"
