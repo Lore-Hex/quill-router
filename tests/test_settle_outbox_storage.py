@@ -8,6 +8,8 @@ drain worker, and frozen-cost finalize primitive land in later increments.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.fakes.spanner import _execute_settle_outbox_sql, _FakeTransaction, make_fake_store
@@ -17,6 +19,7 @@ from trusted_router.storage_gcp_settle_outbox import (
     ENQ_INSERTED,
     ENQ_LEASED,
     ENQ_REFRESHED,
+    OUTBOX_COLUMNS,
     SpannerSettleOutbox,
 )
 from trusted_router.storage_models import SettleOutboxRow
@@ -41,7 +44,7 @@ def _row(aid: str, *, kind: str = "settle", cost: int = 1000, origin: str = "typ
 
 
 def test_enqueue_inserts_and_get_returns_frozen_inputs() -> None:
-    store, _db, _ = make_fake_store()
+    store, database, _ = make_fake_store()
     ob = _outbox(store)
     assert ob.enqueue(_row("gwa-1", cost=4200)) == ENQ_INSERTED
     got = ob.get("gwa-1", "settle")
@@ -51,6 +54,7 @@ def test_enqueue_inserts_and_get_returns_frozen_inputs() -> None:
     assert got.settle_origin == "typed"
     assert got.reservation_id == "res-gwa-1"
     assert got.selected_usage_type == "Credits"
+    assert 0 <= database.settle_outbox[("gwa-1", "settle")]["queue_shard"] < 16
 
 
 def test_enqueue_is_idempotent_and_refreshes_a_pending_row() -> None:
@@ -101,7 +105,10 @@ def test_mark_done_settles_and_drops_out_of_due() -> None:
     [job] = ob.claim(lease_seconds=300)
     assert ob.mark("gwa-6", "settle", done=True, lease_owner=job.lease_owner) == "done"
     assert ob.due() == []
-    assert ob.get("gwa-6", "settle").status == "done"
+    done = ob.get("gwa-6", "settle")
+    assert done is not None
+    assert done.status == "done"
+    assert done.next_attempt_at is None
 
 
 def test_mark_failure_backs_off_then_dies_at_max_attempts() -> None:
@@ -205,6 +212,18 @@ def test_fake_is_sql_sensitive_dropped_predicate_fails() -> None:
             "AND status='pending'",  # dropped the leased_until fence
             params={"owner": "x", "lease": "z", "now": "z", "aid": "gwa-12", "kind": "settle"},
         )
+    # A due query must stay pinned to the sparse sharded index. Accidentally
+    # dropping the hint can silently restore the production moving-edge scan.
+    with pytest.raises(AssertionError, match="due-scan-index"):
+        _execute_settle_outbox_sql(
+            db,
+            None,
+            f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox "  # noqa: S608
+            "WHERE queue_shard IS NOT NULL AND next_attempt_at IS NOT NULL "
+            "AND status='pending' AND next_attempt_at <= @now "
+            "ORDER BY next_attempt_at LIMIT @limit",
+            {"now": "z", "limit": 10},
+        )
     # A mark query missing the PK key predicate must FAIL — real Spanner would
     # update every matching pending row, not the single pk (codex #113 re-review).
     with pytest.raises(AssertionError, match="mark"):
@@ -255,3 +274,34 @@ def test_has_intent_freezes_on_pending_and_dead_only() -> None:
     # release_approved (human ok'd freeing) does NOT freeze.
     db.settle_outbox[("gwa-10", "settle")]["status"] = "release_approved"
     assert ob.has_intent("gwa-10") is False
+
+
+def test_outbox_schema_uses_generated_shard_and_sparse_due_index() -> None:
+    root = Path(__file__).parents[1]
+    migration = (root / "scripts/deploy/migrate_typed_counters.sh").read_text()
+    retirement = (
+        root / "scripts/deploy/retire_settle_outbox_hot_index.sh"
+    ).read_text()
+    workflow = (root / ".github/workflows/deploy.yml").read_text()
+
+    assert "queue_shard INT64 NOT NULL AS (" in migration
+    assert "FARM_FINGERPRINT(CONCAT(authorization_id, '#', intent_kind))" in migration
+    assert "CREATE NULL_FILTERED INDEX tr_settle_outbox_due_v2" in migration
+    assert "ON tr_settle_outbox (queue_shard, next_attempt_at)" in migration
+    assert "CREATE INDEX tr_settle_outbox_due ON" not in migration
+    assert migration.index(
+        "wait_generated_column_committed tr_settle_outbox queue_shard"
+    ) < migration.index("CREATE NULL_FILTERED INDEX tr_settle_outbox_due_v2")
+    assert migration.index("wait_index_read_write tr_settle_outbox_due_v2") > (
+        migration.index("CREATE NULL_FILTERED INDEX tr_settle_outbox_due_v2")
+    )
+    assert "index_state='READ_WRITE'" in retirement
+    assert retirement.index("tr_settle_outbox_due_v2") < retirement.index(
+        "DROP INDEX tr_settle_outbox_due"
+    )
+    assert retirement.index("queue_shard IS NULL") < retirement.index(
+        "DROP INDEX tr_settle_outbox_due"
+    )
+    assert workflow.index("Smoke test prod") < workflow.index(
+        "Retire legacy settle-outbox hotspot index"
+    )

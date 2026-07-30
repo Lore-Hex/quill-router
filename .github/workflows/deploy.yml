@@ -554,3 +554,10 @@ jobs:
             | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('data',[])))")
           [[ "$count" -gt 100 ]] || { echo "/v1/models has only $count models, expected >100"; exit 1; }
           echo "smoke ok: homepage, liveness, readiness, regions, status, and $count catalog models"
+
+      - name: Retire legacy settle-outbox hotspot index
+        env:
+          GCP_PROJECT_ID: quill-cloud-proxy
+          SPANNER_INSTANCE_ID: trusted-router-nam6
+          SPANNER_DATABASE_ID: trusted-router
+        run: scripts/deploy/retire_settle_outbox_hot_index.sh

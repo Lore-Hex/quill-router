@@ -268,8 +268,12 @@ class SpannerSettleOutbox:
         now = _iso_now()
         with self._database.snapshot() as snapshot:
             rows = list(snapshot.execute_sql(
-                f"SELECT {', '.join(OUTBOX_COLUMNS)} FROM tr_settle_outbox "  # noqa: S608 - fixed column list
-                "WHERE status='pending' AND next_attempt_at <= @now "
+                f"SELECT {', '.join(OUTBOX_COLUMNS)} "  # noqa: S608 - fixed column list
+                "FROM tr_settle_outbox"
+                "@{FORCE_INDEX=tr_settle_outbox_due_v2} "
+                "WHERE queue_shard IS NOT NULL "
+                "AND next_attempt_at IS NOT NULL "
+                "AND status='pending' AND next_attempt_at <= @now "
                 "ORDER BY next_attempt_at LIMIT @limit",
                 params={"now": now, "limit": int(limit)},
                 param_types={"now": self._pt.TIMESTAMP, "limit": self._pt.INT64},

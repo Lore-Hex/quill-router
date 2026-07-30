@@ -743,7 +743,12 @@ class _FakeTransaction:
             vkey = ("outbox", pk)
             if vkey not in self.read_versions:
                 self.read_versions[vkey] = self.db.settle_outbox_versions.get(pk, 0)
-            self.pending_writes.append(("insert_settle_outbox", pk, dict(p)))
+            record = dict(p)
+            # Production defines this as a generated stored column. The fake
+            # only needs the same non-null/range contract, not FarmHash parity.
+            shard_source = f"{p['authorization_id']}#{p['intent_kind']}".encode()
+            record["queue_shard"] = sum(shard_source) % 16
+            self.pending_writes.append(("insert_settle_outbox", pk, record))
             return 1
         if sql.startswith("UPDATE tr_settle_outbox SET settle_origin="):  # enqueue refresh
             # SQL-SENSITIVE (codex #113 finding 1): assert every load-bearing
@@ -989,12 +994,21 @@ def _execute_settle_outbox_sql(
         ):
             values.append(rec.get("reservation_id"))
         return [values]
-    if "WHERE status='pending' AND next_attempt_at <= @now" in sql:  # due scan
+    if "next_attempt_at <= @now" in sql and "ORDER BY next_attempt_at" in sql:
+        _require_pred(
+            sql,
+            "FORCE_INDEX=tr_settle_outbox_due_v2",
+            "due-scan-index",
+        )
+        _require_pred(sql, "queue_shard IS NOT NULL", "due-scan-shard")
+        _require_pred(sql, "next_attempt_at IS NOT NULL", "due-scan-sparse")
+        _require_pred(sql, "status='pending'", "due-scan-status")
         now = p["now"]
         limit = int(p.get("limit", 100))
         rows = [
             rec for rec in db.settle_outbox.values()
             if rec.get("status") == "pending"
+            and rec.get("queue_shard") is not None
             and rec.get("next_attempt_at") is not None
             and rec["next_attempt_at"] <= now
         ]
