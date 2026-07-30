@@ -247,3 +247,30 @@ def make_benchmark_sample(
     if created_at is not None:
         kwargs["created_at"] = created_at
     return ProviderBenchmarkSample(**kwargs)
+
+
+def make_synthetic_probe_sample(
+    *,
+    sample_id: str,
+    target: str,
+    probe_type: str,
+    monitor_region: str,
+    created_at: str,
+    status: str = "up",
+    latency_milliseconds: int | None = 50,
+    ttfb_milliseconds: int | None = 25,
+) -> Any:
+    """A privacy-safe synthetic sample for the public-status contract."""
+    from trusted_router.storage_models import SyntheticProbeSample
+
+    return SyntheticProbeSample(
+        id=sample_id,
+        probe_type=probe_type,
+        target=target,
+        target_url=f"https://{target}.example.com/v1",
+        monitor_region=monitor_region,
+        status=status,
+        latency_milliseconds=latency_milliseconds,
+        ttfb_milliseconds=ttfb_milliseconds,
+        created_at=created_at,
+    )

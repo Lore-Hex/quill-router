@@ -68,9 +68,35 @@ from trusted_router.storage_models import (
     normalize_provider_access_slug,
     utcnow,
 )
+from trusted_router.synthetic.rollups import (
+    RAW_SYNTHETIC_RETENTION_DAYS,
+    ROLLUP_RETENTION_MONTHS,
+    apply_sample_to_rollup,
+    new_rollup_for_sample,
+    sample_rollup_ids,
+)
 from trusted_router.types import UsageType
 
 T = TypeVar("T")
+
+
+def _split_sql_statements(schema: str) -> list[str]:
+    """Split a schema file into statements, ignoring semicolons in comments.
+
+    Splitting the raw text on ';' looks fine until a `--` comment contains one,
+    at which point the comment's tail is handed to the server as a statement and
+    fails with a syntax error naming a random English word. That is a genuinely
+    confusing way to discover you cannot write prose in your own schema file, so
+    strip line comments first.
+
+    Deliberately not a full SQL parser: this file is ours, it has no dollar-quoted
+    bodies or string literals containing semicolons, and DSQL forbids the stored
+    procedures that would introduce them.
+    """
+    without_comments = "\n".join(
+        line.split("--", 1)[0] for line in schema.splitlines()
+    )
+    return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
 
 
 class PostgresStore:
@@ -126,16 +152,46 @@ class PostgresStore:
         `IF NOT EXISTS`, so re-running converges rather than conflicting.
         """
         schema = Path(__file__).with_name("storage_postgres_schema.sql").read_text()
-        statements = [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
+        statements = _split_sql_statements(schema)
 
         with self._pool.connection() as conn:
             previous_autocommit = conn.autocommit
             conn.autocommit = True
             try:
                 for statement in statements:
-                    conn.execute(statement, prepare=False)
+                    self._execute_ddl(conn, statement)
             finally:
                 conn.autocommit = previous_autocommit
+
+    @staticmethod
+    def _execute_ddl(conn: Any, statement: str) -> None:
+        """Run one DDL statement, tolerating Aurora DSQL's async-index rule.
+
+        DSQL builds indexes asynchronously and rejects a plain `CREATE INDEX`
+        with "unsupported mode. please use CREATE INDEX ASYNC." Stock Postgres
+        and Spanner's PG dialect both reject the `ASYNC` keyword, so neither
+        spelling is portable on its own.
+
+        Rather than branch on a configured dialect — which would mean the DSN
+        has to declare what it is, and would be wrong the first time someone
+        pointed it somewhere new — try the portable form and fall back only on
+        the specific error DSQL raises. The backend then adapts to whatever it
+        is actually connected to.
+
+        DSQL's ASYNC build returns immediately and completes in the background.
+        That is acceptable here: these indexes serve read paths that are correct
+        (just slower) while the index is still building.
+        """
+        try:
+            conn.execute(statement, prepare=False)
+            return
+        except psycopg.errors.FeatureNotSupported:
+            head = statement.lstrip()[:12].upper()
+            if not head.startswith("CREATE INDEX"):
+                raise
+        conn.execute(
+            statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False
+        )
 
     # Generic entity IO ------------------------------------------------------
 
@@ -230,6 +286,73 @@ class PostgresStore:
             "VALUES (%s, %s, %s::jsonb, CURRENT_TIMESTAMP) "
             "ON CONFLICT (kind, id) DO NOTHING",
             (kind, entity_id, json_body(value)),
+        )
+        return cursor.rowcount == 1
+
+    def _write_indexed_entity_tx(
+        self,
+        conn: Any,
+        kind: str,
+        entity_id: str,
+        value: Any,
+        *,
+        indexed_at: str,
+        index_date: str | None = None,
+        index_target: str | None = None,
+        index_probe_type: str | None = None,
+        index_monitor_region: str | None = None,
+        index_period: str | None = None,
+    ) -> None:
+        conn.execute(
+            "INSERT INTO tr_entities "
+            "(kind, id, body, indexed_at, index_date, index_target, "
+            "index_probe_type, index_monitor_region, index_period, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, "
+            "CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO UPDATE SET "
+            "body = EXCLUDED.body, "
+            "indexed_at = EXCLUDED.indexed_at, "
+            "index_date = EXCLUDED.index_date, "
+            "index_target = EXCLUDED.index_target, "
+            "index_probe_type = EXCLUDED.index_probe_type, "
+            "index_monitor_region = EXCLUDED.index_monitor_region, "
+            "index_period = EXCLUDED.index_period, "
+            "updated_at = EXCLUDED.updated_at",
+            (
+                kind,
+                entity_id,
+                json_body(value),
+                _parse_timestamp(indexed_at),
+                index_date,
+                index_target,
+                index_probe_type,
+                index_monitor_region,
+                index_period,
+            ),
+        )
+
+    def _insert_indexed_entity_once_tx(
+        self,
+        conn: Any,
+        kind: str,
+        entity_id: str,
+        value: Any,
+        *,
+        indexed_at: str,
+        index_period: str,
+    ) -> bool:
+        cursor = conn.execute(
+            "INSERT INTO tr_entities "
+            "(kind, id, body, indexed_at, index_period, updated_at) "
+            "VALUES (%s, %s, %s::jsonb, %s, %s, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (kind, id) DO NOTHING",
+            (
+                kind,
+                entity_id,
+                json_body(value),
+                _parse_timestamp(indexed_at),
+                index_period,
+            ),
         )
         return cursor.rowcount == 1
 
@@ -1419,7 +1542,63 @@ class PostgresStore:
     def record_synthetic_probe_sample(
         self, sample: SyntheticProbeSample
     ) -> None:
-        self._not_implemented("record_synthetic_probe_sample")
+        def record(conn: Any) -> None:
+            self._write_indexed_entity_tx(
+                conn,
+                "synthetic_probe",
+                sample.id,
+                sample,
+                indexed_at=sample.created_at,
+                index_date=sample.created_at[:10],
+                index_target=sample.target,
+                index_probe_type=sample.probe_type,
+                index_monitor_region=sample.monitor_region,
+            )
+            for period, component in sample_rollup_ids(sample):
+                update = new_rollup_for_sample(
+                    sample,
+                    period=period,
+                    component=component,
+                )
+                marker_id = f"{update.id}:{sample.id}"
+                if not self._insert_entity_once_tx(
+                    conn,
+                    "synthetic_rollup_seen",
+                    marker_id,
+                    {"seen": True},
+                ):
+                    continue
+                if self._insert_indexed_entity_once_tx(
+                    conn,
+                    "synthetic_rollup",
+                    update.id,
+                    update,
+                    indexed_at=update.period_start,
+                    index_period=update.period,
+                ):
+                    continue
+                existing = self._read_entity_tx(
+                    conn,
+                    "synthetic_rollup",
+                    update.id,
+                    SyntheticRollup,
+                    for_update=True,
+                )
+                if existing is None:
+                    raise StoreConflict(
+                        "Synthetic rollup disappeared during update"
+                    )
+                apply_sample_to_rollup(existing, sample)
+                self._write_indexed_entity_tx(
+                    conn,
+                    "synthetic_rollup",
+                    existing.id,
+                    existing,
+                    indexed_at=existing.period_start,
+                    index_period=existing.period,
+                )
+
+        self._run_transaction(record)
 
     def synthetic_probe_samples(
         self,
@@ -1430,7 +1609,40 @@ class PostgresStore:
         monitor_region: str | None = None,
         limit: int = 1000,
     ) -> list[SyntheticProbeSample]:
-        self._not_implemented("synthetic_probe_samples")
+        def list_samples(conn: Any) -> list[SyntheticProbeSample]:
+            predicates = [
+                "kind = %s",
+                "indexed_at >= %s",
+            ]
+            params: list[Any] = [
+                "synthetic_probe",
+                utcnow() - dt.timedelta(days=RAW_SYNTHETIC_RETENTION_DAYS),
+            ]
+            if date is not None:
+                predicates.append("index_date = %s")
+                params.append(date)
+            if target is not None:
+                predicates.append("index_target = %s")
+                params.append(target)
+            if probe_type is not None:
+                predicates.append("index_probe_type = %s")
+                params.append(probe_type)
+            if monitor_region is not None:
+                predicates.append("index_monitor_region = %s")
+                params.append(monitor_region)
+            params.append(max(0, int(limit)))
+            query = (
+                "SELECT body FROM tr_entities WHERE "  # noqa: S608 - fixed predicates.
+                + " AND ".join(predicates)
+                + " ORDER BY indexed_at DESC, id DESC LIMIT %s"
+            )
+            rows = conn.execute(query, params).fetchall()
+            return [
+                _dataclass_from_json(row[0], SyntheticProbeSample)
+                for row in rows
+            ]
+
+        return self._run_transaction(list_samples)
 
     def synthetic_rollups(
         self,
@@ -1441,7 +1653,47 @@ class PostgresStore:
         include_histograms: bool = True,
         limit: int = 1000,
     ) -> list[SyntheticRollup]:
-        self._not_implemented("synthetic_rollups")
+        def list_rollups(conn: Any) -> list[SyntheticRollup]:
+            predicates = [
+                "kind = %s",
+                "indexed_at >= %s",
+            ]
+            params: list[Any] = [
+                "synthetic_rollup",
+                _rollup_retention_cutoff(utcnow()),
+            ]
+            if period is not None:
+                predicates.append("index_period = %s")
+                params.append(period)
+            if since is not None:
+                predicates.append("indexed_at >= %s")
+                params.append(_parse_timestamp(since))
+            if until is not None:
+                predicates.append("indexed_at <= %s")
+                params.append(_parse_timestamp(until))
+            params.append(max(0, int(limit)))
+            query = (
+                "SELECT body FROM tr_entities WHERE "  # noqa: S608 - fixed predicates.
+                + " AND ".join(predicates)
+                + " ORDER BY indexed_at DESC, id DESC LIMIT %s"
+            )
+            rows = conn.execute(query, params).fetchall()
+            rollups = [
+                _dataclass_from_json(row[0], SyntheticRollup)
+                for row in rows
+            ]
+            if not include_histograms:
+                return [
+                    dataclasses.replace(
+                        rollup,
+                        latency_histogram={},
+                        ttfb_histogram={},
+                    )
+                    for rollup in rollups
+                ]
+            return rollups
+
+        return self._run_transaction(list_rollups)
 
     def get_generation(self, generation_id: str) -> Generation | None:
         self._not_implemented("get_generation")
@@ -1526,3 +1778,38 @@ class PostgresStore:
         now: dt.datetime | None = None,
     ) -> RateLimitHit:
         self._not_implemented("hit_rate_limit")
+
+
+def _dataclass_from_json(raw: Any, cls: type[T]) -> T:
+    data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    known = {
+        field.name
+        for field in dataclasses.fields(cast(Any, cls))
+    }
+    return cls(
+        **{
+            key: value
+            for key, value in data.items()
+            if key in known
+        }
+    )
+
+
+def _parse_timestamp(value: str) -> dt.datetime:
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
+
+
+def _rollup_retention_cutoff(now: dt.datetime) -> dt.datetime:
+    current = now.astimezone(dt.UTC)
+    cutoff_month = (
+        current.year * 12
+        + current.month
+        - 1
+        - ROLLUP_RETENTION_MONTHS
+        + 1
+    )
+    year, zero_based_month = divmod(cutoff_month, 12)
+    return dt.datetime(year, zero_based_month + 1, 1, tzinfo=dt.UTC)

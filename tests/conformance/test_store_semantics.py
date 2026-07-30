@@ -31,9 +31,11 @@ Known limits of this suite — read before trusting it
 
 from __future__ import annotations
 
+import datetime as dt
+
 from trusted_router.store_protocol import Store
 
-from .conftest import BACKENDS, make_benchmark_sample
+from .conftest import BACKENDS, make_benchmark_sample, make_synthetic_probe_sample
 
 # --------------------------------------------------------------------------
 # Exactly-once money
@@ -272,6 +274,155 @@ def test_benchmark_samples_filter_by_route(store: Store, unique: str) -> None:
 
 
 # --------------------------------------------------------------------------
+# Public-status synthetic samples + rollups
+# --------------------------------------------------------------------------
+
+
+def test_synthetic_probe_samples_return_newest_first_and_respect_limit(
+    store: Store, unique: str
+) -> None:
+    """The public hot path asks for the newest bounded live-sample window."""
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+    target = f"status-{unique}"
+    probe_type = f"probe-{unique}"
+    monitor_region = f"monitor-{unique}"
+    for idx, minutes_ago in enumerate((3, 2, 1)):
+        store.record_synthetic_probe_sample(
+            make_synthetic_probe_sample(
+                sample_id=f"{unique}-synthetic-{idx}",
+                target=target,
+                probe_type=probe_type,
+                monitor_region=monitor_region,
+                created_at=_iso_utc(now - dt.timedelta(minutes=minutes_ago)),
+            )
+        )
+
+    samples = store.synthetic_probe_samples(
+        target=target,
+        probe_type=probe_type,
+        monitor_region=monitor_region,
+        limit=2,
+    )
+
+    assert [sample.id for sample in samples] == [
+        f"{unique}-synthetic-2",
+        f"{unique}-synthetic-1",
+    ]
+
+
+def test_synthetic_probe_samples_apply_status_reader_filters(
+    store: Store, unique: str
+) -> None:
+    """Date and route dimensions must not leak unrelated deployment checks."""
+    now = dt.datetime.now(dt.UTC).replace(microsecond=0)
+    date = now.date().isoformat()
+    target = f"status-{unique}"
+    probe_type = f"probe-{unique}"
+    monitor_region = f"monitor-{unique}"
+    dimensions = (
+        ("match", target, probe_type, monitor_region, now),
+        ("wrong-target", f"other-{unique}", probe_type, monitor_region, now),
+        ("wrong-probe", target, f"other-probe-{unique}", monitor_region, now),
+        ("wrong-monitor", target, probe_type, f"other-monitor-{unique}", now),
+        ("wrong-date", target, probe_type, monitor_region, now - dt.timedelta(days=1)),
+    )
+    for suffix, sample_target, sample_probe, sample_monitor, created_at in dimensions:
+        store.record_synthetic_probe_sample(
+            make_synthetic_probe_sample(
+                sample_id=f"{unique}-{suffix}",
+                target=sample_target,
+                probe_type=sample_probe,
+                monitor_region=sample_monitor,
+                created_at=_iso_utc(created_at),
+            )
+        )
+
+    samples = store.synthetic_probe_samples(
+        date=date,
+        target=target,
+        probe_type=probe_type,
+        monitor_region=monitor_region,
+        limit=10,
+    )
+
+    assert [sample.id for sample in samples] == [f"{unique}-match"]
+
+
+def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
+    store: Store, unique: str
+) -> None:
+    """Status history uses inclusive period ranges and newest-N ordering."""
+    # Rollup reads have no target/probe filters, and server-backed conformance
+    # databases persist between runs. Give this test a practically unique
+    # three-hour range so old test rows cannot consume its limit.
+    now = (
+        dt.datetime(2100, 1, 1, 0, 10, tzinfo=dt.UTC)
+        + dt.timedelta(hours=int(unique, 16) % 50_000_000)
+    )
+    target = f"status-{unique}"
+    probe_type = f"probe-{unique}"
+    monitor_region = f"monitor-{unique}"
+    samples = [
+        make_synthetic_probe_sample(
+            sample_id=f"{unique}-rollup-{idx}",
+            target=target,
+            probe_type=probe_type,
+            monitor_region=monitor_region,
+            created_at=_iso_utc(now - dt.timedelta(hours=hours_ago)),
+            latency_milliseconds=40 + idx,
+            ttfb_milliseconds=20 + idx,
+        )
+        for idx, hours_ago in enumerate((2, 1, 0))
+    ]
+    for sample in samples:
+        store.record_synthetic_probe_sample(sample)
+    # Re-delivery must not increment the aggregate twice.
+    store.record_synthetic_probe_sample(samples[-1])
+
+    oldest_start = _iso_utc(
+        (now - dt.timedelta(hours=2)).replace(minute=0)
+    )
+    newest_start = _iso_utc(now.replace(minute=0))
+    newest = store.synthetic_rollups(
+        period="hour",
+        since=oldest_start,
+        until=newest_start,
+        limit=2,
+    )
+    assert len(newest) == 2
+    middle_start = _iso_utc(
+        (now - dt.timedelta(hours=1)).replace(minute=0)
+    )
+    assert [row.period_start for row in newest] == [newest_start, middle_start]
+
+    ranged = store.synthetic_rollups(
+        period="hour",
+        since=middle_start,
+        until=newest_start,
+        include_histograms=False,
+        limit=1000,
+    )
+
+    assert [row.period_start for row in ranged] == sorted(
+        (row.period_start for row in ranged),
+        reverse=True,
+    )
+    assert all(row.period == "hour" for row in ranged)
+    assert all(middle_start <= row.period_start <= newest_start for row in ranged)
+    assert all(row.latency_histogram == {} for row in ranged)
+    assert all(row.ttfb_histogram == {} for row in ranged)
+    own_rows = [
+        row
+        for row in ranged
+        if row.target == target
+        and row.probe_type == probe_type
+        and row.monitor_region == monitor_region
+    ]
+    assert [row.period_start for row in own_rows] == [newest_start, middle_start]
+    assert own_rows[0].sample_count == 1
+
+
+# --------------------------------------------------------------------------
 # Coverage guard
 # --------------------------------------------------------------------------
 
@@ -287,3 +438,7 @@ def test_memory_backend_is_always_runnable() -> None:
     assert "memory" in BACKENDS
     store = BACKENDS["memory"]()
     assert isinstance(store, Store)
+
+
+def _iso_utc(value: dt.datetime) -> str:
+    return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
