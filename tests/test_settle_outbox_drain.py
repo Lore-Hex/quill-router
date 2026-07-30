@@ -977,6 +977,66 @@ def test_activity_pending_lost_lease_skips_false_alert(
     )
 
 
+def test_lost_lease_dead_letter_alerts_only_when_fence_wins(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    ob = _outbox(store)
+    stale_auth = _bare_authorization("gwa-missing-stale-owner")
+    winner_auth = _bare_authorization("gwa-missing-winning-owner")
+    ob.enqueue(_row(stale_auth))
+    ob.enqueue(_row(winner_auth))
+    claimed = {
+        row.authorization_id: row
+        for row in ob.claim(limit=2, lease_seconds=300)
+    }
+    stale = claimed[stale_auth.id]
+    winner = claimed[winner_auth.id]
+    stale_record = db.settle_outbox[(stale_auth.id, "settle")]
+    stale_record["lease_owner"] = None
+    stale_record["leased_until"] = None
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        drain_mod._resolve_row(
+            ob,
+            stale,
+            ApplyOutcome.RESERVATION_MISSING,
+            error_note=None,
+        )
+        drain_mod._resolve_row(
+            ob,
+            winner,
+            ApplyOutcome.RESERVATION_MISSING,
+            error_note=None,
+        )
+
+    stale_row = ob.get(stale_auth.id, "settle")
+    winner_row = ob.get(winner_auth.id, "settle")
+    assert stale_row is not None and stale_row.status == "pending"
+    assert stale_row.last_error is None
+    assert winner_row is not None and winner_row.status == "dead"
+    alerts = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "ALERT" in record.getMessage()
+    ]
+    assert len(alerts) == 1
+    assert f"authorization_id={winner_auth.id}" in alerts[0].getMessage()
+    assert not any(
+        record.levelno == logging.ERROR
+        and f"authorization_id={stale_auth.id}" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any(
+        record.levelno == logging.WARNING
+        and "resolution skipped" in record.getMessage()
+        and f"authorization_id={stale_auth.id}" in record.getMessage()
+        and "intent_kind=settle" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_activity_pending_escalation_keeps_retention_pinned(
     fake_store: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,

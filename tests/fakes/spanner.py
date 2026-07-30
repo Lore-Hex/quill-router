@@ -791,7 +791,12 @@ class _FakeTransaction:
         if sql.startswith("UPDATE tr_settle_outbox SET status='pending'"):  # park
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "park")
             _require_pred(sql, "AND status='pending' AND attempts=@attempts", "park")
-            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "park")
+            _require_pred(
+                sql,
+                "(@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner)",
+                "park",
+            )
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)
             if rec is None or rec["status"] != "pending":
@@ -799,7 +804,7 @@ class _FakeTransaction:
             if int(rec.get("attempts", 0) or 0) != int(p["attempts"]):
                 return 0
             owner = rec.get("lease_owner")
-            if owner is not None and owner != p.get("lease_owner"):
+            if owner != p.get("lease_owner"):
                 return 0
             new = dict(
                 rec, status="pending", attempts=rec.get("attempts", 0), last_error=p["err"],
@@ -823,13 +828,18 @@ class _FakeTransaction:
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
             _require_pred(sql, "status='pending'", "mark")
-            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "mark")
+            _require_pred(
+                sql,
+                "(@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner)",
+                "mark",
+            )
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)
             if rec is None or rec["status"] != "pending":
                 return 0
             owner = rec.get("lease_owner")
-            if owner is not None and owner != p.get("lease_owner"):
+            if owner != p.get("lease_owner"):
                 return 0
             new = dict(
                 rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],

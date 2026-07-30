@@ -108,6 +108,8 @@ def _resolve_row(
     error_note: str | None,
 ) -> None:
     lease_owner = row.lease_owner
+    # Benign done transitions may ignore a lost fence: the winner re-runs the
+    # idempotent apply and marks the row done.
     if outcome == ApplyOutcome.SETTLED_NOW:
         outbox.mark(row.authorization_id, row.intent_kind, done=True, lease_owner=lease_owner)
         logger.info(
@@ -256,7 +258,7 @@ def _resolve_row(
     if outcome == ApplyOutcome.ALREADY_RELEASED_FREE:
         if row.intent_kind == "settle":
             error = "already_released_free: settle charge was lost"
-            outbox.mark(
+            status = outbox.mark(
                 row.authorization_id,
                 row.intent_kind,
                 done=False,
@@ -264,6 +266,16 @@ def _resolve_row(
                 lease_owner=lease_owner,
                 force_dead=True,
             )
+            if status != "dead":
+                # The winner re-derives the observation and alerts exactly once;
+                # a stale duplicate or contradictory page is worse than none.
+                logger.warning(
+                    "settle outbox resolution skipped because row was no longer "
+                    "claimable by this owner authorization_id=%s intent_kind=%s",
+                    row.authorization_id,
+                    row.intent_kind,
+                )
+                return
             logger.error(
                 "ALERT settle outbox lost charge authorization_id=%s actual_cost_micro=%s",
                 row.authorization_id,
@@ -274,7 +286,7 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.RESERVATION_MISSING:
-        outbox.mark(
+        status = outbox.mark(
             row.authorization_id,
             row.intent_kind,
             done=False,
@@ -282,6 +294,16 @@ def _resolve_row(
             lease_owner=lease_owner,
             force_dead=True,
         )
+        if status != "dead":
+            # The winner re-derives the observation and alerts exactly once;
+            # a stale duplicate or contradictory page is worse than none.
+            logger.warning(
+                "settle outbox resolution skipped because row was no longer "
+                "claimable by this owner authorization_id=%s intent_kind=%s",
+                row.authorization_id,
+                row.intent_kind,
+            )
+            return
         logger.error(
             "ALERT settle outbox reservation missing authorization_id=%s reservation_id=%s",
             row.authorization_id,
@@ -290,7 +312,7 @@ def _resolve_row(
         return
 
     if outcome == ApplyOutcome.INVALID_ROW:
-        outbox.mark(
+        status = outbox.mark(
             row.authorization_id,
             row.intent_kind,
             done=False,
@@ -298,6 +320,16 @@ def _resolve_row(
             lease_owner=lease_owner,
             force_dead=True,
         )
+        if status != "dead":
+            # The winner re-derives the observation and warns exactly once; a
+            # stale duplicate or contradictory warning is worse than none.
+            logger.warning(
+                "settle outbox resolution skipped because row was no longer "
+                "claimable by this owner authorization_id=%s intent_kind=%s",
+                row.authorization_id,
+                row.intent_kind,
+            )
+            return
         logger.warning(
             "settle outbox invalid frozen row authorization_id=%s intent_kind=%s",
             row.authorization_id,

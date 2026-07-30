@@ -136,31 +136,77 @@ def test_mark_rejects_a_lost_lease() -> None:
     assert ob.get("gwa-8", "settle").status == "pending"
 
 
-def test_mark_without_owner_respects_active_lease_then_owner_succeeds() -> None:
-    store, _db, _ = make_fake_store()
+def test_stale_mark_after_reclaim_and_park_is_rejected() -> None:
+    store, db, _ = make_fake_store()
     ob = _outbox(store)
-    ob.enqueue(_row("gwa-lease-fence"))
+    ob.enqueue(_row("gwa-stale-mark"))
+    [job] = ob.claim(lease_seconds=300)
+    record = db.settle_outbox[("gwa-stale-mark", "settle")]
+    record["lease_owner"] = None
+    record["leased_until"] = None
+
+    assert (
+        ob.mark(
+            "gwa-stale-mark",
+            "settle",
+            done=False,
+            error="stale terminal outcome",
+            lease_owner=job.lease_owner,
+            force_dead=True,
+        )
+        is None
+    )
+    pending = ob.get("gwa-stale-mark", "settle")
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.last_error is None
+
+
+def test_stale_park_after_reclaim_and_park_is_rejected() -> None:
+    store, db, _ = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-stale-park"))
+    [job] = ob.claim(lease_seconds=300)
+    record = db.settle_outbox[("gwa-stale-park", "settle")]
+    record["lease_owner"] = None
+    record["leased_until"] = None
+    attempts_before = record["attempts"]
+    next_attempt_before = record["next_attempt_at"]
+
+    assert (
+        ob.park(
+            "gwa-stale-park",
+            "settle",
+            lease_owner=job.lease_owner,
+            retry_after_seconds=120,
+            note="stale park",
+        )
+        is False
+    )
+    pending = ob.get("gwa-stale-park", "settle")
+    assert pending is not None
+    assert pending.status == "pending"
+    assert pending.attempts == attempts_before
+    assert pending.next_attempt_at == next_attempt_before
+    assert pending.last_error is None
+
+
+def test_anonymous_mark_requires_an_unleased_row() -> None:
+    store, db, _ = make_fake_store()
+    ob = _outbox(store)
+    ob.enqueue(_row("gwa-anonymous-fence"))
     [job] = ob.claim(lease_seconds=300)
 
-    assert ob.mark("gwa-lease-fence", "settle", done=True) is None
-    fenced = ob.get("gwa-lease-fence", "settle")
+    assert ob.mark("gwa-anonymous-fence", "settle", done=True) is None
+    fenced = ob.get("gwa-anonymous-fence", "settle")
     assert fenced is not None
     assert fenced.status == "pending"
     assert fenced.lease_owner == job.lease_owner
 
-    assert (
-        ob.mark(
-            "gwa-lease-fence",
-            "settle",
-            done=True,
-            lease_owner=job.lease_owner,
-        )
-        == "done"
-    )
-    done = ob.get("gwa-lease-fence", "settle")
-    assert done is not None
-    assert done.status == "done"
-    assert done.lease_owner is None and done.leased_until is None
+    record = db.settle_outbox[("gwa-anonymous-fence", "settle")]
+    record["lease_owner"] = None
+    record["leased_until"] = None
+    assert ob.mark("gwa-anonymous-fence", "settle", done=True) == "done"
 
 
 def test_enqueue_initial_delay_defers_claim_until_default_row_is_due() -> None:
