@@ -32,6 +32,7 @@ from trusted_router.storage_models import (
     GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
+    ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
@@ -43,6 +44,8 @@ from trusted_router.storage_models import (
     WalletChallenge,
     Workspace,
     iso_now,
+    normalize_provider_access_role,
+    normalize_provider_access_slug,
 )
 from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
@@ -65,6 +68,7 @@ class InMemoryStore:
         self.users: dict[str, User] = {}
         self.user_ids_by_email: dict[str, str] = {}
         self.user_ids_by_wallet: dict[str, str] = {}
+        self.provider_access_grants: dict[tuple[str, str], ProviderAccessGrant] = {}
         self.workspaces: dict[str, Workspace] = {}
         self.members: dict[tuple[str, str], Member] = {}
         self.credits: dict[str, CreditAccount] = {}
@@ -100,6 +104,7 @@ class InMemoryStore:
             self.users.clear()
             self.user_ids_by_email.clear()
             self.user_ids_by_wallet.clear()
+            self.provider_access_grants.clear()
             self.workspaces.clear()
             self.members.clear()
             self.credits.clear()
@@ -144,6 +149,45 @@ class InMemoryStore:
                 trial_credit_microdollars=trial_credit_microdollars,
             )
             return self.users[new_id]
+
+    def grant_provider_access(
+        self,
+        user_id: str,
+        provider: str,
+        *,
+        role: str = "viewer",
+    ) -> ProviderAccessGrant:
+        normalized_provider = normalize_provider_access_slug(provider)
+        normalized_role = normalize_provider_access_role(role)
+        if user_id not in self.users:
+            raise ValueError("user does not exist")
+        grant = ProviderAccessGrant(
+            user_id=user_id,
+            provider=normalized_provider,
+            role=normalized_role,
+        )
+        with self._lock:
+            self.provider_access_grants[(user_id, normalized_provider)] = grant
+        return grant
+
+    def list_provider_access_for_user(self, user_id: str) -> list[ProviderAccessGrant]:
+        with self._lock:
+            return sorted(
+                (
+                    grant
+                    for (grant_user_id, _), grant in self.provider_access_grants.items()
+                    if grant_user_id == user_id
+                ),
+                key=lambda grant: grant.provider,
+            )
+
+    def revoke_provider_access(self, user_id: str, provider: str) -> bool:
+        normalized_provider = normalize_provider_access_slug(provider)
+        with self._lock:
+            return (
+                self.provider_access_grants.pop((user_id, normalized_provider), None)
+                is not None
+            )
 
     def signup(
         self,

@@ -2044,9 +2044,11 @@ async def test_rotation_pass_fans_out_model_samples(monkeypatch: pytest.MonkeyPa
         api_key: str,
         provider: str,
         model: str,
+        default_timeout_seconds: float,
     ) -> tuple[str, str, str, str]:
         assert monitor_region == "us-central1"
         assert api_key == "sk-tr-test"
+        assert default_timeout_seconds == 20.0
         await asyncio.sleep(0.03)
         return (provider, model, monitor_region, api_key)
 

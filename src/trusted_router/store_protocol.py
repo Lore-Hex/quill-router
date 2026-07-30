@@ -28,6 +28,7 @@ from trusted_router.storage_models import (
     GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
+    ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
@@ -121,6 +122,17 @@ class Store(Protocol):
     def list_members(self, workspace_id: str) -> list[Member]: ...
     def user_can_manage(self, user_id: str, workspace_id: str) -> bool: ...
     def user_is_member(self, user_id: str, workspace_id: str) -> bool: ...
+    def grant_provider_access(
+        self,
+        user_id: str,
+        provider: str,
+        *,
+        role: str = ...,
+    ) -> ProviderAccessGrant: ...
+    def list_provider_access_for_user(
+        self, user_id: str
+    ) -> list[ProviderAccessGrant]: ...
+    def revoke_provider_access(self, user_id: str, provider: str) -> bool: ...
 
     # Auth sessions -----------------------------------------------------------
     def create_auth_session(

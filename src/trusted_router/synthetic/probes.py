@@ -17,6 +17,7 @@ from urllib.parse import urljoin
 import httpx
 
 from trusted_router.config import Settings
+from trusted_router.provider_reliability import model_deadlines
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.security import lookup_hash_api_key
 from trusted_router.storage_models import (
@@ -1206,6 +1207,7 @@ async def provider_rotation_probe(
     api_key: str,
     provider: str,
     model: str,
+    default_timeout_seconds: float = 20.0,
 ) -> ProviderBenchmarkSample:
     """Stream a tiny request to one provider+model and measure TTFB (first
     byte) and TTFT (first content token). Pins `provider.only` so the sample is
@@ -1228,9 +1230,18 @@ async def provider_rotation_probe(
     started = time.perf_counter()
     served_provider = provider
     served_model = model
+    deadline = model_deadlines(
+        model,
+        provider=provider,
+        default_first_token_seconds=default_timeout_seconds,
+    )
     try:
         async with client.stream(
-            "POST", url, json=body, headers=_auth_headers(api_key)
+            "POST",
+            url,
+            json=body,
+            headers=_auth_headers(api_key),
+            timeout=httpx.Timeout(deadline.first_token_seconds),
         ) as response:
             served_provider = response.headers.get("x-trustedrouter-provider") or provider
             served_model = response.headers.get("x-trustedrouter-served-model") or model

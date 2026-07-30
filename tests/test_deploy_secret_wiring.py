@@ -119,3 +119,34 @@ def test_every_authenticated_discovery_feed_is_wired_to_narrow_secret_access() -
             f"{provider} discovery loads {secret_name}, but secrets.sh does not "
             "grant the refresh service account narrow access"
         )
+
+
+def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text(encoding="utf-8")
+    secrets = (ROOT / "scripts/deploy/secrets.sh").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    reader = (
+        ROOT / "scripts/deploy/clickhouse_provider_reader.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=http://10.128.15.214:8123" in rollout
+    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read" in rollout
+    assert "--vpc-egress private-ranges-only" in rollout
+    assert '--network "${TR_CLOUD_RUN_NETWORK:-default}"' in rollout
+    assert '--subnet "${TR_CLOUD_RUN_SUBNET:-default}"' in rollout
+
+    for content in (secrets, rollout, reader):
+        assert "trustedrouter-clickhouse-provider-read-password" in content
+
+    assert "<readonly>1</readonly>" in reader
+    assert "<max_execution_time>60</max_execution_time>" in reader
+    assert "<max_memory_usage>536870912</max_memory_usage>" in reader
+    assert "<max_result_bytes>536870912</max_result_bytes>" in reader
+    assert "GRANT SELECT ON tr.provider_benchmark_samples" in reader
+    assert "refusing configuration: $NAME has external IP" in reader
+    assert (
+        "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: "
+        "${{ secrets.TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD }}" in workflow
+    )
+    assert '"trustedrouter-clickhouse-provider-read-password"' in workflow
+    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD is required" in workflow

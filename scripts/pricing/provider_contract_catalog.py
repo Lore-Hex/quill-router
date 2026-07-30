@@ -13,6 +13,7 @@ from scripts.pricing.model_ids import remember_upstream_id
 _MODEL_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$")
 _OWNER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _TOP_LEVEL_FIELDS = frozenset({"object", "data"})
+_TOP_LEVEL_V2_FIELDS = frozenset({"object", "contract_version", "provider", "data"})
 _MODEL_FIELDS = frozenset(
     {
         "id",
@@ -30,6 +31,7 @@ _MODEL_FIELDS = frozenset(
         "lifecycle",
     }
 )
+_MODEL_V2_FIELDS = _MODEL_FIELDS | {"reliability"}
 _CAPABILITY_FIELDS = frozenset(
     {"streaming", "tools", "structured_output", "reasoning", "prompt_caching"}
 )
@@ -51,6 +53,34 @@ _ENDPOINTS = frozenset({"chat/completions", "responses"})
 _INPUT_MODALITIES = frozenset({"text", "image", "audio", "video", "file"})
 _OUTPUT_MODALITIES = frozenset({"text", "image", "audio"})
 _LIFECYCLE_STATUSES = frozenset({"active", "deprecated", "retired"})
+_PROVIDER_V2_FIELDS = frozenset(
+    {
+        "id",
+        "status_url",
+        "support_contact",
+        "incident_contact",
+        "regions",
+        "request_id_header",
+        "error_contract",
+    }
+)
+_ERROR_CONTRACT_FIELDS = frozenset(
+    {
+        "rate_limit_status",
+        "overload_status",
+        "retry_after_header",
+        "account_quota_error_codes",
+    }
+)
+_RELIABILITY_FIELDS = frozenset(
+    {
+        "first_token_timeout_seconds",
+        "completion_timeout_seconds",
+        "stream_idle_timeout_seconds",
+        "capacity_scope",
+    }
+)
+_CAPACITY_SCOPES = frozenset({"global", "region", "model", "model_region"})
 _MICRODOLLARS_PER_DOLLAR = Decimal("1000000")
 
 
@@ -80,6 +110,26 @@ def _require_positive_int(value: object, *, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise RuntimeError(f"{label} must be a positive integer")
     return value
+
+
+def _require_positive_number(value: object, *, label: str, maximum: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RuntimeError(f"{label} must be a number")
+    parsed = float(value)
+    if not 0 < parsed <= maximum:
+        raise RuntimeError(f"{label} must be greater than zero and at most {maximum:g}")
+    return parsed
+
+
+def _require_string_list(value: object, *, label: str, allow_empty: bool = False) -> list[str]:
+    if not isinstance(value, list) or (not value and not allow_empty):
+        raise RuntimeError(f"{label} must be an array")
+    if any(not isinstance(item, str) or not item for item in value):
+        raise RuntimeError(f"{label} entries must be non-empty strings")
+    result = [str(item) for item in value]
+    if len(result) != len(set(result)):
+        raise RuntimeError(f"{label} entries must be unique")
+    return result
 
 
 def _require_string_set(
@@ -149,9 +199,60 @@ def discover_provider_contract_catalog(
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
     """Validate and normalize one canonical provider `/v1/models` response."""
 
-    top = _require_exact_fields(payload, _TOP_LEVEL_FIELDS, label="catalog")
+    is_v2 = isinstance(payload, dict) and payload.get("contract_version") == "2.0"
+    top = _require_exact_fields(
+        payload,
+        _TOP_LEVEL_V2_FIELDS if is_v2 else _TOP_LEVEL_FIELDS,
+        label="catalog",
+    )
     if top["object"] != "list":
         raise RuntimeError("catalog.object must equal 'list'")
+    provider_reliability: dict[str, Any] | None = None
+    if is_v2:
+        provider = _require_exact_fields(
+            top["provider"], _PROVIDER_V2_FIELDS, label="catalog.provider"
+        )
+        provider_id = _require_string(provider["id"], label="catalog.provider.id")
+        if _OWNER_RE.fullmatch(provider_id) is None:
+            raise RuntimeError("catalog.provider.id is invalid")
+        regions = _require_string_list(
+            provider["regions"], label="catalog.provider.regions"
+        )
+        error_contract = _require_exact_fields(
+            provider["error_contract"],
+            _ERROR_CONTRACT_FIELDS,
+            label="catalog.provider.error_contract",
+        )
+        if error_contract["rate_limit_status"] != 429:
+            raise RuntimeError("catalog.provider.error_contract.rate_limit_status must equal 429")
+        if error_contract["overload_status"] != 503:
+            raise RuntimeError("catalog.provider.error_contract.overload_status must equal 503")
+        if error_contract["retry_after_header"] != "Retry-After":
+            raise RuntimeError(
+                "catalog.provider.error_contract.retry_after_header must equal Retry-After"
+            )
+        provider_reliability = {
+            "provider_id": provider_id,
+            "status_url": _require_string(
+                provider["status_url"], label="catalog.provider.status_url"
+            ),
+            "support_contact": _require_string(
+                provider["support_contact"], label="catalog.provider.support_contact"
+            ),
+            "incident_contact": _require_string(
+                provider["incident_contact"], label="catalog.provider.incident_contact"
+            ),
+            "regions": regions,
+            "request_id_header": _require_string(
+                provider["request_id_header"],
+                label="catalog.provider.request_id_header",
+            ),
+            "account_quota_error_codes": _require_string_list(
+                error_contract["account_quota_error_codes"],
+                label="catalog.provider.error_contract.account_quota_error_codes",
+                allow_empty=True,
+            ),
+        }
     source_rows = top["data"]
     if not isinstance(source_rows, list):
         raise RuntimeError("catalog.data must be an array")
@@ -160,7 +261,11 @@ def discover_provider_contract_catalog(
     discovered: dict[str, dict[str, Any]] = {}
     for index, source in enumerate(source_rows):
         label = f"catalog.data[{index}]"
-        row = _require_exact_fields(source, _MODEL_FIELDS, label=label)
+        row = _require_exact_fields(
+            source,
+            _MODEL_V2_FIELDS if is_v2 else _MODEL_FIELDS,
+            label=label,
+        )
         model_id = _require_string(row["id"], label=f"{label}.id")
         if _MODEL_ID_RE.fullmatch(model_id) is None:
             raise RuntimeError(f"{label}.id is not a canonical model id")
@@ -264,6 +369,38 @@ def discover_provider_contract_catalog(
             supported_features.append("reasoning")
 
         remember_upstream_id(upstream_id_map, model_id, model_id)
+        model_reliability: dict[str, Any] | None = None
+        if is_v2:
+            reliability = _require_exact_fields(
+                row["reliability"],
+                _RELIABILITY_FIELDS,
+                label=f"{label}.reliability",
+            )
+            capacity_scope = _require_string(
+                reliability["capacity_scope"],
+                label=f"{label}.reliability.capacity_scope",
+            )
+            if capacity_scope not in _CAPACITY_SCOPES:
+                raise RuntimeError(f"{label}.reliability.capacity_scope is invalid")
+            model_reliability = {
+                "first_token_timeout_seconds": _require_positive_number(
+                    reliability["first_token_timeout_seconds"],
+                    label=f"{label}.reliability.first_token_timeout_seconds",
+                    maximum=300,
+                ),
+                "completion_timeout_seconds": _require_positive_number(
+                    reliability["completion_timeout_seconds"],
+                    label=f"{label}.reliability.completion_timeout_seconds",
+                    maximum=900,
+                ),
+                "stream_idle_timeout_seconds": _require_positive_number(
+                    reliability["stream_idle_timeout_seconds"],
+                    label=f"{label}.reliability.stream_idle_timeout_seconds",
+                    maximum=300,
+                ),
+                "capacity_scope": capacity_scope,
+            }
+
         discovered[model_id] = {
             "id": model_id,
             "upstream_id": model_id,
@@ -279,6 +416,14 @@ def discover_provider_contract_catalog(
             "retirement_at": retirement_at,
             "replacement_model_id": replacement,
             "routable": True,
+            **(
+                {
+                    "reliability": model_reliability,
+                    "provider_reliability": provider_reliability,
+                }
+                if is_v2
+                else {}
+            ),
         }
         prices[model_id] = ModelPrice(
             _microdollars_per_million(prompt, label=f"{label}.pricing.input"),

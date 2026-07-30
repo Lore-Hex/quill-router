@@ -42,6 +42,7 @@ from trusted_router.routes.keys import register_key_routes
 from trusted_router.routes.mcp import register_mcp_routes
 from trusted_router.routes.oauth import register_oauth_routes
 from trusted_router.routes.oauth_keys import register_oauth_key_routes
+from trusted_router.routes.provider_portal import register_provider_portal_routes
 from trusted_router.routes.public import register_public_routes
 from trusted_router.routes.ses_notifications import register_ses_notification_routes
 from trusted_router.routes.signup import register_signup_routes
@@ -144,6 +145,7 @@ def create_app(
     api = _make_api_router(settings)
     register_oauth_routes(app, api)
     register_console_routes(app)
+    register_provider_portal_routes(app)
     register_mcp_routes(app, settings)
     # /chat-proxy/v1/* — same-origin streaming pipe for the chat
     # playground. Mounted on the FastAPI app directly (not on `api`) so

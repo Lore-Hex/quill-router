@@ -69,6 +69,33 @@ class User:
 
 
 @dataclass
+class ProviderAccessGrant:
+    """Explicit access to one provider's private operational data."""
+
+    user_id: str
+    provider: str
+    role: str = "viewer"
+    created_at: str = field(default_factory=iso_now)
+
+
+def normalize_provider_access_slug(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized or any(
+        character not in "abcdefghijklmnopqrstuvwxyz0123456789-_."
+        for character in normalized
+    ):
+        raise ValueError("provider must be a lowercase provider slug")
+    return normalized
+
+
+def normalize_provider_access_role(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in {"viewer", "admin"}:
+        raise ValueError("provider access role must be viewer or admin")
+    return normalized
+
+
+@dataclass
 class Workspace:
     id: str
     name: str

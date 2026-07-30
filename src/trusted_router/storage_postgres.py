@@ -51,6 +51,7 @@ from trusted_router.storage_models import (
     GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
+    ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
@@ -63,6 +64,8 @@ from trusted_router.storage_models import (
     Workspace,
     _is_expired,
     iso_now,
+    normalize_provider_access_role,
+    normalize_provider_access_slug,
     utcnow,
 )
 from trusted_router.types import UsageType
@@ -383,6 +386,66 @@ class PostgresStore:
             return user
 
         return self._run_transaction(ensure)
+
+    def grant_provider_access(
+        self,
+        user_id: str,
+        provider: str,
+        *,
+        role: str = "viewer",
+    ) -> ProviderAccessGrant:
+        normalized_provider = normalize_provider_access_slug(provider)
+        grant = ProviderAccessGrant(
+            user_id=user_id,
+            provider=normalized_provider,
+            role=normalize_provider_access_role(role),
+        )
+
+        def write(conn: Any) -> ProviderAccessGrant:
+            if self._read_entity_tx(conn, "user", user_id, User) is None:
+                raise ValueError("user does not exist")
+            self._write_entity_tx(
+                conn,
+                "provider_access",
+                f"{user_id}#{normalized_provider}",
+                grant,
+            )
+            return grant
+
+        return self._run_transaction(write)
+
+    def list_provider_access_for_user(self, user_id: str) -> list[ProviderAccessGrant]:
+        def read(conn: Any) -> list[ProviderAccessGrant]:
+            rows = conn.execute(
+                "SELECT body FROM tr_entities "
+                "WHERE kind = 'provider_access' AND id LIKE %s "
+                "ORDER BY id",
+                (f"{user_id}#%",),
+            ).fetchall()
+            return [
+                ProviderAccessGrant(
+                    **(
+                        json.loads(row[0])
+                        if isinstance(row[0], str)
+                        else dict(row[0])
+                    )
+                )
+                for row in rows
+            ]
+
+        return self._run_transaction(read)
+
+    def revoke_provider_access(self, user_id: str, provider: str) -> bool:
+        normalized_provider = normalize_provider_access_slug(provider)
+        return bool(
+            self._run_transaction(
+                lambda conn: self._delete_entity_tx(
+                    conn,
+                    "provider_access",
+                    f"{user_id}#{normalized_provider}",
+                )
+            )
+        )
 
     def signup(
         self,

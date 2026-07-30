@@ -77,6 +77,9 @@ add_secret_env_if_exists "TR_PAYPAL_CLIENT_SECRET" "trustedrouter-paypal-client-
 add_secret_env_if_exists "TR_PAYPAL_WEBHOOK_ID" "trustedrouter-paypal-webhook-id"
 add_secret_env_if_exists "AXIOM_API_TOKEN" "trustedrouter-axiom-api-token"
 add_secret_env_if_exists "TR_ATHENA_WORKER_PROMPT" "trustedrouter-athena-worker-prompt-v1"
+add_secret_env_if_exists \
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD" \
+  "trustedrouter-clickhouse-provider-read-password"
 UPDATE_SECRETS="$(IFS=,; echo "${SECRET_ENVS[*]}")"
 
 REQUEST_RECORD_WRITE_MODE="${TR_REQUEST_RECORD_WRITE_MODE:-}"
@@ -160,6 +163,13 @@ ENV_VARS=(
   # This is a SHADOW: nothing reads from ClickHouse. Remove this line to
   # revert — the flag-off path does not touch the outbox at all.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
+  # Private provider operations portal. Direct VPC egress below reaches this
+  # RFC1918 address; ClickHouse has no public IP and the credential is a
+  # SELECT-only account scoped to the benchmark table.
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=http://10.128.15.214:8123"
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read"
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_DATABASE=tr"
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_TABLE=provider_benchmark_samples"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the
@@ -261,6 +271,9 @@ deploy_one_region() {
       --concurrency "${TR_CLOUD_RUN_CONCURRENCY:-2}" \
       --min-instances "$min_instances" \
       --timeout "${TR_CLOUD_RUN_TIMEOUT_SECONDS:-300}" \
+      --network "${TR_CLOUD_RUN_NETWORK:-default}" \
+      --subnet "${TR_CLOUD_RUN_SUBNET:-default}" \
+      --vpc-egress private-ranges-only \
       --set-env-vars "$SET_ENV_VARS" \
       --update-secrets "$UPDATE_SECRETS" \
       ${traffic_arg} \

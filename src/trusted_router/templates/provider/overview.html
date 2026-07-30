@@ -1,0 +1,123 @@
+{% extends "console/_layout.html" %}
+
+{% block body %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>{{ selected_provider }}</h2>
+      <p>Access role: {{ selected_role }}</p>
+    </div>
+    {% if grants|length > 1 %}
+    <form method="get" action="/provider">
+      <label>
+        Provider
+        <select name="provider" onchange="this.form.requestSubmit()">
+          {% for grant in grants %}
+          <option value="{{ grant.provider }}" {{ 'selected' if grant.provider == selected_provider else '' }}>{{ grant.provider }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="days" value="{{ days }}">
+    </form>
+    {% endif %}
+  </div>
+  <div class="metrics">
+    <div class="metric">
+      <div class="label">Completion rate</div>
+      <div class="value">{% if summary.totals.completion_rate is not none %}{{ '%.3f'|format(summary.totals.completion_rate * 100) }}%{% else %}—{% endif %}</div>
+      <div class="sub">{{ summary.totals.completed or 0 }} of {{ summary.totals.attempts or 0 }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">p50 TTFT</div>
+      <div class="value">{% if summary.totals.p50_ttft_ms is not none %}{{ '%.0f'|format(summary.totals.p50_ttft_ms) }} ms{% else %}—{% endif %}</div>
+      <div class="sub">first visible token</div>
+    </div>
+    <div class="metric">
+      <div class="label">p95 TTFT</div>
+      <div class="value">{% if summary.totals.p95_ttft_ms is not none %}{{ '%.0f'|format(summary.totals.p95_ttft_ms) }} ms{% else %}—{% endif %}</div>
+      <div class="sub">tail latency</div>
+    </div>
+    <div class="metric">
+      <div class="label">Traffic mix</div>
+      <div class="value">{{ summary.totals.organic_requests or 0 }}</div>
+      <div class="sub">organic · {{ summary.totals.synthetic_requests or 0 }} synthetic</div>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Request window</h2>
+      <p>Aggregated provider metadata for the selected period.</p>
+    </div>
+    <form method="get" action="/provider">
+      <input type="hidden" name="provider" value="{{ selected_provider }}">
+      <label>
+        Period
+        <select name="days" onchange="this.form.requestSubmit()">
+          {% for option in (1, 7, 30, 60) %}
+          <option value="{{ option }}" {{ 'selected' if option == days else '' }}>Last {{ option }} day{{ '' if option == 1 else 's' }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="leaderboard-table">
+      <thead>
+        <tr><th>Model</th><th>Attempts</th><th>Completed</th><th>Failed</th><th>Offered share</th><th>Completed share</th><th>p50 TTFT</th><th>p95 TTFT</th><th>p50 tok/s</th></tr>
+      </thead>
+      <tbody>
+        {% for row in summary.models %}
+        <tr>
+          <td>{{ row.model }}</td>
+          <td>{{ row.attempts }}</td>
+          <td>{{ row.completed }}</td>
+          <td>{{ row.failed }}</td>
+          <td>{% if row.offered_traffic_share is not none %}{{ '%.2f'|format(row.offered_traffic_share * 100) }}% <span class="lb-badge">{{ row.active_organic_providers }} providers</span>{% else %}—{% endif %}</td>
+          <td>{% if row.completed_traffic_share is not none %}{{ '%.2f'|format(row.completed_traffic_share * 100) }}%{% else %}—{% endif %}</td>
+          <td>{% if row.p50_ttft_ms is not none %}{{ '%.0f'|format(row.p50_ttft_ms) }} ms{% else %}—{% endif %}</td>
+          <td>{% if row.p95_ttft_ms is not none %}{{ '%.0f'|format(row.p95_ttft_ms) }} ms{% else %}—{% endif %}</td>
+          <td>{% if row.p50_tokens_per_second is not none %}{{ '%.1f'|format(row.p50_tokens_per_second) }}{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9">No request metadata in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small-copy">Offered share is your organic requests divided by all organic requests for the same canonical model. Completed share uses successful organic requests. Synthetic probes are excluded. Shares appear after at least {{ summary.minimum_traffic_share_samples }} model requests.</p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Failure summary</h2>
+      <p>Upstream error categories only. Error bodies are not exposed.</p>
+    </div>
+  </div>
+  <div class="leaderboard-table-wrap">
+    <table class="leaderboard-table">
+      <thead><tr><th>Error type</th><th>HTTP status</th><th>Occurrences</th></tr></thead>
+      <tbody>
+        {% for row in summary.errors %}
+        <tr><td><code>{{ row.error_type }}</code></td><td>{{ row.error_status or '—' }}</td><td>{{ row.occurrences }}</td></tr>
+        {% else %}
+        <tr><td colspan="3">No failures in this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="request-export">
+  <div class="panel-head">
+    <div>
+      <h2>Download request metadata</h2>
+      <p>Up to 60 days as CSV. Includes route, timing, token, cost, region, and error fields. Excludes prompts, outputs, customer identity, workspace, app, and API key data.</p>
+    </div>
+    <a class="btn primary" href="/provider/requests.csv?provider={{ selected_provider }}&days=60">Download 60 days</a>
+  </div>
+</section>
+{% endblock %}

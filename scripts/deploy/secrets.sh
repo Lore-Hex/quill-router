@@ -154,6 +154,13 @@ ensure_secret_from_env_file "MORPH_API_KEY" "trustedrouter-morph-api-key"
 ensure_secret_from_env_file "ATLAS_CLOUD_API_KEY" "trustedrouter-atlas-cloud-api-key"
 ensure_secret_from_env_file "STREAMLAKE_API_KEY" "trustedrouter-streamlake-api-key"
 ensure_secret_from_env_file "NEUROMETRIC_API_KEY" "trustedrouter-neurometric-api-key"
+# Dedicated read-only ClickHouse credential for the private provider portal.
+# It is intentionally distinct from trustedrouter-clickhouse-password, which
+# can ingest data. Generate once with:
+#   openssl rand -base64 48
+ensure_secret_from_env_file \
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD" \
+  "trustedrouter-clickhouse-provider-read-password"
 
 SYNTH_PROMPTS_FILE="${TR_SYNTH_PROMPTS_FILE:-${HOME}/.trustedrouter_synth_prompts_v1.md}"
 SYNTH_CODE_PROMPTS_FILE="${TR_SYNTH_CODE_PROMPTS_FILE:-/Users/jperla/claude/fusion-code-prompts-v1.md}"

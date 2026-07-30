@@ -18,6 +18,26 @@ interface VerifyResponse {
   data: { redirect: string; state: string };
 }
 
+function requestedSigninTarget(): string | null {
+  const value = new URLSearchParams(location.search).get("next");
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    return null;
+  }
+  const target = new URL(value, location.origin);
+  if (target.origin !== location.origin) return null;
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
+function applySigninTarget(): void {
+  const target = requestedSigninTarget();
+  if (!target) return;
+  document.querySelectorAll<HTMLAnchorElement>("#signinModal a[data-provider]").forEach((link) => {
+    const url = new URL(link.href, location.origin);
+    url.searchParams.set("next", target);
+    link.href = `${url.pathname}${url.search}`;
+  });
+}
+
 function moneyFromMicrodollars(value: unknown): string {
   if (value === null || value === undefined || value === "") return "$0.00";
   const raw = typeof value === "number" ? String(Math.trunc(value)) : String(value);
@@ -179,7 +199,7 @@ async function startMetaMaskSignin(): Promise<void> {
     setSigninError("Verification failed. The nonce may have expired.");
     return;
   }
-  location.href = verify.data.redirect;
+  location.href = requestedSigninTarget() ?? verify.data.redirect;
 }
 
 async function postJSON<T>(path: string, body: unknown): Promise<T | null> {
@@ -237,6 +257,7 @@ function applyAuthAwareChrome(): void {
 
 function init(): void {
   applyAuthAwareChrome();
+  applySigninTarget();
   applyStoredTheme();
   trackEngagedLanding();
 

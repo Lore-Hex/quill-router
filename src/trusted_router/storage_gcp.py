@@ -28,6 +28,7 @@ from trusted_router.storage import (
     GoogleAdsConversion,
     Member,
     OAuthAuthorizationCode,
+    ProviderAccessGrant,
     ProviderBenchmarkSample,
     RateLimitHit,
     Reservation,
@@ -39,6 +40,8 @@ from trusted_router.storage import (
     WalletChallenge,
     Workspace,
     iso_now,
+    normalize_provider_access_role,
+    normalize_provider_access_slug,
 )
 from trusted_router.storage_gcp_analytics_outbox import SpannerAnalyticsOutbox
 from trusted_router.storage_gcp_attribution import SpannerAcquisitionAttribution
@@ -366,6 +369,43 @@ class SpannerBigtableStore:
             return new_user
 
         return self._run_in_transaction(txn)
+
+    def grant_provider_access(
+        self,
+        user_id: str,
+        provider: str,
+        *,
+        role: str = "viewer",
+    ) -> ProviderAccessGrant:
+        normalized_provider = normalize_provider_access_slug(provider)
+        grant = ProviderAccessGrant(
+            user_id=user_id,
+            provider=normalized_provider,
+            role=normalize_provider_access_role(role),
+        )
+        if self.get_user(user_id) is None:
+            raise ValueError("user does not exist")
+        self._write_entity(
+            "provider_access",
+            f"{user_id}#{normalized_provider}",
+            grant,
+        )
+        return grant
+
+    def list_provider_access_for_user(self, user_id: str) -> list[ProviderAccessGrant]:
+        return self._list_entities(
+            "provider_access",
+            cls=ProviderAccessGrant,
+            prefix=f"{user_id}#",
+        )
+
+    def revoke_provider_access(self, user_id: str, provider: str) -> bool:
+        normalized_provider = normalize_provider_access_slug(provider)
+        entity_id = f"{user_id}#{normalized_provider}"
+        if self._read_entity("provider_access", entity_id, ProviderAccessGrant) is None:
+            return False
+        self._delete_entities("provider_access", [entity_id])
+        return True
 
     def signup(
         self,

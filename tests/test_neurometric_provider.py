@@ -13,6 +13,7 @@ from scripts.pricing.provider_contract_catalog import (
 )
 from scripts.pricing.providers import neurometric
 from trusted_router.catalog import MODEL_ENDPOINTS, MODELS, PROVIDERS, model_open_weights
+from trusted_router.provider_contract import PROVIDER_CATALOG_V2_EXAMPLE
 
 
 def _model_row(
@@ -81,6 +82,23 @@ def test_canonical_contract_parser_preserves_exact_price_and_capabilities() -> N
         "tools",
         "json_mode",
         "structured_outputs",
+    ]
+
+
+def test_reliability_contract_v2_preserves_deadlines_and_error_contract() -> None:
+    payload = copy.deepcopy(PROVIDER_CATALOG_V2_EXAMPLE)
+
+    _prices, discovered = discover_provider_contract_catalog(
+        payload,
+        upstream_id_map={},
+    )
+
+    row = discovered["acme/atlas-70b"]
+    assert row["reliability"]["first_token_timeout_seconds"] == 20
+    assert row["reliability"]["completion_timeout_seconds"] == 120
+    assert row["provider_reliability"]["request_id_header"] == "x-request-id"
+    assert row["provider_reliability"]["account_quota_error_codes"] == [
+        "account_quota_exceeded"
     ]
 
 
