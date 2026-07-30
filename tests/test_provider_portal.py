@@ -84,7 +84,16 @@ def test_provider_portal_renders_only_granted_provider(
         lambda _settings: _FakeAnalytics(),
     )
 
-    response = client.get("/provider?provider=neurometric&days=30")
+    redirect = client.get(
+        "/provider?provider=neurometric&days=30",
+        follow_redirects=False,
+    )
+
+    assert redirect.status_code == 302
+    assert redirect.headers["location"] == "/provider/neurometric?days=30"
+    assert redirect.headers["cache-control"] == "private, no-store"
+
+    response = client.get("/provider/neurometric?days=30")
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "private, no-store"
@@ -94,7 +103,20 @@ def test_provider_portal_renders_only_granted_provider(
     assert "25.00%" in response.text
     assert "Offered share" in response.text
     assert "Prompts, outputs, customer identities" in response.text
-    assert client.get("/provider?provider=together").status_code == 403
+    assert 'href="/provider/neurometric"' in response.text
+    assert client.get("/provider/together").status_code == 403
+
+
+def test_provider_portal_entry_redirects_to_only_granted_provider(
+    client: TestClient,
+) -> None:
+    user_id = _login(client)
+    STORE.grant_provider_access(user_id, "neurometric")
+
+    response = client.get("/provider", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/provider/neurometric"
 
 
 def test_provider_csv_download_is_private_and_bounded(

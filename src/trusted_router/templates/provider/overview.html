@@ -51,8 +51,7 @@
       <h2>Request window</h2>
       <p>Aggregated provider metadata for the selected period.</p>
     </div>
-    <form method="get" action="/provider">
-      <input type="hidden" name="provider" value="{{ selected_provider }}">
+    <form method="get" action="/provider/{{ selected_provider }}">
       <label>
         Period
         <select name="days" onchange="this.form.requestSubmit()">
