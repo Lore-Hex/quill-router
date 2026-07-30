@@ -20,6 +20,10 @@ class _ParamTypes:
     BOOL = "BOOL"
     TIMESTAMP = "TIMESTAMP"
 
+    @staticmethod
+    def Array(element_type: Any) -> tuple[str, Any]:
+        return ("ARRAY", element_type)
+
 
 # Real Spanner column DEFAULTs for the typed counter tables (every counter is
 # NOT NULL DEFAULT(0) in the DDL). The fake fills these on INSERT so a
@@ -531,6 +535,58 @@ class _FakeTransaction:
             record["terminal_at"] = None
             self.pending_writes.append(("insert_reservation", record))
             return 1
+        if (
+            sql.startswith("UPDATE tr_reservation SET terminal_at=@terminal_at")
+            and "IN UNNEST" in sql
+        ):
+            _require_pred(
+                sql,
+                "reservation_id IN UNNEST(@ids)",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "AND settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "o.authorization_id = tr_reservation.authorization_id",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                f"o.status IN ({_GUARD_STATUS_SQL})",
+                "reservation-terminal-backfill",
+            )
+            ids = p.get("ids")
+            if not isinstance(ids, list):
+                raise AssertionError(
+                    "reservation-terminal-backfill requires an @ids array binding"
+                )
+            updated = 0
+            for rid in ids:
+                rec = self._reservation_current(str(rid))
+                if (
+                    rec is None
+                    or not rec.get("settled")
+                    or rec.get("terminal_at") is not None
+                    or self._has_guarded_outbox_intent(
+                        str(rec.get("authorization_id"))
+                    )
+                ):
+                    continue
+                new = dict(rec, terminal_at=p["terminal_at"])
+                self.pending_writes.append(
+                    ("update_reservation", str(rid), new)
+                )
+                updated += 1
+            return updated
         if "UPDATE tr_reservation SET settled=true" in sql:
             _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
             guarded = "tr_settle_outbox" in sql
@@ -1076,6 +1132,134 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Guarded legacy terminal_at backfill. These narrow handlers intentionally
+    # assert every real predicate they model (MF6); a production SQL regression
+    # must fail tests instead of being repaired by the fake's Python filtering.
+    if sql.startswith("SELECT reservation_id FROM tr_reservation"):
+        _require_pred(
+            sql,
+            "WHERE settled AND terminal_at IS NULL",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "o.authorization_id = tr_reservation.authorization_id",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            f"o.status IN ({_GUARD_STATUS_SQL})",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY reservation_id LIMIT @batch",
+            "reservation-terminal-backfill-scan",
+        )
+        rows = [
+            [rid]
+            for rid, rec in sorted(db.reservations.items())
+            if rec.get("settled")
+            and rec.get("terminal_at") is None
+            and not any(
+                outbox.get("authorization_id") == rec.get("authorization_id")
+                and outbox.get("status") in GUARD_STATUSES
+                for outbox in db.settle_outbox.values()
+            )
+        ]
+        return rows[: int(params["batch"])]
+    if (
+        sql.startswith("SELECT COUNT(*) FROM tr_reservation")
+        and not params
+    ):
+        if "AND EXISTS (SELECT 1 FROM tr_settle_outbox o" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            _require_pred(
+                sql,
+                "o.authorization_id = tr_reservation.authorization_id",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            _require_pred(
+                sql,
+                f"o.status IN ({_GUARD_STATUS_SQL})",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled")
+                    and rec.get("terminal_at") is None
+                    and any(
+                        outbox.get("authorization_id")
+                        == rec.get("authorization_id")
+                        and outbox.get("status") in GUARD_STATUSES
+                        for outbox in db.settle_outbox.values()
+                    )
+                )
+            ]]
+        if "terminal_at IS NULL" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill-candidate-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled") and rec.get("terminal_at") is None
+                )
+            ]]
+        if "terminal_at IS NOT NULL" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NOT NULL",
+                "reservation-terminal-backfill-armed-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled") and rec.get("terminal_at") is not None
+                )
+            ]]
+        _require_pred(
+            sql,
+            "WHERE NOT settled",
+            "reservation-terminal-backfill-open-count",
+        )
+        return [[
+            sum(
+                1
+                for rec in db.reservations.values()
+                if not rec.get("settled")
+            )
+        ]]
+    if sql.startswith(
+        "SELECT COUNT(*) FROM tr_gateway_authorization"
+    ):
+        _require_pred(
+            sql,
+            "WHERE settled AND terminal_at IS NULL",
+            "gateway-authorization-terminal-backfill-cross-check",
+        )
+        return [[
+            sum(
+                1
+                for rec in db.gateway_authorizations.values()
+                if rec.get("settled") and rec.get("terminal_at") is None
+            )
+        ]]
     # Reaper scan: expired unsettled reservations. This must precede the generic
     # tr_settle_outbox dispatcher because the guarded scan names both tables; match
     # the more specific query first.

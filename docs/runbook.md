@@ -712,6 +712,29 @@ money keys. It preserves the credit row's Stripe, auto-refill, shard, and future
 metadata. Run once without flags, review, then run with `--apply`. Re-running is
 idempotent.
 
+**Legacy retention backfill** (issue #357): `tr_reservation` rows written before
+`terminal_at` arming shipped have it NULL, and Spanner's
+`ROW DELETION POLICY (OLDER_THAN(terminal_at, INTERVAL 30 DAY))` never deletes a
+NULL-timestamp row — as of 2026-07-30 that was 1.17M settled rows (~97% of the
+settled table) permanently exempt from the TTL. One-off, idempotent repair:
+
+```bash
+PYTHONPATH=src uv run python scripts/backfill_reservation_terminal_at.py
+```
+
+reports candidates / guard-excluded counts (dry run); add `--apply` to arm
+`terminal_at = now` in batches (`--batch`, default 5000). Two predicates in the
+UPDATE are load-bearing and must never be widened: `settled` (an open hold must
+NEVER get a TTL fuse — the reaper owns its lifecycle) and the
+`NOT EXISTS (... tr_settle_outbox ... status IN ('pending','dead'))` guard (a
+frozen intent's evidence must not age out under it; the script reports such rows
+as excluded and stops rather than spinning). Backfilled rows age out ~30 days
+after the run. Run it off the deploy path in a low-traffic window — bulk DML
+overlapping a rolling deploy produces the
+[Aborted/wounded burst](#authorize-deadlock-burst). Safe to re-run any time;
+once the debt drains the candidate count stays ~0 because steady-state arming
+is structural.
+
 ---
 
 ## <a id="authorize-deadlock-burst"></a>Sentry "Aborted ... deadlock/wounded" burst on gateway authorize
