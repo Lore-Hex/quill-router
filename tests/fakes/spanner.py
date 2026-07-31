@@ -143,6 +143,15 @@ class FakeSpannerDatabase:
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
+        # Per-authorization RANGE version: bumped whenever ANY outbox row of an
+        # authorization is inserted/updated/deleted at commit. The MF2 guard
+        # count and the sibling/EXISTS predicates are range reads over an
+        # authorization's rows — including the ABSENCE of rows — and real
+        # Spanner serializes them against a concurrent enqueue commit. Per-row
+        # versions cannot represent "no row existed", so guard reads record
+        # this key and _try_commit validates it: an enqueue that lands between
+        # the in-txn zero-count and the claim commit aborts the claim.
+        self.settle_outbox_auth_versions: dict[str, int] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -187,6 +196,11 @@ class FakeSpannerDatabase:
                     current_version = 1 if key[1] in self.reservation_idemp else 0
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox":
                     current_version = self.settle_outbox_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox_auth":
+                    # Range read over one authorization's outbox rows (MF2 guard
+                    # count / sibling predicates): any commit touching the range
+                    # since the read aborts this transaction.
+                    current_version = self.settle_outbox_auth_versions.get(key[1], 0)
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "gateway_auth":
                     current_version = self.gateway_authorization_versions.get(
                         key[1],
@@ -235,10 +249,12 @@ class FakeSpannerDatabase:
                     _, pk, record = op
                     self.settle_outbox[pk] = record
                     self.settle_outbox_versions[pk] = new_version
+                    self.settle_outbox_auth_versions[pk[0]] = new_version
                 elif op[0] == "delete_settle_outbox":
                     _, pk = op
                     self.settle_outbox.pop(pk, None)
                     self.settle_outbox_versions.pop(pk, None)
+                    self.settle_outbox_auth_versions[pk[0]] = new_version
                 elif op[0] == "update_reservation":
                     _, rid, record = op
                     self.reservations[rid] = record
@@ -348,6 +364,13 @@ class _FakeTransaction:
 
     def _has_guarded_outbox_intent(self, authorization_id: str) -> bool:
         """Evaluate the correlated pending/dead EXISTS against the in-txn view."""
+        # Range read (absence included) — record the per-authorization range
+        # version so a concurrent enqueue/status-flip aborts this txn at commit.
+        range_key = ("outbox_auth", authorization_id)
+        if range_key not in self.read_versions:
+            self.read_versions[range_key] = (
+                self.db.settle_outbox_auth_versions.get(authorization_id, 0)
+            )
         pks = set(self.db.settle_outbox)
         pks.update(
             op[1]
@@ -1122,12 +1145,31 @@ def _execute_settle_outbox_sql(
         )
         aid = p["aid"]
         kind = p["kind"]
+        if txn is not None:
+            # Range read over the authorization's rows (absence included) —
+            # same serialization contract as the MF2 guard count above.
+            range_key = ("outbox_auth", aid)
+            if range_key not in txn.read_versions:
+                txn.read_versions[range_key] = (
+                    db.settle_outbox_auth_versions.get(aid, 0)
+                )
         count = 0
-        for pk, committed in db.settle_outbox.items():
+        pks = set(db.settle_outbox)
+        if txn is not None:
+            pks.update(
+                op[1]
+                for op in txn.pending_writes
+                if op[0] in (
+                    "insert_settle_outbox",
+                    "update_settle_outbox",
+                    "delete_settle_outbox",
+                )
+            )
+        for pk in pks:
             rec = (
                 txn._settle_outbox_current(pk)
                 if txn is not None
-                else committed
+                else db.settle_outbox.get(pk)
             )
             if (
                 rec is not None
@@ -1137,12 +1179,42 @@ def _execute_settle_outbox_sql(
             ):
                 count += 1
         return [[count]]
-    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
+    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # MF2 guard count / has_intent
         _require_pred(sql, "authorization_id=@aid", "has_intent")
         _require_pred(sql, f"status IN ({_GUARD_STATUS_SQL})", "has_intent")
         aid = p["aid"]
-        # Committed-state read is correct for the in-txn guard too: enqueue
-        # commits in its own txn, and the reaper txn never writes outbox rows.
+        if txn is not None:
+            # MF2: inside settle_atomic's claim transaction this range read —
+            # including its ABSENCE result — must serialize against a
+            # concurrent enqueue commit. Record the per-authorization range
+            # version so _try_commit aborts the claim if any outbox row of this
+            # authorization commits after the count. (An earlier comment argued
+            # committed-state reads were fine here; a diagnostic disproved it —
+            # an enqueue landing between the zero-count and the claim commit
+            # slipped through unvalidated.)
+            range_key = ("outbox_auth", aid)
+            if range_key not in txn.read_versions:
+                txn.read_versions[range_key] = (
+                    db.settle_outbox_auth_versions.get(aid, 0)
+                )
+            pks = set(db.settle_outbox)
+            pks.update(
+                op[1]
+                for op in txn.pending_writes
+                if op[0] in (
+                    "insert_settle_outbox",
+                    "update_settle_outbox",
+                    "delete_settle_outbox",
+                )
+            )
+            n = sum(
+                1
+                for pk in pks
+                if pk[0] == aid
+                and (rec := txn._settle_outbox_current(pk)) is not None
+                and rec.get("status") in GUARD_STATUSES
+            )
+            return [[n]]
         n = sum(
             1 for rec in db.settle_outbox.values()
             if rec.get("authorization_id") == aid and rec.get("status") in GUARD_STATUSES

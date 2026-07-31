@@ -116,3 +116,59 @@ def test_repeat_read_in_one_txn_is_stable_despite_concurrent_commit() -> None:
     # The read-only body still aborts at commit (version drift) and retries.
     assert db.run_in_transaction(txn_body) == 999
     assert db.aborts == 1
+
+
+def test_mf2_guard_zero_count_aborts_when_enqueue_commits_before_claim() -> None:
+    """The MF2 lost-charge interlock's actual serialization race.
+
+    settle_atomic's in-txn guard count reads an authorization's outbox rows —
+    including their ABSENCE. If an enqueue commits between the zero-count and
+    the claim commit, real Spanner aborts the claim; per-row versions cannot
+    express "no row existed", so the fake tracks a per-authorization range
+    version. Without it, the claim committed against a guard it never saw."""
+    from trusted_router.storage_gcp_settle_outbox import GUARD_COUNT_SQL
+
+    store, db, _bt = make_fake_store()
+    aid = "gwa-mf2-race"
+    counts: list[int] = []
+
+    def txn_body(txn):
+        attempt = len(counts)
+        rows = list(
+            txn.execute_sql(GUARD_COUNT_SQL, params={"aid": aid}, param_types=None)
+        )
+        counts.append(int(rows[0][0]))
+        if attempt == 0:
+            assert counts[0] == 0, "precondition: no guard row at first read"
+            # Concurrent enqueue commits AFTER the zero-count, BEFORE our commit.
+            pk = (aid, "settle")
+            db.settle_outbox[pk] = {
+                "authorization_id": aid,
+                "intent_kind": "settle",
+                "status": "pending",
+            }
+            db._global_version += 1
+            db.settle_outbox_versions[pk] = db._global_version
+            db.settle_outbox_auth_versions[aid] = db._global_version
+        # Stand-in for the reservation claim write: any buffered write makes
+        # this a read-write commit subject to validation.
+        txn.pending_writes.append(
+            (
+                "update_typed",
+                "tr_credit_balance",
+                ("ws-mf2", 0),
+                {
+                    "workspace_id": "ws-mf2",
+                    "shard": 0,
+                    "total_credits": 1,
+                    "total_usage": 0,
+                    "reserved": 0,
+                },
+            )
+        )
+        return counts[-1]
+
+    # The retry must OBSERVE the enqueue the first attempt raced with.
+    assert db.run_in_transaction(txn_body) == 1
+    assert counts == [0, 1]
+    assert db.aborts == 1
