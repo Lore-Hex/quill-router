@@ -95,6 +95,129 @@ def test_baseten_fetch_discovers_prices_without_float_drift(monkeypatch) -> None
     assert baseten.UPSTREAM_ID_MAP["thinkingmachines/inkling-1m"] == "thinkingmachines/inkling"
 
 
+def test_baseten_zero_price_discovery_is_immediately_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    payload = {
+        "data": [
+            {
+                "id": "thinkingmachines/inkling-small",
+                "context_length": 1_048_576,
+                "pricing": {"prompt": "0", "completion": "0"},
+            },
+            {
+                "id": "zai-org/GLM-5.2",
+                "pricing": {
+                    "prompt": "0.0000014",
+                    "completion": "0.0000044",
+                },
+            },
+            {
+                "id": "zai-org/GLM-5.2-Fast",
+                "pricing": {
+                    "prompt": "0.0000021",
+                    "completion": "0.0000066",
+                },
+            },
+            {
+                "id": "moonshotai/Kimi-K2.7-Code",
+                "pricing": {
+                    "prompt": "0.00000095",
+                    "completion": "0.000004",
+                },
+            },
+            {
+                "id": "thinkingmachines/inkling",
+                "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.00000405",
+                },
+            },
+        ]
+    }
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+        def __enter__(self) -> FakeClient:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def get(self, *_args, **_kwargs) -> FakeResponse:  # noqa: ANN002, ANN003
+            return FakeResponse(payload)
+
+    manifest_path = tmp_path / "baseten.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "provider": "baseten",
+                "models": [
+                    {
+                        "id": "thinkingmachines/inkling-small",
+                        "upstream_id": "thinkingmachines/inkling-small",
+                        "input_token_price_per_m": 10_000,
+                        "output_token_price_per_m": 10_000,
+                    },
+                    {
+                        "id": "z-ai/glm-5.2",
+                        "upstream_id": "zai-org/GLM-5.2",
+                    },
+                    {
+                        "id": "z-ai/glm-5.2-fast",
+                        "upstream_id": "zai-org/GLM-5.2-Fast",
+                    },
+                    {
+                        "id": "moonshotai/kimi-k2.7-code",
+                        "upstream_id": "moonshotai/Kimi-K2.7-Code",
+                    },
+                    {
+                        "id": "thinkingmachines/inkling-1m",
+                        "upstream_id": "thinkingmachines/inkling",
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(baseten.httpx, "Client", FakeClient)
+    monkeypatch.setattr(baseten, "MANIFEST_PATH", manifest_path)
+
+    result = baseten.fetch()
+    assert "thinkingmachines/inkling-small" not in result.prices
+    assert "thinkingmachines/inkling-small" in baseten._DISCOVERED_MANIFEST_ROWS
+
+    baseten.write_provider_manifest(result)
+    rows = {
+        row["id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    assert rows["thinkingmachines/inkling-small"]["routable"] is False
+    assert (
+        rows["thinkingmachines/inkling-small"]["routable_reason"]
+        == "price-unavailable"
+    )
+
+    payload["data"][0]["pricing"] = {
+        "prompt": "0.0000003",
+        "completion": "0.0000012",
+    }
+    recovered = baseten.fetch()
+    baseten.write_provider_manifest(recovered)
+    recovered_rows = {
+        row["id"]: row
+        for row in json.loads(manifest_path.read_text(encoding="utf-8"))["models"]
+    }
+    recovered_small = recovered_rows["thinkingmachines/inkling-small"]
+    assert "routable" not in recovered_small
+    assert "routable_reason" not in recovered_small
+    assert recovered_small["input_token_price_per_m"] == 300_000
+    assert recovered_small["output_token_price_per_m"] == 1_200_000
+
+
 def test_baseten_provider_appends_new_priced_models_to_manifest(
     tmp_path: Path, monkeypatch
 ) -> None:  # noqa: ANN001

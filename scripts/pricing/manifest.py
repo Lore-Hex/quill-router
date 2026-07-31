@@ -131,6 +131,9 @@ def write_discovered_chat_manifest(
 
         price = result.prices.get(model_id)
         if price is not None:
+            if row.get("routable_reason") == "price-unavailable":
+                row.pop("routable", None)
+                row.pop("routable_reason", None)
             tier = price.tiers[0]
             row["input_token_price_per_m"] = tier.prompt_micro_per_m
             row["output_token_price_per_m"] = tier.completion_micro_per_m
@@ -139,9 +142,15 @@ def write_discovered_chat_manifest(
             else:
                 row["cached_input_token_price_per_m"] = tier.prompt_cached_micro_per_m
             updated.append(model_id)
-        elif existing is None:
-            row["routable"] = False
-            row["routable_reason"] = "price-unavailable"
+        else:
+            row.pop("input_token_price_per_m", None)
+            row.pop("output_token_price_per_m", None)
+            row.pop("cached_input_token_price_per_m", None)
+            if row.get("routable") is not False or row.get(
+                "routable_reason"
+            ) == "price-unavailable":
+                row["routable"] = False
+                row["routable_reason"] = "price-unavailable"
         present_rows[model_id] = row
 
     rebuilt = reconcile_manifest_tombstones(

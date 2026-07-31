@@ -1124,6 +1124,28 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         (endpoint.provider, endpoint.upstream_id) for endpoint in endpoints_for_model(inkling_1m.id)
     } == {("baseten", "thinkingmachines/inkling")}
 
+    inkling_small = MODELS["thinkingmachines/inkling-small"]
+    inkling_small_shape = model_to_openrouter_shape(inkling_small)
+    assert inkling_small.context_length == 262_144
+    assert inkling_small_shape["trustedrouter"]["open_weights"] is True
+    assert (
+        inkling_small.prompt_price_microdollars_per_million_tokens
+        == 315_000
+    )
+    assert (
+        inkling_small.completion_price_microdollars_per_million_tokens
+        == 1_260_000
+    )
+    assert {
+        (endpoint.provider, endpoint.upstream_id)
+        for endpoint in endpoints_for_model(inkling_small.id)
+    } == {
+        (
+            "thinkingmachines",
+            "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
+        )
+    }
+
 
 def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() -> None:
     model_id = "nvidia/nemotron-3-ultra-550b-a55b"

@@ -10,7 +10,10 @@ from scripts.pricing.base import ProviderPricingResult, fetch_provider
 
 SLUG = "thinkingmachines"
 URL = "https://tinker-docs.thinkingmachines.ai/tinker/models/"
-EXPECTED_MODELS = ["thinkingmachines/inkling"]
+EXPECTED_MODELS = [
+    "thinkingmachines/inkling",
+    "thinkingmachines/inkling-small",
+]
 MANIFEST_PATH = (
     Path(__file__).resolve().parents[3]
     / "src"
@@ -63,4 +66,7 @@ def write_provider_manifest(result: ProviderPricingResult) -> list[str]:
         json.dumps(raw, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    return ["thinkingmachines: refreshed provider_models/thinkingmachines.json (1 priced row)"]
+    return [
+        "thinkingmachines: refreshed provider_models/thinkingmachines.json "
+        f"({len(updated)} priced rows)"
+    ]
