@@ -49,7 +49,8 @@ def test_control_plane_memory_alert_warns_before_oom() -> None:
     assert 'displayName: "TR Control Plane: memory pressure"' in policy
     assert 'resource.labels.service_name = "trusted-router"' in policy
     assert 'metric.type = "run.googleapis.com/container/memory/utilizations"' in policy
-    assert "perSeriesAligner: ALIGN_MAX" in policy
+    assert "perSeriesAligner: ALIGN_PERCENTILE_99" in policy
+    assert "perSeriesAligner: ALIGN_MAX" not in policy
     assert "crossSeriesReducer: REDUCE_MAX" in policy
     assert "resource.label.location" in policy
     assert "thresholdValue: 0.8" in policy
