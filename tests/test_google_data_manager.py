@@ -41,6 +41,7 @@ def _now() -> str:
 
 def _config() -> GoogleDataManagerConfig:
     return GoogleDataManagerConfig(
+        project_id="test-project",
         account_id="1234567890",
         signup_action_id="111",
         activated_action_id="333",
@@ -52,6 +53,7 @@ def _config() -> GoogleDataManagerConfig:
 def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "environment": "test",
+        "gcp_project_id": "test-project",
         "google_data_manager_enabled": True,
         "google_data_manager_account_id": "123-456-7890",
         "google_data_manager_signup_action_id": "111",
@@ -295,6 +297,7 @@ def test_raw_http_client_posts_to_data_manager_without_google_sdk() -> None:
     assert str(requests[0].url) == DATA_MANAGER_INGEST_URL
     assert requests[0].headers["authorization"] == "Bearer scoped-access-token"
     assert requests[0].headers["content-type"] == "application/json"
+    assert requests[0].headers["x-goog-user-project"] == "test-project"
 
 
 def test_metadata_identity_token_is_scoped_and_cached() -> None:

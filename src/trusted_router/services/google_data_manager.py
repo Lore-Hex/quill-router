@@ -48,6 +48,7 @@ _NUMERIC_ID_RE = re.compile(r"^[0-9]+$")
 
 @dataclass(frozen=True)
 class GoogleDataManagerConfig:
+    project_id: str
     account_id: str
     signup_action_id: str
     activated_action_id: str
@@ -57,6 +58,7 @@ class GoogleDataManagerConfig:
     @classmethod
     def from_settings(cls, settings: Settings) -> GoogleDataManagerConfig:
         return cls(
+            project_id=settings.gcp_project_id.strip(),
             account_id=_numeric_id(
                 settings.google_data_manager_account_id,
                 "Google Ads account ID",
@@ -218,6 +220,7 @@ class GoogleDataManagerClient:
                     "Authorization": f"Bearer {self._token_provider()}",
                     "Content-Type": "application/json",
                     "User-Agent": "TrustedRouter-DataManager/1",
+                    "x-goog-user-project": self._config.project_id,
                 },
             )
         except GoogleDataManagerUploadError:
