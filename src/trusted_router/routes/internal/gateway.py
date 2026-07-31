@@ -38,6 +38,12 @@ from trusted_router.catalog import (
 from trusted_router.config import Settings
 from trusted_router.errors import api_error, assert_workspace_billing_active
 from trusted_router.money import money_pair, token_cost_microdollars
+from trusted_router.openai_service_tiers import (
+    OPENAI_PRIORITY_MAX_PROMPT_TOKENS,
+    OPENAI_SERVICE_TIERS,
+    openai_priority_cost_microdollars,
+    openai_priority_pricing,
+)
 from trusted_router.partner_billing import (
     PARASAIL_LIBERTY_2_0_MODEL_ID,
     PARTNER_OPERATOR_COST_SETTLE_FIELD,
@@ -99,6 +105,7 @@ _SETTLE_REPAIR_FIELDS = frozenset(
         "output_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
+        "service_tier",
         "request_id",
         "finish_reason",
         "status",
@@ -255,6 +262,15 @@ def _authorize_gateway_sync(
     endpoint_candidates = _eligible_gateway_endpoint_candidates(
         endpoint_candidates, workspace.id
     )
+    input_tokens = body.estimated_input_tokens
+    if custom_model is not None and custom_model.hidden_prompt.strip():
+        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
+    service_tier = _requested_service_tier_or_error(body.service_tier)
+    endpoint_candidates = _service_tier_endpoint_candidates_or_error(
+        endpoint_candidates,
+        service_tier=service_tier,
+        estimated_input_tokens=input_tokens,
+    )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
         if body.route_type != "responses.web_search.planner":
@@ -279,9 +295,6 @@ def _authorize_gateway_sync(
     model, endpoint = endpoint_candidates[0]
     region = choose_region(settings, body.region or None)
 
-    input_tokens = body.estimated_input_tokens
-    if custom_model is not None and custom_model.hidden_prompt.strip():
-        input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
     output_tokens = body.output_estimate
     model_estimate = (
         partner_cost_microdollars(
@@ -291,7 +304,13 @@ def _authorize_gateway_sync(
         )
         if partner_mode is not None
         else max(
-            _endpoint_cost_microdollars(candidate_endpoint, input_tokens, output_tokens)
+            _endpoint_cost_microdollars(
+                candidate_endpoint,
+                input_tokens,
+                output_tokens,
+                service_tier=service_tier,
+                reserve_auto=True,
+            )
             for _candidate_model, candidate_endpoint in endpoint_candidates
         )
     )
@@ -1002,6 +1021,7 @@ def _settle_gateway_authorization(
     auth_ms = (perf_counter() - timing_start) * 1000
 
     output_tokens = body.output_count
+    service_tier = _actual_service_tier_or_error(body.service_tier)
     uncached_input, total_input, cache_read, cache_creation = normalized_prompt_accounting(
         selected_endpoint.provider, body
     )
@@ -1033,6 +1053,7 @@ def _settle_gateway_authorization(
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
             effective_at=authorization.created_at,
+            service_tier=service_tier,
         )
     )
     operator_cost = (
@@ -1043,6 +1064,7 @@ def _settle_gateway_authorization(
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
             effective_at=authorization.created_at,
+            service_tier=service_tier,
         )
         if partner_mode == PartnerBillingMode.INTERNAL
         else None
@@ -1543,6 +1565,69 @@ def _endpoint_for_id_compat(endpoint_id: str) -> ModelEndpoint | None:
     return endpoint_for_id(f"{model_id}@{provider}/{usage_suffix}")
 
 
+def _requested_service_tier_or_error(service_tier: str | None) -> str | None:
+    if service_tier is None:
+        return None
+    normalized = service_tier.strip().lower()
+    if normalized not in OPENAI_SERVICE_TIERS:
+        raise api_error(
+            400,
+            "service_tier must be default, auto, or priority",
+            ErrorType.BAD_REQUEST,
+        )
+    return normalized
+
+
+def _actual_service_tier_or_error(service_tier: str | None) -> str | None:
+    if service_tier is None:
+        return None
+    normalized = service_tier.strip().lower()
+    if normalized not in {"default", "priority"}:
+        raise api_error(
+            400,
+            "settlement service_tier must be the actual default or priority tier",
+            ErrorType.BAD_REQUEST,
+        )
+    return normalized
+
+
+def _service_tier_endpoint_candidates_or_error(
+    candidates: list[tuple[Model, ModelEndpoint]],
+    *,
+    service_tier: str | None,
+    estimated_input_tokens: int,
+) -> list[tuple[Model, ModelEndpoint]]:
+    if service_tier is None:
+        return candidates
+    openai_candidates = [
+        (model, endpoint)
+        for model, endpoint in candidates
+        if endpoint.provider == "openai"
+    ]
+    if service_tier in {"auto", "priority"}:
+        openai_candidates = [
+            (model, endpoint)
+            for model, endpoint in openai_candidates
+            if openai_priority_pricing(endpoint.model_id) is not None
+        ]
+    if (
+        service_tier == "priority"
+        and estimated_input_tokens > OPENAI_PRIORITY_MAX_PROMPT_TOKENS
+    ):
+        raise api_error(
+            400,
+            "OpenAI Priority processing does not support prompts over 272000 tokens",
+            ErrorType.BAD_REQUEST,
+        )
+    if not openai_candidates:
+        raise api_error(
+            400,
+            f"OpenAI {service_tier} processing is unavailable for the requested model",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    return openai_candidates
+
+
 def _endpoint_cost_microdollars(
     endpoint: ModelEndpoint,
     input_tokens: int,
@@ -1551,11 +1636,23 @@ def _endpoint_cost_microdollars(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
     effective_at: datetime | str | None = None,
+    service_tier: str | None = None,
+    reserve_auto: bool = False,
 ) -> int:
     """input_tokens must be the UNCACHED prompt tokens when cache counts
     are passed — cached reads/writes bill at the provider-specific
     multiple of the prompt price (see catalog.cache_token_prices_microdollars)."""
     endpoint = effective_endpoint(endpoint, at=effective_at)
+    if service_tier == "priority" or (service_tier == "auto" and reserve_auto):
+        if endpoint.provider != "openai":
+            raise ValueError("OpenAI service tiers require an OpenAI endpoint")
+        return openai_priority_cost_microdollars(
+            endpoint.model_id,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        )
     total_prompt = input_tokens + cache_read_tokens + cache_creation_tokens
     rates = resolve_request_rates(
         getattr(endpoint, "price_tiers", ()) or (),
