@@ -3,20 +3,24 @@
 Handoff document. Goal: run the control plane end-to-end on AWS (then Azure)
 without a risky rewrite of the billing core.
 
-Status as of 2026-07-26:
+Status as of 2026-07-31:
 
 | Phase | State |
 |---|---|
 | 0. Behavioural storage conformance suite | **landed** (#288) |
 | 1. ClickHouse analytics — proof on real data | **done, exact match on 500 routes** |
 | 4. Leak closures — cloud SDKs behind ports | **landed** (#289) |
-| 2. ClickHouse in parallel on GCP (dual-write + verify) | **next** |
+| 2. ClickHouse on GCP | **live**: durable outbox, three replicas, archive, rollups, private reads |
 | 3. AWS test cluster (ClickHouse + remote Spanner) | tooling already exists — mostly a re-run |
 | 5. Azure | spike done for attestation; Entra→GCP WIF outstanding |
 | — Postgres/`PostgresStore` port | **deliberately NOT on the path** |
 
 Ordering note: phase 4 landed before phase 2 because it is a pure decoupling
 with no deployment risk, and it is what lets a non-GCP process start at all.
+
+Current production operations are documented in
+[`../clickhouse-reliability.md`](../clickhouse-reliability.md). Later sections
+describing phase 2 as future work are retained as historical design context.
 
 ---
 
@@ -243,7 +247,13 @@ typed-billing contract (leak #3) is explicitly *not* being touched yet.
 
 ---
 
-## Phase 2 (next): ClickHouse in parallel on GCP
+## Phase 2 (complete): ClickHouse on GCP
+
+The production implementation now uses a durable Spanner outbox, three
+replicated zonal nodes behind a private load balancer, verified immutable
+Parquet archives, daily disk snapshots, and recomputed aggregate tiers. The
+steps below are the original plan and should be read as history; use the
+canonical runbook for current commands and recovery procedures.
 
 Goal: ClickHouse running alongside the live stack, continuously verified,
 before anything depends on it.

@@ -105,6 +105,20 @@ case "$REQUEST_RECORD_WRITE_MODE" in
     ;;
 esac
 
+# Prefer the private three-replica ClickHouse load balancer once provisioned.
+# The direct node-1 address remains only as a migration fallback for projects
+# that have not run clickhouse_cluster.sh yet.
+PROVIDER_ANALYTICS_CLICKHOUSE_URL="${TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL:-}"
+if [ -z "$PROVIDER_ANALYTICS_CLICKHOUSE_URL" ]; then
+  clickhouse_ilb_ip="$(gc compute addresses describe tr-clickhouse-ilb \
+    --region=us-central1 --format='value(address)' 2>/dev/null || true)"
+  if [ -n "$clickhouse_ilb_ip" ]; then
+    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"
+  else
+    PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"
+  fi
+fi
+
 ENV_VARS=(
   "TR_ENVIRONMENT=production"
   "TR_RELEASE=$(git rev-parse --short HEAD 2>/dev/null || echo local)"
@@ -151,22 +165,21 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
-  # Analytics outbox → ClickHouse (docs/storage-portability/analytics-ingestion.md
-  # stage 1). Enqueue is a SEPARATE transaction from settle and is best-effort:
+  # Analytics outbox -> ClickHouse (docs/clickhouse-reliability.md). Enqueue is
+  # a SEPARATE transaction from settle and is best-effort:
   # analytics is not worth destabilising money code for, and
   # clickhouse/reconcile_benchmark_samples.py replays from Bigtable to repair
   # anything dropped. Table DDL applied 2026-07-28 with a 7-day ROW DELETION
   # POLICY, so a dead drainer cannot grow it without bound the way
   # tr_settle_outbox and tr_entities did (#334). Ingester + reconciler run on
-  # tr-clickhouse-1 under systemd.
-  #
-  # This is a SHADOW: nothing reads from ClickHouse. Remove this line to
-  # revert — the flag-off path does not touch the outbox at all.
+  # tr-clickhouse-1 under systemd. Provider analytics reads use the private
+  # three-replica load balancer below; inference and billing never depend on
+  # ClickHouse. Remove this line to stop enqueueing new analytics rows.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
   # Private provider operations portal. Direct VPC egress below reaches this
   # RFC1918 address; ClickHouse has no public IP and the credential is a
   # SELECT-only account scoped to the benchmark table.
-  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=http://10.128.15.214:8123"
+  "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=${PROVIDER_ANALYTICS_CLICKHOUSE_URL}"
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read"
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_DATABASE=tr"
   "TR_PROVIDER_ANALYTICS_CLICKHOUSE_TABLE=provider_benchmark_samples"

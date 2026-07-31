@@ -18,8 +18,19 @@ echo "deb [signed-by=/usr/share/keyrings/clickhouse-keyring.gpg] https://package
   > /etc/apt/sources.list.d/clickhouse.list
 apt-get update -y
 
-PASSWORD=$(curl -fsSL -H 'Metadata-Flavor: Google' \
-  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/ch-password")
+# Resolve the password directly from Secret Manager using the VM identity. The
+# raw credential never enters instance metadata, serial output, or argv.
+METADATA=http://metadata.google.internal/computeMetadata/v1
+PROJECT_ID=$(curl -fsSL -H 'Metadata-Flavor: Google' "$METADATA/project/project-id")
+SECRET_NAME=$(curl -fsSL -H 'Metadata-Flavor: Google' \
+  "$METADATA/instance/attributes/clickhouse-password-secret")
+ACCESS_TOKEN=$(curl -fsSL -H 'Metadata-Flavor: Google' \
+  "$METADATA/instance/service-accounts/default/token" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+PASSWORD=$(curl -fsSL -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  "https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${SECRET_NAME}/versions/latest:access" \
+  | python3 -c 'import base64,json,sys; print(base64.b64decode(json.load(sys.stdin)["payload"]["data"]).decode(), end="")')
+unset ACCESS_TOKEN
 debconf-set-selections <<< "clickhouse-server clickhouse-server/default-password password ${PASSWORD}"
 apt-get install -y clickhouse-server clickhouse-client
 

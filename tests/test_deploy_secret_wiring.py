@@ -147,7 +147,9 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
         ROOT / "scripts/deploy/clickhouse_provider_reader.sh"
     ).read_text(encoding="utf-8")
 
-    assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_URL=http://10.128.15.214:8123" in rollout
+    assert "compute addresses describe tr-clickhouse-ilb" in rollout
+    assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://${clickhouse_ilb_ip}:8123"' in rollout
+    assert 'PROVIDER_ANALYTICS_CLICKHOUSE_URL="http://10.128.15.214:8123"' in rollout
     assert "TR_PROVIDER_ANALYTICS_CLICKHOUSE_USER=tr_provider_read" in rollout
     assert "--vpc-egress private-ranges-only" in rollout
     assert '--network "${TR_CLOUD_RUN_NETWORK:-default}"' in rollout
@@ -161,6 +163,9 @@ def test_provider_portal_uses_private_vpc_and_dedicated_clickhouse_reader() -> N
     assert "<max_memory_usage>536870912</max_memory_usage>" in reader
     assert "<max_result_bytes>536870912</max_result_bytes>" in reader
     assert "GRANT SELECT ON tr.provider_benchmark_samples" in reader
+    assert "GRANT SELECT ON tr.provider_analytics_hourly" in reader
+    assert "GRANT SELECT ON tr.provider_analytics_daily" in reader
+    assert "GRANT SELECT ON tr.provider_analytics_monthly" in reader
     assert "refusing configuration: $NAME has external IP" in reader
     assert (
         "TR_PROVIDER_ANALYTICS_CLICKHOUSE_PASSWORD: "

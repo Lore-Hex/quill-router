@@ -1,0 +1,27 @@
+displayName: "TR ClickHouse: disk capacity"
+combiner: OR
+enabled: true
+documentation:
+  mimeType: text/markdown
+  content: |
+    A TrustedRouter ClickHouse filesystem has remained above 75 percent used.
+    Expand the persistent disk online before ingestion or archive verification
+    loses working space. Runbook: docs/clickhouse-reliability.md.
+conditions:
+  - displayName: "ClickHouse disk above 75 percent for 15 minutes"
+    conditionThreshold:
+      filter: 'resource.type = "gce_instance" AND (__INSTANCE_FILTER__) AND metric.type = "agent.googleapis.com/disk/percent_used" AND metric.labels.state = "used"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 75
+      duration: 900s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+  notificationPrompts:
+    - OPENED
+    - CLOSED

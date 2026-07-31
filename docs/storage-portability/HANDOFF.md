@@ -1,9 +1,15 @@
 # HANDOFF — multi-cloud + ClickHouse analytics
 
-**Last updated 2026-07-30.** Written for an agent taking this over cold. Read
+**Last updated 2026-07-31.** Written for an agent taking this over cold. Read
 [`multi-cloud-separation.md`](multi-cloud-separation.md) and
 [`analytics-ingestion.md`](analytics-ingestion.md) for the *why*; this document is the *where
 we are and what is next*.
+
+> **Production topology update:** the canonical operational document is now
+> [`../clickhouse-reliability.md`](../clickhouse-reliability.md). ClickHouse is
+> no longer a single shadow node. Provider analytics reads use a private,
+> three-zone replicated cluster. Historical stage descriptions below remain
+> useful design context but are not the current runbook.
 
 ---
 
@@ -24,12 +30,13 @@ operational wide-column store and was never a columnar warehouse.
 | Separation decision | **Decided**, #307 |
 | `PostgresStore` | **Merged**, #310 — passes conformance |
 | `PostgresStore` on Spanner PG dialect | **Proven**, #322 — 14/14 |
-| ClickHouse node on GCP | **Live** — `tr-clickhouse-1` |
+| ClickHouse cluster on GCP | **Live**: three zones, three Keeper voters, 500 GB SSD per replica |
 | Backfill (historical) | **Done** — 200k+ rows, per-day parity with Bigtable |
-| Live ingestion (stage 1 shadow) | **Live and verified**, #340 + #347 |
+| Live ingestion | **Live and verified**, durable Spanner outbox plus hourly repair |
 | Route-health differential proof (stage 2 gate) | **Passes**, #350 |
-| Route-health read cutover | **Not started** |
-| Leaderboard proof + cutover | **Not started** |
+| Provider portal read cutover | **Live** through private regional load balancer |
+| Immutable Parquet archive | **Live**, verified daily revisions in GCS, seven-year retention |
+| Hour/day/month rollups | **Live**, parity-gated atomic partition replacement |
 | AWS deployment | **Not started** |
 | Azure deployment | **Not started** |
 
@@ -55,16 +62,17 @@ the "different money code per backend" risk — there is one implementation.
 
 ## 3. What is running in production right now
 
-### ClickHouse node — `tr-clickhouse-1`
+### ClickHouse cluster
 
-* `us-central1-a`, `e2-standard-4`, 200GB pd-ssd, ClickHouse 26.7.1, database `tr`.
-* **No external IP.** Egress via Cloud NAT; access via IAP only.
-* Table `provider_benchmark_samples`, `ReplacingMergeTree`. **Raw only — there is deliberately
-  no `AggregatingMergeTree` view**, because a materialized view runs per INSERT *block* before
-  source replacement and therefore double-counts on every replay. Use `FINAL` for exact counts.
-* Password: Secret Manager `trustedrouter-clickhouse-password`, and on the node at
-  `/etc/tr-clickhouse-ingest.env` as `CH_PASSWORD`. **Prefer the node's file** — Secret
-  Manager's `latest` has drifted from what is deployed.
+* `tr-clickhouse-1/2/3` run in `us-central1-a/b/c`, each on `e2-standard-4`
+  with a 500 GB SSD and no external IP.
+* One logical shard has three `ReplicatedReplacingMergeTree` replicas and a
+  three-voter embedded Keeper quorum.
+* Provider analytics readers use private load balancer `tr-clickhouse-ilb`.
+* Exact raw queries use `FINAL`. Recomputed hourly, daily, and monthly tables
+  replace verified partitions instead of using replay-unsafe additive views.
+* Daily disk snapshots retain 30 days. Verified immutable Parquet retains raw
+  history for seven years. See the canonical runbook linked above.
 
 ### Live ingestion
 
@@ -84,7 +92,9 @@ Verified 2026-07-30: rows flowed, outbox depth held at **0**, `drain_lag_seconds
 `clickhouse_insert_errors_total=0`, and the ingester's `rows_ingested_total` matched the
 ClickHouse row delta exactly.
 
-**It is still a SHADOW. Nothing reads from ClickHouse.** Bigtable remains authoritative.
+Provider portal analytics now read ClickHouse through the private load
+balancer. Spanner remains authoritative for billing, and ClickHouse remains
+off the inference and settlement critical path.
 
 ### Keyless cross-cloud identity (provisioned, currently unused)
 
