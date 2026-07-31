@@ -2411,6 +2411,30 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     assert '"${throughput_job_name}-every-minute"' in body
     assert '"${throughput_job_name}-every-two-minutes"' in body
     assert 'image_job_name="trusted-router-image-generation-${image_region}"' in body
+    assert (
+        'regional_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"'
+        in body
+    )
+    assert (
+        '"TR_SYNTHETIC_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/samples"'
+        in body
+    )
+    assert (
+        '"TR_SYNTHETIC_BENCHMARK_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/benchmark"'
+        in body
+    )
+    assert (
+        '"TR_SYNTHETIC_ROUTE_HEALTH_URL=${regional_ingest_base}/v1/internal/synthetic/route-health"'
+        in body
+    )
+    assert (
+        '"TR_SYNTHETIC_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/samples"'
+        in body
+    )
+    assert (
+        '"TR_SYNTHETIC_INGEST_URL=${image_ingest_base}/v1/internal/synthetic/samples"'
+        in body
+    )
     assert '"TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"' in body
     assert '"TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"' in body
     assert '--args="-m,trusted_router.synthetic.image_generation"' in body
