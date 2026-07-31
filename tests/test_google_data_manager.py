@@ -303,6 +303,7 @@ def test_deploy_worker_does_not_receive_application_secrets() -> None:
 
     assert "TR_ENVIRONMENT=worker" in deploy_script
     assert "tr-google-data-manager@" in deploy_script
+    assert "TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS=20" in deploy_script
     assert "TR_STRIPE_SECRET_KEY=" not in deploy_script
     assert "TR_STRIPE_WEBHOOK_SECRET=" not in deploy_script
     assert "TR_INTERNAL_GATEWAY_TOKEN=" not in deploy_script
