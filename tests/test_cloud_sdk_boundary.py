@@ -46,6 +46,9 @@ ALLOWED = {
     # need not install the Google libraries at all.
     "storage_errors.py",
     "key_management.py",
+    # The portable Postgres adapter lazily imports boto3 only when its explicit
+    # Aurora DSQL IAM-auth mode is selected.
+    "storage_postgres.py",
     # VENDOR PRODUCT APIs, not infrastructure — see the module docstring.
     # google.auth here mints an access token for Vertex AI as an upstream LLM
     # PROVIDER. Routing to Vertex requires Google credentials no matter which

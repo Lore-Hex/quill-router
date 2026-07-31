@@ -1388,7 +1388,15 @@ def create_store(settings: Any) -> Store:
                 "TR_STORAGE_BACKEND=postgres requires TR_POSTGRES_DSN. "
                 "Without it the process would start and fail on first query."
             )
-        store = PostgresStore(dsn)
+        store = PostgresStore(
+            dsn,
+            postgres_iam_auth=str(
+                getattr(settings, "postgres_iam_auth", "") or ""
+            ),
+            postgres_iam_region=str(
+                getattr(settings, "postgres_iam_region", "") or ""
+            ),
+        )
         store.apply_schema()
         return store
     if backend == "spanner-bigtable":
