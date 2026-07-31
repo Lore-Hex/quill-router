@@ -659,8 +659,13 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "modality": (
                 "text->embedding"
                 if model.supports_embeddings and not model.supports_chat
-                else "text->text"
+                else (
+                    f"{'+'.join(model.input_modalities)}"
+                    f"->{'+'.join(model.output_modalities)}"
+                )
             ),
+            "input_modalities": list(model.input_modalities),
+            "output_modalities": list(model.output_modalities),
             "tokenizer": "unknown",
             "instruct_type": None,
         },

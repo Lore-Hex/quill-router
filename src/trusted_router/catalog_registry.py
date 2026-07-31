@@ -11,6 +11,8 @@ catalog_data / catalog_ingest / pricing leaves."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from trusted_router.catalog_data import (  # noqa: F401 - re-exported for back-compat
     _EMBEDDING_SPECS,
     _MODEL_PROVIDER_PRIVACY_OVERRIDES,
@@ -767,7 +769,26 @@ _SUPPLEMENTAL_MODELS, _SUPPLEMENTAL_ENDPOINTS = _supplemental_provider_models_an
 # through the same `cost × 1.05, $0.01/M floor` formula.
 MODELS.update(_INGESTED_MODELS)
 for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
-    MODELS.setdefault(_model_id, _model)
+    _existing_model = MODELS.get(_model_id)
+    if _existing_model is None:
+        MODELS[_model_id] = _model
+        continue
+    # A provider-native catalog may advertise a capability before the shared
+    # snapshot does. Preserve the primary catalog's pricing/name while taking
+    # the union of capabilities verified by callable provider routes.
+    MODELS[_model_id] = replace(
+        _existing_model,
+        input_modalities=tuple(
+            dict.fromkeys(
+                (*_existing_model.input_modalities, *_model.input_modalities)
+            )
+        ),
+        output_modalities=tuple(
+            dict.fromkeys(
+                (*_existing_model.output_modalities, *_model.output_modalities)
+            )
+        ),
+    )
 # Embedding models override any snapshot/supplemental collision: the
 # hand-curated embedding entry (input-only pricing, supports_embeddings) is
 # authoritative for these IDs. Merge BEFORE `_build_endpoints` so each gets
