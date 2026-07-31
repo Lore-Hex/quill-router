@@ -89,12 +89,23 @@ else
     --machine-type "$MACHINE" \
     --image-family debian-12 --image-project debian-cloud \
     --boot-disk-size "${DISK_GB}GB" --boot-disk-type "$DISK_TYPE" \
+    --no-boot-disk-auto-delete \
+    --deletion-protection \
     --tags tr-clickhouse \
     --no-address \
     --scopes https://www.googleapis.com/auth/cloud-platform \
     --metadata-from-file startup-script="$STARTUP_FILE" \
     --metadata ch-password="$PASSWORD"
 fi
+
+# Keep the analytics volume if an existing VM is accidentally deleted. The
+# explicit update also repairs nodes created before these flags were added.
+gcloud compute instances set-disk-auto-delete "$NAME" \
+  --project "$PROJECT" --zone "$ZONE" \
+  --disk "$NAME" --no-auto-delete
+gcloud compute instances update "$NAME" \
+  --project "$PROJECT" --zone "$ZONE" \
+  --deletion-protection
 
 log "done. tail provisioning with:"
 echo "  gcloud compute ssh $NAME --zone $ZONE --project $PROJECT --tunnel-through-iap --command 'sudo tail -f /var/log/tr-clickhouse-startup.log'"
