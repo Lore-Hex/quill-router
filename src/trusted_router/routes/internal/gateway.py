@@ -65,6 +65,7 @@ from trusted_router.routing import (
     chat_route_endpoint_candidates,
     embeddings_route_endpoint_candidates,
     provider_route_preferences,
+    video_route_endpoint_candidates,
 )
 from trusted_router.schemas import (
     GatewayAuthorizeRequest,
@@ -190,9 +191,7 @@ def _authorize_gateway_sync(
             app_categories=body.app_categories,
         )
     except InvalidAttribution as exc:
-        raise api_error(
-            400, str(exc), ErrorType.INVALID_REQUEST_METADATA
-        ) from exc
+        raise api_error(400, str(exc), ErrorType.INVALID_REQUEST_METADATA) from exc
     for key in ("user", "session_id", "trace", "app", "http_referer", "app_categories"):
         body_dict.pop(key, None)
     body_dict.update(attribution.body_fields())
@@ -214,9 +213,7 @@ def _authorize_gateway_sync(
         body_dict["custom_model_id"] = custom_model.id
         body_dict["custom_model_revision"] = custom_model.revision
         _force_custom_model_credit_routes(body_dict)
-    request_idempotency_key = _gateway_idempotency_key(request, body) or str(
-        uuid.uuid4()
-    )
+    request_idempotency_key = _gateway_idempotency_key(request, body) or str(uuid.uuid4())
     partner_mode = _partner_billing_mode_or_error(
         requested_model_id=requested_model_id,
         route_type=body.route_type,
@@ -229,12 +226,9 @@ def _authorize_gateway_sync(
     # resolver so the attested enclave can authorize + bill an
     # embeddings call exactly like a chat one.
     route_model_id = str(body_dict.get("model") or body.model)
-    if (
-        body.additional_cost_reservation_microdollars
-        and (
-            _is_web_search_restricted_model(route_model_id)
-            or _is_web_search_restricted_provider(body_dict.get("provider"))
-        )
+    if body.additional_cost_reservation_microdollars and (
+        _is_web_search_restricted_model(route_model_id)
+        or _is_web_search_restricted_provider(body_dict.get("provider"))
     ):
         raise api_error(
             400,
@@ -242,26 +236,25 @@ def _authorize_gateway_sync(
             ErrorType.BAD_REQUEST,
         )
     requested_model = MODELS.get(route_model_id) if route_model_id else None
+    is_video_request = body.route_type == "videos"
     is_embeddings_request = (
         requested_model is not None
         and requested_model.supports_embeddings
         and not requested_model.supports_chat
     )
-    if is_embeddings_request:
+    if is_video_request:
+        endpoint_candidates = video_route_endpoint_candidates(body_dict, settings)
+    elif is_embeddings_request:
         endpoint_candidates = embeddings_route_endpoint_candidates(body_dict, settings)
         if not endpoint_candidates:
-            raise api_error(
-                400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED
-            )
+            raise api_error(400, "Model does not support embeddings", ErrorType.MODEL_NOT_SUPPORTED)
     else:
         endpoint_candidates = chat_route_endpoint_candidates(body_dict, settings)
         if not endpoint_candidates:
             raise api_error(
                 400, "Model does not support chat completions", ErrorType.MODEL_NOT_SUPPORTED
             )
-    endpoint_candidates = _eligible_gateway_endpoint_candidates(
-        endpoint_candidates, workspace.id
-    )
+    endpoint_candidates = _eligible_gateway_endpoint_candidates(endpoint_candidates, workspace.id)
     input_tokens = body.estimated_input_tokens
     if custom_model is not None and custom_model.hidden_prompt.strip():
         input_tokens += estimate_tokens_from_text(custom_model.hidden_prompt)
@@ -273,14 +266,14 @@ def _authorize_gateway_sync(
     )
     additional_cost_reservation = body.additional_cost_reservation_microdollars
     if additional_cost_reservation:
-        if body.route_type != "responses.web_search.planner":
+        if body.route_type not in {"responses.web_search.planner", "videos"}:
             raise api_error(
                 400,
-                "additional cost reservations are only available for Responses web search",
+                "additional cost reservations are only available for hosted search or video",
                 ErrorType.BAD_REQUEST,
             )
-        # The hosted search service is operator-funded, so its cost must settle
-        # against Credits even when this workspace also has BYOK routes.
+        # Hosted tools and asynchronous media are operator-funded, so their
+        # fixed cost must settle against Credits rather than a BYOK route.
         endpoint_candidates = [
             (candidate_model, candidate_endpoint)
             for candidate_model, candidate_endpoint in endpoint_candidates
@@ -322,6 +315,11 @@ def _authorize_gateway_sync(
     )
     reservation_usage_type = UsageType.CREDITS if has_credit_candidate else UsageType.BYOK
     fingerprint_body = dict(body_dict)
+    if is_video_request:
+        # Provider quotes can change between retries. The enclave supplies a
+        # keyed content fingerprint, so video idempotency binds to the logical
+        # request without storing content or coupling replay to a fresh quote.
+        fingerprint_body.pop("additional_cost_reservation_microdollars", None)
     # Preserve the pre-tagging router's distinction between an absent tags
     # field and an explicitly supplied empty object. That lets an idempotent
     # retry carrying tags={} replay an authorization created before rollout.
@@ -335,6 +333,7 @@ def _authorize_gateway_sync(
         key_hash=api_key.hash,
         body=fingerprint_body,
     )
+
     def _replay_response(existing_authorization: Any) -> dict[str, Any]:
         # Build the replay response from the STORED authorization (NOT current
         # routing), so a replay across catalog/pricing/BYOK drift advertises
@@ -461,9 +460,7 @@ def _authorize_gateway_sync(
                 headers={"Retry-After": str(retry_after)},
             )
         if outcome in (AuthorizeOutcome.KEY_LIMIT_EXCEEDED, AuthorizeOutcome.KEY_MISSING):
-            raise api_error(
-                402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED
-            )
+            raise api_error(402, "API key spend limit exceeded", ErrorType.KEY_LIMIT_EXCEEDED)
         if outcome == AuthorizeOutcome.IDEMPOTENCY_MISMATCH:
             raise api_error(
                 409,
@@ -542,9 +539,7 @@ def _authorize_gateway_sync(
             additional_cost_reservation_microdollars=additional_cost_reservation,
         )
     byok_config = (
-        _get_byok_provider(workspace.id, endpoint.provider)
-        if model_usage_type.is_byok()
-        else None
+        _get_byok_provider(workspace.id, endpoint.provider) if model_usage_type.is_byok() else None
     )
     broadcast_destinations = [
         payload
@@ -692,9 +687,7 @@ def register(router: APIRouter) -> None:
         body: GatewayResolveCustomModelRequest,
         settings: SettingsDep,
     ) -> dict[str, Any]:
-        return await run_in_threadpool(
-            _gateway_resolve_custom_model_sync, request, body, settings
-        )
+        return await run_in_threadpool(_gateway_resolve_custom_model_sync, request, body, settings)
 
     @router.post("/internal/gateway/authorize")
     async def gateway_authorize(
@@ -755,9 +748,7 @@ def _api_key_for_gateway_authorization(body: GatewayAuthorizeRequest) -> Any | N
     )
 
 
-def _gateway_idempotency_key(
-    request: Request, body: GatewayAuthorizeRequest
-) -> str | None:
+def _gateway_idempotency_key(request: Request, body: GatewayAuthorizeRequest) -> str | None:
     raw = body.idempotency_key or request.headers.get("idempotency-key")
     if raw is None:
         return None
@@ -942,9 +933,7 @@ def _force_credit_routes(body: dict[str, Any], *, error_message: str) -> None:
 def _is_web_search_restricted_model(model_id: str) -> bool:
     model = model_id.strip().lower()
     return any(
-        model == prefix
-        or model.startswith(f"{prefix}-")
-        or model.startswith(f"{prefix}/")
+        model == prefix or model.startswith(f"{prefix}-") or model.startswith(f"{prefix}/")
         for prefix in (
             "trustedrouter/zdr",
             "trustedrouter/e2e",
@@ -1030,10 +1019,7 @@ def _settle_gateway_authorization(
         route_type=body.route_type,
         idempotency_key=authorization.idempotency_key,
     )
-    if (
-        partner_mode is not None
-        and UsageType.for_endpoint(selected_endpoint) != UsageType.CREDITS
-    ):
+    if partner_mode is not None and UsageType.for_endpoint(selected_endpoint) != UsageType.CREDITS:
         raise api_error(
             400,
             "Parasail Liberty does not support BYOK routes",
@@ -1071,10 +1057,10 @@ def _settle_gateway_authorization(
     )
     additional_cost = body.additional_cost_microdollars
     if additional_cost:
-        if body.route_type != "responses.web_search.planner":
+        if body.route_type not in {"responses.web_search.planner", "videos"}:
             raise api_error(
                 400,
-                "additional cost settlement is only available for Responses web search",
+                "additional cost settlement is only available for hosted search or video",
                 ErrorType.BAD_REQUEST,
             )
         if additional_cost > authorization.additional_cost_reservation_microdollars:
@@ -1093,14 +1079,10 @@ def _settle_gateway_authorization(
     input_tokens = total_input
     selected_usage_type = UsageType.for_endpoint(selected_endpoint)
     generation_model_id = (
-        PARASAIL_LIBERTY_2_0_MODEL_ID
-        if partner_mode == PartnerBillingMode.TOP_LEVEL
-        else model.id
+        PARASAIL_LIBERTY_2_0_MODEL_ID if partner_mode == PartnerBillingMode.TOP_LEVEL else model.id
     )
     generation_provider = (
-        "parasail"
-        if partner_mode == PartnerBillingMode.TOP_LEVEL
-        else selected_endpoint.provider
+        "parasail" if partner_mode == PartnerBillingMode.TOP_LEVEL else selected_endpoint.provider
     )
     generation_provider_name = PROVIDERS[generation_provider].name
 
@@ -1200,14 +1182,12 @@ def _settle_gateway_authorization(
                 ),
             )
         else:
-            finalized_legacy_contract = (
-                _typed_store.typed_finalize_gateway_authorization(
-                    authorization.id,
-                    success=success,
-                    actual_microdollars=actual_cost,
-                    selected_usage_type=selected_usage_type,
-                    generation=generation,
-                )
+            finalized_legacy_contract = _typed_store.typed_finalize_gateway_authorization(
+                authorization.id,
+                success=success,
+                actual_microdollars=actual_cost,
+                selected_usage_type=selected_usage_type,
+                generation=generation,
             )
             finalize_result = TypedFinalizeResult(
                 finalized=finalized_legacy_contract,
@@ -1242,11 +1222,7 @@ def _settle_gateway_authorization(
             }
         }
     mark_ms = 0.0
-    if (
-        settings.settle_outbox_enabled
-        and outbox_enqueued
-        and finalize_result.activity_indexed
-    ):
+    if settings.settle_outbox_enabled and outbox_enqueued and finalize_result.activity_indexed:
         mark_start = perf_counter()
         try:
             marked = spanner_settle_outbox().mark(authorization.id, intent_kind, done=True)
@@ -1274,11 +1250,7 @@ def _settle_gateway_authorization(
         )
 
     is_customer_billing_event = partner_mode != PartnerBillingMode.INTERNAL
-    if (
-        success
-        and is_customer_billing_event
-        and selected_usage_type == UsageType.CREDITS
-    ):
+    if success and is_customer_billing_event and selected_usage_type == UsageType.CREDITS:
         _schedule_auto_refill(authorization.workspace_id, settings, background_tasks)
     if success and is_customer_billing_event:
         if background_tasks is not None:
@@ -1394,8 +1366,7 @@ def _settle_body_with_safe_attribution(
         for key in attribution_keys:
             settle_body.pop(key, None)
         logger.warning(
-            "invalid gateway settlement attribution dropped authorization_id=%s "
-            "error_class=%s",
+            "invalid gateway settlement attribution dropped authorization_id=%s error_class=%s",
             authorization_id,
             type(exc).__name__,
         )
@@ -1414,11 +1385,7 @@ def _settle_repair_metadata(settle_body: dict[str, Any]) -> dict[str, Any]:
     deliberately excluded. The one metadata bit retained marks synthetic
     traffic so repaired rows stay out of public provider benchmarks.
     """
-    frozen = {
-        key: value
-        for key, value in settle_body.items()
-        if key in _SETTLE_REPAIR_FIELDS
-    }
+    frozen = {key: value for key, value in settle_body.items() if key in _SETTLE_REPAIR_FIELDS}
     metadata = settle_body.get("metadata")
     if isinstance(metadata, dict) and _synthetic_metadata_enabled(metadata):
         frozen["metadata"] = {"trustedrouter_synthetic": "true"}
@@ -1465,9 +1432,7 @@ def _gateway_candidate_payload(
     }
 
 
-def _gateway_byok_payload(
-    byok_config: Any | None, workspace_id: str
-) -> dict[str, Any]:
+def _gateway_byok_payload(byok_config: Any | None, workspace_id: str) -> dict[str, Any]:
     if byok_config is None:
         return {
             "byok_secret_ref": None,
@@ -1497,10 +1462,7 @@ def _eligible_gateway_endpoint_candidates(
     out: list[tuple[Model, ModelEndpoint]] = []
     for model, endpoint in candidates:
         usage_type = UsageType.for_endpoint(endpoint)
-        if (
-            usage_type.is_byok()
-            and _get_byok_provider(workspace_id, endpoint.provider) is None
-        ):
+        if usage_type.is_byok() and _get_byok_provider(workspace_id, endpoint.provider) is None:
             continue
         out.append((model, endpoint))
     return out
@@ -1600,9 +1562,7 @@ def _service_tier_endpoint_candidates_or_error(
     if service_tier is None:
         return candidates
     openai_candidates = [
-        (model, endpoint)
-        for model, endpoint in candidates
-        if endpoint.provider == "openai"
+        (model, endpoint) for model, endpoint in candidates if endpoint.provider == "openai"
     ]
     if service_tier in {"auto", "priority"}:
         openai_candidates = [
@@ -1610,10 +1570,7 @@ def _service_tier_endpoint_candidates_or_error(
             for model, endpoint in openai_candidates
             if openai_priority_pricing(endpoint.model_id) is not None
         ]
-    if (
-        service_tier == "priority"
-        and estimated_input_tokens > OPENAI_PRIORITY_MAX_PROMPT_TOKENS
-    ):
+    if service_tier == "priority" and estimated_input_tokens > OPENAI_PRIORITY_MAX_PROMPT_TOKENS:
         raise api_error(
             400,
             "OpenAI Priority processing does not support prompts over 272000 tokens",
@@ -1667,8 +1624,7 @@ def _endpoint_cost_microdollars(
         rates.completion_price_microdollars_per_million_tokens,
     )
     has_positive_charge = (input_tokens > 0 and prompt_price > 0) or (
-        output_tokens > 0
-        and rates.completion_price_microdollars_per_million_tokens > 0
+        output_tokens > 0 and rates.completion_price_microdollars_per_million_tokens > 0
     )
     if cache_read_tokens or cache_creation_tokens:
         default_read_price, write_price = cache_token_prices_microdollars(

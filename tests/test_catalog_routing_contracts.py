@@ -122,63 +122,38 @@ def test_every_catalog_model_has_integer_prices_and_valid_provider() -> None:
     from trusted_router.catalog_ingest import _PROVIDER_MODELS_DIR
     from trusted_router.pricing import _customer_price
 
-    kimi_manifest = json.loads(
-        (_PROVIDER_MODELS_DIR / "kimi.json").read_text(encoding="utf-8")
-    )
-    kimi_k3_row = next(
-        row
-        for row in kimi_manifest["models"]
-        if row["id"] == "moonshotai/kimi-k3"
-    )
-    expected_prompt_price = _customer_price(
-        int(kimi_k3_row["input_token_price_per_m"])
-    )
-    expected_completion_price = _customer_price(
-        int(kimi_k3_row["output_token_price_per_m"])
-    )
+    kimi_manifest = json.loads((_PROVIDER_MODELS_DIR / "kimi.json").read_text(encoding="utf-8"))
+    kimi_k3_row = next(row for row in kimi_manifest["models"] if row["id"] == "moonshotai/kimi-k3")
+    expected_prompt_price = _customer_price(int(kimi_k3_row["input_token_price_per_m"]))
+    expected_completion_price = _customer_price(int(kimi_k3_row["output_token_price_per_m"]))
     expected_cached_prompt_price = _customer_price(
         int(kimi_k3_row["cached_input_token_price_per_m"])
     )
     kimi_k3_endpoints = endpoints_for_model("moonshotai/kimi-k3")
     assert kimi_k3.context_length == 1_048_576
     assert kimi_k3.prompt_price_microdollars_per_million_tokens in {
-        endpoint.prompt_price_microdollars_per_million_tokens
-        for endpoint in kimi_k3_endpoints
+        endpoint.prompt_price_microdollars_per_million_tokens for endpoint in kimi_k3_endpoints
     }
     assert kimi_k3.completion_price_microdollars_per_million_tokens in {
-        endpoint.completion_price_microdollars_per_million_tokens
-        for endpoint in kimi_k3_endpoints
+        endpoint.completion_price_microdollars_per_million_tokens for endpoint in kimi_k3_endpoints
     }
     kimi_k3_direct = MODEL_ENDPOINTS["moonshotai/kimi-k3@kimi/prepaid"]
     assert kimi_k3_direct.upstream_id == "kimi-k3"
+    assert kimi_k3_direct.prompt_price_microdollars_per_million_tokens == expected_prompt_price
     assert (
-        kimi_k3_direct.prompt_price_microdollars_per_million_tokens
-        == expected_prompt_price
-    )
-    assert (
-        kimi_k3_direct.completion_price_microdollars_per_million_tokens
-        == expected_completion_price
+        kimi_k3_direct.completion_price_microdollars_per_million_tokens == expected_completion_price
     )
     assert (
         kimi_k3_direct.price_tiers[0].prompt_cached_price_microdollars_per_million_tokens
         == expected_cached_prompt_price
     )
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id
-        == "moonshotai/kimi-k3"
-    )
+    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@novita/prepaid"].upstream_id == "moonshotai/kimi-k3"
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@siliconflow/prepaid"].upstream_id
         == "moonshotai/kimi-k3"
     )
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k3@baseten/prepaid"].upstream_id
-        == "moonshotai/Kimi-K3"
-    )
-    assert (
-        MODEL_ENDPOINTS["moonshotai/kimi-k3@nebius/prepaid"].upstream_id
-        == "moonshotai/Kimi-K3"
-    )
+    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@baseten/prepaid"].upstream_id == "moonshotai/Kimi-K3"
+    assert MODEL_ENDPOINTS["moonshotai/kimi-k3@nebius/prepaid"].upstream_id == "moonshotai/Kimi-K3"
     assert (
         MODEL_ENDPOINTS["moonshotai/kimi-k3@fireworks/prepaid"].upstream_id
         == "accounts/fireworks/models/kimi-k3"
@@ -244,10 +219,7 @@ def test_parasail_liberty_catalog_publishes_fixed_credits_only_price() -> None:
     assert shape["pricing"]["completion"] == "0.000019"
     assert shape["pricing"]["minimum"] == "0.001"
     assert shape["trustedrouter"]["prompt_price_microdollars_per_million_tokens"] == 2_000_000
-    assert (
-        shape["trustedrouter"]["completion_price_microdollars_per_million_tokens"]
-        == 19_000_000
-    )
+    assert shape["trustedrouter"]["completion_price_microdollars_per_million_tokens"] == 19_000_000
     assert shape["trustedrouter"]["minimum_charge_microdollars"] == 1_000
     assert shape["trustedrouter"]["prepaid_available"] is True
     assert shape["trustedrouter"]["byok_available"] is False
@@ -291,10 +263,7 @@ def test_model_storage_flag_is_gateway_scoped_endpoint_flag_is_provider_scoped()
     openai_endpoints = [
         endpoint for endpoint in meta["endpoints"] if endpoint["provider"] == "openai"
     ]
-    by_usage = {
-        endpoint["usage_type"]: endpoint
-        for endpoint in openai_endpoints
-    }
+    by_usage = {endpoint["usage_type"]: endpoint for endpoint in openai_endpoints}
     assert by_usage["Credits"]["stores_content"] is False
     assert by_usage["Credits"]["provider_zero_data_retention"] is True
     assert by_usage["Credits"]["zero_data_retention_scope"] == "trustedrouter_prepaid"
@@ -706,8 +675,7 @@ def test_provider_deprecated_models_have_no_catalog_endpoints() -> None:
         assert [
             endpoint
             for endpoint in MODEL_ENDPOINTS.values()
-            if endpoint.provider == "atlas-cloud"
-            and endpoint.model_id == kept_model
+            if endpoint.provider == "atlas-cloud" and endpoint.model_id == kept_model
         ], f"atlas-cloud/{kept_model} should remain routable"
 
     assert "anthropic/claude-fable-5@anthropic/prepaid" in MODEL_ENDPOINTS
@@ -1136,14 +1104,8 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
         "image",
     ]
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
-    assert (
-        inkling_small.prompt_price_microdollars_per_million_tokens
-        == 315_000
-    )
-    assert (
-        inkling_small.completion_price_microdollars_per_million_tokens
-        == 1_260_000
-    )
+    assert inkling_small.prompt_price_microdollars_per_million_tokens == 315_000
+    assert inkling_small.completion_price_microdollars_per_million_tokens == 1_260_000
     assert {
         (endpoint.provider, endpoint.upstream_id)
         for endpoint in endpoints_for_model(inkling_small.id)
@@ -1454,9 +1416,7 @@ def test_privacy_meta_models_force_endpoint_privacy_floor() -> None:
     assert e2e_endpoints
     assert e2e_endpoints[0][1].provider == "tinfoil"
     assert "anthropic" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
-    assert "google-ai-studio" not in {
-        endpoint.provider for _model, endpoint in zdr_endpoints
-    }
+    assert "google-ai-studio" not in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "google-vertex" in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert "openai" in {endpoint.provider for _model, endpoint in zdr_endpoints}
     assert all(
@@ -1504,10 +1464,18 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
         "z-ai/glm-5-turbo",
         "z-ai/glm-5v-turbo",
     }
-    endpoints = [
-        endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"
-    ]
-    assert {endpoint.model_id for endpoint in endpoints} == private_models | anonymized_models
+    video_models = {
+        "bytedance/seedance-2.0",
+        "bytedance/seedance-2.0-fast",
+        "google/gemini-omni-flash",
+        "lightricks/ltx-2.3",
+        "lightricks/ltx-2.3-fast",
+        "minimax/hailuo-3",
+    }
+    endpoints = [endpoint for endpoint in MODEL_ENDPOINTS.values() if endpoint.provider == "venice"]
+    assert {endpoint.model_id for endpoint in endpoints} == (
+        private_models | anonymized_models | video_models
+    )
     assert all(
         PROVIDERS[endpoint.provider].provider_confidential_compute is False
         for endpoint in endpoints
@@ -1523,6 +1491,17 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
             assert endpoint_privacy_tier(endpoint) == PRIVACY_TIER_STANDARD
             assert endpoint_zero_data_retention(endpoint) is False
             assert endpoint_stores_content(endpoint) is True
+
+    for model_id in video_models:
+        model = MODELS[model_id]
+        assert model.supports_video is True
+        assert model.supports_chat is False
+        video_endpoints = [
+            endpoint for endpoint in endpoints_for_model(model_id) if endpoint.provider == "venice"
+        ]
+        assert video_endpoints
+        assert all(endpoint_zero_data_retention(endpoint) is False for endpoint in video_endpoints)
+        assert all(endpoint_stores_content(endpoint) is True for endpoint in video_endpoints)
 
     private_shape = model_to_openrouter_shape(MODELS["z-ai/glm-5.2"])
     private_venice = [
@@ -1544,9 +1523,7 @@ def test_venice_privacy_is_model_specific_and_never_claims_tee() -> None:
     ]
     assert anonymized_venice
     assert all(endpoint["stores_content"] is True for endpoint in anonymized_venice)
-    assert all(
-        endpoint["provider_zero_data_retention"] is False for endpoint in anonymized_venice
-    )
+    assert all(endpoint["provider_zero_data_retention"] is False for endpoint in anonymized_venice)
 
 
 def test_every_tinfoil_endpoint_is_confidential_and_e2ee() -> None:
@@ -1559,8 +1536,7 @@ def test_every_tinfoil_endpoint_is_confidential_and_e2ee() -> None:
     assert provider.provider_confidential_compute is True
     assert provider.provider_e2ee is True
     assert all(
-        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_CONFIDENTIAL
-        for endpoint in endpoints
+        endpoint_privacy_tier(endpoint) >= PRIVACY_TIER_CONFIDENTIAL for endpoint in endpoints
     )
 
 
@@ -1749,9 +1725,7 @@ def test_makora_provider_models_follow_live_manifest() -> None:
 
     assert "makora" in PROVIDERS
     assert "makora" in GATEWAY_PREPAID_PROVIDER_SLUGS
-    raw = json.loads(
-        (_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8")
-    )
+    raw = json.loads((_PROVIDER_MODELS_DIR / "makora.json").read_text(encoding="utf-8"))
     raw_models = raw.get("models")
     assert isinstance(raw_models, list)
     expected: dict[str, str] = {}
@@ -1761,9 +1735,7 @@ def test_makora_provider_models_follow_live_manifest() -> None:
             continue
         if row.get("model_type") not in (None, "chat"):
             continue
-        if "chat/completions" not in {
-            str(item) for item in (row.get("endpoints") or [])
-        }:
+        if "chat/completions" not in {str(item) for item in (row.get("endpoints") or [])}:
             continue
         model_id = row.get("id")
         assert isinstance(model_id, str) and model_id

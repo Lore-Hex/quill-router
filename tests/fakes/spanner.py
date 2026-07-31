@@ -368,14 +368,15 @@ class _FakeTransaction:
         # version so a concurrent enqueue/status-flip aborts this txn at commit.
         range_key = ("outbox_auth", authorization_id)
         if range_key not in self.read_versions:
-            self.read_versions[range_key] = (
-                self.db.settle_outbox_auth_versions.get(authorization_id, 0)
+            self.read_versions[range_key] = self.db.settle_outbox_auth_versions.get(
+                authorization_id, 0
             )
         pks = set(self.db.settle_outbox)
         pks.update(
             op[1]
             for op in self.pending_writes
-            if op[0] in (
+            if op[0]
+            in (
                 "insert_settle_outbox",
                 "update_settle_outbox",
                 "delete_settle_outbox",
@@ -394,10 +395,14 @@ class _FakeTransaction:
         authorization_id: str,
     ) -> dict | None:
         for op in reversed(self.pending_writes):
-            if op[0] in (
-                "insert_gateway_authorization",
-                "update_gateway_authorization",
-            ) and op[1] == authorization_id:
+            if (
+                op[0]
+                in (
+                    "insert_gateway_authorization",
+                    "update_gateway_authorization",
+                )
+                and op[1] == authorization_id
+            ):
                 return dict(op[2])
         return self._pinned_read(
             ("gateway_auth", authorization_id),
@@ -510,7 +515,9 @@ class _FakeTransaction:
                 return 1
             return 0
         if "UPDATE tr_credit_balance SET reserved = reserved - @hold" in sql:
-            _require_pred(sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release")
+            _require_pred(
+                sql, "workspace_id=@ws AND shard=@shard AND reserved >= @hold", "credit-release"
+            )
             pk = (p["ws"], p["shard"])
             rec = self._typed_current("tr_credit_balance", pk)
             # mirrors the `AND reserved >= @hold` guard: underflow = 0-row no-op
@@ -555,7 +562,9 @@ class _FakeTransaction:
                 if byok_settle and not rec.get("include_byok", True):
                     wamt = 0
                 for window, floor_param in (
-                    ("day", "day_floor"), ("week", "week_floor"), ("month", "month_floor"),
+                    ("day", "day_floor"),
+                    ("week", "week_floor"),
+                    ("month", "month_floor"),
                 ):
                     floor = p[floor_param]
                     start = rec.get(f"{window}_start")
@@ -618,9 +627,7 @@ class _FakeTransaction:
             )
             ids = p.get("ids")
             if not isinstance(ids, list):
-                raise AssertionError(
-                    "reservation-terminal-backfill requires an @ids array binding"
-                )
+                raise AssertionError("reservation-terminal-backfill requires an @ids array binding")
             updated = 0
             for rid in ids:
                 rec = self._reservation_current(str(rid))
@@ -628,15 +635,11 @@ class _FakeTransaction:
                     rec is None
                     or not rec.get("settled")
                     or rec.get("terminal_at") is not None
-                    or self._has_guarded_outbox_intent(
-                        str(rec.get("authorization_id"))
-                    )
+                    or self._has_guarded_outbox_intent(str(rec.get("authorization_id")))
                 ):
                     continue
                 new = dict(rec, terminal_at=p["terminal_at"])
-                self.pending_writes.append(
-                    ("update_reservation", str(rid), new)
-                )
+                self.pending_writes.append(("update_reservation", str(rid), new))
                 updated += 1
             return updated
         if "UPDATE tr_reservation SET settled=true" in sql:
@@ -732,21 +735,15 @@ class _FakeTransaction:
             record = dict(p)
             record["settled"] = False
             record["terminal_at"] = None
-            self.pending_writes.append(
-                ("insert_gateway_authorization", authorization_id, record)
-            )
+            self.pending_writes.append(("insert_gateway_authorization", authorization_id, record))
             return 1
-        if sql.startswith(
-            "UPDATE tr_gateway_authorization SET settled=true, payload=@payload"
-        ):
+        if sql.startswith("UPDATE tr_gateway_authorization SET settled=true, payload=@payload"):
             authorization_id = p["authorization_id"]
             rec = self._gateway_authorization_current(authorization_id)
             if rec is None:
                 return 0
             new = dict(rec, settled=True, payload=p["payload"])
-            self.pending_writes.append(
-                ("update_gateway_authorization", authorization_id, new)
-            )
+            self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=@terminal_at"):
             _require_pred(
@@ -773,18 +770,12 @@ class _FakeTransaction:
                 )
             authorization_id = p["authorization_id"]
             rec = self._gateway_authorization_current(authorization_id)
-            if (
-                rec is None
-                or not rec.get("settled")
-                or rec.get("terminal_at") is not None
-            ):
+            if rec is None or not rec.get("settled") or rec.get("terminal_at") is not None:
                 return 0
             if guarded and self._has_guarded_outbox_intent(authorization_id):
                 return 0
             new = dict(rec, terminal_at=p["terminal_at"])
-            self.pending_writes.append(
-                ("update_gateway_authorization", authorization_id, new)
-            )
+            self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith("UPDATE tr_gateway_authorization SET terminal_at=NULL"):
             _require_pred(
@@ -797,9 +788,7 @@ class _FakeTransaction:
             if rec is None or rec.get("terminal_at") is None:
                 return 0
             new = dict(rec, terminal_at=None)
-            self.pending_writes.append(
-                ("update_gateway_authorization", authorization_id, new)
-            )
+            self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith(
             "UPDATE tr_gateway_authorization SET settled=true, terminal_at=@terminal_at"
@@ -815,9 +804,7 @@ class _FakeTransaction:
                 terminal_at=p["terminal_at"],
                 payload=None,
             )
-            self.pending_writes.append(
-                ("update_gateway_authorization", authorization_id, new)
-            )
+            self.pending_writes.append(("update_gateway_authorization", authorization_id, new))
             return 1
         if sql.startswith("INSERT INTO tr_entities"):
             entity_key = (p["kind"], p["id"])
@@ -832,7 +819,10 @@ class _FakeTransaction:
             # read-your-writes within the txn, else committed
             pending = None
             for op in reversed(self.pending_writes):
-                if op[0] in ("insert_entity_dml", "update_entity_dml") and (op[1], op[2]) == entity_key:
+                if (
+                    op[0] in ("insert_entity_dml", "update_entity_dml")
+                    and (op[1], op[2]) == entity_key
+                ):
                     pending = op
                     break
             if pending is None:
@@ -863,7 +853,9 @@ class _FakeTransaction:
             # predicate — including the PK key — is present, so a dropped predicate
             # FAILS a test (real Spanner would update every matching row, not the
             # single pk the fake derives from params).
-            _require_pred(sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh")
+            _require_pred(
+                sql, "authorization_id=@authorization_id AND intent_kind=@intent_kind", "refresh"
+            )
             _require_pred(sql, "status='pending'", "refresh")
             _require_pred(sql, "leased_until IS NULL OR leased_until < @now", "refresh")
             pk = (p["authorization_id"], p["intent_kind"])
@@ -875,8 +867,13 @@ class _FakeTransaction:
                 return 0  # actively leased -> refresh is a no-op (finding 2 fix)
             new = dict(rec)
             for col in (
-                "settle_origin", "reservation_id", "actual_cost_micro",
-                "selected_endpoint_id", "model_id", "selected_usage_type", "settle_body",
+                "settle_origin",
+                "reservation_id",
+                "actual_cost_micro",
+                "selected_endpoint_id",
+                "model_id",
+                "selected_usage_type",
+                "settle_body",
             ):
                 new[col] = p[col]
             new["updated_at"] = p["now"]
@@ -915,8 +912,13 @@ class _FakeTransaction:
             if owner != p.get("lease_owner"):
                 return 0
             new = dict(
-                rec, status="pending", attempts=rec.get("attempts", 0), last_error=p["err"],
-                next_attempt_at=p["next_at"], lease_owner=None, leased_until=None,
+                rec,
+                status="pending",
+                attempts=rec.get("attempts", 0),
+                last_error=p["err"],
+                next_attempt_at=p["next_at"],
+                lease_owner=None,
+                leased_until=None,
                 updated_at=p["now"],
             )
             self.pending_writes.append(("update_settle_outbox", pk, new))
@@ -950,9 +952,15 @@ class _FakeTransaction:
             if owner != p.get("lease_owner"):
                 return 0
             new = dict(
-                rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],
-                next_attempt_at=p["next_at"], lease_owner=None, leased_until=None,
-                updated_at=p["now"], terminal_at=p["terminal_at"],
+                rec,
+                status=p["status"],
+                attempts=p["attempts"],
+                last_error=p["err"],
+                next_attempt_at=p["next_at"],
+                lease_owner=None,
+                leased_until=None,
+                updated_at=p["now"],
+                terminal_at=p["terminal_at"],
                 settle_body=None if p["done"] else rec.get("settle_body"),
             )
             self.pending_writes.append(("update_settle_outbox", pk, new))
@@ -1043,7 +1051,12 @@ class _FakeBatch:
                 elif op[0] == "upsert_typed":
                     _, table, columns, value_tuple = op
                     _apply_upsert_typed(
-                        self.db.typed, self.db.typed_versions, table, columns, value_tuple, new_version
+                        self.db.typed,
+                        self.db.typed_versions,
+                        table,
+                        columns,
+                        value_tuple,
+                        new_version,
                     )
                 elif op[0] == "delete_typed":
                     _, table, pk = op
@@ -1107,9 +1120,7 @@ def _execute_settle_outbox_sql(
         if rec is None or rec.get("status") != "pending":
             return []
         values = [rec.get("attempts", 0), rec.get("lease_owner")]
-        if sql.startswith(
-            "SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"
-        ):
+        if sql.startswith("SELECT attempts, lease_owner, reservation_id FROM tr_settle_outbox"):
             values.append(rec.get("reservation_id"))
         return [values]
     if "next_attempt_at <= @now" in sql and "ORDER BY next_attempt_at" in sql:
@@ -1124,7 +1135,8 @@ def _execute_settle_outbox_sql(
         now = p["now"]
         limit = int(p.get("limit", 100))
         rows = [
-            rec for rec in db.settle_outbox.values()
+            rec
+            for rec in db.settle_outbox.values()
             if rec.get("status") == "pending"
             and rec.get("queue_shard") is not None
             and rec.get("next_attempt_at") is not None
@@ -1132,10 +1144,7 @@ def _execute_settle_outbox_sql(
         ]
         rows.sort(key=lambda r: r.get("next_attempt_at") or "")
         return [[rec.get(c) for c in OUTBOX_COLUMNS] for rec in rows[:limit]]
-    if (
-        "SELECT COUNT(*) FROM tr_settle_outbox" in sql
-        and "intent_kind != @kind" in sql
-    ):
+    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql and "intent_kind != @kind" in sql:
         _require_pred(sql, "authorization_id=@aid", "sibling-guard")
         _require_pred(sql, "intent_kind != @kind", "sibling-guard")
         _require_pred(
@@ -1150,27 +1159,22 @@ def _execute_settle_outbox_sql(
             # same serialization contract as the MF2 guard count above.
             range_key = ("outbox_auth", aid)
             if range_key not in txn.read_versions:
-                txn.read_versions[range_key] = (
-                    db.settle_outbox_auth_versions.get(aid, 0)
-                )
+                txn.read_versions[range_key] = db.settle_outbox_auth_versions.get(aid, 0)
         count = 0
         pks = set(db.settle_outbox)
         if txn is not None:
             pks.update(
                 op[1]
                 for op in txn.pending_writes
-                if op[0] in (
+                if op[0]
+                in (
                     "insert_settle_outbox",
                     "update_settle_outbox",
                     "delete_settle_outbox",
                 )
             )
         for pk in pks:
-            rec = (
-                txn._settle_outbox_current(pk)
-                if txn is not None
-                else db.settle_outbox.get(pk)
-            )
+            rec = txn._settle_outbox_current(pk) if txn is not None else db.settle_outbox.get(pk)
             if (
                 rec is not None
                 and rec.get("authorization_id") == aid
@@ -1194,14 +1198,13 @@ def _execute_settle_outbox_sql(
             # slipped through unvalidated.)
             range_key = ("outbox_auth", aid)
             if range_key not in txn.read_versions:
-                txn.read_versions[range_key] = (
-                    db.settle_outbox_auth_versions.get(aid, 0)
-                )
+                txn.read_versions[range_key] = db.settle_outbox_auth_versions.get(aid, 0)
             pks = set(db.settle_outbox)
             pks.update(
                 op[1]
                 for op in txn.pending_writes
-                if op[0] in (
+                if op[0]
+                in (
                     "insert_settle_outbox",
                     "update_settle_outbox",
                     "delete_settle_outbox",
@@ -1216,7 +1219,8 @@ def _execute_settle_outbox_sql(
             )
             return [[n]]
         n = sum(
-            1 for rec in db.settle_outbox.values()
+            1
+            for rec in db.settle_outbox.values()
             if rec.get("authorization_id") == aid and rec.get("status") in GUARD_STATUSES
         )
         return [[n]]
@@ -1274,10 +1278,7 @@ def _execute_sql(
             )
         ]
         return rows[: int(params["batch"])]
-    if (
-        sql.startswith("SELECT COUNT(*) FROM tr_reservation")
-        and not params
-    ):
+    if sql.startswith("SELECT COUNT(*) FROM tr_reservation") and not params:
         if "AND EXISTS (SELECT 1 FROM tr_settle_outbox o" in sql:
             _require_pred(
                 sql,
@@ -1294,73 +1295,72 @@ def _execute_sql(
                 f"o.status IN ({_GUARD_STATUS_SQL})",
                 "reservation-terminal-backfill-excluded-count",
             )
-            return [[
-                sum(
-                    1
-                    for rec in db.reservations.values()
-                    if rec.get("settled")
-                    and rec.get("terminal_at") is None
-                    and any(
-                        outbox.get("authorization_id")
-                        == rec.get("authorization_id")
-                        and outbox.get("status") in GUARD_STATUSES
-                        for outbox in db.settle_outbox.values()
+            return [
+                [
+                    sum(
+                        1
+                        for rec in db.reservations.values()
+                        if rec.get("settled")
+                        and rec.get("terminal_at") is None
+                        and any(
+                            outbox.get("authorization_id") == rec.get("authorization_id")
+                            and outbox.get("status") in GUARD_STATUSES
+                            for outbox in db.settle_outbox.values()
+                        )
                     )
-                )
-            ]]
+                ]
+            ]
         if "terminal_at IS NULL" in sql:
             _require_pred(
                 sql,
                 "WHERE settled AND terminal_at IS NULL",
                 "reservation-terminal-backfill-candidate-count",
             )
-            return [[
-                sum(
-                    1
-                    for rec in db.reservations.values()
-                    if rec.get("settled") and rec.get("terminal_at") is None
-                )
-            ]]
+            return [
+                [
+                    sum(
+                        1
+                        for rec in db.reservations.values()
+                        if rec.get("settled") and rec.get("terminal_at") is None
+                    )
+                ]
+            ]
         if "terminal_at IS NOT NULL" in sql:
             _require_pred(
                 sql,
                 "WHERE settled AND terminal_at IS NOT NULL",
                 "reservation-terminal-backfill-armed-count",
             )
-            return [[
-                sum(
-                    1
-                    for rec in db.reservations.values()
-                    if rec.get("settled") and rec.get("terminal_at") is not None
-                )
-            ]]
+            return [
+                [
+                    sum(
+                        1
+                        for rec in db.reservations.values()
+                        if rec.get("settled") and rec.get("terminal_at") is not None
+                    )
+                ]
+            ]
         _require_pred(
             sql,
             "WHERE NOT settled",
             "reservation-terminal-backfill-open-count",
         )
-        return [[
-            sum(
-                1
-                for rec in db.reservations.values()
-                if not rec.get("settled")
-            )
-        ]]
-    if sql.startswith(
-        "SELECT COUNT(*) FROM tr_gateway_authorization"
-    ):
+        return [[sum(1 for rec in db.reservations.values() if not rec.get("settled"))]]
+    if sql.startswith("SELECT COUNT(*) FROM tr_gateway_authorization"):
         _require_pred(
             sql,
             "WHERE settled AND terminal_at IS NULL",
             "gateway-authorization-terminal-backfill-cross-check",
         )
-        return [[
-            sum(
-                1
-                for rec in db.gateway_authorizations.values()
-                if rec.get("settled") and rec.get("terminal_at") is None
-            )
-        ]]
+        return [
+            [
+                sum(
+                    1
+                    for rec in db.gateway_authorizations.values()
+                    if rec.get("settled") and rec.get("terminal_at") is None
+                )
+            ]
+        ]
     # Reaper scan: expired unsettled reservations. This must precede the generic
     # tr_settle_outbox dispatcher because the guarded scan names both tables; match
     # the more specific query first.
@@ -1393,8 +1393,7 @@ def _execute_sql(
                 # the reaper's scan window.
                 aid = rec.get("authorization_id")
                 if any(
-                    row.get("authorization_id") == aid
-                    and row.get("status") in GUARD_STATUSES
+                    row.get("authorization_id") == aid and row.get("status") in GUARD_STATUSES
                     for row in db.settle_outbox.values()
                 ):
                     continue
@@ -1416,25 +1415,36 @@ def _execute_sql(
         )
         if rec is None:
             return []
-        cols = [
-            col.strip()
-            for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
-        ]
+        cols = [col.strip() for col in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[rec.get(col) for col in cols]]
     # Repair: any OPEN holds on a nonzero shard? (checked first — its query string
     # contains the generic count substrings below.)
     if "key_shard!=0" in sql:
         kh = params["kh"]
-        return [[sum(
-            1 for rec in db.reservations.values()
-            if rec.get("key_hash") == kh and not rec.get("settled") and rec.get("key_shard", 0) != 0
-        )]]
+        return [
+            [
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("key_hash") == kh
+                    and not rec.get("settled")
+                    and rec.get("key_shard", 0) != 0
+                )
+            ]
+        ]
     if "ws_shard!=0" in sql:
         ws = params["ws"]
-        return [[sum(
-            1 for rec in db.reservations.values()
-            if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) != 0
-        )]]
+        return [
+            [
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("workspace_id") == ws
+                    and not rec.get("settled")
+                    and rec.get("ws_shard", 0) != 0
+                )
+            ]
+        ]
     if (
         "FROM tr_reservation WHERE workspace_id=@ws AND settled=false" in sql
         and "GROUP BY credit_shard, ws_shard" in sql
@@ -1465,24 +1475,31 @@ def _execute_sql(
             values = groups.setdefault(shard, [0, 0])
             values[0] += 1
             values[1] += int(rec.get("key_reserved_micro") or 0)
-        return [
-            [shard, values[0], values[1]]
-            for shard, values in groups.items()
-        ]
+        return [[shard, values[0], values[1]] for shard, values in groups.items()]
     # Open typed holds for this workspace. Checked BEFORE the generic count
     # below, which this query string contains.
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws AND settled = false" in sql:
         ws = params["ws"]
-        return [[sum(
-            1 for rec in db.reservations.values()
-            if rec.get("workspace_id") == ws and not rec.get("settled")
-        )]]
+        return [
+            [
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("workspace_id") == ws and not rec.get("settled")
+                )
+            ]
+        ]
     if "COUNT(*) FROM tr_reservation WHERE key_hash=@kh AND settled = false" in sql:
         kh = params["kh"]
-        return [[sum(
-            1 for rec in db.reservations.values()
-            if rec.get("key_hash") == kh and not rec.get("settled")
-        )]]
+        return [
+            [
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("key_hash") == kh and not rec.get("settled")
+                )
+            ]
+        ]
     # Flip-reconcile: does this workspace have ANY typed reservation history?
     if "COUNT(*) FROM tr_reservation WHERE workspace_id=@ws" in sql:
         ws = params["ws"]
@@ -1491,16 +1508,30 @@ def _execute_sql(
     # which match the same SUM(...) substring).
     if "SUM(credit_reserved_micro)" in sql and "workspace_id=@ws" in sql:
         ws = params["ws"]
-        return [[sum(
-            rec.get("credit_reserved_micro") or 0 for rec in db.reservations.values()
-            if rec.get("workspace_id") == ws and not rec.get("settled") and rec.get("ws_shard", 0) == 0
-        )]]
+        return [
+            [
+                sum(
+                    rec.get("credit_reserved_micro") or 0
+                    for rec in db.reservations.values()
+                    if rec.get("workspace_id") == ws
+                    and not rec.get("settled")
+                    and rec.get("ws_shard", 0) == 0
+                )
+            ]
+        ]
     if "SUM(key_reserved_micro)" in sql and "key_hash=@kh" in sql:
         kh = params["kh"]
-        return [[sum(
-            rec.get("key_reserved_micro") or 0 for rec in db.reservations.values()
-            if rec.get("key_hash") == kh and not rec.get("settled") and rec.get("key_shard", 0) == 0
-        )]]
+        return [
+            [
+                sum(
+                    rec.get("key_reserved_micro") or 0
+                    for rec in db.reservations.values()
+                    if rec.get("key_hash") == kh
+                    and not rec.get("settled")
+                    and rec.get("key_shard", 0) == 0
+                )
+            ]
+        ]
     # Invariant auditor: open typed-origin holds summed by (scope, shard).
     if "SUM(credit_reserved_micro)" in sql:
         sums: dict[tuple, int] = {}
@@ -1536,9 +1567,7 @@ def _execute_sql(
             counts = grouped.setdefault(key, [0, 0])
             raw_created = body.get("created_at")
             try:
-                created = dt.datetime.fromisoformat(
-                    str(raw_created).replace("Z", "+00:00")
-                )
+                created = dt.datetime.fromisoformat(str(raw_created).replace("Z", "+00:00"))
                 if created.tzinfo is None:
                     raise ValueError("naive timestamp")
             except (TypeError, ValueError):
@@ -1584,10 +1613,7 @@ def _execute_sql(
     # Typed key-limit point-read (reserve_key 0-row classification). Honors the
     # WHERE, so it must precede the full-scan branch below.
     compact_sql = sql.replace(" ", "")
-    if (
-        "FROM tr_key_limit WHERE key_hash=@kh" in sql
-        and "shard<@shard_count" in compact_sql
-    ):
+    if "FROM tr_key_limit WHERE key_hash=@kh" in sql and "shard<@shard_count" in compact_sql:
         items = [
             (pk, rec)
             for pk, rec in db.typed.get("tr_key_limit", {}).items()
@@ -1596,15 +1622,10 @@ def _execute_sql(
         ]
         items.sort(key=lambda item: int(item[1].get("shard", 0)))
         recs = [
-            txn._typed_current("tr_key_limit", pk)
-            if txn is not None
-            else dict(rec)
+            txn._typed_current("tr_key_limit", pk) if txn is not None else dict(rec)
             for pk, rec in items
         ]
-        cols = [
-            c.strip()
-            for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")
-        ]
+        cols = [c.strip() for c in sql.split("SELECT", 1)[1].split("FROM", 1)[0].split(",")]
         return [[rec.get(c) for c in cols] for rec in recs if rec is not None]
     if "FROM tr_key_limit WHERE key_hash=@kh" in sql:
         # `shard` may be a literal 0 in the SQL (window/typed-usage point reads)
@@ -1632,7 +1653,8 @@ def _execute_sql(
                     items = [(pk, rec) for pk, rec in items if rec.get("shard", 0) == 0]
                 if "shard<@shard_count" in sql.replace(" ", ""):
                     items = [
-                        (pk, rec) for pk, rec in items
+                        (pk, rec)
+                        for pk, rec in items
                         if 0 <= int(rec.get("shard", 0)) < int(params["shard_count"])
                     ]
                 if "ORDER BY shard" in sql:
@@ -1666,14 +1688,18 @@ def _execute_sql(
         return [[row.body]]
     if "STARTS_WITH" in sql:
         prefix = params.get("prefix", "")
-        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.startswith(prefix)]
+        rows = [
+            (eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.startswith(prefix)
+        ]
         rows.sort(key=lambda item: item[0])
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
         return [[body] for _, body in rows]
     if "ENDS_WITH" in sql:
         suffix = params.get("suffix", "")
-        rows = [(eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.endswith(suffix)]
+        rows = [
+            (eid, r.body) for (k, eid), r in db.rows.items() if k == kind and eid.endswith(suffix)
+        ]
         rows.sort(key=lambda item: item[0])
         if "LIMIT @limit" in sql:
             rows = rows[: int(params["limit"])]
@@ -1745,10 +1771,7 @@ class _FakeDirectRow:
         with self.table.lock:
             self.table.committed.append(self.key)
             merged = {
-                family: {
-                    qualifier: list(cells)
-                    for qualifier, cells in qualifiers.items()
-                }
+                family: {qualifier: list(cells) for qualifier, cells in qualifiers.items()}
                 for family, qualifiers in self.table.rows.get(self.key, {}).items()
             }
             for family, qualifiers in self.cells.items():
@@ -1774,6 +1797,7 @@ def make_fake_store(
     from trusted_router.storage_gcp_rate_limits import SpannerRateLimits
     from trusted_router.storage_gcp_settle_outbox import SpannerSettleOutbox
     from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
+    from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
     from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 
     db = FakeSpannerDatabase(ready_barrier=ready_barrier)
@@ -1811,6 +1835,7 @@ def make_fake_store(
     )
     store.byok_store = SpannerByok(io)
     store.broadcast_store = SpannerBroadcastDestinations(io)
+    store.video_job_store = SpannerVideoJobs(io)
     store.settle_outbox = SpannerSettleOutbox(store._database, store._param_types)
     store.auth_session_store = SpannerAuthSessions(io)
     store.oauth_code_store = SpannerOAuthCodes(io)
