@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from tests.fakes.spanner import make_fake_store
 from trusted_router.config import Settings
 from trusted_router.main import create_app
-from trusted_router.routes.console.activity import _USAGE_CACHE
+from trusted_router.routes.console.activity import _USAGE_CACHE, _UsageCache
 from trusted_router.storage import STORE, Generation, InMemoryStore
 from trusted_router.storage_activity import summarize_activity, usage_bucket_key
 from trusted_router.storage_gcp_activity_index import usage_series, write_generation
@@ -542,6 +542,33 @@ def test_console_usage_series_endpoint_returns_json_and_uses_cache(
     assert first.json()["latest_activity_at"] is None
     assert first.json() == second.json()
     assert calls == [(workspace.id, 60, "minute", "key_a", True)]
+
+
+def test_console_usage_cache_is_bounded_and_evicts_lru() -> None:
+    cache = _UsageCache(max_entries=2)
+    first = ("ws-1", "1h", False, None)
+    second = ("ws-2", "1h", False, None)
+    third = ("ws-3", "1h", False, None)
+
+    cache.put(first, {"value": 1}, expires_at=100.0)
+    cache.put(second, {"value": 2}, expires_at=100.0)
+    assert cache.get(first, now=1.0) == {"value": 1}
+
+    cache.put(third, {"value": 3}, expires_at=100.0)
+
+    assert len(cache) == 2
+    assert cache.get(first, now=1.0) == {"value": 1}
+    assert cache.get(second, now=1.0) is None
+    assert cache.get(third, now=1.0) == {"value": 3}
+
+
+def test_console_usage_cache_removes_expired_entries() -> None:
+    cache = _UsageCache(max_entries=2)
+    key = ("ws-1", "30d", True, "key-hash")
+    cache.put(key, {"value": 1}, expires_at=10.0)
+
+    assert cache.get(key, now=10.0) is None
+    assert len(cache) == 0
 
 
 def test_console_usage_series_empty_window_reports_latest_activity(

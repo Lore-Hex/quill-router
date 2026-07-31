@@ -41,6 +41,22 @@ def test_gateway_pressure_alert_only_tracks_the_billing_path() -> None:
     assert "duration: 600s" in original
 
 
+def test_control_plane_memory_alert_warns_before_oom() -> None:
+    policy = (DEPLOY / "gateway-alerts" / "control-plane-memory.yaml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'displayName: "TR Control Plane: memory pressure"' in policy
+    assert 'resource.labels.service_name = "trusted-router"' in policy
+    assert 'metric.type = "run.googleapis.com/container/memory/utilizations"' in policy
+    assert "perSeriesAligner: ALIGN_MAX" in policy
+    assert "crossSeriesReducer: REDUCE_MAX" in policy
+    assert "resource.label.location" in policy
+    assert "thresholdValue: 0.8" in policy
+    assert "duration: 300s" in policy
+    assert "EVALUATION_MISSING_DATA_INACTIVE" in policy
+
+
 def test_gateway_alert_deploy_is_idempotent_and_dry_run_by_default() -> None:
     script = (DEPLOY / "gateway_reliability.sh").read_text(encoding="utf-8")
 

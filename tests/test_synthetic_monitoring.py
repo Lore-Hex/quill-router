@@ -5,6 +5,7 @@ import base64
 import datetime as dt
 import json
 import random
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -295,6 +296,105 @@ def test_public_status_response_cache_reuses_rendered_body() -> None:
     assert second.body == b"payload-1"
     assert second.headers["x-tr-cache"] == "hit"
     assert calls == 1
+
+
+def test_public_response_cache_is_bounded() -> None:
+    import trusted_router.routes.public as public_routes
+
+    with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+        public_routes._STATUS_RESPONSE_CACHE.clear()
+        public_routes._STATUS_RESPONSE_REFRESHING.clear()
+    try:
+        for index in range(public_routes.PUBLIC_RESPONSE_CACHE_MAX_ENTRIES + 5):
+            public_routes._cached_public_response(
+                Settings(environment="local"),
+                key=f"bounded-cache-{index}",
+                media_type="application/json",
+                ttl_seconds=60,
+                stale_seconds=300,
+                background_tasks=BackgroundTasks(),
+                build=lambda index=index: f"payload-{index}".encode(),
+            )
+
+        with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+            assert (
+                len(public_routes._STATUS_RESPONSE_CACHE)
+                == public_routes.PUBLIC_RESPONSE_CACHE_MAX_ENTRIES
+            )
+            assert "bounded-cache-0" not in public_routes._STATUS_RESPONSE_CACHE
+            assert (
+                f"bounded-cache-{public_routes.PUBLIC_RESPONSE_CACHE_MAX_ENTRIES + 4}"
+                in public_routes._STATUS_RESPONSE_CACHE
+            )
+    finally:
+        with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+            public_routes._STATUS_RESPONSE_CACHE.clear()
+            public_routes._STATUS_RESPONSE_REFRESHING.clear()
+
+
+def test_status_cache_host_collapses_untrusted_host_headers() -> None:
+    import trusted_router.routes.public as public_routes
+
+    settings = Settings(environment="local", trusted_domain="trustedrouter.com")
+
+    assert (
+        public_routes._status_render_host(settings, "STATUS.TRUSTEDROUTER.COM:443")
+        == "status.trustedrouter.com"
+    )
+    assert (
+        public_routes._status_render_host(settings, "attacker-controlled.example")
+        == "trustedrouter.com"
+    )
+
+
+def test_stale_public_refreshes_are_concurrency_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import trusted_router.routes.public as public_routes
+
+    started = threading.Event()
+    unblock = threading.Event()
+    finished = threading.Event()
+    monkeypatch.setattr(
+        public_routes,
+        "_STATUS_RESPONSE_REFRESH_SLOTS",
+        threading.BoundedSemaphore(1),
+    )
+
+    def blocking_build() -> bytes:
+        started.set()
+        assert unblock.wait(timeout=2)
+        finished.set()
+        return b"refreshed"
+
+    public_routes._schedule_cached_response_refresh(
+        key="refresh-first",
+        media_type="text/plain",
+        cache_control="public, max-age=1",
+        build=blocking_build,
+        background_tasks=BackgroundTasks(),
+    )
+    assert started.wait(timeout=2)
+    public_routes._schedule_cached_response_refresh(
+        key="refresh-second",
+        media_type="text/plain",
+        cache_control="public, max-age=1",
+        build=lambda: b"should-not-run",
+        background_tasks=BackgroundTasks(),
+    )
+
+    with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+        assert public_routes._STATUS_RESPONSE_REFRESHING == {"refresh-first"}
+    unblock.set()
+    assert finished.wait(timeout=2)
+    for _ in range(100):
+        with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+            if not public_routes._STATUS_RESPONSE_REFRESHING:
+                break
+        time.sleep(0.01)
+    with public_routes._STATUS_RESPONSE_CACHE_LOCK:
+        assert not public_routes._STATUS_RESPONSE_REFRESHING
+        public_routes._STATUS_RESPONSE_CACHE.pop("refresh-first", None)
 
 
 def test_status_history_monthly_uses_public_rollups(client: TestClient) -> None:

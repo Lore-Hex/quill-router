@@ -139,6 +139,22 @@ def _trustedos_payload(*, company: str, message: str) -> dict[str, str]:
     }
 
 
+def test_trustedos_inquiry_rate_state_has_a_hard_client_bound() -> None:
+    with public_routes._INQUIRY_RATE_LOCK:
+        public_routes._INQUIRY_HITS.clear()
+    try:
+        for index in range(public_routes._INQUIRY_MAX_CLIENTS + 1):
+            client_ip = f"198.51.{index // 256}.{index % 256}"
+            assert public_routes._inquiry_rate_ok(client_ip, now=100.0)
+
+        with public_routes._INQUIRY_RATE_LOCK:
+            assert len(public_routes._INQUIRY_HITS) == public_routes._INQUIRY_MAX_CLIENTS
+            assert "198.51.0.0" not in public_routes._INQUIRY_HITS
+    finally:
+        with public_routes._INQUIRY_RATE_LOCK:
+            public_routes._INQUIRY_HITS.clear()
+
+
 def _scrubbed_trustedos_messages(
     caplog: pytest.LogCaptureFixture,
     event_name: str,
