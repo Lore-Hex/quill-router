@@ -59,6 +59,7 @@ _NATIVE_TO_OR_ID = {
     "zai-org/GLM-5.2-Fast": "z-ai/glm-5.2-fast",
     "moonshotai/Kimi-K2.7-Code": "moonshotai/kimi-k2.7-code",
     "thinkingmachines/inkling": "thinkingmachines/inkling-1m",
+    "thinkingmachines/inkling-small": "thinkingmachines/inkling-small",
 }
 
 UPSTREAM_ID_MAP = {or_id: native_id for native_id, or_id in _NATIVE_TO_OR_ID.items()}

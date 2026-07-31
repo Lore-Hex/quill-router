@@ -65,7 +65,11 @@ def discover_openai_chat_catalog(
     upstream_id_map: dict[str, str],
     include: Callable[[dict[str, Any]], bool] | None = None,
 ) -> tuple[dict[str, ModelPrice], dict[str, dict[str, Any]]]:
-    """Normalize priced text-chat rows while preserving exact upstream IDs."""
+    """Normalize text-chat rows while preserving exact upstream IDs.
+
+    All-zero prices remain in ``discovered`` so manifest writers can disable
+    an existing route immediately, but never enter ``prices`` as billable.
+    """
 
     prices: dict[str, ModelPrice] = {}
     discovered: dict[str, dict[str, Any]] = {}
@@ -111,7 +115,8 @@ def discover_openai_chat_catalog(
             if isinstance(value, list):
                 row[field] = [str(item) for item in value]
         discovered[model_id] = row
-        prices[model_id] = price
+        if price.prompt_micro_per_m > 0 or price.completion_micro_per_m > 0:
+            prices[model_id] = price
     return prices, discovered
 
 

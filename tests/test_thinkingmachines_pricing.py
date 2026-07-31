@@ -26,6 +26,42 @@ def _pricing_html(*, active: str = "old") -> str:
     """
 
 
+def _serverless_pricing_html() -> str:
+    return """
+    <table><tbody id="serverless-tbody">
+      <tr>
+        <td>Inkling-Small</td>
+        <td class="tinker-id">thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4</td>
+        <td>256K</td>
+        <td class="price">$0.30<span class="price-cached">$0.06 (cached)</span></td>
+        <td class="price">$1.20</td>
+      </tr>
+      <tr>
+        <td>Inkling</td>
+        <td class="tinker-id">thinkingmachines/Inkling:peft:262144:sampling-nvfp4</td>
+        <td>256K</td>
+        <td class="price">$1.00<span class="price-cached">$0.17 (cached)</span></td>
+        <td class="price">$4.05</td>
+      </tr>
+    </tbody></table>
+    """
+
+
+def test_parser_reads_all_serverless_inference_models() -> None:
+    assert parse(_serverless_pricing_html()) == {
+        "thinkingmachines/inkling-small": {
+            "prompt_micro_per_m": 300_000,
+            "completion_micro_per_m": 1_200_000,
+            "prompt_cached_micro_per_m": 60_000,
+        },
+        "thinkingmachines/inkling": {
+            "prompt_micro_per_m": 1_000_000,
+            "completion_micro_per_m": 4_050_000,
+            "prompt_cached_micro_per_m": 170_000,
+        },
+    }
+
+
 def test_parser_uses_currently_active_pricing_version() -> None:
     assert parse(_pricing_html()) == {
         "thinkingmachines/inkling": {
@@ -73,6 +109,11 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
                         "id": "thinkingmachines/inkling",
                         "input_token_price_per_m": 1,
                         "output_token_price_per_m": 1,
+                    },
+                    {
+                        "id": "thinkingmachines/inkling-small",
+                        "input_token_price_per_m": 1,
+                        "output_token_price_per_m": 1,
                     }
                 ]
             }
@@ -84,17 +125,31 @@ def test_manifest_writer_updates_integer_rates(tmp_path, monkeypatch) -> None:  
         slug="thinkingmachines",
         prices={
             "thinkingmachines/inkling": ModelPrice(
-                prompt_micro_per_m=3_740_000,
-                completion_micro_per_m=9_360_000,
-                prompt_cached_micro_per_m=748_000,
-            )
+                prompt_micro_per_m=1_000_000,
+                completion_micro_per_m=4_050_000,
+                prompt_cached_micro_per_m=170_000,
+            ),
+            "thinkingmachines/inkling-small": ModelPrice(
+                prompt_micro_per_m=300_000,
+                completion_micro_per_m=1_200_000,
+                prompt_cached_micro_per_m=60_000,
+            ),
         },
         source="deterministic",
     )
 
     thinkingmachines.write_provider_manifest(result)
 
-    row = json.loads(manifest.read_text(encoding="utf-8"))["models"][0]
-    assert row["input_token_price_per_m"] == 3_740_000
-    assert row["output_token_price_per_m"] == 9_360_000
-    assert row["cached_input_token_price_per_m"] == 748_000
+    rows = {
+        row["id"]: row
+        for row in json.loads(manifest.read_text(encoding="utf-8"))["models"]
+    }
+    assert rows["thinkingmachines/inkling"]["input_token_price_per_m"] == 1_000_000
+    assert rows["thinkingmachines/inkling"]["output_token_price_per_m"] == 4_050_000
+    assert rows["thinkingmachines/inkling"]["cached_input_token_price_per_m"] == 170_000
+    assert rows["thinkingmachines/inkling-small"]["input_token_price_per_m"] == 300_000
+    assert rows["thinkingmachines/inkling-small"]["output_token_price_per_m"] == 1_200_000
+    assert (
+        rows["thinkingmachines/inkling-small"]["cached_input_token_price_per_m"]
+        == 60_000
+    )
