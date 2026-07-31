@@ -188,6 +188,8 @@ class Model:
     supports_chat: bool = True
     supports_messages: bool = False
     supports_embeddings: bool = False
+    input_modalities: tuple[str, ...] = ("text",)
+    output_modalities: tuple[str, ...] = ("text",)
     prepaid_available: bool = False
     byok_available: bool = True
     # Headline (low-tier) rates: what /v1/models displays. For

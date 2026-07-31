@@ -10,6 +10,7 @@ merge). No dependency on catalog.py, so no import cycle.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,26 @@ def _positive_float(value: object) -> float | None:
         return None
     parsed = float(value)
     return parsed if parsed > 0 else None
+
+
+_SUPPORTED_GATEWAY_MODALITIES = frozenset({"text", "image"})
+
+
+def _modalities(value: object, *, default: tuple[str, ...]) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return default
+    normalized = tuple(
+        dict.fromkeys(
+            item.strip().lower()
+            for item in value
+            if (
+                isinstance(item, str)
+                and item.strip()
+                and item.strip().lower() in _SUPPORTED_GATEWAY_MODALITIES
+            )
+        )
+    )
+    return normalized or default
 
 
 def _endpoint(
@@ -597,6 +618,9 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
         # not supported even if Claude-on-OpenRouter etc. exist. Drive
         # the supports_messages flag off the publisher.
         supports_messages = publisher == "anthropic"
+        architecture = raw_model.get("architecture")
+        if not isinstance(architecture, dict):
+            architecture = {}
         prepaid_available = any(
             slug in GATEWAY_PREPAID_PROVIDER_SLUGS for _p, _c, _t, slug, _ep in per_endpoint_prices
         )
@@ -607,6 +631,14 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             context_length=context_length,
             supports_chat=True,
             supports_messages=supports_messages,
+            input_modalities=_modalities(
+                architecture.get("input_modalities"),
+                default=("text",),
+            ),
+            output_modalities=_modalities(
+                architecture.get("output_modalities"),
+                default=("text",),
+            ),
             prepaid_available=prepaid_available,
             byok_available=any(
                 PROVIDERS[slug].supports_byok
@@ -782,6 +814,14 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 upstream_id=upstream_id,
                 supports_chat=True,
                 supports_messages=publisher == "anthropic",
+                input_modalities=_modalities(
+                    raw_model.get("input_modalities"),
+                    default=("text",),
+                ),
+                output_modalities=_modalities(
+                    raw_model.get("output_modalities"),
+                    default=("text",),
+                ),
                 # Availability comes from the explicit provider-native
                 # endpoints below. Do not let _build_endpoints synthesize
                 # publisher-direct routes for supplemental-only models
@@ -795,7 +835,19 @@ def _supplemental_provider_models_and_endpoints() -> tuple[
                 price_tiers=tiers,
                 published_price_tiers=tiers,
             )
-            models.setdefault(model_id, model)
+            existing = models.get(model_id)
+            if existing is None:
+                models[model_id] = model
+            else:
+                models[model_id] = replace(
+                    existing,
+                    input_modalities=tuple(
+                        dict.fromkeys((*existing.input_modalities, *model.input_modalities))
+                    ),
+                    output_modalities=tuple(
+                        dict.fromkeys((*existing.output_modalities, *model.output_modalities))
+                    ),
+                )
 
             if provider_slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
                 credits_id = f"{model_id}@{provider_slug}/prepaid"

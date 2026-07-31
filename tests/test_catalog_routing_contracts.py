@@ -78,6 +78,7 @@ from trusted_router.catalog import (
     orchestration_role,
     provider_privacy_tier,
 )
+from trusted_router.catalog_ingest import _modalities
 from trusted_router.config import Settings
 from trusted_router.main import create_app
 from trusted_router.routing import chat_route_candidates, chat_route_endpoint_candidates
@@ -1127,6 +1128,13 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
     inkling_small = MODELS["thinkingmachines/inkling-small"]
     inkling_small_shape = model_to_openrouter_shape(inkling_small)
     assert inkling_small.context_length == 262_144
+    assert inkling_small.input_modalities == ("text", "image")
+    assert inkling_small.output_modalities == ("text",)
+    assert inkling_small_shape["architecture"]["modality"] == "text+image->text"
+    assert inkling_small_shape["architecture"]["input_modalities"] == [
+        "text",
+        "image",
+    ]
     assert inkling_small_shape["trustedrouter"]["open_weights"] is True
     assert (
         inkling_small.prompt_price_microdollars_per_million_tokens
@@ -1145,6 +1153,14 @@ def test_liberty_models_publish_verified_components_and_honest_context_limits() 
             "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
         )
     }
+
+
+def test_catalog_modalities_publish_only_gateway_supported_capabilities() -> None:
+    assert _modalities(
+        ["Text", "image", "audio", "image", "", 7],
+        default=("text",),
+    ) == ("text", "image")
+    assert _modalities(["audio"], default=("text",)) == ("text",)
 
 
 def test_liberty_nemotron_resolves_only_to_working_canonical_prepaid_routes() -> None:
