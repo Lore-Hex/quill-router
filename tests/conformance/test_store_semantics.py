@@ -13,25 +13,22 @@ conformance test and fails these.
 
 Known limits of this suite — read before trusting it
 ----------------------------------------------------
-* **Sequential, not concurrent.** "Single use" is really a claim about an
-  atomic take, and these tests exercise it one caller at a time. A backend
-  that implements consume as a non-atomic read-then-write would pass here and
-  still double-redeem under two concurrent callers. Concurrent conformance
-  needs real backends (an emulator or container), so it lands with that
-  wiring rather than being faked against the in-memory store.
-* **Credit is asserted through its return contract, not a balance.** The
-  `Store` protocol exposes no backend-neutral balance read: `CreditAccount`
+* Most single-use-secret tests are sequential. Credit reservation is the
+  exception: its oversubscription test uses real threads against the same
+  store, which means separate pooled connections on server-backed backends.
+* The `Store` protocol exposes no backend-neutral balance read: `CreditAccount`
   became metadata-only, and the money snapshot lives on backend-specific
-  methods (`credit_money_snapshot`, `typed_credit_snapshot`). So a backend
-  that returns `(True, False)` while crediting the wrong amount would pass.
-  Closing that hole means putting a neutral money read on the protocol — a
-  real portability gap, tracked in docs/storage-portability/README.md rather
-  than papered over here.
+  methods (`credit_money_snapshot`, `typed_credit_snapshot`). The reservation
+  tests therefore assert balances through observable capacity: reserve the
+  exact expected remainder, then prove one more microdollar is rejected.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import threading
+
+import pytest
 
 from trusted_router.store_protocol import Store
 
@@ -70,6 +67,161 @@ def test_credit_workspace_once_distinguishes_events(
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is True
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-A") is False
     assert store.credit_workspace_once(workspace_id, 5_000, f"evt-{unique}-B") is True
+
+
+def _credit_and_key(
+    store: Store,
+    workspace_id: str,
+    unique: str,
+    amount_microdollars: int,
+) -> str:
+    assert store.credit_workspace_once(
+        workspace_id,
+        amount_microdollars,
+        f"evt-reservation-{unique}",
+    ) is True
+    _raw_key, key = store.create_api_key(
+        workspace_id=workspace_id,
+        name=f"reservation-{unique}",
+        creator_user_id=None,
+    )
+    return key.hash
+
+
+def _assert_exact_available_capacity(
+    store: Store,
+    workspace_id: str,
+    key_hash: str,
+    amount_microdollars: int,
+    unique: str,
+) -> None:
+    store.reserve(
+        workspace_id,
+        key_hash,
+        amount_microdollars,
+        idempotency_key=f"capacity-{unique}",
+    )
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.reserve(workspace_id, key_hash, 1)
+
+
+def test_reserve_then_settle_less_releases_unused_hold(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """A 60 microdollar hold settled at 20 leaves exactly 80 of 100."""
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    reservation = store.reserve(workspace_id, key_hash, 60)
+
+    store.settle(reservation.id, 20)
+
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 80, unique)
+
+
+def test_reserve_then_settle_more_books_full_actual(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Settlement may exceed the hold and can make available credit negative."""
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    reservation = store.reserve(workspace_id, key_hash, 60)
+
+    store.settle(reservation.id, 120)
+
+    # Correct state is credits=100, usage=120, reserved=0: a 20 top-up only
+    # reaches zero, and the next microdollar creates exactly one of capacity.
+    assert store.credit_workspace_once(
+        workspace_id, 20, f"evt-overage-zero-{unique}"
+    ) is True
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.reserve(workspace_id, key_hash, 1)
+    assert store.credit_workspace_once(
+        workspace_id, 1, f"evt-overage-positive-{unique}"
+    ) is True
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 1, unique)
+
+
+def test_reserve_then_refund_restores_exact_balance(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    reservation = store.reserve(workspace_id, key_hash, 60)
+
+    store.refund(reservation.id)
+
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 100, unique)
+
+
+def test_settle_is_idempotent(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """A replay releases and charges once, even after the first call returned."""
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    reservation = store.reserve(workspace_id, key_hash, 60)
+
+    store.settle(reservation.id, 20)
+    store.settle(reservation.id, 20)
+
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 80, unique)
+
+
+def test_refund_is_idempotent(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """A refund replay releases the recorded hold exactly once."""
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    reservation = store.reserve(workspace_id, key_hash, 60)
+
+    store.refund(reservation.id)
+    store.refund(reservation.id)
+
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 100, unique)
+
+
+def test_concurrent_reserves_cannot_oversubscribe(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    """Two simultaneous full-balance holds cannot both pass the predicate."""
+    key_hash = _credit_and_key(store, workspace_id, unique, 100)
+    ready = threading.Barrier(3)
+    result_lock = threading.Lock()
+    reservations: list[object] = []
+    errors: list[Exception] = []
+
+    def reserve_once() -> None:
+        ready.wait()
+        try:
+            reservation = store.reserve(workspace_id, key_hash, 100)
+        except Exception as exc:
+            with result_lock:
+                errors.append(exc)
+        else:
+            with result_lock:
+                reservations.append(reservation)
+
+    threads = [threading.Thread(target=reserve_once) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    ready.wait()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads), "reserve threads hung"
+    assert len(reservations) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], ValueError)
+    assert str(errors[0]) == "insufficient credits"
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.reserve(workspace_id, key_hash, 1)
+
+
+def test_insufficient_reserve_does_not_mutate_balance(
+    store: Store, workspace_id: str, unique: str
+) -> None:
+    key_hash = _credit_and_key(store, workspace_id, unique, 50)
+
+    with pytest.raises(ValueError, match="insufficient credits"):
+        store.reserve(workspace_id, key_hash, 51)
+
+    _assert_exact_available_capacity(store, workspace_id, key_hash, 50, unique)
 
 
 def test_record_sns_message_once_is_idempotent(store: Store, unique: str) -> None:
