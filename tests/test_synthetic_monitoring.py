@@ -51,8 +51,10 @@ from trusted_router.synthetic.probes import (
     IMAGE_GENERATION_MODEL,
     IMAGE_GENERATION_PROVIDER,
     SyntheticTarget,
+    _remaining_probe_seconds,
     _rotation_max_tokens,
     _rotation_omits_temperature,
+    _server_timing_gateway,
     _sse_line_error,
     _sse_line_finish_reason,
     _sse_line_has_content,
@@ -60,6 +62,7 @@ from trusted_router.synthetic.probes import (
     choose_rotation_target,
     gateway_billing_probe,
     gateway_fallback_probe,
+    gateway_latency_phase_probes,
     image_generation_probe,
     openai_chat_pong_probe,
     provider_rotation_probe,
@@ -252,6 +255,49 @@ def test_status_snapshot_calls_out_stale_monitor_data() -> None:
     assert snapshot["summary"]["headline"] == "Monitor Data Stale"
     assert snapshot["monitor_freshness"]["is_stale"] is True
     assert snapshot["monitor_freshness"]["latest_sample_age_seconds"] >= 12 * 60
+
+
+def test_status_snapshot_reports_cold_and_reused_latency_anatomy_without_affecting_slo() -> None:
+    now = utcnow()
+    created_at = (now - dt.timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+    samples = [
+        _sample(
+            id="tls",
+            probe_type="tls_health",
+            status="up",
+            latency_milliseconds=57,
+            created_at=created_at,
+        ),
+        _sample(
+            id="cold",
+            probe_type="gateway_cold_path",
+            status="up",
+            latency_milliseconds=57,
+            dns_milliseconds=3,
+            tcp_connect_milliseconds=12,
+            tls_handshake_milliseconds=26,
+            gateway_processing_milliseconds=1,
+            created_at=created_at,
+        ),
+        _sample(
+            id="reused",
+            probe_type="gateway_reused_path",
+            status="up",
+            latency_milliseconds=15,
+            gateway_processing_milliseconds=1,
+            created_at=created_at,
+        ),
+    ]
+
+    snapshot = status_snapshot(samples, now=now)
+    anatomy = {
+        row["probe_type"]: row for row in snapshot["headline_metrics"]["latency_anatomy"]
+    }
+
+    assert anatomy["gateway_cold_path"]["p50_dns_milliseconds"] == 3
+    assert anatomy["gateway_cold_path"]["p50_tls_handshake_milliseconds"] == 26
+    assert anatomy["gateway_reused_path"]["p50_latency_milliseconds"] == 15
+    assert snapshot["windows"]["5m"]["sample_count"] == 1
 
 
 def test_public_status_response_cache_reuses_rendered_body() -> None:
@@ -1290,6 +1336,27 @@ def test_synthetic_rollups_are_idempotent_and_monthly_queryable() -> None:
     assert canonical.latency_histogram == {"123": 1}
 
 
+def test_synthetic_rollup_retains_latency_phase_histograms() -> None:
+    sample = _sample(
+        id="syn_latency_phases",
+        probe_type="gateway_cold_path",
+        status="up",
+        latency_milliseconds=57,
+        dns_milliseconds=3,
+        tcp_connect_milliseconds=12,
+        tls_handshake_milliseconds=26,
+        gateway_processing_milliseconds=1,
+    )
+
+    rollup = new_rollup_for_sample(sample, period="hour", component="uncategorized")
+
+    assert rollup.latency_histogram == {"57": 1}
+    assert rollup.dns_histogram == {"3": 1}
+    assert rollup.tcp_connect_histogram == {"12": 1}
+    assert rollup.tls_handshake_histogram == {"26": 1}
+    assert rollup.gateway_processing_histogram == {"1": 1}
+
+
 def test_gcp_synthetic_rollups_use_period_start_range() -> None:
     old = _sample(
         id="syn_rollup_old_range",
@@ -1917,6 +1984,10 @@ def _sample(
     output_match: bool | None = None,
     created_at: str | None = None,
     latency_milliseconds: int | None = None,
+    dns_milliseconds: int | None = None,
+    tcp_connect_milliseconds: int | None = None,
+    tls_handshake_milliseconds: int | None = None,
+    gateway_processing_milliseconds: int | None = None,
     error_type: str | None = None,
     http_status: int | None = None,
 ) -> SyntheticProbeSample:
@@ -1932,6 +2003,10 @@ def _sample(
         provider=provider,
         output_match=output_match,
         latency_milliseconds=latency_milliseconds,
+        dns_milliseconds=dns_milliseconds,
+        tcp_connect_milliseconds=tcp_connect_milliseconds,
+        tls_handshake_milliseconds=tls_handshake_milliseconds,
+        gateway_processing_milliseconds=gateway_processing_milliseconds,
         error_type=error_type,
         http_status=http_status,
         created_at=created_at or iso_now(),
@@ -2043,6 +2118,26 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
     monkeypatch.setattr(probe_module, "configured_targets", lambda _settings: targets)
     monkeypatch.setattr(probe_module, "tls_health_probe", fake_probe("tls_health"))
     monkeypatch.setattr(probe_module, "attestation_nonce_probe", fake_probe("attestation_nonce"))
+
+    async def fake_phase_probes(
+        target: SyntheticTarget,
+        *,
+        monitor_region: str,
+        **_kwargs: Any,
+    ) -> list[SyntheticProbeSample]:
+        return [
+            _sample(
+                id=f"{probe_type}-{target.name}",
+                probe_type=probe_type,
+                status="up",
+                target=target.name,
+                target_region=target.region,
+                monitor_region=monitor_region,
+            )
+            for probe_type in ("gateway_cold_path", "gateway_reused_path")
+        ]
+
+    monkeypatch.setattr(probe_module, "gateway_latency_phase_probes", fake_phase_probes)
     monkeypatch.setattr(
         probe_module, "control_plane_health_probe", fake_probe("control_plane_health")
     )
@@ -2061,7 +2156,7 @@ async def test_run_synthetic_once_fans_out_targets_and_probes(monkeypatch: pytes
     )
     elapsed = time.perf_counter() - started
 
-    assert len(samples) == 13
+    assert len(samples) == 19
     assert {sample.target for sample in samples} == {"canonical", "us-east4", "europe-west4"}
     # Serial execution would take about 13 * 30ms. Keep enough slack for busy CI
     # while still proving a single slow target no longer blocks the whole pass.
@@ -2119,6 +2214,17 @@ async def test_run_synthetic_once_bounds_credit_bearing_probe_concurrency(
     monkeypatch.setattr(probe_module, "configured_targets", lambda _settings: targets)
     monkeypatch.setattr(probe_module, "tls_health_probe", fake_health_probe)
     monkeypatch.setattr(probe_module, "attestation_nonce_probe", fake_health_probe)
+
+    async def no_phase_probes(
+        _target: SyntheticTarget,
+        *,
+        monitor_region: str,
+        **_kwargs: Any,
+    ) -> list[SyntheticProbeSample]:
+        assert monitor_region == "us-central1"
+        return []
+
+    monkeypatch.setattr(probe_module, "gateway_latency_phase_probes", no_phase_probes)
     monkeypatch.setattr(probe_module, "openai_chat_pong_probe", fake_billing_probe)
     monkeypatch.setattr(probe_module, "responses_pong_probe", fake_billing_probe)
 
@@ -2666,6 +2772,82 @@ def test_sse_line_error_distinguishes_router_failure_from_provider_failure() -> 
     ) == ("router_database_contention", 503, "transient database contention")
 
 
+def test_gateway_server_timing_parser_is_bounded_and_optional() -> None:
+    assert _server_timing_gateway({"server-timing": "cache;dur=4, gateway;dur=0.7"}) == 1
+    assert _server_timing_gateway({"server-timing": "gateway;dur=invalid"}) is None
+    assert _server_timing_gateway({}) is None
+
+
+def test_gateway_latency_phase_probe_uses_one_total_deadline() -> None:
+    with pytest.raises(TimeoutError, match="deadline exceeded"):
+        _remaining_probe_seconds(time.perf_counter() - 2.0, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_gateway_latency_phase_probe_rejects_non_https_without_network() -> None:
+    samples = await gateway_latency_phase_probes(
+        SyntheticTarget("bad", "http://api.example/v1", "us-central1"),
+        monitor_region="us-central1",
+    )
+
+    assert [sample.probe_type for sample in samples] == [
+        "gateway_cold_path",
+        "gateway_reused_path",
+    ]
+    assert all(sample.status == "down" for sample in samples)
+    assert all(sample.error_type == "invalid_health_url" for sample in samples)
+    assert all(sample_slo_class_ids(sample) == [] for sample in samples)
+
+
+@pytest.mark.asyncio
+async def test_gateway_billing_probe_reports_authorize_and_settle_separately() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/authorize"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "authorization_id": "auth-1",
+                        "model": "deepseek/deepseek-v4-flash",
+                        "provider": "deepseek",
+                        "endpoint_id": "deepseek-primary",
+                    }
+                },
+            )
+        assert request.url.path.endswith("/settle")
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "settled": True,
+                    "model": "deepseek/deepseek-v4-flash",
+                    "provider": "deepseek",
+                    "generation_id": "gen-1",
+                    "cost_microdollars": 1,
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        samples = await gateway_billing_probe(
+            client,
+            control_plane_base_url="https://trustedrouter.com",
+            monitor_region="us-central1",
+            api_key="sk-test",  # noqa: S106 - test placeholder.
+            internal_token="internal-test",  # noqa: S106 - test placeholder.
+            model="trustedrouter/monitor",
+        )
+
+    assert [sample.probe_type for sample in samples] == [
+        "gateway_authorize",
+        "gateway_settle",
+    ]
+    assert all(sample.status == "up" for sample in samples)
+    assert all(sample.latency_milliseconds is not None for sample in samples)
+    assert all(sample_slo_class_ids(sample) == ["router_core"] for sample in samples)
+    assert samples[1].cost_microdollars == 1
+
+
 @pytest.mark.asyncio
 async def test_gateway_billing_probe_classifies_monitor_workspace_pause() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -2692,6 +2874,7 @@ async def test_gateway_billing_probe_classifies_monitor_workspace_pause() -> Non
             model="trustedrouter/monitor",
         )
 
+    assert samples[0].probe_type == "gateway_authorize"
     assert samples[0].error_type == "monitor_workspace_paused"
     assert sample_slo_class_ids(samples[0]) == []
     assert {component for _period, component in sample_rollup_ids(samples[0])} == {

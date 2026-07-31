@@ -137,6 +137,16 @@ def _sample_from_body(body: Any) -> SyntheticProbeSample:
         "status": str(body.get("status") or ""),
         "latency_milliseconds": _optional_int(body.get("latency_milliseconds")),
         "ttfb_milliseconds": _optional_int(body.get("ttfb_milliseconds")),
+        "dns_milliseconds": _optional_int(body.get("dns_milliseconds")),
+        "tcp_connect_milliseconds": _optional_int(body.get("tcp_connect_milliseconds")),
+        "tls_handshake_milliseconds": _optional_int(body.get("tls_handshake_milliseconds")),
+        "gateway_processing_milliseconds": _optional_int(
+            body.get("gateway_processing_milliseconds")
+        ),
+        "connection_reused": body.get("connection_reused")
+        if isinstance(body.get("connection_reused"), bool)
+        else None,
+        "protocol": _optional_str(body.get("protocol")),
         "http_status": _optional_int(body.get("http_status")),
         "error_type": _optional_str(body.get("error_type")),
         "provider": _optional_str(body.get("provider")),

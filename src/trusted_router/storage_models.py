@@ -803,6 +803,12 @@ class SyntheticProbeSample:
     target_region: str | None = None
     latency_milliseconds: int | None = None
     ttfb_milliseconds: int | None = None
+    dns_milliseconds: int | None = None
+    tcp_connect_milliseconds: int | None = None
+    tls_handshake_milliseconds: int | None = None
+    gateway_processing_milliseconds: int | None = None
+    connection_reused: bool | None = None
+    protocol: str | None = None
     http_status: int | None = None
     error_type: str | None = None
     provider: str | None = None
@@ -827,6 +833,12 @@ class SyntheticProbeSample:
             "status": self.status,
             "latency_milliseconds": self.latency_milliseconds,
             "ttfb_milliseconds": self.ttfb_milliseconds,
+            "dns_milliseconds": self.dns_milliseconds,
+            "tcp_connect_milliseconds": self.tcp_connect_milliseconds,
+            "tls_handshake_milliseconds": self.tls_handshake_milliseconds,
+            "gateway_processing_milliseconds": self.gateway_processing_milliseconds,
+            "connection_reused": self.connection_reused,
+            "protocol": self.protocol,
             "http_status": self.http_status,
             "error_type": self.error_type,
             "provider": self.provider,
@@ -868,6 +880,10 @@ class SyntheticRollup:
     unknown_count: int = 0
     latency_histogram: dict[str, int] = field(default_factory=dict)
     ttfb_histogram: dict[str, int] = field(default_factory=dict)
+    dns_histogram: dict[str, int] = field(default_factory=dict)
+    tcp_connect_histogram: dict[str, int] = field(default_factory=dict)
+    tls_handshake_histogram: dict[str, int] = field(default_factory=dict)
+    gateway_processing_histogram: dict[str, int] = field(default_factory=dict)
     error_counts: dict[str, int] = field(default_factory=dict)
     last_checked_at: str | None = None
     cost_microdollars: int = 0

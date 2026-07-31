@@ -1814,6 +1814,10 @@ class PostgresStore:
                         rollup,
                         latency_histogram={},
                         ttfb_histogram={},
+                        dns_histogram={},
+                        tcp_connect_histogram={},
+                        tls_handshake_histogram={},
+                        gateway_processing_histogram={},
                     )
                     for rollup in rollups
                 ]

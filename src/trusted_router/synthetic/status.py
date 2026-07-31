@@ -159,6 +159,14 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
     global_latencies = _gateway_latency_values(samples, now=now)
     canonical_latencies = _gateway_latency_values(samples, now=now, target="canonical")
     primary_latencies = in_region_latencies or global_latencies
+    cutoff = now - dt.timedelta(seconds=WINDOW_SECONDS["5m"])
+    phase_samples = [
+        sample
+        for sample in samples
+        if sample.probe_type in {"gateway_cold_path", "gateway_reused_path"}
+        and sample.status == "up"
+        and _parse_time(sample.created_at) >= cutoff
+    ]
     return {
         "gateway_overhead_p50_milliseconds": _percentile(primary_latencies, 50),
         "gateway_overhead_sample_count": len(primary_latencies),
@@ -169,6 +177,7 @@ def _headline_metrics(samples: list[SyntheticProbeSample], *, now: dt.datetime) 
         "global_gateway_overhead_sample_count": len(global_latencies),
         "canonical_gateway_overhead_p50_milliseconds": _percentile(canonical_latencies, 50),
         "canonical_gateway_overhead_sample_count": len(canonical_latencies),
+        "latency_anatomy": _sample_group_breakdown(phase_samples),
         # Human-friendly label for the headline-metric subtitle; the
         # actual rollup window stays at WINDOW_SECONDS["5m"] above.
         "window": "last 5 min",
@@ -809,6 +818,26 @@ def _sample_group_breakdown(
             for sample in probe_samples
             if sample.ttfb_milliseconds is not None
         ]
+        dns_values = [
+            sample.dns_milliseconds
+            for sample in probe_samples
+            if sample.dns_milliseconds is not None
+        ]
+        tcp_values = [
+            sample.tcp_connect_milliseconds
+            for sample in probe_samples
+            if sample.tcp_connect_milliseconds is not None
+        ]
+        tls_values = [
+            sample.tls_handshake_milliseconds
+            for sample in probe_samples
+            if sample.tls_handshake_milliseconds is not None
+        ]
+        gateway_values = [
+            sample.gateway_processing_milliseconds
+            for sample in probe_samples
+            if sample.gateway_processing_milliseconds is not None
+        ]
         statuses = [sample.status for sample in probe_samples]
         row = {
             "target": target,
@@ -823,6 +852,14 @@ def _sample_group_breakdown(
             "p95_latency_milliseconds": _percentile(latencies, 95),
             "p50_ttfb_milliseconds": _percentile(ttfbs, 50),
             "p95_ttfb_milliseconds": _percentile(ttfbs, 95),
+            "p50_dns_milliseconds": _percentile(dns_values, 50),
+            "p95_dns_milliseconds": _percentile(dns_values, 95),
+            "p50_tcp_connect_milliseconds": _percentile(tcp_values, 50),
+            "p95_tcp_connect_milliseconds": _percentile(tcp_values, 95),
+            "p50_tls_handshake_milliseconds": _percentile(tls_values, 50),
+            "p95_tls_handshake_milliseconds": _percentile(tls_values, 95),
+            "p50_gateway_processing_milliseconds": _percentile(gateway_values, 50),
+            "p95_gateway_processing_milliseconds": _percentile(gateway_values, 95),
             "last_checked_at": max(sample.created_at for sample in probe_samples),
         }
         if include_component:
@@ -871,6 +908,22 @@ def _rollup_group_breakdown(
             "p95_latency_milliseconds": merged["p95_latency_milliseconds"],
             "p50_ttfb_milliseconds": merged["p50_ttfb_milliseconds"],
             "p95_ttfb_milliseconds": merged["p95_ttfb_milliseconds"],
+            "p50_dns_milliseconds": merged["p50_dns_milliseconds"],
+            "p95_dns_milliseconds": merged["p95_dns_milliseconds"],
+            "p50_tcp_connect_milliseconds": merged["p50_tcp_connect_milliseconds"],
+            "p95_tcp_connect_milliseconds": merged["p95_tcp_connect_milliseconds"],
+            "p50_tls_handshake_milliseconds": merged[
+                "p50_tls_handshake_milliseconds"
+            ],
+            "p95_tls_handshake_milliseconds": merged[
+                "p95_tls_handshake_milliseconds"
+            ],
+            "p50_gateway_processing_milliseconds": merged[
+                "p50_gateway_processing_milliseconds"
+            ],
+            "p95_gateway_processing_milliseconds": merged[
+                "p95_gateway_processing_milliseconds"
+            ],
             "last_checked_at": merged["last_checked_at"],
             "top_error": merged["top_error"],
         }
