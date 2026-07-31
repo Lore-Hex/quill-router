@@ -81,6 +81,10 @@ library. Its Cloud Run service identity requests only the
 2,000 events per request; TrustedRouter uses bounded 500-row batches and a
 five-minute schedule.
 
+REST uploads also send `x-goog-user-project` using `TR_GCP_PROJECT_ID`, as
+required by Google's Data Manager REST setup. The uploader service account
+must have `roles/serviceusage.serviceUsageConsumer` on that project.
+
 Delivery state is durable:
 
 - `pending`: eligible for a worker lease
