@@ -14,6 +14,7 @@ from trusted_router.config import Settings
 from trusted_router.google_ads_conversions import (
     GOOGLE_ADS_ACTIVATED_ACTION,
     GOOGLE_ADS_PURCHASE_ACTION,
+    GOOGLE_ADS_RETAINED_ACTION,
     GOOGLE_ADS_SIGNUP_ACTION,
 )
 from trusted_router.services.google_data_manager import (
@@ -42,6 +43,7 @@ def _config() -> GoogleDataManagerConfig:
     return GoogleDataManagerConfig(
         account_id="1234567890",
         signup_action_id="111",
+        activated_action_id="333",
         purchase_action_id="222",
         login_account_id="9998887776",
     )
@@ -53,6 +55,7 @@ def _settings(**overrides: Any) -> Settings:
         "google_data_manager_enabled": True,
         "google_data_manager_account_id": "123-456-7890",
         "google_data_manager_signup_action_id": "111",
+        "google_data_manager_activated_action_id": "333",
         "google_data_manager_purchase_action_id": "222",
         "google_data_manager_batch_size": 50,
         "google_data_manager_lease_seconds": 60,
@@ -108,13 +111,18 @@ def test_request_is_exact_metadata_only_json() -> None:
         order_id="s" * 64,
         value_microdollars=0,
     )
+    activated = _conversion(
+        action=GOOGLE_ADS_ACTIVATED_ACTION,
+        order_id="a" * 64,
+        value_microdollars=0,
+    )
     purchase = _conversion(
         order_id="p" * 64,
         value_microdollars=12_345_678,
     )
 
     encoded = encode_google_data_manager_request(
-        [signup, purchase],
+        [signup, activated, purchase],
         config=_config(),
     )
     payload = json.loads(encoded, parse_float=Decimal)
@@ -141,15 +149,28 @@ def test_request_is_exact_metadata_only_json() -> None:
                 "accountId": "1234567890",
                 "accountType": "GOOGLE_ADS",
             },
+            "productDestinationId": "333",
+            "reference": "activation",
+        },
+        {
+            "loginAccount": {
+                "accountId": "9998887776",
+                "accountType": "GOOGLE_ADS",
+            },
+            "operatingAccount": {
+                "accountId": "1234567890",
+                "accountType": "GOOGLE_ADS",
+            },
             "productDestinationId": "222",
             "reference": "purchase",
         },
     ]
     assert payload["events"][0]["conversionValue"] == 0
-    assert payload["events"][1]["conversionValue"] == Decimal("12.345678")
-    assert payload["events"][1]["adIdentifiers"] == {"gclid": "google-click"}
-    assert payload["events"][1]["eventSource"] == "WEB"
-    assert payload["events"][1]["transactionId"] == "p" * 64
+    assert payload["events"][1]["conversionValue"] == 0
+    assert payload["events"][2]["conversionValue"] == Decimal("12.345678")
+    assert payload["events"][2]["adIdentifiers"] == {"gclid": "google-click"}
+    assert payload["events"][2]["eventSource"] == "WEB"
+    assert payload["events"][2]["transactionId"] == "p" * 64
 
     lowered = encoded.decode().lower()
     for forbidden in (
@@ -208,7 +229,7 @@ def test_request_sends_exactly_one_click_identifier() -> None:
 def test_request_rejects_non_direct_events_and_missing_click_ids() -> None:
     with pytest.raises(ValueError, match="not eligible"):
         encode_google_data_manager_request(
-            [_conversion(action=GOOGLE_ADS_ACTIVATED_ACTION)],
+            [_conversion(action=GOOGLE_ADS_RETAINED_ACTION)],
             config=_config(),
         )
     with pytest.raises(ValueError, match="no click identifier"):
@@ -241,6 +262,7 @@ def test_config_fails_closed_when_enabled_without_destination_ids() -> None:
             environment="test",
             google_data_manager_enabled=True,
             google_data_manager_account_id="123",
+            google_data_manager_activated_action_id="333",
             google_data_manager_purchase_action_id="222",
         )
 
@@ -437,6 +459,7 @@ class _SuccessfulClient:
             item.conversion_action for item in conversions
         } == {
             GOOGLE_ADS_SIGNUP_ACTION,
+            GOOGLE_ADS_ACTIVATED_ACTION,
             GOOGLE_ADS_PURCHASE_ACTION,
         }
         return GoogleDataManagerIngestResult(
@@ -459,7 +482,7 @@ class _FailingClient:
         )
 
 
-def test_worker_submits_signup_and_settled_purchase_only() -> None:
+def test_worker_submits_signup_activation_and_settled_purchase() -> None:
     store = InMemoryStore()
     record = _attribution()
     assert store.create_acquisition_attribution(record)
@@ -480,8 +503,8 @@ def test_worker_submits_signup_and_settled_purchase_only() -> None:
         client=_SuccessfulClient(),  # type: ignore[arg-type]
     )
 
-    assert result.claimed == 2
-    assert result.submitted == 2
+    assert result.claimed == 3
+    assert result.submitted == 3
     conversions = store.list_google_ads_conversions(
         since="2000-01-01T00:00:00Z",
         limit=10,
@@ -489,9 +512,10 @@ def test_worker_submits_signup_and_settled_purchase_only() -> None:
     by_action = {item.conversion_action: item for item in conversions}
     assert by_action[GOOGLE_ADS_SIGNUP_ACTION].delivery_status == "submitted"
     assert by_action[GOOGLE_ADS_PURCHASE_ACTION].delivery_status == "submitted"
-    assert by_action[GOOGLE_ADS_ACTIVATED_ACTION].delivery_status == "not_scheduled"
+    assert by_action[GOOGLE_ADS_ACTIVATED_ACTION].delivery_status == "submitted"
     assert {
         by_action[GOOGLE_ADS_SIGNUP_ACTION].google_request_id,
+        by_action[GOOGLE_ADS_ACTIVATED_ACTION].google_request_id,
         by_action[GOOGLE_ADS_PURCHASE_ACTION].google_request_id,
     } == {"accepted-request"}
     assert store.claim_google_ads_deliveries(limit=10, lease_seconds=60) == []
