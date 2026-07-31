@@ -3,7 +3,9 @@ prompt content."""
 
 from __future__ import annotations
 
+import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,7 +26,55 @@ USAGE_RANGE_PRESETS: dict[str, tuple[int, str]] = {
     "90d": (129600, "day"),
 }
 _UsageCacheKey = tuple[str, str, bool, str | None]
-_USAGE_CACHE: dict[_UsageCacheKey, tuple[float, dict[str, Any]]] = {}
+_USAGE_CACHE_MAX_ENTRIES = 256
+
+
+class _UsageCache:
+    """Small bounded TTL cache for expensive console usage queries."""
+
+    def __init__(self, *, max_entries: int = _USAGE_CACHE_MAX_ENTRIES) -> None:
+        if max_entries < 1:
+            raise ValueError("usage cache max_entries must be positive")
+        self._max_entries = max_entries
+        self._entries: OrderedDict[
+            _UsageCacheKey, tuple[float, dict[str, Any]]
+        ] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: _UsageCacheKey, *, now: float) -> dict[str, Any] | None:
+        with self._lock:
+            cached = self._entries.get(key)
+            if cached is None:
+                return None
+            if cached[0] <= now:
+                self._entries.pop(key, None)
+                return None
+            self._entries.move_to_end(key)
+            return cached[1]
+
+    def put(
+        self,
+        key: _UsageCacheKey,
+        value: dict[str, Any],
+        *,
+        expires_at: float,
+    ) -> None:
+        with self._lock:
+            self._entries[key] = (expires_at, value)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._entries.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+
+_USAGE_CACHE = _UsageCache()
 
 
 def register(app: FastAPI) -> None:
@@ -61,9 +111,9 @@ def register(app: FastAPI) -> None:
             api_key_hash,
         )
         now = time.monotonic()
-        cached = _USAGE_CACHE.get(cache_key)
-        if cached is not None and cached[0] > now:
-            return cached[1]
+        cached = _USAGE_CACHE.get(cache_key, now=now)
+        if cached is not None:
+            return cached
         result = STORE.usage_series(
             ctx.workspace.id,
             window_minutes=window_minutes,
@@ -81,5 +131,9 @@ def register(app: FastAPI) -> None:
         result["latest_activity_at"] = latest[0].get("created_at") if latest else None
         # A shared cache (Redis) is deferred; this per-worker TTL covers
         # occasional console reads and protects Bigtable from refresh bursts.
-        _USAGE_CACHE[cache_key] = (now + _USAGE_CACHE_TTL_SECONDS, result)
+        _USAGE_CACHE.put(
+            cache_key,
+            result,
+            expires_at=now + _USAGE_CACHE_TTL_SECONDS,
+        )
         return result

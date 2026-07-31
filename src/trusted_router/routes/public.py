@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -116,6 +117,8 @@ STATUS_MONTH_ROLLUP_LIMIT = 50
 STATUS_ROLLUP_RETENTION_MONTHS = 24
 STATUS_RESPONSE_CACHE_SECONDS = 60
 STATUS_RESPONSE_STALE_SECONDS = 600
+PUBLIC_RESPONSE_CACHE_MAX_ENTRIES = 32
+PUBLIC_RESPONSE_REFRESH_MAX_THREADS = 2
 STATUS_HISTORY_CACHE_SECONDS = 300
 STATUS_HISTORY_STALE_SECONDS = 1_800
 LEADERBOARD_SAMPLE_LIMIT = PUBLIC_BENCHMARK_SAMPLE_LIMIT
@@ -135,9 +138,12 @@ INDEXNOW_KEY = "360a02e48445d297f9612a4c3fef878b"
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 _LEADERBOARD_CACHE: tuple[float, dict[str, Any]] | None = None
 _APPS_CACHE: tuple[float, dict[str, Any]] | None = None
-_STATUS_RESPONSE_CACHE: dict[str, _CachedPublicBody] = {}
+_STATUS_RESPONSE_CACHE: OrderedDict[str, _CachedPublicBody] = OrderedDict()
 _STATUS_RESPONSE_REFRESHING: set[str] = set()
 _STATUS_RESPONSE_CACHE_LOCK = threading.RLock()
+_STATUS_RESPONSE_REFRESH_SLOTS = threading.BoundedSemaphore(
+    PUBLIC_RESPONSE_REFRESH_MAX_THREADS
+)
 
 
 @dataclass(frozen=True)
@@ -187,7 +193,8 @@ if not _leads_log.handlers:
 # form. Not a substitute for an edge WAF, but enough to blunt casual abuse of
 # an unauthenticated POST that fans out to email. Keyed by client IP.
 _INQUIRY_RATE_LOCK = threading.Lock()
-_INQUIRY_HITS: dict[str, list[float]] = {}
+_INQUIRY_MAX_CLIENTS = 4096
+_INQUIRY_HITS: OrderedDict[str, list[float]] = OrderedDict()
 _INQUIRY_WINDOW_SECONDS = 3600.0
 _INQUIRY_MAX_PER_WINDOW = 5
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -200,14 +207,28 @@ def _inquiry_rate_ok(client_ip: str, *, now: float | None = None) -> bool:
         hits = [t for t in _INQUIRY_HITS.get(client_ip, ()) if t > cutoff]
         if len(hits) >= _INQUIRY_MAX_PER_WINDOW:
             _INQUIRY_HITS[client_ip] = hits
+            _INQUIRY_HITS.move_to_end(client_ip)
+            _bound_inquiry_clients(cutoff)
             return False
         hits.append(now)
         _INQUIRY_HITS[client_ip] = hits
-        # Opportunistic cleanup so the dict can't grow unbounded.
-        if len(_INQUIRY_HITS) > 4096:
-            for key in [k for k, v in _INQUIRY_HITS.items() if not any(t > cutoff for t in v)]:
-                _INQUIRY_HITS.pop(key, None)
+        _INQUIRY_HITS.move_to_end(client_ip)
+        _bound_inquiry_clients(cutoff)
     return True
+
+
+def _bound_inquiry_clients(cutoff: float) -> None:
+    if len(_INQUIRY_HITS) <= _INQUIRY_MAX_CLIENTS:
+        return
+    stale = [
+        key
+        for key, hits in _INQUIRY_HITS.items()
+        if not any(hit > cutoff for hit in hits)
+    ]
+    for key in stale:
+        _INQUIRY_HITS.pop(key, None)
+    while len(_INQUIRY_HITS) > _INQUIRY_MAX_CLIENTS:
+        _INQUIRY_HITS.popitem(last=False)
 
 
 async def _handle_trustedos_inquiry(settings: Settings, request: Request) -> JSONResponse:
@@ -908,9 +929,10 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/leaderboard")
     async def leaderboard_page(request: Request, background_tasks: BackgroundTasks) -> Response:
+        _ = request
         return _cached_public_response(
             settings,
-            key=f"leaderboard:page:{request.headers.get('host', '')}",
+            key="leaderboard:page",
             media_type="text/html",
             ttl_seconds=LEADERBOARD_RESPONSE_CACHE_SECONDS,
             stale_seconds=LEADERBOARD_RESPONSE_STALE_SECONDS,
@@ -959,16 +981,17 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
                 background_tasks=background_tasks,
                 build=lambda: _json_body({"data": _status_history_payload(window)}),
             )
+        render_host = _status_render_host(settings, request.headers.get("host", ""))
         return _cached_public_response(
             settings,
-            key=f"status:history:{window}:html:{request.headers.get('host', '')}",
+            key=f"status:history:{window}:html:{render_host}",
             media_type="text/html",
             ttl_seconds=STATUS_HISTORY_CACHE_SECONDS,
             stale_seconds=STATUS_HISTORY_STALE_SECONDS,
             background_tasks=background_tasks,
             build=lambda: _status_history_page_html(
                 settings,
-                host=request.headers.get("host", ""),
+                host=render_host,
                 window=window,
                 history=_status_history_payload(window),
             ).encode(),
@@ -1151,15 +1174,24 @@ def _cached_status_page_response(
     host: str,
     background_tasks: BackgroundTasks,
 ) -> Response:
+    render_host = _status_render_host(settings, host)
     return _cached_public_response(
         settings,
-        key=f"status:page:{host}",
+        key=f"status:page:{render_host}",
         media_type="text/html",
         ttl_seconds=STATUS_RESPONSE_CACHE_SECONDS,
         stale_seconds=STATUS_RESPONSE_STALE_SECONDS,
         background_tasks=background_tasks,
-        build=lambda: _status_page_html(settings, host=host).encode(),
+        build=lambda: _status_page_html(settings, host=render_host).encode(),
     )
+
+
+def _status_render_host(settings: Settings, host: str) -> str:
+    """Collapse arbitrary Host headers to the two rendered page variants."""
+    hostname = host.partition(":")[0].strip().lower()
+    if hostname == "status.trustedrouter.com":
+        return hostname
+    return settings.trusted_domain
 
 
 def _cached_public_response(
@@ -1186,8 +1218,10 @@ def _cached_public_response(
         if cached is not None:
             age = now - cached.cached_at
             if age < ttl_seconds:
+                _STATUS_RESPONSE_CACHE.move_to_end(key)
                 return _cached_body_response(cached, cache_state="hit")
             if age < ttl_seconds + stale_seconds:
+                _STATUS_RESPONSE_CACHE.move_to_end(key)
                 _schedule_cached_response_refresh(
                     key=key,
                     media_type=media_type,
@@ -1206,6 +1240,9 @@ def _cached_public_response(
     )
     with _STATUS_RESPONSE_CACHE_LOCK:
         _STATUS_RESPONSE_CACHE[key] = cached
+        _STATUS_RESPONSE_CACHE.move_to_end(key)
+        while len(_STATUS_RESPONSE_CACHE) > PUBLIC_RESPONSE_CACHE_MAX_ENTRIES:
+            _STATUS_RESPONSE_CACHE.popitem(last=False)
     return _cached_body_response(cached, cache_state="miss")
 
 
@@ -1221,13 +1258,21 @@ def _schedule_cached_response_refresh(
     with _STATUS_RESPONSE_CACHE_LOCK:
         if key in _STATUS_RESPONSE_REFRESHING:
             return
+        if not _STATUS_RESPONSE_REFRESH_SLOTS.acquire(blocking=False):
+            return
         _STATUS_RESPONSE_REFRESHING.add(key)
     refresh_thread = threading.Thread(
         target=_refresh_cached_response,
         args=(key, media_type, cache_control, build),
         daemon=True,
     )
-    refresh_thread.start()
+    try:
+        refresh_thread.start()
+    except Exception:
+        with _STATUS_RESPONSE_CACHE_LOCK:
+            _STATUS_RESPONSE_REFRESHING.discard(key)
+        _STATUS_RESPONSE_REFRESH_SLOTS.release()
+        raise
 
 
 def _refresh_cached_response(
@@ -1245,9 +1290,15 @@ def _refresh_cached_response(
                 media_type=media_type,
                 cache_control=cache_control,
             )
+            _STATUS_RESPONSE_CACHE.move_to_end(key)
+            while len(_STATUS_RESPONSE_CACHE) > PUBLIC_RESPONSE_CACHE_MAX_ENTRIES:
+                _STATUS_RESPONSE_CACHE.popitem(last=False)
+    except Exception:
+        log.exception("public_cache_refresh_failed key=%s", key)
     finally:
         with _STATUS_RESPONSE_CACHE_LOCK:
             _STATUS_RESPONSE_REFRESHING.discard(key)
+        _STATUS_RESPONSE_REFRESH_SLOTS.release()
 
 
 def _cached_body_response(cached: _CachedPublicBody, *, cache_state: str) -> Response:
