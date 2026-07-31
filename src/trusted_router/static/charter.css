@@ -708,6 +708,19 @@ tbody tr:hover {
   gap: 24px;
 }
 
+.public-wrap {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.public-wrap > * {
+  min-width: 0;
+}
+
+.public-wrap :not(pre) > code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .public-hero,
 .marketing-hero {
   display: grid;

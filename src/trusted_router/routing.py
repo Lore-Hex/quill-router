@@ -299,6 +299,42 @@ def embeddings_route_endpoint_candidates(
     return candidates
 
 
+def video_route_endpoint_candidates(
+    body: dict[str, Any], settings: Settings
+) -> list[tuple[Model, ModelEndpoint]]:
+    """Resolve only provider endpoints backed by the attested video worker."""
+    raw_ids, prefs = _routing_for_body(body, settings)
+    candidates: list[tuple[Model, ModelEndpoint]] = []
+    seen: set[str] = set()
+    for model_id in raw_ids:
+        model = MODELS.get(model_id)
+        if model is None or not model.supports_video:
+            raise api_error(
+                400,
+                f"Model does not support video generation: {model_id}",
+                ErrorType.MODEL_NOT_SUPPORTED,
+            )
+        for endpoint in endpoints_for_model(model.id):
+            if endpoint.id in seen:
+                continue
+            candidates.append((model, endpoint))
+            seen.add(endpoint.id)
+
+    candidates = _filter_candidates_soft_data_collection(
+        candidates, prefs, _apply_endpoint_provider_filters
+    )
+    if not candidates:
+        raise api_error(
+            400,
+            "No video route candidates match the requested provider filters",
+            ErrorType.MODEL_NOT_SUPPORTED,
+        )
+    candidates = _sort_endpoint_candidates(candidates, prefs)
+    if not prefs.allow_fallbacks:
+        return candidates[:1]
+    return candidates
+
+
 def provider_route_preferences(body: dict[str, Any]) -> RoutePreferences:
     raw = body.get("provider")
     if not isinstance(raw, dict):
@@ -482,9 +518,7 @@ def _requested_model_ids(
             overrides.update(ovr)
         enforced_privacy_tier = ROUTING_MODEL_MIN_PRIVACY_TIERS.get(stripped)
         if enforced_privacy_tier is not None:
-            overrides["min_privacy"] = (
-                "e2ee" if enforced_privacy_tier >= 3 else "zdr"
-            )
+            overrides["min_privacy"] = "e2ee" if enforced_privacy_tier >= 3 else "zdr"
         if stripped == ZDR_MODEL_ID:
             overrides["order"] = (
                 "anthropic,openai,google-vertex,google-ai-studio,tinfoil,venice,phala"
@@ -652,9 +686,7 @@ def _sort_endpoint_candidates(
             # A provider preference for one model must not promote that model
             # ahead of a caller's primary model or a meta-router's model order.
             model_preference = (
-                _MODEL_PROVIDER_PREFERENCE.get(model.id, {})
-                if model.id == single_model_id
-                else {}
+                _MODEL_PROVIDER_PREFERENCE.get(model.id, {}) if model.id == single_model_id else {}
             )
             sort_rank = model_preference.get(
                 endpoint.provider,

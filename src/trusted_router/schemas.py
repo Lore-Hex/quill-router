@@ -193,6 +193,7 @@ class GatewayAuthorizeRequest(_Lenient):
     api_key_hash: str | None = Field(default=None, min_length=1)
     api_key_lookup_hash: str | None = Field(default=None, min_length=1)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+    request_fingerprint: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")
     model: str = Field(min_length=1)
     models: list[str] | None = None
     provider: dict[str, Any] | None = None
@@ -213,10 +214,8 @@ class GatewayAuthorizeRequest(_Lenient):
     route_type: str | None = None
     # Attested hosted tools may reserve a bounded non-token cost on the same
     # atomic hold as their planner model call. This is internal-only and is
-    # currently accepted solely for the Responses web-search planner.
-    additional_cost_reservation_microdollars: int = Field(
-        default=0, ge=0, le=1_000_000
-    )
+    # accepted only for enclave-owned hosted tools and asynchronous media.
+    additional_cost_reservation_microdollars: int = Field(default=0, ge=0, le=100_000_000)
 
     @model_validator(mode="after")
     def key_identifier_required(self) -> GatewayAuthorizeRequest:
@@ -240,6 +239,41 @@ class GatewayFetchImageRequest(_Lenient):
     # The control plane resolves DNS, rejects private/loopback IPs, and
     # returns the bytes as base64 to be re-embedded inline by the gateway.
     url: str = Field(min_length=1)
+
+
+class GatewayVideoJobPrepareRequest(_Strict):
+    job_id: str = Field(min_length=8, max_length=128)
+    authorization_id: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=256)
+    provider: str = Field(min_length=1, max_length=64)
+    endpoint_id: str = Field(min_length=1, max_length=512)
+    provider_model: str = Field(min_length=1, max_length=256)
+    quoted_microdollars: int = Field(ge=1, le=100_000_000)
+
+
+class GatewayVideoJobQueuedRequest(_Strict):
+    provider_job_id: str = Field(min_length=1, max_length=512)
+    provider_model: str = Field(min_length=1, max_length=256)
+    poll_after_seconds: int = Field(default=5, ge=1, le=300)
+
+
+class GatewayVideoJobLookupRequest(_Strict):
+    api_key_lookup_hash: str = Field(min_length=1, max_length=128)
+
+
+class GatewayVideoJobClaimRequest(_Strict):
+    lease_owner: str = Field(min_length=1, max_length=128)
+    limit: int = Field(default=10, ge=1, le=100)
+    lease_seconds: int = Field(default=60, ge=10, le=600)
+
+
+class GatewayVideoJobUpdateRequest(_Strict):
+    status: str = Field(pattern="^(pending|in_progress|completed|failed)$")
+    lease_owner: str | None = Field(default=None, max_length=128)
+    provider_status: str | None = Field(default=None, max_length=64)
+    generation_id: str | None = Field(default=None, max_length=128)
+    error: str | None = Field(default=None, max_length=500)
+    poll_after_seconds: int = Field(default=5, ge=1, le=300)
 
 
 class GatewayValidateRequest(_Lenient):
@@ -308,7 +342,7 @@ class GatewaySettleRequest(_Lenient):
     http_referer: str | None = Field(default=None, max_length=2048)
     app_categories: list[str] | None = None
     route_type: str | None = None
-    additional_cost_microdollars: int = Field(default=0, ge=0, le=1_000_000)
+    additional_cost_microdollars: int = Field(default=0, ge=0, le=100_000_000)
 
     @property
     def input_count(self) -> int:

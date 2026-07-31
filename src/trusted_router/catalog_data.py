@@ -188,6 +188,7 @@ class Model:
     supports_chat: bool = True
     supports_messages: bool = False
     supports_embeddings: bool = False
+    supports_video: bool = False
     input_modalities: tuple[str, ...] = ("text",)
     output_modalities: tuple[str, ...] = ("text",)
     prepaid_available: bool = False

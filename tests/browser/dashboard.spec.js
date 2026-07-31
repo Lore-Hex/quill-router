@@ -130,7 +130,12 @@ test("homepage and console redirect are usable on mobile width", async ({ page }
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Every model. Provable privacy." })).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  let overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(2);
+
+  await page.goto("/docs/video");
+  await expect(page.getByRole("heading", { name: "Video Generation API" })).toBeVisible();
+  overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(2);
 });
 

@@ -37,6 +37,7 @@ from trusted_router.storage import (
     SyntheticRollup,
     User,
     VerificationToken,
+    VideoJob,
     WalletChallenge,
     Workspace,
     iso_now,
@@ -94,6 +95,7 @@ from trusted_router.storage_gcp_synthetic_rollups import (
     synthetic_rollups as _bt_synthetic_rollups,
 )
 from trusted_router.storage_gcp_verification_tokens import SpannerVerificationTokens
+from trusted_router.storage_gcp_video_jobs import SpannerVideoJobs
 from trusted_router.storage_gcp_wallet_challenges import SpannerWalletChallenges
 from trusted_router.storage_models import TypedFinalizeResult
 from trusted_router.types import UsageType
@@ -181,9 +183,7 @@ class SpannerBigtableStore:
         # `--concurrency=2` (rollout.sh), so we'll never need more than
         # 2-3 sessions in flight; size=4 gives a 2x headroom over the
         # in-flight ceiling. Saves ~30 MB per instance.
-        pool_size = int(
-            os.environ.get("TR_SPANNER_POOL_SIZE", "4")
-        )
+        pool_size = int(os.environ.get("TR_SPANNER_POOL_SIZE", "4"))
         self._database = (
             spanner.Client(
                 project=project_id,
@@ -220,12 +220,8 @@ class SpannerBigtableStore:
         # identity + credit ledger. Mirrors the InMemoryStore pattern.
 
         self._credit_shard_counts = CreditShardCountCache(
-            ttl_seconds=float(
-                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")
-            ),
-            max_entries=int(
-                os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")
-            ),
+            ttl_seconds=float(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_SECONDS", "60")),
+            max_entries=int(os.environ.get("TR_CREDIT_SHARD_COUNT_CACHE_ENTRIES", "10000")),
         )
         self._rebalance_last_attempt: dict[str, float] = {}
         self._rebalance_last_attempt_lock = threading.Lock()
@@ -259,6 +255,7 @@ class SpannerBigtableStore:
         self.byok_store = SpannerByok(io)
         self.custom_model_store = SpannerCustomModels(io)
         self.broadcast_store = SpannerBroadcastDestinations(io)
+        self.video_job_store = SpannerVideoJobs(io)
         # Durable settle outbox (docs/design/durable-settle-outbox.md). Native
         # table, so it takes the raw database + param_types like the counter DML
         # rather than the entity IO. Dormant until settle_outbox_enabled + the
@@ -288,9 +285,7 @@ class SpannerBigtableStore:
     def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
         return self.acquisition_store.create(record)
 
-    def get_acquisition_attribution(
-        self, workspace_id: str
-    ) -> AcquisitionAttribution | None:
+    def get_acquisition_attribution(self, workspace_id: str) -> AcquisitionAttribution | None:
         return self.acquisition_store.get(workspace_id)
 
     def claim_acquisition_milestones(
@@ -407,14 +402,16 @@ class SpannerBigtableStore:
                 owner_user_id=new_user.id,
             )
             member = Member(workspace_id=workspace.id, user_id=new_user.id, role="owner")
-            initial_total = (
-                0 if trial_credit_microdollars is None else trial_credit_microdollars
-            )
+            initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
             credit = CreditAccount(workspace_id=workspace.id)
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
-            self._write_entity_tx(transaction, "email_user", normalized_email, {"user_id": new_user.id})
+            self._write_entity_tx(
+                transaction, "email_user", normalized_email, {"user_id": new_user.id}
+            )
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
-            self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
+            self._write_entity_tx(
+                transaction, "member", _member_id(workspace.id, new_user.id), member
+            )
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
             self._seed_credit_balance_on_create(transaction, workspace.id, initial_total)
             return new_user
@@ -558,7 +555,9 @@ class SpannerBigtableStore:
         credit = CreditAccount(workspace_id=workspace.id)
         with self._database.batch() as batch:
             self._write_entity_batch(batch, "workspace", workspace.id, workspace)
-            self._write_entity_batch(batch, "member", _member_id(workspace.id, owner_user_id), member)
+            self._write_entity_batch(
+                batch, "member", _member_id(workspace.id, owner_user_id), member
+            )
             self._write_entity_batch(batch, "credit", workspace.id, credit)
             self._seed_credit_balance_on_create(batch, workspace.id, initial_total)
         return workspace
@@ -664,7 +663,9 @@ class SpannerBigtableStore:
                     attempts.pop(stale_workspace, None)
             return True
 
-    def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
+    def add_members(
+        self, workspace_id: str, emails: list[str], role: str = "member"
+    ) -> list[Member]:
         members: list[Member] = []
         with self._database.batch() as batch:
             for email in emails:
@@ -731,7 +732,9 @@ class SpannerBigtableStore:
             self._write_entity_tx(transaction, "user", new_user.id, new_user)
             self._write_entity_tx(transaction, "wallet_user", normalized, {"user_id": new_user.id})
             self._write_entity_tx(transaction, "workspace", workspace.id, workspace)
-            self._write_entity_tx(transaction, "member", _member_id(workspace.id, new_user.id), member)
+            self._write_entity_tx(
+                transaction, "member", _member_id(workspace.id, new_user.id), member
+            )
             self._write_entity_tx(transaction, "credit", workspace.id, credit)
             self._seed_credit_balance_on_create(
                 transaction,
@@ -1027,6 +1030,67 @@ class SpannerBigtableStore:
             lease_owner=lease_owner,
         )
 
+    def prepare_video_job(self, job: VideoJob) -> tuple[VideoJob, bool]:
+        return self.video_job_store.prepare(job)
+
+    def get_video_job(self, job_id: str) -> VideoJob | None:
+        return self.video_job_store.get(job_id)
+
+    def get_video_job_for_key(self, job_id: str, key_hash: str) -> VideoJob | None:
+        return self.video_job_store.get_for_key(job_id, key_hash)
+
+    def mark_video_job_queued(
+        self,
+        job_id: str,
+        *,
+        provider_job_id: str,
+        provider_model: str,
+        poll_after_seconds: int,
+    ) -> VideoJob | None:
+        return self.video_job_store.mark_queued(
+            job_id,
+            provider_job_id=provider_job_id,
+            provider_model=provider_model,
+            poll_after_seconds=poll_after_seconds,
+        )
+
+    def claim_video_jobs(
+        self,
+        *,
+        lease_owner: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[VideoJob]:
+        return self.video_job_store.claim_due(
+            lease_owner=lease_owner,
+            limit=limit,
+            lease_seconds=lease_seconds,
+        )
+
+    def update_video_job(
+        self,
+        job_id: str,
+        *,
+        status: str,
+        lease_owner: str | None = None,
+        provider_status: str | None = None,
+        generation_id: str | None = None,
+        error: str | None = None,
+        poll_after_seconds: int = 5,
+    ) -> VideoJob | None:
+        return self.video_job_store.update(
+            job_id,
+            status=status,
+            lease_owner=lease_owner,
+            provider_status=provider_status,
+            generation_id=generation_id,
+            error=error,
+            poll_after_seconds=poll_after_seconds,
+        )
+
+    def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
+        return self.video_job_store.mark_cleaned(job_id)
+
     def credit_workspace_typed_direct(
         self, workspace_id: str, amount_microdollars: int, event_id: str
     ) -> bool:
@@ -1081,7 +1145,9 @@ class SpannerBigtableStore:
 
         return self._run_in_transaction(txn)
 
-    def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
+    def credit_workspace_once(
+        self, workspace_id: str, amount_microdollars: int, event_id: str
+    ) -> bool:
         return self.credit_workspace_typed_direct(workspace_id, amount_microdollars, event_id)
 
     def update_auto_refill_settings(
@@ -1219,9 +1285,7 @@ class SpannerBigtableStore:
             additional_cost_reservation_microdollars=additional_cost_reservation_microdollars,
         )
 
-    def get_gateway_authorization(
-        self, authorization_id: str
-    ) -> GatewayAuthorization | None:
+    def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         with self._database.snapshot() as snapshot:
             typed = read_gateway_authorization(
                 snapshot,
@@ -1251,9 +1315,7 @@ class SpannerBigtableStore:
         selected_usage_type: UsageType | str,
         generation: Generation | None = None,
     ) -> bool:
-        raise RuntimeError(
-            "legacy JSON finalize path removed (C1); use typed finalize on Spanner"
-        )
+        raise RuntimeError("legacy JSON finalize path removed (C1); use typed finalize on Spanner")
 
     # ── Typed-column billing (Step 3): thin wrappers over storage_gcp_authorize.
     # The atomic conditional-DML authorize/settle engine. Routes select this by
@@ -1401,9 +1463,7 @@ class SpannerBigtableStore:
         )
 
         usage = UsageType.coerce(reservation_usage_type)
-        key_counter_shards = key_usage_shard_count(
-            {"usage_shard_count": key_usage_shards}
-        )
+        key_counter_shards = key_usage_shard_count({"usage_shard_count": key_usage_shards})
         key_shard_candidates = randomized_credit_shards(key_counter_shards)
         scope = (
             _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
@@ -1464,10 +1524,9 @@ class SpannerBigtableStore:
                 return f"{AuthorizeOutcome.KEY_WINDOW_LIMIT_EXCEEDED}:{blocked}", None
 
         credit_shard_candidates = (
-            self._credit_shard_candidates(workspace_id)
-            if has_credit_candidate
-            else (UNSHARDED,)
+            self._credit_shard_candidates(workspace_id) if has_credit_candidate else (UNSHARDED,)
         )
+
         def run_authorize(candidates: tuple[int, ...]) -> dict[str, Any]:
             return authorize_atomic(
                 self._database,
@@ -1488,10 +1547,7 @@ class SpannerBigtableStore:
             )
 
         result = run_authorize(credit_shard_candidates)
-        if (
-            result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS
-            and has_credit_candidate
-        ):
+        if result["outcome"] == AuthorizeOutcome.INSUFFICIENT_CREDITS and has_credit_candidate:
             from trusted_router import storage_gcp_credit_rebalance as rebalance_mod
 
             # An all-shards rejection is cold. Refresh once so a remote
@@ -1547,10 +1603,7 @@ class SpannerBigtableStore:
                 if verdict == rebalance_mod.RebalanceOutcome.NOT_NEEDED:
                     result = run_authorize(credit_shard_candidates)
                     continue
-                if (
-                    verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE
-                    and not forced_reload_done
-                ):
+                if verdict == rebalance_mod.RebalanceOutcome.INCOMPLETE and not forced_reload_done:
                     # The observed shard set doesn't match the count we hold —
                     # most likely a remote unshard/split behind the refresh's
                     # dedupe window, not corruption. Force ONE dedupe-bypassing
@@ -1561,9 +1614,7 @@ class SpannerBigtableStore:
                     forced_reload_done = True
                     try:
                         self._credit_shard_counts.invalidate(workspace_id)
-                        reloaded_candidates = self._credit_shard_candidates(
-                            workspace_id
-                        )
+                        reloaded_candidates = self._credit_shard_candidates(workspace_id)
                     except Exception:
                         log.warning(
                             "credit shard-count forced reload failed after "
@@ -1595,10 +1646,7 @@ class SpannerBigtableStore:
                     estimate,
                     _attempt + 1,
                 )
-                if (
-                    rebalance_result["outcome"]
-                    == rebalance_mod.RebalanceOutcome.INCOMPLETE
-                ):
+                if rebalance_result["outcome"] == rebalance_mod.RebalanceOutcome.INCOMPLETE:
                     raise RuntimeError(
                         "configured credit shard set is incomplete after cache refresh"
                     )
@@ -1635,14 +1683,16 @@ class SpannerBigtableStore:
             if key is None:
                 return None
             shard_count = key_usage_shard_count(key)
-            rows = list(snapshot.execute_sql(
-                "SELECT shard, usage, byok_usage, reserved, day_usage, day_start, "
-                "week_usage, week_start, month_usage, month_start "
-                "FROM tr_key_limit WHERE key_hash=@pk AND shard>=0 "
-                "AND shard<@shard_count ORDER BY shard",
-                params={"pk": key_hash, "shard_count": shard_count},
-                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
-            ))
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, usage, byok_usage, reserved, day_usage, day_start, "
+                    "week_usage, week_start, month_usage, month_start "
+                    "FROM tr_key_limit WHERE key_hash=@pk AND shard>=0 "
+                    "AND shard<@shard_count ORDER BY shard",
+                    params={"pk": key_hash, "shard_count": shard_count},
+                    param_types={"pk": pt.STRING, "shard_count": pt.INT64},
+                )
+            )
         if not rows:
             return None
         if [int(row[0]) for row in rows] != list(range(shard_count)):
@@ -1686,12 +1736,14 @@ class SpannerBigtableStore:
             if account is None:
                 return None
             shard_count = credit_shard_count(account)
-            rows = list(snapshot.execute_sql(
-                "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
-                "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
-                params={"pk": workspace_id, "shard_count": shard_count},
-                param_types={"pk": pt.STRING, "shard_count": pt.INT64},
-            ))
+            rows = list(
+                snapshot.execute_sql(
+                    "SELECT shard, total_credits, total_usage, reserved FROM tr_credit_balance "
+                    "WHERE workspace_id=@pk AND shard>=0 AND shard<@shard_count ORDER BY shard",
+                    params={"pk": workspace_id, "shard_count": shard_count},
+                    param_types={"pk": pt.STRING, "shard_count": pt.INT64},
+                )
+            )
         if not rows:
             raise RuntimeError(
                 f"missing authoritative tr_credit_balance rows for workspace {workspace_id}"
@@ -1746,9 +1798,7 @@ class SpannerBigtableStore:
             _gateway_authorization_idempotency_index_id,
         )
 
-        scope = _gateway_authorization_idempotency_index_id(
-            workspace_id, key_hash, idempotency_key
-        )
+        scope = _gateway_authorization_idempotency_index_id(workspace_id, key_hash, idempotency_key)
         with self._database.snapshot() as snapshot:
             existing = read_reservation_by_idempotency(snapshot, self._param_types, scope)
         if existing is None:
@@ -1968,9 +2018,7 @@ class SpannerBigtableStore:
         date: str | None = None,
         limit: int = 1000,
     ) -> int:
-        return self.generation_store.reconcile_activity(
-            workspace_id, date=date, limit=limit
-        )
+        return self.generation_store.reconcile_activity(workspace_id, date=date, limit=limit)
 
     def hit_rate_limit(
         self,
@@ -2072,7 +2120,9 @@ class SpannerBigtableStore:
         """
         return run_in_transaction_with_retry(self._database, func, attempts=attempts)
 
-    def _read_entity_tx(self, transaction: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:
+    def _read_entity_tx(
+        self, transaction: Any, kind: str, entity_id: str, cls: type[T]
+    ) -> T | None:
         return self._read_entity_from(transaction, kind, entity_id, cls)
 
     def _read_entity_from(self, reader: Any, kind: str, entity_id: str, cls: type[T]) -> T | None:

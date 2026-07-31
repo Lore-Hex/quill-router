@@ -518,9 +518,7 @@ MODELS: dict[str, Model] = {
         published_completion_price_microdollars_per_million_tokens=(
             PARASAIL_LIBERTY_2_0_OUTPUT_MICRODOLLARS_PER_MILLION
         ),
-        minimum_charge_microdollars=(
-            PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS
-        ),
+        minimum_charge_microdollars=(PARASAIL_LIBERTY_2_0_MINIMUM_CHARGE_MICRODOLLARS),
     ),
     LIBERTY_3_0_MODEL_ID: Model(
         id=LIBERTY_3_0_MODEL_ID,
@@ -779,14 +777,10 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
     MODELS[_model_id] = replace(
         _existing_model,
         input_modalities=tuple(
-            dict.fromkeys(
-                (*_existing_model.input_modalities, *_model.input_modalities)
-            )
+            dict.fromkeys((*_existing_model.input_modalities, *_model.input_modalities))
         ),
         output_modalities=tuple(
-            dict.fromkeys(
-                (*_existing_model.output_modalities, *_model.output_modalities)
-            )
+            dict.fromkeys((*_existing_model.output_modalities, *_model.output_modalities))
         ),
     )
 # Embedding models override any snapshot/supplemental collision: the
@@ -796,9 +790,108 @@ for _model_id, _model in _SUPPLEMENTAL_MODELS.items():
 for _model_id, _model in _EMBEDDING_MODELS.items():
     MODELS[_model_id] = _model
 
+# Video generation is a separate asynchronous product surface. These models
+# are deliberately not inferred from the text-model snapshot: each entry is
+# backed by a provider-native video queue that the attested gateway knows how
+# to quote, submit, poll, and clean up. Token prices are zero because billing
+# uses the provider's per-job quote as a fixed integer-microdollar charge.
+_VIDEO_MODELS: dict[str, Model] = {
+    "bytedance/seedance-2.0": Model(
+        id="bytedance/seedance-2.0",
+        name="ByteDance Seedance 2.0",
+        provider="venice",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "audio", "video"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "bytedance/seedance-2.0-fast": Model(
+        id="bytedance/seedance-2.0-fast",
+        name="ByteDance Seedance 2.0 Fast",
+        provider="venice",
+        context_length=10_000,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "audio", "video"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "lightricks/ltx-2.3": Model(
+        id="lightricks/ltx-2.3",
+        name="Lightricks LTX 2.3",
+        provider="venice",
+        context_length=2_500,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "lightricks/ltx-2.3-fast": Model(
+        id="lightricks/ltx-2.3-fast",
+        name="Lightricks LTX 2.3 Fast",
+        provider="venice",
+        context_length=2_500,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "google/gemini-omni-flash": Model(
+        id="google/gemini-omni-flash",
+        name="Google Gemini Omni Flash",
+        provider="venice",
+        context_length=1_048_576,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+    "minimax/hailuo-3": Model(
+        id="minimax/hailuo-3",
+        name="MiniMax Hailuo 3 (H3)",
+        provider="venice",
+        context_length=2_500,
+        supports_chat=False,
+        supports_video=True,
+        input_modalities=("text", "image", "audio"),
+        output_modalities=("video",),
+        prepaid_available=True,
+        byok_available=False,
+    ),
+}
+MODELS.update(_VIDEO_MODELS)
+
 MODEL_ENDPOINTS: dict[str, ModelEndpoint] = _build_endpoints(MODELS)
 MODEL_ENDPOINTS.update(_INGESTED_ENDPOINTS)
 MODEL_ENDPOINTS.update(_SUPPLEMENTAL_ENDPOINTS)
+
+_VIDEO_UPSTREAM_IDS = {
+    "bytedance/seedance-2.0": "seedance-2-0-text-to-video",
+    "bytedance/seedance-2.0-fast": "seedance-2-0-fast-text-to-video",
+    "lightricks/ltx-2.3": "ltx-2-v2-3-full-text-to-video",
+    "lightricks/ltx-2.3-fast": "ltx-2-v2-3-fast-text-to-video",
+    "google/gemini-omni-flash": "gemini-omni-flash-text-to-video",
+    "minimax/hailuo-3": "minimax-h3-text-to-video",
+}
+for _model_id, _upstream_id in _VIDEO_UPSTREAM_IDS.items():
+    _endpoint_id = f"{_model_id}@venice/prepaid"
+    MODEL_ENDPOINTS[_endpoint_id] = ModelEndpoint(
+        id=_endpoint_id,
+        model_id=_model_id,
+        provider="venice",
+        usage_type="Credits",
+        upstream_id=_upstream_id,
+    )
 
 # --- Provider served-model allowlist -------------------------------------
 # Our upstream accounts don't always match OpenRouter's provider→model map.

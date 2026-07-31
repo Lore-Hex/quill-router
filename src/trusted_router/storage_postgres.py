@@ -61,6 +61,7 @@ from trusted_router.storage_models import (
     SyntheticRollup,
     User,
     VerificationToken,
+    VideoJob,
     WalletChallenge,
     Workspace,
     _is_expired,
@@ -130,8 +131,7 @@ def _aws_dsql_connection_details(
         raise ValueError("AWS DSQL IAM auth requires a hostname in TR_POSTGRES_DSN")
     if params.get("password"):
         raise ValueError(
-            "TR_POSTGRES_DSN must not contain a password when "
-            "TR_POSTGRES_IAM_AUTH=aws-dsql"
+            "TR_POSTGRES_DSN must not contain a password when TR_POSTGRES_IAM_AUTH=aws-dsql"
         )
 
     region = region_override.strip()
@@ -179,9 +179,7 @@ def _split_sql_statements(schema: str) -> list[str]:
     bodies or string literals containing semicolons, and DSQL forbids the stored
     procedures that would introduce them.
     """
-    without_comments = "\n".join(
-        line.split("--", 1)[0] for line in schema.splitlines()
-    )
+    without_comments = "\n".join(line.split("--", 1)[0] for line in schema.splitlines())
     return [stmt.strip() for stmt in without_comments.split(";") if stmt.strip()]
 
 
@@ -295,9 +293,7 @@ class PostgresStore:
             head = statement.lstrip()[:12].upper()
             if not head.startswith("CREATE INDEX"):
                 raise
-        conn.execute(
-            statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False
-        )
+        conn.execute(statement.replace("CREATE INDEX", "CREATE INDEX ASYNC", 1), prepare=False)
 
     # Generic entity IO ------------------------------------------------------
 
@@ -354,9 +350,7 @@ class PostgresStore:
         return cls(**data)
 
     def _read_entity(self, kind: str, entity_id: str, cls: type[T]) -> T | None:
-        return self._run_transaction(
-            lambda conn: self._read_entity_tx(conn, kind, entity_id, cls)
-        )
+        return self._run_transaction(lambda conn: self._read_entity_tx(conn, kind, entity_id, cls))
 
     def _write_entity_tx(
         self,
@@ -480,9 +474,7 @@ class PostgresStore:
             role="owner",
         )
         credit = CreditAccount(workspace_id=workspace.id)
-        initial_total = 0 if trial_credit_microdollars is None else int(
-            trial_credit_microdollars
-        )
+        initial_total = 0 if trial_credit_microdollars is None else int(trial_credit_microdollars)
         self._write_entity_tx(conn, "workspace", workspace.id, workspace)
         self._write_entity_tx(
             conn,
@@ -555,14 +547,14 @@ class PostgresStore:
     @staticmethod
     def _expires_at(ttl_seconds: int) -> str:
         return (
-            utcnow() + dt.timedelta(seconds=max(ttl_seconds, 60))
-        ).isoformat().replace("+00:00", "Z")
+            (utcnow() + dt.timedelta(seconds=max(ttl_seconds, 60)))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
     @staticmethod
     def _not_implemented(method: str) -> Never:
-        raise NotImplementedError(
-            f"PostgresStore.{method} is not implemented in increment 1"
-        )
+        raise NotImplementedError(f"PostgresStore.{method} is not implemented in increment 1")
 
     # Lifecycle --------------------------------------------------------------
 
@@ -653,11 +645,7 @@ class PostgresStore:
             ).fetchall()
             return [
                 ProviderAccessGrant(
-                    **(
-                        json.loads(row[0])
-                        if isinstance(row[0], str)
-                        else dict(row[0])
-                    )
+                    **(json.loads(row[0]) if isinstance(row[0], str) else dict(row[0]))
                 )
                 for row in rows
             ]
@@ -685,14 +673,10 @@ class PostgresStore:
     ) -> SignupResult | None:
         self._not_implemented("signup")
 
-    def create_acquisition_attribution(
-        self, record: AcquisitionAttribution
-    ) -> bool:
+    def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
         self._not_implemented("create_acquisition_attribution")
 
-    def get_acquisition_attribution(
-        self, workspace_id: str
-    ) -> AcquisitionAttribution | None:
+    def get_acquisition_attribution(self, workspace_id: str) -> AcquisitionAttribution | None:
         self._not_implemented("get_acquisition_attribution")
 
     def claim_acquisition_milestones(
@@ -870,14 +854,10 @@ class PostgresStore:
         self._run_transaction(create)
         return raw, session
 
-    def upgrade_auth_session(
-        self, raw_token: str, *, state: str
-    ) -> AuthSession | None:
+    def upgrade_auth_session(self, raw_token: str, *, state: str) -> AuthSession | None:
         self._not_implemented("upgrade_auth_session")
 
-    def set_auth_session_workspace(
-        self, raw_token: str, workspace_id: str
-    ) -> AuthSession | None:
+    def set_auth_session_workspace(self, raw_token: str, workspace_id: str) -> AuthSession | None:
         self._not_implemented("set_auth_session_workspace")
 
     def get_auth_session_by_raw(self, raw_token: str) -> AuthSession | None:
@@ -928,11 +908,14 @@ class PostgresStore:
                 "auth_session",
                 str(lookup["session_id"]),
             )
-            return self._delete_entity_tx(
-                conn,
-                "auth_session_lookup",
-                lookup_hash,
-            ) == 1
+            return (
+                self._delete_entity_tx(
+                    conn,
+                    "auth_session_lookup",
+                    lookup_hash,
+                )
+                == 1
+            )
 
         return self._run_transaction(delete)
 
@@ -975,9 +958,7 @@ class PostgresStore:
         self._run_transaction(create)
         return raw, challenge
 
-    def consume_wallet_challenge(
-        self, raw_nonce: str
-    ) -> WalletChallenge | None:
+    def consume_wallet_challenge(self, raw_nonce: str) -> WalletChallenge | None:
         return self._consume_secret(
             raw_secret=raw_nonce,
             lookup_kind="wallet_challenge_lookup",
@@ -1090,9 +1071,7 @@ class PostgresStore:
         self._run_transaction(create)
         return raw, code
 
-    def consume_oauth_authorization_code(
-        self, raw_code: str
-    ) -> OAuthAuthorizationCode | None:
+    def consume_oauth_authorization_code(self, raw_code: str) -> OAuthAuthorizationCode | None:
         return self._consume_secret(
             raw_secret=raw_code,
             lookup_kind="oauth_code_lookup",
@@ -1256,8 +1235,7 @@ class PostgresStore:
                 workspace_key_id(key.workspace_id, key.hash),
             )
             conn.execute(
-                "DELETE FROM tr_key_limit "
-                "WHERE workspace_id = %s AND key_hash = %s",
+                "DELETE FROM tr_key_limit WHERE workspace_id = %s AND key_hash = %s",
                 (key.workspace_id, key.hash),
             )
             return True
@@ -1312,9 +1290,7 @@ class PostgresStore:
     ) -> ByokProviderConfig:
         self._not_implemented("upsert_byok_provider")
 
-    def list_byok_providers(
-        self, workspace_id: str
-    ) -> list[ByokProviderConfig]:
+    def list_byok_providers(self, workspace_id: str) -> list[ByokProviderConfig]:
         self._not_implemented("list_byok_providers")
 
     def get_byok_provider(
@@ -1346,9 +1322,7 @@ class PostgresStore:
     ) -> CustomModel:
         self._not_implemented("create_custom_model")
 
-    def list_custom_models_for_user(
-        self, owner_user_id: str
-    ) -> list[CustomModel]:
+    def list_custom_models_for_user(self, owner_user_id: str) -> list[CustomModel]:
         self._not_implemented("list_custom_models_for_user")
 
     def get_custom_model(self, model_id: str) -> CustomModel | None:
@@ -1389,9 +1363,7 @@ class PostgresStore:
     ) -> BroadcastDestination:
         self._not_implemented("create_broadcast_destination")
 
-    def list_broadcast_destinations(
-        self, workspace_id: str
-    ) -> list[BroadcastDestination]:
+    def list_broadcast_destinations(self, workspace_id: str) -> list[BroadcastDestination]:
         self._not_implemented("list_broadcast_destinations")
 
     def get_broadcast_destination(
@@ -1426,9 +1398,7 @@ class PostgresStore:
     ) -> BroadcastDeliveryJob:
         self._not_implemented("enqueue_broadcast_delivery")
 
-    def due_broadcast_deliveries(
-        self, *, limit: int = 100
-    ) -> list[BroadcastDeliveryJob]:
+    def due_broadcast_deliveries(self, *, limit: int = 100) -> list[BroadcastDeliveryJob]:
         self._not_implemented("due_broadcast_deliveries")
 
     def claim_broadcast_deliveries(
@@ -1449,11 +1419,55 @@ class PostgresStore:
     ) -> BroadcastDeliveryJob | None:
         self._not_implemented("mark_broadcast_delivery")
 
+    # Asynchronous video jobs -----------------------------------------------
+
+    def prepare_video_job(self, job: VideoJob) -> tuple[VideoJob, bool]:
+        self._not_implemented("prepare_video_job")
+
+    def get_video_job(self, job_id: str) -> VideoJob | None:
+        self._not_implemented("get_video_job")
+
+    def get_video_job_for_key(self, job_id: str, key_hash: str) -> VideoJob | None:
+        self._not_implemented("get_video_job_for_key")
+
+    def mark_video_job_queued(
+        self,
+        job_id: str,
+        *,
+        provider_job_id: str,
+        provider_model: str,
+        poll_after_seconds: int,
+    ) -> VideoJob | None:
+        self._not_implemented("mark_video_job_queued")
+
+    def claim_video_jobs(
+        self,
+        *,
+        lease_owner: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[VideoJob]:
+        self._not_implemented("claim_video_jobs")
+
+    def update_video_job(
+        self,
+        job_id: str,
+        *,
+        status: str,
+        lease_owner: str | None = None,
+        provider_status: str | None = None,
+        generation_id: str | None = None,
+        error: str | None = None,
+        poll_after_seconds: int = 5,
+    ) -> VideoJob | None:
+        self._not_implemented("update_video_job")
+
+    def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
+        self._not_implemented("mark_video_job_cleaned")
+
     # Credit ledger ----------------------------------------------------------
 
-    def get_credit_account(
-        self, workspace_id: str
-    ) -> CreditAccount | None:
+    def get_credit_account(self, workspace_id: str) -> CreditAccount | None:
         self._not_implemented("get_credit_account")
 
     def credit_workspace_typed_direct(
@@ -1541,9 +1555,7 @@ class PostgresStore:
     ) -> CreditAccount | None:
         self._not_implemented("set_stripe_customer")
 
-    def clear_stripe_payment_method(
-        self, workspace_id: str
-    ) -> CreditAccount | None:
+    def clear_stripe_payment_method(self, workspace_id: str) -> CreditAccount | None:
         self._not_implemented("clear_stripe_payment_method")
 
     def record_auto_refill_outcome(
@@ -1580,9 +1592,7 @@ class PostgresStore:
     ) -> GatewayAuthorization:
         self._not_implemented("create_gateway_authorization")
 
-    def get_gateway_authorization(
-        self, authorization_id: str
-    ) -> GatewayAuthorization | None:
+    def get_gateway_authorization(self, authorization_id: str) -> GatewayAuthorization | None:
         self._not_implemented("get_gateway_authorization")
 
     def get_gateway_authorization_by_idempotency_key(
@@ -1591,13 +1601,9 @@ class PostgresStore:
         key_hash: str,
         idempotency_key: str,
     ) -> GatewayAuthorization | None:
-        self._not_implemented(
-            "get_gateway_authorization_by_idempotency_key"
-        )
+        self._not_implemented("get_gateway_authorization_by_idempotency_key")
 
-    def mark_gateway_authorization_settled(
-        self, authorization_id: str
-    ) -> None:
+    def mark_gateway_authorization_settled(self, authorization_id: str) -> None:
         self._not_implemented("mark_gateway_authorization_settled")
 
     def finalize_gateway_authorization(
@@ -1616,9 +1622,7 @@ class PostgresStore:
     def add_generation(self, generation: Generation) -> None:
         self._not_implemented("add_generation")
 
-    def record_provider_benchmark(
-        self, sample: ProviderBenchmarkSample
-    ) -> None:
+    def record_provider_benchmark(self, sample: ProviderBenchmarkSample) -> None:
         self._run_transaction(
             lambda conn: self._write_entity_tx(
                 conn,
@@ -1661,26 +1665,17 @@ class PostgresStore:
             for row in rows:
                 raw = row[0]
                 data = json.loads(raw) if isinstance(raw, str) else dict(raw)
-                known = {
-                    field.name
-                    for field in dataclasses.fields(ProviderBenchmarkSample)
-                }
+                known = {field.name for field in dataclasses.fields(ProviderBenchmarkSample)}
                 samples.append(
                     ProviderBenchmarkSample(
-                        **{
-                            key: value
-                            for key, value in data.items()
-                            if key in known
-                        }
+                        **{key: value for key, value in data.items() if key in known}
                     )
                 )
             return samples
 
         return self._run_transaction(list_samples)
 
-    def record_synthetic_probe_sample(
-        self, sample: SyntheticProbeSample
-    ) -> None:
+    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         def record(conn: Any) -> None:
             self._write_indexed_entity_tx(
                 conn,
@@ -1724,9 +1719,7 @@ class PostgresStore:
                     for_update=True,
                 )
                 if existing is None:
-                    raise StoreConflict(
-                        "Synthetic rollup disappeared during update"
-                    )
+                    raise StoreConflict("Synthetic rollup disappeared during update")
                 apply_sample_to_rollup(existing, sample)
                 self._write_indexed_entity_tx(
                     conn,
@@ -1776,10 +1769,7 @@ class PostgresStore:
                 + " ORDER BY indexed_at DESC, id DESC LIMIT %s"
             )
             rows = conn.execute(query, params).fetchall()
-            return [
-                _dataclass_from_json(row[0], SyntheticProbeSample)
-                for row in rows
-            ]
+            return [_dataclass_from_json(row[0], SyntheticProbeSample) for row in rows]
 
         return self._run_transaction(list_samples)
 
@@ -1817,10 +1807,7 @@ class PostgresStore:
                 + " ORDER BY indexed_at DESC, id DESC LIMIT %s"
             )
             rows = conn.execute(query, params).fetchall()
-            rollups = [
-                _dataclass_from_json(row[0], SyntheticRollup)
-                for row in rows
-            ]
+            rollups = [_dataclass_from_json(row[0], SyntheticRollup) for row in rows]
             if not include_histograms:
                 return [
                     dataclasses.replace(
@@ -1921,17 +1908,8 @@ class PostgresStore:
 
 def _dataclass_from_json(raw: Any, cls: type[T]) -> T:
     data = json.loads(raw) if isinstance(raw, str) else dict(raw)
-    known = {
-        field.name
-        for field in dataclasses.fields(cast(Any, cls))
-    }
-    return cls(
-        **{
-            key: value
-            for key, value in data.items()
-            if key in known
-        }
-    )
+    known = {field.name for field in dataclasses.fields(cast(Any, cls))}
+    return cls(**{key: value for key, value in data.items() if key in known})
 
 
 def _parse_timestamp(value: str) -> dt.datetime:
@@ -1943,12 +1921,6 @@ def _parse_timestamp(value: str) -> dt.datetime:
 
 def _rollup_retention_cutoff(now: dt.datetime) -> dt.datetime:
     current = now.astimezone(dt.UTC)
-    cutoff_month = (
-        current.year * 12
-        + current.month
-        - 1
-        - ROLLUP_RETENTION_MONTHS
-        + 1
-    )
+    cutoff_month = current.year * 12 + current.month - 1 - ROLLUP_RETENTION_MONTHS + 1
     year, zero_based_month = divmod(cutoff_month, 12)
     return dt.datetime(year, zero_based_month + 1, 1, tzinfo=dt.UTC)

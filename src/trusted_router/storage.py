@@ -41,6 +41,7 @@ from trusted_router.storage_models import (
     SyntheticRollup,
     User,
     VerificationToken,
+    VideoJob,
     WalletChallenge,
     Workspace,
     iso_now,
@@ -51,6 +52,7 @@ from trusted_router.storage_oauth_codes import InMemoryOAuthCodes
 from trusted_router.storage_rate_limits import InMemoryRateLimits
 from trusted_router.storage_synthetic import InMemorySyntheticChecks
 from trusted_router.storage_verification_tokens import InMemoryVerificationTokens
+from trusted_router.storage_video_jobs import InMemoryVideoJobs
 from trusted_router.storage_wallet_challenges import InMemoryWalletChallenges
 from trusted_router.types import UsageType
 
@@ -92,6 +94,7 @@ class InMemoryStore:
         self.byok_store = InMemoryByok(lock=self._lock)
         self.custom_model_store = InMemoryCustomModels(lock=self._lock)
         self.broadcast_store = InMemoryBroadcastDestinations(lock=self._lock)
+        self.video_job_store = InMemoryVideoJobs(lock=self._lock)
         self.auth_session_store = InMemoryAuthSessions(lock=self._lock)
         self.oauth_code_store = InMemoryOAuthCodes(lock=self._lock)
         self.rate_limit_store = InMemoryRateLimits(lock=self._lock)
@@ -117,6 +120,7 @@ class InMemoryStore:
             self.byok_store.reset()
             self.custom_model_store.reset()
             self.broadcast_store.reset()
+            self.video_job_store.reset()
             self.auth_session_store.reset()
             self.oauth_code_store.reset()
             self.rate_limit_store.reset()
@@ -184,10 +188,7 @@ class InMemoryStore:
     def revoke_provider_access(self, user_id: str, provider: str) -> bool:
         normalized_provider = normalize_provider_access_slug(provider)
         with self._lock:
-            return (
-                self.provider_access_grants.pop((user_id, normalized_provider), None)
-                is not None
-            )
+            return self.provider_access_grants.pop((user_id, normalized_provider), None) is not None
 
     def signup(
         self,
@@ -227,9 +228,7 @@ class InMemoryStore:
     def create_acquisition_attribution(self, record: AcquisitionAttribution) -> bool:
         return self.acquisition_store.create(record)
 
-    def get_acquisition_attribution(
-        self, workspace_id: str
-    ) -> AcquisitionAttribution | None:
+    def get_acquisition_attribution(self, workspace_id: str) -> AcquisitionAttribution | None:
         return self.acquisition_store.get(workspace_id)
 
     def claim_acquisition_milestones(
@@ -372,14 +371,14 @@ class InMemoryStore:
             # Secondary workspaces omit it and therefore start at zero.
             initial_total = 0 if trial_credit_microdollars is None else trial_credit_microdollars
             self.credits[workspace.id] = CreditAccount(workspace_id=workspace.id)
-            self.credit_money[workspace.id] = CreditMoney(
-                total_credits_microdollars=initial_total
-            )
+            self.credit_money[workspace.id] = CreditMoney(total_credits_microdollars=initial_total)
             return workspace
 
     def list_workspaces_for_user(self, user_id: str) -> list[Workspace]:
         with self._lock:
-            ids = [wid for (wid, uid), member in self.members.items() if uid == user_id and member.role]
+            ids = [
+                wid for (wid, uid), member in self.members.items() if uid == user_id and member.role
+            ]
             return [self.workspaces[wid] for wid in ids if not self.workspaces[wid].deleted]
 
     def get_workspace(self, workspace_id: str) -> Workspace | None:
@@ -426,7 +425,9 @@ class InMemoryStore:
             money.reserved_microdollars,
         )
 
-    def add_members(self, workspace_id: str, emails: list[str], role: str = "member") -> list[Member]:
+    def add_members(
+        self, workspace_id: str, emails: list[str], role: str = "member"
+    ) -> list[Member]:
         with self._lock:
             members: list[Member] = []
             for email in emails:
@@ -445,11 +446,7 @@ class InMemoryStore:
 
     def list_members(self, workspace_id: str) -> list[Member]:
         with self._lock:
-            return [
-                member
-                for (wid, _), member in self.members.items()
-                if wid == workspace_id
-            ]
+            return [member for (wid, _), member in self.members.items() if wid == workspace_id]
 
     def user_can_manage(self, user_id: str, workspace_id: str) -> bool:
         with self._lock:
@@ -785,7 +782,70 @@ class InMemoryStore:
             lease_owner=lease_owner,
         )
 
-    def credit_workspace_once(self, workspace_id: str, amount_microdollars: int, event_id: str) -> bool:
+    def prepare_video_job(self, job: VideoJob) -> tuple[VideoJob, bool]:
+        return self.video_job_store.prepare(job)
+
+    def get_video_job(self, job_id: str) -> VideoJob | None:
+        return self.video_job_store.get(job_id)
+
+    def get_video_job_for_key(self, job_id: str, key_hash: str) -> VideoJob | None:
+        return self.video_job_store.get_for_key(job_id, key_hash)
+
+    def mark_video_job_queued(
+        self,
+        job_id: str,
+        *,
+        provider_job_id: str,
+        provider_model: str,
+        poll_after_seconds: int,
+    ) -> VideoJob | None:
+        return self.video_job_store.mark_queued(
+            job_id,
+            provider_job_id=provider_job_id,
+            provider_model=provider_model,
+            poll_after_seconds=poll_after_seconds,
+        )
+
+    def claim_video_jobs(
+        self,
+        *,
+        lease_owner: str,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[VideoJob]:
+        return self.video_job_store.claim_due(
+            lease_owner=lease_owner,
+            limit=limit,
+            lease_seconds=lease_seconds,
+        )
+
+    def update_video_job(
+        self,
+        job_id: str,
+        *,
+        status: str,
+        lease_owner: str | None = None,
+        provider_status: str | None = None,
+        generation_id: str | None = None,
+        error: str | None = None,
+        poll_after_seconds: int = 5,
+    ) -> VideoJob | None:
+        return self.video_job_store.update(
+            job_id,
+            status=status,
+            lease_owner=lease_owner,
+            provider_status=provider_status,
+            generation_id=generation_id,
+            error=error,
+            poll_after_seconds=poll_after_seconds,
+        )
+
+    def mark_video_job_cleaned(self, job_id: str) -> VideoJob | None:
+        return self.video_job_store.mark_cleaned(job_id)
+
+    def credit_workspace_once(
+        self, workspace_id: str, amount_microdollars: int, event_id: str
+    ) -> bool:
         with self._lock:
             if event_id in self.stripe_events:
                 return False
@@ -962,9 +1022,7 @@ class InMemoryStore:
 
             if authorization.credit_reservation_id is not None:
                 if success and actual_usage_type == UsageType.CREDITS:
-                    self.api_keys.settle(
-                        authorization.credit_reservation_id, actual_microdollars
-                    )
+                    self.api_keys.settle(authorization.credit_reservation_id, actual_microdollars)
                 else:
                     self.api_keys.refund(authorization.credit_reservation_id)
 
@@ -1390,12 +1448,8 @@ def create_store(settings: Any) -> Store:
             )
         store = PostgresStore(
             dsn,
-            postgres_iam_auth=str(
-                getattr(settings, "postgres_iam_auth", "") or ""
-            ),
-            postgres_iam_region=str(
-                getattr(settings, "postgres_iam_region", "") or ""
-            ),
+            postgres_iam_auth=str(getattr(settings, "postgres_iam_auth", "") or ""),
+            postgres_iam_region=str(getattr(settings, "postgres_iam_region", "") or ""),
         )
         store.apply_schema()
         return store
@@ -1408,15 +1462,9 @@ def create_store(settings: Any) -> Store:
             spanner_database_id=settings.spanner_database_id,
             bigtable_instance_id=settings.bigtable_instance_id,
             generation_table=settings.bigtable_generation_table,
-            bigtable_app_profile_id=getattr(
-                settings, "bigtable_app_profile_id", ""
-            ),
-            request_record_write_mode=getattr(
-                settings, "request_record_write_mode", "legacy"
-            ),
-            analytics_outbox_enabled=getattr(
-                settings, "analytics_outbox_enabled", False
-            ),
+            bigtable_app_profile_id=getattr(settings, "bigtable_app_profile_id", ""),
+            request_record_write_mode=getattr(settings, "request_record_write_mode", "legacy"),
+            analytics_outbox_enabled=getattr(settings, "analytics_outbox_enabled", False),
         )
     raise ValueError(f"unsupported storage backend: {backend}")
 

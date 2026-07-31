@@ -16,6 +16,7 @@ from . import paypal as paypal
 from . import reconcile as reconcile
 from . import sentry as sentry
 from . import synthetic as synthetic
+from . import video_jobs as video_jobs
 from . import webhook as webhook
 
 
@@ -24,6 +25,7 @@ def register_internal_routes(router: APIRouter) -> None:
     paypal.register(router)
     broadcast_queue.register(router)
     gateway.register(router)
+    video_jobs.register(router)
     google_ads.register(router)
     fetch_image.register(router)
     reconcile.register(router)

@@ -163,6 +163,7 @@ SEO_CORE_PATHS: tuple[str, ...] = (
     "/docs/migrate-from-openrouter",
     "/docs/tagging",
     "/docs/web-search",
+    "/docs/video",
     "/for-developers",
     "/llms.txt",
     "/docs/llms.txt",
@@ -890,6 +891,14 @@ PUBLIC_PAGES: dict[str, PublicPage] = {
         description=(
             "Use OpenAI-compatible web_search tools inside the attested TrustedRouter "
             "gateway with citations, source controls, streaming events, and explicit privacy limits."
+        ),
+    ),
+    "docs/video": PublicPage(
+        template="public/video.html",
+        title="Video Generation API",
+        description=(
+            "Generate Seedance, LTX, Gemini Omni, and MiniMax Hailuo 3 video "
+            "through the attested TrustedRouter API with exact quoted billing."
         ),
     ),
     "docs/agent-setup": PublicPage(
@@ -2566,6 +2575,7 @@ def llms_txt(settings: Settings) -> str:
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
+        f"- Video generation: https://{domain}/docs/video",
         f"- Request tagging and cost allocation: https://{domain}/docs/tagging",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
@@ -2582,6 +2592,7 @@ def llms_txt(settings: Settings) -> str:
         ),
         "- Chat completions: POST /v1/chat/completions",
         "- Responses: POST /v1/responses",
+        "- Video generation: POST /v1/videos, GET /v1/videos/{job_id}, GET /v1/videos/{job_id}/content",
         "- Models: GET /v1/models",
         "- Providers: GET /v1/providers",
         "- Advisor primitive: use model trustedrouter/advisor only with explicit worker_models and advisor_models.",
@@ -2651,6 +2662,7 @@ def docs_llms_txt(settings: Settings) -> str:
             f"- Evals guide: https://{domain}/docs/evals",
             f"- Synth guide: https://{domain}/docs/synth",
             f"- Responses web search: https://{domain}/docs/web-search",
+            f"- Video generation: https://{domain}/docs/video",
             f"- OpenRouter alternative: https://{domain}/openrouter-alternative",
             f"- Private LLM API: https://{domain}/private-llm-api",
             f"- Zero data retention LLM API: https://{domain}/llm-zero-data-retention",
@@ -2759,6 +2771,7 @@ def docs_llms_full_txt(settings: Settings) -> str:
         f"- Evals guide: https://{domain}/docs/evals",
         f"- Synth guide: https://{domain}/docs/synth",
         f"- Responses web search: https://{domain}/docs/web-search",
+        f"- Video generation: https://{domain}/docs/video",
         f"- Blog: https://{domain}/blog",
         f"- Migration guide: https://{domain}/docs/migrate-from-openrouter",
         f"- EU routing: https://{domain}/eu",

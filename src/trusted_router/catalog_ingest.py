@@ -93,7 +93,11 @@ def _endpoint(
 def _build_endpoints(models: dict[str, Model]) -> dict[str, ModelEndpoint]:
     endpoints: dict[str, ModelEndpoint] = {}
     for model in models.values():
-        if model.id in META_MODEL_IDS:
+        # Async media has provider-specific request shapes and fixed per-job
+        # quotes. Its endpoints are registered explicitly by the media catalog;
+        # synthesizing a token-priced chat endpoint here creates a duplicate
+        # route with the wrong upstream model id.
+        if model.id in META_MODEL_IDS or model.supports_video:
             continue
         provider = PROVIDERS[model.provider]
         if model.prepaid_available and provider.slug in GATEWAY_PREPAID_PROVIDER_SLUGS:
@@ -141,9 +145,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
     routes without accidentally disabling a separately verified embedding.
     """
     allowed = {
-        str(spec["id"])
-        for spec in _EMBEDDING_SPECS
-        if spec.get("provider") == provider_slug
+        str(spec["id"]) for spec in _EMBEDDING_SPECS if spec.get("provider") == provider_slug
     }
     path = _PROVIDER_MODELS_DIR / f"{provider_slug}.json"
     try:
@@ -158,9 +160,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
             continue
         if row.get("model_type") not in (None, "chat"):
             continue
-        if "chat/completions" not in {
-            str(item) for item in (row.get("endpoints") or [])
-        }:
+        if "chat/completions" not in {str(item) for item in (row.get("endpoints") or [])}:
             continue
         model_id = row.get("id")
         if not isinstance(model_id, str) or not model_id:
@@ -170,6 +170,7 @@ def _authoritative_provider_model_ids(provider_slug: str) -> frozenset[str]:
             continue
         allowed.add(model_id)
     return frozenset(allowed)
+
 
 _AUTHOR_TO_PROVIDER_SLUG: dict[str, str] = {
     "anthropic": "anthropic",
@@ -641,8 +642,7 @@ def _ingested_models_and_endpoints() -> tuple[dict[str, Model], dict[str, ModelE
             ),
             prepaid_available=prepaid_available,
             byok_available=any(
-                PROVIDERS[slug].supports_byok
-                for _p, _c, _t, slug, _ep in per_endpoint_prices
+                PROVIDERS[slug].supports_byok for _p, _c, _t, slug, _ep in per_endpoint_prices
             ),
             prompt_price_microdollars_per_million_tokens=cheapest_prompt,
             completion_price_microdollars_per_million_tokens=cheapest_completion,
@@ -914,9 +914,7 @@ def _embedding_models() -> dict[str, Model]:
             continue
         manifest_cost = _embedding_manifest_cost(spec)
         if manifest_cost is None:
-            prompt_price, published_price, _cost = _priced(
-                spec["cost_dollars_per_million"]
-            )
+            prompt_price, published_price, _cost = _priced(spec["cost_dollars_per_million"])
         else:
             prompt_price = _customer_price(manifest_cost)
             published_price = prompt_price

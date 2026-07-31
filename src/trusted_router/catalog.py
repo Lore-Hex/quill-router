@@ -612,6 +612,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
         # parsing `architecture.modality`.
         "supports_chat": model.supports_chat,
         "supports_embeddings": model.supports_embeddings,
+        "supports_video": model.supports_video,
         "endpoints": [
             {
                 "id": endpoint.id,
@@ -659,10 +660,7 @@ def model_to_openrouter_shape(model: Model) -> dict[str, object]:
             "modality": (
                 "text->embedding"
                 if model.supports_embeddings and not model.supports_chat
-                else (
-                    f"{'+'.join(model.input_modalities)}"
-                    f"->{'+'.join(model.output_modalities)}"
-                )
+                else (f"{'+'.join(model.input_modalities)}->{'+'.join(model.output_modalities)}")
             ),
             "input_modalities": list(model.input_modalities),
             "output_modalities": list(model.output_modalities),
