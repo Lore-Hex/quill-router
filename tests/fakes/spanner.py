@@ -274,6 +274,18 @@ class _FakeTransaction:
         self.db = db
         self.read_versions: dict[tuple[str, str], int] = {}
         self.read_snapshots: dict[tuple[str, str], str | None] = {}
+        # Row values pinned at FIRST read, keyed like read_versions. Real
+        # Spanner read-write transactions are serializable: every statement in
+        # one transaction sees ONE consistent view, and an external commit that
+        # invalidates it surfaces as Aborted at commit time — never as a row
+        # changing between two statements. Serving repeat reads from the pinned
+        # snapshot (with _try_commit's version validation unchanged) reproduces
+        # exactly that: the txn body stays self-consistent, and the conflict
+        # becomes an abort-and-retry. Without this, a concurrent commit landing
+        # between a plan read and its guarded DML made the guard fail MID-txn —
+        # a phantom _RebalanceInvariantError real Spanner cannot produce
+        # (surfaced as a rare credit-shard stress flake).
+        self.row_snapshots: dict[tuple, dict | None] = {}
         self.pending_writes: list[tuple] = []
         # DML+mutation mixing is forbidden in one transaction (real Spanner
         # buffers mutations after DML and DML can't see them); fail fast if both.
@@ -289,6 +301,25 @@ class _FakeTransaction:
     ) -> list[list[str]]:
         return _execute_sql(self.db, self, sql, params or {})
 
+    def _pinned_read(
+        self,
+        version_key: tuple,
+        current_version: int,
+        rec: dict | None,
+    ) -> dict | None:
+        """First read pins version + value; repeat reads return the pin.
+
+        Pin independently of read_versions: some INSERT handlers record an
+        absence version directly without a value snapshot, and a later read
+        through here must not KeyError (nor observe fresher state) for that key.
+        """
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = current_version
+        if version_key not in self.row_snapshots:
+            self.row_snapshots[version_key] = dict(rec) if rec is not None else None
+        snap = self.row_snapshots[version_key]
+        return dict(snap) if snap is not None else None
+
     def _reservation_current(self, rid: str) -> dict | None:
         """In-txn view of a reservation (read-your-writes) + record read version."""
         for op in reversed(self.pending_writes):
@@ -296,11 +327,11 @@ class _FakeTransaction:
                 return dict(op[2])
             if op[0] == "insert_reservation" and op[1]["reservation_id"] == rid:
                 return dict(op[1])
-        version_key = ("res", rid)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.reservation_versions.get(rid, 0)
-        rec = self.db.reservations.get(rid)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("res", rid),
+            self.db.reservation_versions.get(rid, 0),
+            self.db.reservations.get(rid),
+        )
 
     def _settle_outbox_current(self, pk: tuple) -> dict | None:
         """In-txn view of a settle-outbox row (read-your-writes) + read version."""
@@ -309,11 +340,11 @@ class _FakeTransaction:
                 return None
             if op[0] in ("insert_settle_outbox", "update_settle_outbox") and op[1] == pk:
                 return dict(op[2])
-        version_key = ("outbox", pk)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.settle_outbox_versions.get(pk, 0)
-        rec = self.db.settle_outbox.get(pk)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("outbox", pk),
+            self.db.settle_outbox_versions.get(pk, 0),
+            self.db.settle_outbox.get(pk),
+        )
 
     def _has_guarded_outbox_intent(self, authorization_id: str) -> bool:
         """Evaluate the correlated pending/dead EXISTS against the in-txn view."""
@@ -345,13 +376,11 @@ class _FakeTransaction:
                 "update_gateway_authorization",
             ) and op[1] == authorization_id:
                 return dict(op[2])
-        version_key = ("gateway_auth", authorization_id)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = (
-                self.db.gateway_authorization_versions.get(authorization_id, 0)
-            )
-        rec = self.db.gateway_authorizations.get(authorization_id)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("gateway_auth", authorization_id),
+            self.db.gateway_authorization_versions.get(authorization_id, 0),
+            self.db.gateway_authorizations.get(authorization_id),
+        )
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
         """In-txn view of a typed row for DML: sees prior DML writes
@@ -361,11 +390,11 @@ class _FakeTransaction:
         for op in reversed(self.pending_writes):
             if op[0] == "update_typed" and op[1] == table and op[2] == pk:
                 return dict(op[3])
-        version_key = ("typed", table, pk)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.typed_versions.get((table, pk), 0)
-        rec = self.db.typed.get(table, {}).get(pk)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("typed", table, pk),
+            self.db.typed_versions.get((table, pk), 0),
+            self.db.typed.get(table, {}).get(pk),
+        )
 
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
