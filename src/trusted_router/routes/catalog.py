@@ -24,6 +24,10 @@ from trusted_router.catalog import (
     providers_for_display,
 )
 from trusted_router.money import microdollars_per_million_tokens_to_token_decimal
+from trusted_router.openai_service_tiers import (
+    OPENAI_SERVICE_TIERS,
+    openai_priority_pricing,
+)
 from trusted_router.regions import choose_region, region_payload
 from trusted_router.routing import catalog_endpoint_candidates, provider_route_preferences
 
@@ -56,6 +60,30 @@ def _provider_query_body(request: Request) -> dict[str, Any]:
 
 def _truthy_query(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _endpoint_supported_parameters(provider: str) -> list[str]:
+    parameters = [
+        "messages",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "stream",
+    ]
+    if provider == "openai":
+        parameters.append("service_tier")
+    return parameters
+
+
+def _openai_service_tier_metadata(
+    provider: str, model_id: str
+) -> dict[str, Any]:
+    if provider != "openai":
+        return {}
+    metadata: dict[str, Any] = {"service_tiers": list(OPENAI_SERVICE_TIERS)}
+    if pricing := openai_priority_pricing(model_id):
+        metadata["priority_pricing"] = pricing.public_payload()
+    return metadata
 
 
 def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bool:
@@ -165,13 +193,9 @@ def register_catalog_routes(router: APIRouter) -> None:
                     "completion_price_microdollars_per_million_tokens": (
                         endpoint.completion_price_microdollars_per_million_tokens
                     ),
-                    "supported_parameters": [
-                        "messages",
-                        "temperature",
-                        "top_p",
-                        "max_tokens",
-                        "stream",
-                    ],
+                    "supported_parameters": _endpoint_supported_parameters(
+                        endpoint.provider
+                    ),
                     "trustedrouter": {
                         "attested_gateway": PROVIDERS[endpoint.provider].attested_gateway,
                         "stores_content": endpoint_stores_content(endpoint),
@@ -200,6 +224,10 @@ def register_catalog_routes(router: APIRouter) -> None:
                         "usage_type": endpoint.usage_type,
                         "prepaid_available": endpoint.usage_type == "Credits",
                         "byok_available": endpoint.usage_type == "BYOK",
+                        **_openai_service_tier_metadata(
+                            endpoint.provider,
+                            endpoint.model_id,
+                        ),
                     },
                 }
                 for _model, endpoint in catalog_endpoint_candidates(model, prefs)

@@ -26,11 +26,13 @@ from scripts.pricing.base import ProviderPricingResult, fetch_provider
 SLUG = "openai"
 URL = "https://developers.openai.com/api/docs/pricing"
 
-# Models we expect to see on the page. Strict floor — parser must
-# extract these or validation triggers self-heal. Today the page
-# headlines GPT-5.5 / 5.4 family; if OpenAI replaces those with a
-# 5.6 family this list needs updating.
+# Models we expect to see on the page. This strict floor makes the hourly
+# refresh self-heal or fail closed if a current flagship disappears from the
+# parser output instead of silently retaining stale prices.
 EXPECTED_MODELS = [
+    "openai/gpt-5.6-sol",
+    "openai/gpt-5.6-terra",
+    "openai/gpt-5.6-luna",
     "openai/gpt-5.5",
     "openai/gpt-5.4",
     "openai/gpt-5.4-mini",
