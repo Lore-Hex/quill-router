@@ -299,3 +299,15 @@ def test_catalog_advertises_openai_priority_pricing() -> None:
         "completion_microdollars_per_million_tokens": 63_000_000,
         "max_prompt_tokens": 272_000,
     }
+
+
+def test_catalog_does_not_advertise_unpriced_priority_tiers() -> None:
+    client, _key = _client_and_key()
+    response = client.get("/v1/models/openai/gpt-4o-mini/endpoints")
+    assert response.status_code == 200
+    openai_endpoint = next(
+        item for item in response.json()["data"] if item["provider"] == "openai"
+    )
+
+    assert openai_endpoint["trustedrouter"]["service_tiers"] == ["default"]
+    assert "priority_pricing" not in openai_endpoint["trustedrouter"]

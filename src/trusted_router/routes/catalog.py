@@ -80,10 +80,12 @@ def _openai_service_tier_metadata(
 ) -> dict[str, Any]:
     if provider != "openai":
         return {}
-    metadata: dict[str, Any] = {"service_tiers": list(OPENAI_SERVICE_TIERS)}
     if pricing := openai_priority_pricing(model_id):
-        metadata["priority_pricing"] = pricing.public_payload()
-    return metadata
+        return {
+            "service_tiers": list(OPENAI_SERVICE_TIERS),
+            "priority_pricing": pricing.public_payload(),
+        }
+    return {"service_tiers": ["default"]}
 
 
 def _public_model_matches_filters(shape: dict[str, Any], request: Request) -> bool:
