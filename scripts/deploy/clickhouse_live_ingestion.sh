@@ -61,17 +61,37 @@ ssh_node --command="sudo sh -c '
     /etc/systemd/system/tr-clickhouse-reconcile.service
   install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-reconcile.timer \
     /etc/systemd/system/tr-clickhouse-reconcile.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.service \
+    /etc/systemd/system/tr-clickhouse-archive.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-archive.timer \
+    /etc/systemd/system/tr-clickhouse-archive.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-hourly.service \
+    /etc/systemd/system/tr-clickhouse-rollup-hourly.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-hourly.timer \
+    /etc/systemd/system/tr-clickhouse-rollup-hourly.timer
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-daily.service \
+    /etc/systemd/system/tr-clickhouse-rollup-daily.service
+  install -m 0644 /opt/tr-clickhouse/clickhouse/tr-clickhouse-rollup-daily.timer \
+    /etc/systemd/system/tr-clickhouse-rollup-daily.timer
   set -a
   . /etc/tr-clickhouse-ingest.env
   set +a
   clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
     --multiquery < /opt/tr-clickhouse/clickhouse/001_provider_benchmark_samples.sql
+  clickhouse-client --user tr --password \"\$CH_PASSWORD\" --database tr \
+    --multiquery < /opt/tr-clickhouse/clickhouse/002_provider_analytics_rollups.sql
   systemctl daemon-reload
   systemctl enable tr-clickhouse-ingest.service
   systemctl restart tr-clickhouse-ingest.service
   systemctl enable --now tr-clickhouse-reconcile.timer
+  systemctl enable --now tr-clickhouse-archive.timer
+  systemctl enable --now tr-clickhouse-rollup-hourly.timer
+  systemctl enable --now tr-clickhouse-rollup-daily.timer
   systemctl is-active tr-clickhouse-ingest.service
   systemctl is-active tr-clickhouse-reconcile.timer
+  systemctl is-active tr-clickhouse-archive.timer
+  systemctl is-active tr-clickhouse-rollup-hourly.timer
+  systemctl is-active tr-clickhouse-rollup-daily.timer
 '"
 
 echo "deployed through IAP; TR_ANALYTICS_OUTBOX_ENABLED was not changed"

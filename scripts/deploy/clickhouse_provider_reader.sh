@@ -49,6 +49,9 @@ sed "s/__PASSWORD_SHA256__/${reader_hash}/g" >"$config" <<'XML'
       <quota>default</quota>
       <grants>
         <query>GRANT SELECT ON tr.provider_benchmark_samples</query>
+        <query>GRANT SELECT ON tr.provider_analytics_hourly</query>
+        <query>GRANT SELECT ON tr.provider_analytics_daily</query>
+        <query>GRANT SELECT ON tr.provider_analytics_monthly</query>
       </grants>
     </tr_provider_read>
   </users>
@@ -61,7 +64,7 @@ gcloud compute ssh "$NAME" \
   --zone="$ZONE" \
   --tunnel-through-iap \
   --quiet \
-  --command="sudo sh -c 'umask 077; cat > /etc/clickhouse-server/users.d/tr-provider-reader.xml; chown clickhouse:clickhouse /etc/clickhouse-server/users.d/tr-provider-reader.xml; systemctl restart clickhouse-server'" \
+  --command="sudo sh -c 'set -eu; umask 077; temporary=\$(mktemp); cat > \"\$temporary\"; if ! cmp -s \"\$temporary\" /etc/clickhouse-server/users.d/tr-provider-reader.xml; then install -o clickhouse -g clickhouse -m 0640 \"\$temporary\" /etc/clickhouse-server/users.d/tr-provider-reader.xml; systemctl restart clickhouse-server; fi; rm -f \"\$temporary\"'" \
   <"$config"
 
 # Validate the account with the raw password locally, but never put it in argv:
