@@ -28,6 +28,13 @@ GOOGLE_ADS_ACTION_BY_EVENT = {
     "credit_purchase_completed": GOOGLE_ADS_PURCHASE_ACTION,
 }
 
+GOOGLE_ADS_DIRECT_DELIVERY_ACTIONS = frozenset(
+    {
+        GOOGLE_ADS_SIGNUP_ACTION,
+        GOOGLE_ADS_PURCHASE_ACTION,
+    }
+)
+
 GOOGLE_ADS_CSV_COLUMNS = (
     "conversion_action",
     "gclid",
@@ -69,7 +76,7 @@ def build_google_ads_conversion(
         )
     )
     order_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()
-    return GoogleAdsConversion(
+    conversion = GoogleAdsConversion(
         order_id=order_id,
         conversion_action=action,
         occurred_at=occurred_at,
@@ -78,6 +85,14 @@ def build_google_ads_conversion(
         wbraid=touch.get("wbraid"),
         value_microdollars=value_microdollars,
     )
+    if is_google_ads_direct_delivery(conversion):
+        conversion.delivery_status = "pending"
+        conversion.next_attempt_at = conversion.created_at
+    return conversion
+
+
+def is_google_ads_direct_delivery(conversion: GoogleAdsConversion) -> bool:
+    return conversion.conversion_action in GOOGLE_ADS_DIRECT_DELIVERY_ACTIONS
 
 
 def google_ads_conversion_kind(occurred_at: str) -> str:

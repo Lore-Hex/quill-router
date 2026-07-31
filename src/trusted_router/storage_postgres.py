@@ -618,6 +618,39 @@ class PostgresStore:
     def backfill_google_ads_conversions(self, *, limit: int) -> int:
         self._not_implemented("backfill_google_ads_conversions")
 
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        self._not_implemented("claim_google_ads_deliveries")
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_submitted")
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        self._not_implemented("mark_google_ads_delivery_failed")
+
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        self._not_implemented("repair_google_ads_delivery_queue")
+
     def create_workspace(
         self,
         owner_user_id: str,
