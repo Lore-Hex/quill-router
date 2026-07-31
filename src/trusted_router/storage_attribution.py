@@ -7,6 +7,7 @@ import uuid
 from trusted_router.google_ads_conversions import (
     build_google_ads_conversion,
     is_google_ads_direct_delivery,
+    should_repair_legacy_google_data_manager_403,
 )
 from trusted_router.storage_models import (
     AcquisitionAttribution,
@@ -250,10 +251,16 @@ class InMemoryAcquisitionAttribution:
                     continue
                 if (
                     is_google_ads_direct_delivery(conversion)
-                    and conversion.delivery_status == "not_scheduled"
+                    and (
+                        conversion.delivery_status == "not_scheduled"
+                        or should_repair_legacy_google_data_manager_403(
+                            conversion
+                        )
+                    )
                 ):
                     conversion.delivery_status = "pending"
                     conversion.next_attempt_at = iso_now()
+                    conversion.last_error = None
                     conversion.updated_at = conversion.next_attempt_at
                     repaired += 1
         return repaired
