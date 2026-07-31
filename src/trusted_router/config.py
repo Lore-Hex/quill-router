@@ -93,6 +93,19 @@ class Settings(BaseSettings):
     google_ads_conversion_feed_password: str | None = None
     google_ads_conversion_feed_retention_days: int = 90
     google_ads_conversion_feed_max_rows: int = 100_000
+    # Direct server-to-server Google Ads Data Manager reporting. The control
+    # plane leaves this disabled; a scheduled Cloud Run job enables it and
+    # uploads only metadata-only signup and settled-purchase rows.
+    google_data_manager_enabled: bool = False
+    google_data_manager_account_id: str | None = None
+    google_data_manager_login_account_id: str | None = None
+    google_data_manager_signup_action_id: str | None = None
+    google_data_manager_purchase_action_id: str | None = None
+    google_data_manager_batch_size: int = 500
+    google_data_manager_lease_seconds: int = 300
+    google_data_manager_max_attempts: int = 8
+    google_data_manager_timeout_seconds: float = 20.0
+    google_data_manager_repair_lookback_days: int = 90
     enable_sentry_test_route: bool = False
     sentry_floodgate_enabled: bool = True
     sentry_floodgate_window_seconds: int = 60 * 60
@@ -307,6 +320,50 @@ class Settings(BaseSettings):
             )
         if self.google_ads_conversion_feed_max_rows < 1:
             raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_MAX_ROWS must be positive")
+        if not 1 <= self.google_data_manager_batch_size <= 2_000:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_BATCH_SIZE must be between 1 and 2000"
+            )
+        if self.google_data_manager_lease_seconds < 30:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_LEASE_SECONDS must be at least 30"
+            )
+        if not 1 <= self.google_data_manager_max_attempts <= 20:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS must be between 1 and 20"
+            )
+        if not 1.0 <= self.google_data_manager_timeout_seconds <= 120.0:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_TIMEOUT_SECONDS must be between 1 and 120"
+            )
+        if not 1 <= self.google_data_manager_repair_lookback_days <= 90:
+            raise ValueError(
+                "TR_GOOGLE_DATA_MANAGER_REPAIR_LOOKBACK_DAYS must be between 1 and 90"
+            )
+        if self.google_data_manager_enabled:
+            missing_google_data_manager = [
+                name
+                for name, value in (
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_ACCOUNT_ID",
+                        self.google_data_manager_account_id,
+                    ),
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_SIGNUP_ACTION_ID",
+                        self.google_data_manager_signup_action_id,
+                    ),
+                    (
+                        "TR_GOOGLE_DATA_MANAGER_PURCHASE_ACTION_ID",
+                        self.google_data_manager_purchase_action_id,
+                    ),
+                )
+                if not value
+            ]
+            if missing_google_data_manager:
+                raise ValueError(
+                    "Google Data Manager is enabled but missing "
+                    + ", ".join(missing_google_data_manager)
+                )
         if ":" in self.google_ads_conversion_feed_username:
             raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_USERNAME cannot contain ':'")
         if (
@@ -422,6 +479,10 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "sentry_dsn",
     "google_ads_conversion_feed_username",
     "google_ads_conversion_feed_password",
+    "google_data_manager_account_id",
+    "google_data_manager_login_account_id",
+    "google_data_manager_signup_action_id",
+    "google_data_manager_purchase_action_id",
     "bootstrap_management_key",
     "byok_kms_key_name",
     "byok_envelope_key_b64",

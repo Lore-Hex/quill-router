@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import datetime as dt
 import threading
+import uuid
 
-from trusted_router.google_ads_conversions import build_google_ads_conversion
+from trusted_router.google_ads_conversions import (
+    build_google_ads_conversion,
+    is_google_ads_direct_delivery,
+)
 from trusted_router.storage_models import (
     AcquisitionAttribution,
     GoogleAdsConversion,
@@ -143,6 +147,117 @@ class InMemoryAcquisitionAttribution:
                         created += 1
         return created
 
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]:
+        now = iso_now()
+        owner = f"gdm_{uuid.uuid4().hex}"
+        leased_until = _iso_after_seconds(lease_seconds)
+        with self._lock:
+            rows = [
+                conversion
+                for conversion in self.google_ads_conversions.values()
+                if _google_delivery_is_due(conversion, now)
+            ]
+            rows.sort(
+                key=lambda item: (
+                    item.next_attempt_at,
+                    item.occurred_at,
+                    item.order_id,
+                )
+            )
+            claimed = rows[:limit]
+            for conversion in claimed:
+                conversion.lease_owner = owner
+                conversion.leased_until = leased_until
+                conversion.updated_at = now
+            return claimed
+
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None:
+        del occurred_at
+        with self._lock:
+            conversion = self.google_ads_conversions.get(order_id)
+            if conversion is None or conversion.lease_owner != lease_owner:
+                return None
+            conversion.delivery_status = "submitted"
+            conversion.delivery_attempts += 1
+            conversion.last_error = None
+            conversion.lease_owner = None
+            conversion.leased_until = None
+            conversion.google_request_id = request_id
+            conversion.submitted_at = iso_now()
+            conversion.updated_at = conversion.submitted_at
+            return conversion
+
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None:
+        del occurred_at
+        with self._lock:
+            conversion = self.google_ads_conversions.get(order_id)
+            if conversion is None or conversion.lease_owner != lease_owner:
+                return None
+            conversion.delivery_attempts += 1
+            conversion.last_error = error[:500]
+            conversion.lease_owner = None
+            conversion.leased_until = None
+            conversion.google_request_id = None
+            conversion.submitted_at = None
+            conversion.updated_at = iso_now()
+            if retryable and conversion.delivery_attempts < max_attempts:
+                conversion.delivery_status = "pending"
+                conversion.next_attempt_at = _iso_after_seconds(
+                    _google_delivery_backoff_seconds(
+                        conversion.delivery_attempts
+                    )
+                )
+            else:
+                conversion.delivery_status = "dead"
+            return conversion
+
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int:
+        since_at = dt.datetime.fromisoformat(since.replace("Z", "+00:00"))
+        repaired = 0
+        with self._lock:
+            rows = sorted(
+                self.google_ads_conversions.values(),
+                key=lambda item: (item.occurred_at, item.order_id),
+            )
+            for conversion in rows:
+                if repaired >= limit:
+                    break
+                occurred_at = dt.datetime.fromisoformat(
+                    conversion.occurred_at.replace("Z", "+00:00")
+                )
+                if occurred_at < since_at:
+                    continue
+                if (
+                    is_google_ads_direct_delivery(conversion)
+                    and conversion.delivery_status == "not_scheduled"
+                ):
+                    conversion.delivery_status = "pending"
+                    conversion.next_attempt_at = iso_now()
+                    conversion.updated_at = conversion.next_attempt_at
+                    repaired += 1
+        return repaired
+
     def _record_google_conversion(
         self,
         record: AcquisitionAttribution,
@@ -161,3 +276,25 @@ class InMemoryAcquisitionAttribution:
         )
         if conversion is not None:
             self.google_ads_conversions.setdefault(conversion.order_id, conversion)
+
+
+def _google_delivery_backoff_seconds(attempts: int) -> int:
+    return min(6 * 60 * 60, 30 * (2 ** max(attempts - 1, 0)))
+
+
+def _iso_after_seconds(seconds: int) -> str:
+    return (
+        dt.datetime.now(dt.UTC).replace(microsecond=0)
+        + dt.timedelta(seconds=seconds)
+    ).isoformat().replace("+00:00", "Z")
+
+
+def _google_delivery_is_due(
+    conversion: GoogleAdsConversion,
+    now: str,
+) -> bool:
+    if conversion.delivery_status != "pending":
+        return False
+    if conversion.next_attempt_at > now:
+        return False
+    return not conversion.leased_until or conversion.leased_until <= now

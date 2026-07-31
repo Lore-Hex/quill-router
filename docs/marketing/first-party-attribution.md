@@ -67,16 +67,40 @@ settlement, payment acknowledgement, or streaming.
 
 ## Google Ads Data Manager
 
-Google Ads imports attributed outcomes from:
+Signup and settled credit-purchase conversions are sent directly from a
+scheduled Cloud Run job to Google's Data Manager REST endpoint:
+
+```text
+POST https://datamanager.googleapis.com/v1/events:ingest
+```
+
+The job calls raw HTTPS and does not load a Google browser tag or Google client
+library. Its Cloud Run service identity requests only the
+`https://www.googleapis.com/auth/datamanager` scope. Google accepts at most
+2,000 events per request; TrustedRouter uses bounded 500-row batches and a
+five-minute schedule.
+
+Delivery state is durable:
+
+- `pending`: eligible for a worker lease
+- `submitted`: Google accepted the request and returned a request ID
+- `dead`: a permanent failure or the retry limit was reached
+
+Leases prevent concurrent workers from claiming the same row. Transient
+network, `408`, `409`, `425`, `429`, and `5xx` failures use bounded exponential
+backoff. The deterministic transaction ID lets Google deduplicate an upload if
+the worker crashes after Google accepts it but before Spanner records the
+request ID.
+
+Activation and seven-day retention remain available in the authenticated CSV
+recovery feed:
 
 ```text
 GET /v1/internal/marketing/google-ads-conversions.csv
 ```
 
-The HTTPS feed requires a dedicated HTTP Basic username and a 32-character or
-longer secret from Secret Manager. It is private, uncached, and excluded from
-indexing. The feed covers the last 90 days and fails with `503` rather than
-silently truncating if it reaches the configured row ceiling.
+The feed is private, uncached, excluded from indexing, and fails with `503`
+rather than silently truncating at its configured row ceiling.
 
 Each Google-attributed milestone creates an idempotent, month-partitioned
 Spanner row:
@@ -99,6 +123,44 @@ idempotency check wins. A protected backfill endpoint reconstructs historic
 signup, activation, and retention rows; it deliberately does not synthesize
 historic individual purchases from aggregate totals.
 
+### Production Setup
+
+The production Google Ads resources are:
+
+```text
+operating account: 8424034078
+signup conversion action: 7701333837
+purchase conversion action: 7701333966
+```
+
+These identifiers are ordinary deployment configuration, not credentials. They
+can be overridden with `TR_GOOGLE_DATA_MANAGER_*`. When a manager account makes
+the call, also configure:
+
+```text
+TR_GOOGLE_DATA_MANAGER_LOGIN_ACCOUNT_ID
+```
+
+Authorize
+`tr-google-data-manager@quill-cloud-proxy.iam.gserviceaccount.com` with Standard
+access to Google Ads account `8424034078`. The worker has only Spanner database
+access and Service Usage Consumer in GCP. It has no application secrets,
+provider keys, BYOK decrypt permission, or prompt-path Bigtable access. It
+retrieves a short-lived access token from the Cloud Run metadata server with
+only the Data Manager OAuth scope; no service-account key is created or stored.
+The worker initializes a Spanner-only outbox adapter and never constructs the
+application's Bigtable client.
+
+`scripts/deploy/infra.sh` creates the dedicated identity.
+`scripts/deploy/google_data_manager.sh` deploys the uploader job and scheduler,
+and skips safely until the identity exists.
+
+Google reference:
+
+- [Data Manager event ingestion](https://developers.google.com/data-manager/api/reference/rest/v1/events/ingest)
+- [Data Manager access setup](https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access)
+- [Data Manager request status](https://developers.google.com/data-manager/api/reference/rest/v1/requestStatus/retrieve)
+
 ## Campaign Conventions
 
 Every paid destination must set:
@@ -113,6 +175,28 @@ utm_content=<creative_name>
 Google and X click identifiers can be appended by their respective auto-tagging
 features. Creative-specific `utm_content` values are required so Axiom can
 compare privacy, migration, and reliability messages within one campaign.
+
+## First-Party Funnel Report
+
+Google does not need TrustedRouter conversion data for internal measurement.
+TrustedRouter records the metadata-only funnel and can compare campaigns and
+creative cells through signup, first successful API call, payment, and
+seven-day retained usage:
+
+```bash
+uv run python scripts/marketing_funnel_report.py \
+  --source google \
+  --campaign high_intent_search_20260725 \
+  --days 30
+```
+
+Use `--format json` for analysis or dashboards. Add `--creative <utm_content>`
+to inspect one creative cell. Revenue remains integer microdollars until the
+final display conversion.
+
+One `utm_content` value is one measurable creative cell. Multiple headlines
+inside one responsive search ad share that cell, so create separately tagged
+ads when headline-level downstream measurement is required.
 
 ## Initial Optimization Policy
 

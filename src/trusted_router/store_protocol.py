@@ -97,6 +97,31 @@ class Store(Protocol):
         limit: int,
     ) -> list[GoogleAdsConversion]: ...
     def backfill_google_ads_conversions(self, *, limit: int) -> int: ...
+    def claim_google_ads_deliveries(
+        self,
+        *,
+        limit: int,
+        lease_seconds: int,
+    ) -> list[GoogleAdsConversion]: ...
+    def mark_google_ads_delivery_submitted(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        request_id: str,
+    ) -> GoogleAdsConversion | None: ...
+    def mark_google_ads_delivery_failed(
+        self,
+        *,
+        order_id: str,
+        occurred_at: str,
+        lease_owner: str,
+        error: str,
+        retryable: bool,
+        max_attempts: int,
+    ) -> GoogleAdsConversion | None: ...
+    def repair_google_ads_delivery_queue(self, *, since: str, limit: int) -> int: ...
     def create_workspace(
         self,
         owner_user_id: str,

@@ -315,11 +315,13 @@ jobs:
         run: |
           set -euo pipefail
           deploy_synthetic_monitor="false"
+          deploy_google_data_manager="false"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.deploy_synthetic_monitor }}" = "true" ]; then
               deploy_synthetic_monitor="true"
             fi
+            deploy_google_data_manager="true"
           fi
 
           changed=""
@@ -337,10 +339,15 @@ jobs:
             if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/|scripts/deploy/synthetic\.sh$|\.github/workflows/deploy\.yml$)'; then
               deploy_synthetic_monitor="true"
             fi
+            if printf '%s\n' "$changed" | grep -Eq '^(src/trusted_router/|scripts/deploy/google_data_manager\.sh$|\.github/workflows/deploy\.yml$)'; then
+              deploy_google_data_manager="true"
+            fi
           fi
 
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}" >> "$GITHUB_OUTPUT"
           echo "deploy_synthetic_monitor=${deploy_synthetic_monitor}"
+          echo "deploy_google_data_manager=${deploy_google_data_manager}" >> "$GITHUB_OUTPUT"
+          echo "deploy_google_data_manager=${deploy_google_data_manager}"
 
       - name: Deploy us-central1 (no-traffic)
         env:
@@ -494,6 +501,13 @@ jobs:
         # not user-serving traffic.
         continue-on-error: true
         run: bash scripts/deploy/synthetic.sh
+
+      - name: Deploy Google Data Manager conversion uploader
+        if: ${{ steps.optional.outputs.deploy_google_data_manager == 'true' }}
+        # Server-to-server conversion upload is outside the request path.
+        # The script safely skips until its dedicated service account exists.
+        continue-on-error: true
+        run: bash scripts/deploy/google_data_manager.sh
 
       # No cross-region "final watchdog" step. Each region's health is
       # gated by its own per-region canary above (us-central1, then

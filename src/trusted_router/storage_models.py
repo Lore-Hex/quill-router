@@ -916,6 +916,15 @@ class GoogleAdsConversion:
     value_microdollars: int = 0
     currency_code: str = "USD"
     created_at: str = field(default_factory=iso_now)
+    delivery_status: str = "not_scheduled"
+    delivery_attempts: int = 0
+    next_attempt_at: str = field(default_factory=iso_now)
+    last_error: str | None = None
+    lease_owner: str | None = None
+    leased_until: str | None = None
+    google_request_id: str | None = None
+    submitted_at: str | None = None
+    updated_at: str = field(default_factory=iso_now)
 
 
 @dataclass
