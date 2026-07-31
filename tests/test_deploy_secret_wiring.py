@@ -15,6 +15,24 @@ def test_deploy_pins_ten_cent_signup_credit_policy() -> None:
     assert '"TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"' in rollout
 
 
+def test_all_attested_control_plane_regions_remain_warm() -> None:
+    library = (ROOT / "scripts/deploy/_lib.sh").read_text()
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert 'TR_REGIONS="${TR_REGIONS:-us-central1,us-east4,europe-west4}"' in library
+    assert (
+        'TR_WARM_REGIONS="${TR_WARM_REGIONS:-us-central1,europe-west4,us-east4}"'
+        in library
+    )
+    assert '--min-instances "$min_instances"' in rollout
+
+
+def test_production_deploy_keeps_regional_quota_leases_dark() -> None:
+    rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
+
+    assert '"TR_REGIONAL_QUOTA_LEASES_ENABLED=false"' in rollout
+
+
 def test_deploy_preserves_request_record_mode_without_silent_legacy_fallback() -> None:
     rollout = (ROOT / "scripts/deploy/rollout.sh").read_text()
 

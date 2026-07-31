@@ -7,6 +7,12 @@ from trusted_router.storage_models import SyntheticProbeSample, SyntheticRollup
 REGIONAL_GATEWAY_PROBES = {"tls_health", "attestation_nonce"}
 CONTROL_PLANE_PROBES = {"control_plane_health"}
 IMAGE_GENERATION_PROBES = {"image_generation"}
+BILLING_PROBES = {
+    "gateway_authorize",
+    "gateway_settle",
+    # Retained so existing 24-month rollups remain visible after the split.
+    "gateway_authorize_settle",
+}
 MONITOR_CONFIGURATION_ERROR_TYPES = frozenset(
     {
         "monitor_account_unavailable",
@@ -20,7 +26,7 @@ COMPONENT_PROBES: dict[str, set[str]] = {
     "us_east4_regional_api": REGIONAL_GATEWAY_PROBES,
     "eu_regional_api": REGIONAL_GATEWAY_PROBES,
     "attestation": {"attestation_nonce"},
-    "billing_settlement": {"gateway_authorize_settle"},
+    "billing_settlement": BILLING_PROBES,
     "provider_fallback": {"provider_fallback"},
     "image_generation": IMAGE_GENERATION_PROBES,
 }
@@ -99,7 +105,7 @@ def sample_component_ids(sample: SyntheticProbeSample) -> list[str]:
         ids.append("eu_regional_api")
     if sample.probe_type == "attestation_nonce":
         ids.append("attestation")
-    if sample.target == "control-plane" and sample.probe_type == "gateway_authorize_settle":
+    if sample.target == "control-plane" and sample.probe_type in BILLING_PROBES:
         ids.append("billing_settlement")
     if sample.target == "control-plane" and sample.probe_type == "provider_fallback":
         ids.append("provider_fallback")
@@ -135,6 +141,8 @@ def rollup_slo_class_ids(rollup: SyntheticRollup) -> list[str]:
     expected_component = {
         "tls_health": "canonical_api",
         "attestation_nonce": "canonical_api",
+        "gateway_authorize": "billing_settlement",
+        "gateway_settle": "billing_settlement",
         "gateway_authorize_settle": "billing_settlement",
         "provider_fallback": "provider_fallback",
     }.get(rollup.probe_type)
@@ -149,7 +157,7 @@ def _slo_class_ids(*, probe_type: str, target: str) -> list[str]:
         (target == "canonical" and probe_type in REGIONAL_GATEWAY_PROBES)
         or (
             target == "control-plane"
-            and probe_type in {"gateway_authorize_settle", "provider_fallback"}
+            and probe_type in BILLING_PROBES | {"provider_fallback"}
         )
     ):
         ids.append("router_core")

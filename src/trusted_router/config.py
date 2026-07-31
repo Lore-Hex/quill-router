@@ -198,6 +198,16 @@ class Settings(BaseSettings):
     x402_settle_rate_limit_per_window: int = 30
     x402_settle_workspace_per_window: int = 120
     multi_region_enabled: bool = True
+    # Regional quota leases are a future latency optimization for prepaid
+    # authorization. The state machine and design are intentionally dark: the
+    # exact typed Spanner counters remain the only production authority until
+    # a durable regional ledger and reconciliation worker have passed the
+    # rollout gates in docs/design/regional-quota-leases.md.
+    regional_quota_leases_enabled: bool = False
+    regional_quota_lease_pilot_workspace_ids: str = ""
+    regional_quota_lease_ttl_seconds: int = 60
+    regional_quota_lease_max_microdollars: int = 10_000_000
+    regional_quota_lease_max_available_basis_points: int = 1_000
     # Operational read-only flag. When set, write paths (credit
     # reservations, gateway authorize, signup, etc.) return 503 with
     # `Retry-After`; reads keep working. Used for the Spanner →
@@ -334,6 +344,30 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TR_REQUEST_RECORD_WRITE_MODE must be 'legacy' or 'typed'"
             )
+        if not 5 <= self.regional_quota_lease_ttl_seconds <= 300:
+            raise ValueError(
+                "TR_REGIONAL_QUOTA_LEASE_TTL_SECONDS must be between 5 and 300"
+            )
+        if self.regional_quota_lease_max_microdollars <= 0:
+            raise ValueError(
+                "TR_REGIONAL_QUOTA_LEASE_MAX_MICRODOLLARS must be positive"
+            )
+        if not 1 <= self.regional_quota_lease_max_available_basis_points <= 5_000:
+            raise ValueError(
+                "TR_REGIONAL_QUOTA_LEASE_MAX_AVAILABLE_BASIS_POINTS must be "
+                "between 1 and 5000"
+            )
+        if self.regional_quota_leases_enabled:
+            if environment not in {"local", "test"}:
+                raise ValueError(
+                    "TR_REGIONAL_QUOTA_LEASES_ENABLED is not production-ready; "
+                    "the durable regional ledger and reconciliation gates are incomplete"
+                )
+            if not self.regional_quota_lease_pilot_workspace_ids.strip():
+                raise ValueError(
+                    "TR_REGIONAL_QUOTA_LEASES_ENABLED requires "
+                    "TR_REGIONAL_QUOTA_LEASE_PILOT_WORKSPACE_IDS"
+                )
         if self.google_ads_conversion_feed_max_rows < 1:
             raise ValueError("TR_GOOGLE_ADS_CONVERSION_FEED_MAX_ROWS must be positive")
         if not 1 <= self.google_data_manager_batch_size <= 2_000:
@@ -466,6 +500,14 @@ class Settings(BaseSettings):
     @property
     def paypal_enabled(self) -> bool:
         return bool(self.paypal_client_id and self.paypal_client_secret)
+
+    @property
+    def regional_quota_lease_pilot_workspaces(self) -> frozenset[str]:
+        return frozenset(
+            workspace_id.strip()
+            for workspace_id in self.regional_quota_lease_pilot_workspace_ids.split(",")
+            if workspace_id.strip()
+        )
 
     @property
     def ses_enabled(self) -> bool:

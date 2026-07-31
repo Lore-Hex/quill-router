@@ -175,6 +175,9 @@ ENV_VARS=(
   # operator overrides it. This prevents routine rollouts from reopening the
   # unbounded generic write path.
   "TR_REQUEST_RECORD_WRITE_MODE=${REQUEST_RECORD_WRITE_MODE}"
+  # Dark foundation only. Do not let a stale service-level env var activate a
+  # second billing authority during an ordinary production rollout.
+  "TR_REGIONAL_QUOTA_LEASES_ENABLED=false"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
 

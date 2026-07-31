@@ -6,13 +6,15 @@ import binascii
 import json
 import random
 import secrets
+import socket
+import ssl
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -140,6 +142,7 @@ async def _run_target_synthetic_probes(
     probes = [
         tls_health_probe(client, target, monitor_region=monitor_region),
         attestation_nonce_probe(client, target, monitor_region=monitor_region),
+        gateway_latency_phase_probes(target, monitor_region=monitor_region),
     ]
     # Per-region control plane health via Cloud Run direct URL.
     # tls_health above probes target.api_base_url which is the
@@ -172,7 +175,16 @@ async def _run_target_synthetic_probes(
                 ),
             ]
         )
-    return list(await asyncio.gather(*probes))
+    results = await asyncio.gather(*probes)
+    samples: list[SyntheticProbeSample] = []
+    for result in results:
+        if isinstance(result, list):
+            samples.extend(result)
+        elif isinstance(result, SyntheticProbeSample):
+            samples.append(result)
+        else:
+            raise TypeError(f"unexpected synthetic probe result: {type(result).__name__}")
+    return samples
 
 
 async def _run_billing_probe(
@@ -224,6 +236,276 @@ async def tls_health_probe(
             latency_milliseconds=_elapsed_ms(started),
             error_type=exc.__class__.__name__,
         )
+
+
+async def gateway_latency_phase_probes(
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    timeout_seconds: float = 10.0,
+) -> list[SyntheticProbeSample]:
+    """Measure a fresh TLS request and an immediate request on that connection.
+
+    This probe is diagnostic, not an uptime signal. It uses an HTTP/1.1-only
+    connection so DNS, TCP, TLS, and application processing can be timed
+    independently without relying on private httpx/httpcore trace APIs.
+    """
+
+    url = _root_url(target.api_base_url, "/health")
+    parsed = urlsplit(url)
+    host = parsed.hostname
+    if parsed.scheme != "https" or not host:
+        return _failed_latency_phase_samples(
+            target,
+            monitor_region=monitor_region,
+            url=url,
+            error_type="invalid_health_url",
+        )
+    port = parsed.port or 443
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    writer: asyncio.StreamWriter | None = None
+    raw_socket: socket.socket | None = None
+    started = time.perf_counter()
+    try:
+        loop = asyncio.get_running_loop()
+        dns_started = time.perf_counter()
+        addresses = await asyncio.wait_for(
+            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+            timeout=_remaining_probe_seconds(started, timeout_seconds),
+        )
+        dns_ms = _elapsed_ms(dns_started)
+        tcp_ms: int | None = None
+        last_connect_error: OSError | TimeoutError | None = None
+        for family, socktype, protocol, _canonical_name, address in addresses:
+            candidate_socket = socket.socket(family, socktype, protocol)
+            candidate_socket.setblocking(False)
+            tcp_started = time.perf_counter()
+            try:
+                await asyncio.wait_for(
+                    loop.sock_connect(candidate_socket, address),
+                    timeout=_remaining_probe_seconds(started, timeout_seconds),
+                )
+            except (OSError, TimeoutError) as exc:
+                candidate_socket.close()
+                last_connect_error = exc
+                continue
+            raw_socket = candidate_socket
+            tcp_ms = _elapsed_ms(tcp_started)
+            break
+        if raw_socket is None or tcp_ms is None:
+            raise last_connect_error or OSError("no resolved address accepted TCP")
+
+        tls_context = ssl.create_default_context()
+        tls_context.set_alpn_protocols(["http/1.1"])
+        tls_started = time.perf_counter()
+        reader, stream_writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                sock=raw_socket,
+                ssl=tls_context,
+                server_hostname=host,
+            ),
+            timeout=_remaining_probe_seconds(started, timeout_seconds),
+        )
+        writer = stream_writer
+        raw_socket = None
+        tls_ms = _elapsed_ms(tls_started)
+        ssl_object = stream_writer.get_extra_info("ssl_object")
+        negotiated_protocol = (
+            ssl_object.selected_alpn_protocol() if ssl_object is not None else None
+        ) or "http/1.1"
+
+        first_started = time.perf_counter()
+        first_status, first_headers, first_body, first_ttfb = await _health_http11_request(
+            reader,
+            stream_writer,
+            host=host,
+            path=path,
+            timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
+        )
+        first_total_ms = _elapsed_ms(started)
+        first_ok = first_status == 200 and first_body == b'{"status":"ok"}'
+        cold = _sample(
+            "gateway_cold_path",
+            target,
+            monitor_region,
+            url,
+            status="up" if first_ok else "down",
+            latency_milliseconds=first_total_ms,
+            ttfb_milliseconds=first_ttfb,
+            dns_milliseconds=dns_ms,
+            tcp_connect_milliseconds=tcp_ms,
+            tls_handshake_milliseconds=tls_ms,
+            gateway_processing_milliseconds=_server_timing_gateway(first_headers),
+            connection_reused=False,
+            protocol=negotiated_protocol,
+            http_status=first_status,
+            error_type=None if first_ok else "bad_health_response",
+        )
+
+        reusable = first_headers.get("connection", "").casefold() != "close"
+        if not reusable or not first_ok:
+            return [
+                cold,
+                _sample(
+                    "gateway_reused_path",
+                    target,
+                    monitor_region,
+                    url,
+                    status="down",
+                    latency_milliseconds=_elapsed_ms(first_started),
+                    connection_reused=False,
+                    protocol=negotiated_protocol,
+                    error_type="connection_not_reusable",
+                ),
+            ]
+
+        reused_started = time.perf_counter()
+        second_status, second_headers, second_body, second_ttfb = (
+            await _health_http11_request(
+                reader,
+                stream_writer,
+                host=host,
+                path=path,
+                timeout_seconds=_remaining_probe_seconds(started, timeout_seconds),
+            )
+        )
+        second_total_ms = _elapsed_ms(reused_started)
+        second_ok = second_status == 200 and second_body == b'{"status":"ok"}'
+        return [
+            cold,
+            _sample(
+                "gateway_reused_path",
+                target,
+                monitor_region,
+                url,
+                status="up" if second_ok else "down",
+                latency_milliseconds=second_total_ms,
+                ttfb_milliseconds=second_ttfb,
+                gateway_processing_milliseconds=_server_timing_gateway(second_headers),
+                connection_reused=True,
+                protocol=negotiated_protocol,
+                http_status=second_status,
+                error_type=None if second_ok else "bad_health_response",
+            ),
+        ]
+    except (EOFError, OSError, TimeoutError, ssl.SSLError, ValueError) as exc:
+        return _failed_latency_phase_samples(
+            target,
+            monitor_region=monitor_region,
+            url=url,
+            error_type=exc.__class__.__name__,
+            latency_milliseconds=_elapsed_ms(started),
+        )
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, ssl.SSLError):
+                pass
+        if raw_socket is not None:
+            raw_socket.close()
+
+
+async def _health_http11_request(
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    *,
+    host: str,
+    path: str,
+    timeout_seconds: float,
+) -> tuple[int, dict[str, str], bytes, int]:
+    request = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        "Accept: application/json\r\n"
+        "User-Agent: TrustedRouter-Synthetic/1\r\n"
+        "Connection: keep-alive\r\n\r\n"
+    ).encode("ascii")
+    started = time.perf_counter()
+    writer.write(request)
+    await asyncio.wait_for(
+        writer.drain(), timeout=_remaining_probe_seconds(started, timeout_seconds)
+    )
+    status_line = await asyncio.wait_for(
+        reader.readline(), timeout=_remaining_probe_seconds(started, timeout_seconds)
+    )
+    ttfb_ms = _elapsed_ms(started)
+    parts = status_line.decode("ascii", "replace").strip().split(" ", 2)
+    if len(parts) < 2 or not parts[1].isdigit():
+        raise ValueError("invalid HTTP status line")
+    status = int(parts[1])
+    headers: dict[str, str] = {}
+    header_bytes = len(status_line)
+    while True:
+        line = await asyncio.wait_for(
+            reader.readline(), timeout=_remaining_probe_seconds(started, timeout_seconds)
+        )
+        header_bytes += len(line)
+        if header_bytes > 64 * 1024:
+            raise ValueError("health response headers too large")
+        if line in {b"\r\n", b"\n"}:
+            break
+        name, separator, value = line.decode("latin-1").partition(":")
+        if not separator:
+            raise ValueError("invalid HTTP header")
+        headers[name.strip().casefold()] = value.strip()
+    content_length = int(headers.get("content-length", "0"))
+    if content_length < 0 or content_length > 4096:
+        raise ValueError("invalid health response length")
+    body = await asyncio.wait_for(
+        reader.readexactly(content_length),
+        timeout=_remaining_probe_seconds(started, timeout_seconds),
+    )
+    return status, headers, body, ttfb_ms
+
+
+def _server_timing_gateway(headers: dict[str, str]) -> int | None:
+    for metric in headers.get("server-timing", "").split(","):
+        name, *parameters = metric.split(";")
+        if name.strip().casefold() != "gateway":
+            continue
+        for parameter in parameters:
+            key, separator, value = parameter.strip().partition("=")
+            if separator and key.casefold() == "dur":
+                try:
+                    return max(0, int(round(float(value))))
+                except ValueError:
+                    return None
+    return None
+
+
+def _remaining_probe_seconds(started: float, timeout_seconds: float) -> float:
+    remaining = timeout_seconds - (time.perf_counter() - started)
+    if remaining <= 0:
+        raise TimeoutError("gateway latency probe deadline exceeded")
+    return remaining
+
+
+def _failed_latency_phase_samples(
+    target: SyntheticTarget,
+    *,
+    monitor_region: str,
+    url: str,
+    error_type: str,
+    latency_milliseconds: int | None = None,
+) -> list[SyntheticProbeSample]:
+    return [
+        _sample(
+            probe_type,
+            target,
+            monitor_region,
+            url,
+            status="down",
+            latency_milliseconds=latency_milliseconds,
+            connection_reused=probe_type == "gateway_reused_path",
+            error_type=error_type,
+        )
+        for probe_type in ("gateway_cold_path", "gateway_reused_path")
+    ]
 
 
 async def control_plane_health_probe(
@@ -634,8 +916,10 @@ async def gateway_billing_probe(
     authorize_url = f"{base}/v1/internal/gateway/authorize"
     settle_url = f"{base}/v1/internal/gateway/settle"
     headers = {"x-trustedrouter-internal-token": internal_token}
-    started = time.perf_counter()
     target = SyntheticTarget("control-plane", control_plane_base_url, None)
+    samples: list[SyntheticProbeSample] = []
+    stage = "authorize"
+    started = time.perf_counter()
     try:
         authorize = await client.post(
             authorize_url,
@@ -651,7 +935,7 @@ async def gateway_billing_probe(
         if authorize.status_code != 200:
             return [
                 _sample(
-                    "gateway_authorize_settle",
+                    "gateway_authorize",
                     target,
                     monitor_region,
                     authorize_url,
@@ -663,6 +947,22 @@ async def gateway_billing_probe(
                 )
             ]
         data = authorize.json()["data"]
+        samples.append(
+            _sample(
+                "gateway_authorize",
+                target,
+                monitor_region,
+                authorize_url,
+                status="up",
+                latency_milliseconds=_elapsed_ms(started),
+                http_status=authorize.status_code,
+                model=model,
+                selected_model=data.get("model"),
+                selected_provider=data.get("provider"),
+            )
+        )
+        stage = "settle"
+        started = time.perf_counter()
         settle = await client.post(
             settle_url,
             headers=headers,
@@ -692,9 +992,9 @@ async def gateway_billing_probe(
                 else "settle_failed"
             )
         )
-        return [
+        samples.append(
             _sample(
-                "gateway_authorize_settle",
+                "gateway_settle",
                 target,
                 monitor_region,
                 settle_url,
@@ -708,20 +1008,22 @@ async def gateway_billing_probe(
                 generation_id=settle_data.get("generation_id"),
                 cost_microdollars=int(settle_data.get("cost_microdollars") or 0),
             )
-        ]
+        )
+        return samples
     except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
-        return [
+        samples.append(
             _sample(
-                "gateway_authorize_settle",
+                f"gateway_{stage}",
                 target,
                 monitor_region,
-                authorize_url,
+                authorize_url if stage == "authorize" else settle_url,
                 status="down",
                 latency_milliseconds=_elapsed_ms(started),
                 error_type=exc.__class__.__name__,
                 model=model,
             )
-        ]
+        )
+        return samples
 
 
 async def gateway_fallback_probe(
@@ -1589,6 +1891,12 @@ def _sample(
     status: str,
     latency_milliseconds: int | None = None,
     ttfb_milliseconds: int | None = None,
+    dns_milliseconds: int | None = None,
+    tcp_connect_milliseconds: int | None = None,
+    tls_handshake_milliseconds: int | None = None,
+    gateway_processing_milliseconds: int | None = None,
+    connection_reused: bool | None = None,
+    protocol: str | None = None,
     http_status: int | None = None,
     error_type: str | None = None,
     provider: str | None = None,
@@ -1611,6 +1919,12 @@ def _sample(
         status=status,
         latency_milliseconds=latency_milliseconds,
         ttfb_milliseconds=ttfb_milliseconds,
+        dns_milliseconds=dns_milliseconds,
+        tcp_connect_milliseconds=tcp_connect_milliseconds,
+        tls_handshake_milliseconds=tls_handshake_milliseconds,
+        gateway_processing_milliseconds=gateway_processing_milliseconds,
+        connection_reused=connection_reused,
+        protocol=protocol,
         http_status=http_status,
         error_type=error_type,
         provider=provider,

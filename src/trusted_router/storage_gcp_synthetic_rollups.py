@@ -139,6 +139,10 @@ def _rollups_from_rows(
             if not include_histograms:
                 payload["latency_histogram"] = {}
                 payload["ttfb_histogram"] = {}
+                payload["dns_histogram"] = {}
+                payload["tcp_connect_histogram"] = {}
+                payload["tls_handshake_histogram"] = {}
+                payload["gateway_processing_histogram"] = {}
             rollups.append(SyntheticRollup(**payload))
         except (TypeError, ValueError):
             continue

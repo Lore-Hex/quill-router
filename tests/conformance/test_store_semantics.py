@@ -411,6 +411,10 @@ def test_synthetic_rollups_apply_ranges_order_limit_and_histogram_option(
     assert all(middle_start <= row.period_start <= newest_start for row in ranged)
     assert all(row.latency_histogram == {} for row in ranged)
     assert all(row.ttfb_histogram == {} for row in ranged)
+    assert all(row.dns_histogram == {} for row in ranged)
+    assert all(row.tcp_connect_histogram == {} for row in ranged)
+    assert all(row.tls_handshake_histogram == {} for row in ranged)
+    assert all(row.gateway_processing_histogram == {} for row in ranged)
     own_rows = [
         row
         for row in ranged
