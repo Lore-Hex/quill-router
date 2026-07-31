@@ -34,6 +34,9 @@ GOOGLE_ADS_DIRECT_DELIVERY_ACTIONS = frozenset(
         GOOGLE_ADS_PURCHASE_ACTION,
     }
 )
+LEGACY_GOOGLE_DATA_MANAGER_403_ERROR = (
+    "Google Data Manager returned HTTP 403"
+)
 
 GOOGLE_ADS_CSV_COLUMNS = (
     "conversion_action",
@@ -93,6 +96,18 @@ def build_google_ads_conversion(
 
 def is_google_ads_direct_delivery(conversion: GoogleAdsConversion) -> bool:
     return conversion.conversion_action in GOOGLE_ADS_DIRECT_DELIVERY_ACTIONS
+
+
+def should_repair_legacy_google_data_manager_403(
+    conversion: GoogleAdsConversion,
+) -> bool:
+    """Repair only rows dead-lettered by the first API-propagation smoke."""
+    return (
+        is_google_ads_direct_delivery(conversion)
+        and conversion.delivery_status == "dead"
+        and conversion.delivery_attempts == 1
+        and conversion.last_error == LEGACY_GOOGLE_DATA_MANAGER_403_ERROR
+    )
 
 
 def google_ads_conversion_kind(occurred_at: str) -> str:

@@ -11,6 +11,7 @@ from trusted_router.google_ads_conversions import (
     google_ads_conversion_kinds_since,
     is_google_ads_direct_delivery,
     parse_utc_timestamp,
+    should_repair_legacy_google_data_manager_403,
 )
 from trusted_router.storage_gcp_io import SpannerIO, run_in_transaction_with_retry
 from trusted_router.storage_models import (
@@ -391,9 +392,15 @@ class SpannerAcquisitionAttribution:
                     )
                     if conversion is None:
                         return 0
-                    if conversion.delivery_status == "not_scheduled":
+                    if (
+                        conversion.delivery_status == "not_scheduled"
+                        or should_repair_legacy_google_data_manager_403(
+                            conversion
+                        )
+                    ):
                         conversion.delivery_status = "pending"
                         conversion.next_attempt_at = iso_now()
+                        conversion.last_error = None
                         conversion.updated_at = conversion.next_attempt_at
                         self._io.write_entity_tx(
                             transaction,

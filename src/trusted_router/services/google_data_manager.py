@@ -221,8 +221,10 @@ class GoogleDataManagerClient:
                 retryable=True,
             ) from exc
         if not 200 <= response.status_code < 300:
+            detail = _google_error_detail(response)
+            suffix = f" ({detail})" if detail else ""
             raise GoogleDataManagerUploadError(
-                f"Google Data Manager returned HTTP {response.status_code}",
+                f"Google Data Manager returned HTTP {response.status_code}{suffix}",
                 retryable=_is_retryable_status(response.status_code),
             )
         try:
@@ -337,12 +339,12 @@ def run_google_data_manager_once(
             max_attempts=settings.google_data_manager_max_attempts,
         )
         log.warning(
-            "google_data_manager.upload_failed",
-            extra={
-                "conversion_count": len(conversions),
-                "retryable": exc.retryable,
-                "marked_failed": failed,
-            },
+            "google_data_manager.upload_failed error=%s "
+            "conversion_count=%d retryable=%s marked_failed=%d",
+            exc,
+            len(conversions),
+            exc.retryable,
+            failed,
         )
         return GoogleDataManagerRunResult(
             claimed=len(conversions),
@@ -487,5 +489,41 @@ def _numeric_id(value: str | None, label: str) -> str:
     return normalized
 
 
+def _google_error_detail(response: httpx.Response) -> str:
+    """Extract safe diagnostic codes without logging Google's raw response."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return ""
+
+    details: list[str] = []
+    status = error.get("status")
+    if isinstance(status, str) and status:
+        details.append(f"status={status[:80]}")
+
+    raw_details = error.get("details")
+    if isinstance(raw_details, list):
+        for item in raw_details:
+            if not isinstance(item, dict):
+                continue
+            detail_type = str(item.get("@type", ""))
+            if detail_type.endswith("ErrorInfo"):
+                reason = item.get("reason")
+                if isinstance(reason, str) and reason:
+                    details.append(f"reason={reason[:80]}")
+            elif detail_type.endswith("RequestInfo"):
+                request_id = item.get("requestId")
+                if isinstance(request_id, str) and request_id:
+                    details.append(f"request_id={request_id[:128]}")
+    return " ".join(details)
+
+
 def _is_retryable_status(status_code: int) -> bool:
-    return status_code in {408, 409, 425, 429} or status_code >= 500
+    # Google documents propagation-time SERVICE_DISABLED as a 403. Retry is
+    # still bounded by google_data_manager_max_attempts.
+    return status_code in {403, 408, 409, 425, 429} or status_code >= 500

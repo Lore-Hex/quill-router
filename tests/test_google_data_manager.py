@@ -343,7 +343,7 @@ def test_worker_uses_spanner_only_outbox_store() -> None:
     ("status_code", "retryable"),
     [
         (400, False),
-        (403, False),
+        (403, True),
         (408, True),
         (429, True),
         (500, True),
@@ -369,6 +369,47 @@ def test_http_failure_classification_does_not_echo_response_body(
             client.ingest([_conversion()])
     assert raised.value.retryable is retryable
     assert private_response_body not in str(raised.value)
+
+
+def test_google_error_codes_are_logged_without_raw_message() -> None:
+    private_message = "click-id-secret-must-not-be-logged"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "error": {
+                    "status": "PERMISSION_DENIED",
+                    "message": private_message,
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                            "reason": "SERVICE_DISABLED",
+                        },
+                        {
+                            "@type": "type.googleapis.com/google.rpc.RequestInfo",
+                            "requestId": "google-request-123",
+                        },
+                    ],
+                }
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client = GoogleDataManagerClient(
+            config=_config(),
+            client=http,
+            token_provider=lambda: "token",
+        )
+        with pytest.raises(GoogleDataManagerUploadError) as raised:
+            client.ingest([_conversion()])
+
+    message = str(raised.value)
+    assert "status=PERMISSION_DENIED" in message
+    assert "reason=SERVICE_DISABLED" in message
+    assert "request_id=google-request-123" in message
+    assert private_message not in message
+    assert raised.value.retryable is True
 
 
 def test_success_without_request_id_is_retried() -> None:
@@ -516,6 +557,56 @@ def test_legacy_direct_conversion_is_repaired_once() -> None:
     assert len(
         store.claim_google_ads_deliveries(limit=10, lease_seconds=60)
     ) == 1
+
+
+def test_first_production_403_dead_letter_is_repaired_once() -> None:
+    store = InMemoryStore()
+    conversion = _conversion()
+    conversion.delivery_status = "dead"
+    conversion.delivery_attempts = 1
+    conversion.last_error = "Google Data Manager returned HTTP 403"
+    store.acquisition_store.google_ads_conversions[conversion.order_id] = conversion
+
+    assert store.repair_google_ads_delivery_queue(
+        since="2000-01-01T00:00:00Z",
+        limit=10,
+    ) == 1
+    assert conversion.delivery_status == "pending"
+    assert conversion.last_error is None
+    assert store.repair_google_ads_delivery_queue(
+        since="2000-01-01T00:00:00Z",
+        limit=10,
+    ) == 0
+
+
+def test_spanner_repairs_first_production_403_dead_letter() -> None:
+    store, _database, _table = make_fake_store()
+    assert store.create_acquisition_attribution(
+        _attribution(workspace_id="ws-spanner-repair")
+    )
+    claimed = store.claim_google_ads_deliveries(limit=10, lease_seconds=60)
+    assert len(claimed) == 1
+    conversion = claimed[0]
+    assert conversion.lease_owner
+
+    dead = store.mark_google_ads_delivery_failed(
+        order_id=conversion.order_id,
+        occurred_at=conversion.occurred_at,
+        lease_owner=conversion.lease_owner,
+        error="Google Data Manager returned HTTP 403",
+        retryable=False,
+        max_attempts=3,
+    )
+    assert dead is not None
+    assert dead.delivery_status == "dead"
+
+    assert store.repair_google_ads_delivery_queue(
+        since="2000-01-01T00:00:00Z",
+        limit=10,
+    ) == 1
+    retried = store.claim_google_ads_deliveries(limit=10, lease_seconds=60)
+    assert len(retried) == 1
+    assert retried[0].last_error is None
 
 
 def test_spanner_conversion_and_due_pointer_commit_together() -> None:
