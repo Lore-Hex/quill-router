@@ -37,7 +37,10 @@ ENV_VARS=(
   "TR_GOOGLE_DATA_MANAGER_PURCHASE_ACTION_ID=${GOOGLE_ADS_PURCHASE_ACTION_ID}"
   "TR_GOOGLE_DATA_MANAGER_BATCH_SIZE=500"
   "TR_GOOGLE_DATA_MANAGER_LEASE_SECONDS=300"
-  "TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS=8"
+  # Google Ads documents that newly granted account access can take about
+  # 24 hours to propagate. Twenty bounded, exponentially backed-off attempts
+  # retain the conversion for roughly three days without creating a tight loop.
+  "TR_GOOGLE_DATA_MANAGER_MAX_ATTEMPTS=20"
   "TR_GOOGLE_DATA_MANAGER_REPAIR_LOOKBACK_DAYS=90"
 )
 SET_ENV_VARS="$(IFS='|'; echo "^|^${ENV_VARS[*]}")"
