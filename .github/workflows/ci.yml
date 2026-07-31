@@ -62,10 +62,11 @@ jobs:
         run: npx eslint frontend/src
       - name: Stylelint
         run: npx stylelint "src/trusted_router/static/*.css"
-      - name: Tests
-        run: uv run pytest -q
-      - name: Coverage
-        run: uv run pytest --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
+      # The coverage invocation executes the complete test suite. Running a
+      # separate plain pytest pass doubled CI time and delayed every guarded
+      # production rollout without checking any additional behavior.
+      - name: Tests and coverage
+        run: uv run pytest -q --cov=trusted_router --cov-report=term-missing --cov-fail-under=70
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser smoke
