@@ -3,7 +3,7 @@
   "provider": "makora",
   "source": "https://inference.makora.com/v1/models",
   "pricing_source": "https://inference.makora.com/v1/models",
-  "generated_at": "2026-07-31T07:52:56Z",
+  "generated_at": "2026-07-31T10:42:23Z",
   "price_scale": "microdollars_per_million",
   "model_count": 12,
   "models": [
@@ -135,7 +135,7 @@
       "id": "z-ai/glm-5.2",
       "upstream_id": "zai-org/GLM-5.2-FP8",
       "display_name": "zai-org/GLM-5.2-FP8",
-      "context_length": 980000,
+      "context_length": 1048576,
       "endpoints": [
         "chat/completions"
       ],
@@ -409,7 +409,8 @@
         "structured_outputs",
         "json_mode",
         "logprobs"
-      ]
+      ],
+      "missing_since": "2026-07-31"
     },
     {
       "id": "openai/gpt-oss-120b",
