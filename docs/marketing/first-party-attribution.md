@@ -67,8 +67,9 @@ settlement, payment acknowledgement, or streaming.
 
 ## Google Ads Data Manager
 
-Signup and settled credit-purchase conversions are sent directly from a
-scheduled Cloud Run job to Google's Data Manager REST endpoint:
+Signup, first successful API call, and settled credit-purchase conversions are
+sent directly from a scheduled Cloud Run job to Google's Data Manager REST
+endpoint:
 
 ```text
 POST https://datamanager.googleapis.com/v1/events:ingest
@@ -92,8 +93,7 @@ backoff. The deterministic transaction ID lets Google deduplicate an upload if
 the worker crashes after Google accepts it but before Spanner records the
 request ID.
 
-Activation and seven-day retention remain available in the authenticated CSV
-recovery feed:
+Seven-day retention remains available in the authenticated CSV recovery feed:
 
 ```text
 GET /v1/internal/marketing/google-ads-conversions.csv
@@ -130,12 +130,14 @@ The production Google Ads resources are:
 ```text
 operating account: 8424034078
 signup conversion action: 7701333837
+activated API user conversion action: 7701333960
 purchase conversion action: 7701333966
 ```
 
 These identifiers are ordinary deployment configuration, not credentials. They
-can be overridden with `TR_GOOGLE_DATA_MANAGER_*`. When a manager account makes
-the call, also configure:
+can be overridden with `TR_GOOGLE_DATA_MANAGER_*`. The production worker sets
+the direct Google Ads account as both the operating and login account. When a
+manager account makes the call, override:
 
 ```text
 TR_GOOGLE_DATA_MANAGER_LOGIN_ACCOUNT_ID

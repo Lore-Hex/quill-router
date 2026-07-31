@@ -21,6 +21,7 @@ import httpx
 
 from trusted_router.config import Settings
 from trusted_router.google_ads_conversions import (
+    GOOGLE_ADS_ACTIVATED_ACTION,
     GOOGLE_ADS_PURCHASE_ACTION,
     GOOGLE_ADS_SIGNUP_ACTION,
     is_google_ads_direct_delivery,
@@ -39,6 +40,7 @@ MAX_EVENTS_PER_REQUEST = 2_000
 
 _DESTINATION_REFERENCE_BY_ACTION = {
     GOOGLE_ADS_SIGNUP_ACTION: "signup",
+    GOOGLE_ADS_ACTIVATED_ACTION: "activation",
     GOOGLE_ADS_PURCHASE_ACTION: "purchase",
 }
 _NUMERIC_ID_RE = re.compile(r"^[0-9]+$")
@@ -48,6 +50,7 @@ _NUMERIC_ID_RE = re.compile(r"^[0-9]+$")
 class GoogleDataManagerConfig:
     account_id: str
     signup_action_id: str
+    activated_action_id: str
     purchase_action_id: str
     login_account_id: str | None = None
 
@@ -61,6 +64,10 @@ class GoogleDataManagerConfig:
             signup_action_id=_numeric_id(
                 settings.google_data_manager_signup_action_id,
                 "signup conversion action ID",
+            ),
+            activated_action_id=_numeric_id(
+                settings.google_data_manager_activated_action_id,
+                "activated conversion action ID",
             ),
             purchase_action_id=_numeric_id(
                 settings.google_data_manager_purchase_action_id,
@@ -273,7 +280,7 @@ def encode_google_data_manager_request(
     }
     destinations = [
         _destination(reference, config=config)
-        for reference in ("signup", "purchase")
+        for reference in ("signup", "activation", "purchase")
         if reference in references
     ]
     event_json = [
@@ -417,6 +424,7 @@ def _destination(
 ) -> dict[str, Any]:
     action_id = {
         "signup": config.signup_action_id,
+        "activation": config.activated_action_id,
         "purchase": config.purchase_action_id,
     }[reference]
     destination: dict[str, Any] = {

@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     google_data_manager_account_id: str | None = None
     google_data_manager_login_account_id: str | None = None
     google_data_manager_signup_action_id: str | None = None
+    google_data_manager_activated_action_id: str | None = None
     google_data_manager_purchase_action_id: str | None = None
     google_data_manager_batch_size: int = 500
     google_data_manager_lease_seconds: int = 300
@@ -353,6 +354,10 @@ class Settings(BaseSettings):
                         self.google_data_manager_signup_action_id,
                     ),
                     (
+                        "TR_GOOGLE_DATA_MANAGER_ACTIVATED_ACTION_ID",
+                        self.google_data_manager_activated_action_id,
+                    ),
+                    (
                         "TR_GOOGLE_DATA_MANAGER_PURCHASE_ACTION_ID",
                         self.google_data_manager_purchase_action_id,
                     ),
@@ -482,6 +487,7 @@ _LOCAL_KEY_FALLBACKS: tuple[str, ...] = (
     "google_data_manager_account_id",
     "google_data_manager_login_account_id",
     "google_data_manager_signup_action_id",
+    "google_data_manager_activated_action_id",
     "google_data_manager_purchase_action_id",
     "bootstrap_management_key",
     "byok_kms_key_name",
