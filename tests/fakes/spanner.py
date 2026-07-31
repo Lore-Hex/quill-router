@@ -20,6 +20,10 @@ class _ParamTypes:
     BOOL = "BOOL"
     TIMESTAMP = "TIMESTAMP"
 
+    @staticmethod
+    def Array(element_type: Any) -> tuple[str, Any]:
+        return ("ARRAY", element_type)
+
 
 # Real Spanner column DEFAULTs for the typed counter tables (every counter is
 # NOT NULL DEFAULT(0) in the DDL). The fake fills these on INSERT so a
@@ -139,6 +143,15 @@ class FakeSpannerDatabase:
         # tr_settle_outbox: PK (authorization_id, intent_kind) -> {column: value}.
         self.settle_outbox: dict[tuple, dict] = {}
         self.settle_outbox_versions: dict[tuple, int] = {}
+        # Per-authorization RANGE version: bumped whenever ANY outbox row of an
+        # authorization is inserted/updated/deleted at commit. The MF2 guard
+        # count and the sibling/EXISTS predicates are range reads over an
+        # authorization's rows — including the ABSENCE of rows — and real
+        # Spanner serializes them against a concurrent enqueue commit. Per-row
+        # versions cannot represent "no row existed", so guard reads record
+        # this key and _try_commit validates it: an enqueue that lands between
+        # the in-txn zero-count and the claim commit aborts the claim.
+        self.settle_outbox_auth_versions: dict[str, int] = {}
         self._global_version = 0
         self._commit_lock = threading.Lock()
         self._ready_barrier = ready_barrier
@@ -183,6 +196,11 @@ class FakeSpannerDatabase:
                     current_version = 1 if key[1] in self.reservation_idemp else 0
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox":
                     current_version = self.settle_outbox_versions.get(key[1], 0)
+                elif isinstance(key, tuple) and len(key) == 2 and key[0] == "outbox_auth":
+                    # Range read over one authorization's outbox rows (MF2 guard
+                    # count / sibling predicates): any commit touching the range
+                    # since the read aborts this transaction.
+                    current_version = self.settle_outbox_auth_versions.get(key[1], 0)
                 elif isinstance(key, tuple) and len(key) == 2 and key[0] == "gateway_auth":
                     current_version = self.gateway_authorization_versions.get(
                         key[1],
@@ -231,10 +249,12 @@ class FakeSpannerDatabase:
                     _, pk, record = op
                     self.settle_outbox[pk] = record
                     self.settle_outbox_versions[pk] = new_version
+                    self.settle_outbox_auth_versions[pk[0]] = new_version
                 elif op[0] == "delete_settle_outbox":
                     _, pk = op
                     self.settle_outbox.pop(pk, None)
                     self.settle_outbox_versions.pop(pk, None)
+                    self.settle_outbox_auth_versions[pk[0]] = new_version
                 elif op[0] == "update_reservation":
                     _, rid, record = op
                     self.reservations[rid] = record
@@ -270,6 +290,18 @@ class _FakeTransaction:
         self.db = db
         self.read_versions: dict[tuple[str, str], int] = {}
         self.read_snapshots: dict[tuple[str, str], str | None] = {}
+        # Row values pinned at FIRST read, keyed like read_versions. Real
+        # Spanner read-write transactions are serializable: every statement in
+        # one transaction sees ONE consistent view, and an external commit that
+        # invalidates it surfaces as Aborted at commit time — never as a row
+        # changing between two statements. Serving repeat reads from the pinned
+        # snapshot (with _try_commit's version validation unchanged) reproduces
+        # exactly that: the txn body stays self-consistent, and the conflict
+        # becomes an abort-and-retry. Without this, a concurrent commit landing
+        # between a plan read and its guarded DML made the guard fail MID-txn —
+        # a phantom _RebalanceInvariantError real Spanner cannot produce
+        # (surfaced as a rare credit-shard stress flake).
+        self.row_snapshots: dict[tuple, dict | None] = {}
         self.pending_writes: list[tuple] = []
         # DML+mutation mixing is forbidden in one transaction (real Spanner
         # buffers mutations after DML and DML can't see them); fail fast if both.
@@ -285,6 +317,25 @@ class _FakeTransaction:
     ) -> list[list[str]]:
         return _execute_sql(self.db, self, sql, params or {})
 
+    def _pinned_read(
+        self,
+        version_key: tuple,
+        current_version: int,
+        rec: dict | None,
+    ) -> dict | None:
+        """First read pins version + value; repeat reads return the pin.
+
+        Pin independently of read_versions: some INSERT handlers record an
+        absence version directly without a value snapshot, and a later read
+        through here must not KeyError (nor observe fresher state) for that key.
+        """
+        if version_key not in self.read_versions:
+            self.read_versions[version_key] = current_version
+        if version_key not in self.row_snapshots:
+            self.row_snapshots[version_key] = dict(rec) if rec is not None else None
+        snap = self.row_snapshots[version_key]
+        return dict(snap) if snap is not None else None
+
     def _reservation_current(self, rid: str) -> dict | None:
         """In-txn view of a reservation (read-your-writes) + record read version."""
         for op in reversed(self.pending_writes):
@@ -292,11 +343,11 @@ class _FakeTransaction:
                 return dict(op[2])
             if op[0] == "insert_reservation" and op[1]["reservation_id"] == rid:
                 return dict(op[1])
-        version_key = ("res", rid)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.reservation_versions.get(rid, 0)
-        rec = self.db.reservations.get(rid)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("res", rid),
+            self.db.reservation_versions.get(rid, 0),
+            self.db.reservations.get(rid),
+        )
 
     def _settle_outbox_current(self, pk: tuple) -> dict | None:
         """In-txn view of a settle-outbox row (read-your-writes) + read version."""
@@ -305,14 +356,21 @@ class _FakeTransaction:
                 return None
             if op[0] in ("insert_settle_outbox", "update_settle_outbox") and op[1] == pk:
                 return dict(op[2])
-        version_key = ("outbox", pk)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.settle_outbox_versions.get(pk, 0)
-        rec = self.db.settle_outbox.get(pk)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("outbox", pk),
+            self.db.settle_outbox_versions.get(pk, 0),
+            self.db.settle_outbox.get(pk),
+        )
 
     def _has_guarded_outbox_intent(self, authorization_id: str) -> bool:
         """Evaluate the correlated pending/dead EXISTS against the in-txn view."""
+        # Range read (absence included) — record the per-authorization range
+        # version so a concurrent enqueue/status-flip aborts this txn at commit.
+        range_key = ("outbox_auth", authorization_id)
+        if range_key not in self.read_versions:
+            self.read_versions[range_key] = (
+                self.db.settle_outbox_auth_versions.get(authorization_id, 0)
+            )
         pks = set(self.db.settle_outbox)
         pks.update(
             op[1]
@@ -341,13 +399,11 @@ class _FakeTransaction:
                 "update_gateway_authorization",
             ) and op[1] == authorization_id:
                 return dict(op[2])
-        version_key = ("gateway_auth", authorization_id)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = (
-                self.db.gateway_authorization_versions.get(authorization_id, 0)
-            )
-        rec = self.db.gateway_authorizations.get(authorization_id)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("gateway_auth", authorization_id),
+            self.db.gateway_authorization_versions.get(authorization_id, 0),
+            self.db.gateway_authorizations.get(authorization_id),
+        )
 
     def _typed_current(self, table: str, pk: tuple) -> dict | None:
         """In-txn view of a typed row for DML: sees prior DML writes
@@ -357,11 +413,11 @@ class _FakeTransaction:
         for op in reversed(self.pending_writes):
             if op[0] == "update_typed" and op[1] == table and op[2] == pk:
                 return dict(op[3])
-        version_key = ("typed", table, pk)
-        if version_key not in self.read_versions:
-            self.read_versions[version_key] = self.db.typed_versions.get((table, pk), 0)
-        rec = self.db.typed.get(table, {}).get(pk)
-        return dict(rec) if rec is not None else None
+        return self._pinned_read(
+            ("typed", table, pk),
+            self.db.typed_versions.get((table, pk), 0),
+            self.db.typed.get(table, {}).get(pk),
+        )
 
     def execute_update(
         self, sql: str, *, params: dict[str, Any] | None = None, param_types: Any = None
@@ -531,6 +587,58 @@ class _FakeTransaction:
             record["terminal_at"] = None
             self.pending_writes.append(("insert_reservation", record))
             return 1
+        if (
+            sql.startswith("UPDATE tr_reservation SET terminal_at=@terminal_at")
+            and "IN UNNEST" in sql
+        ):
+            _require_pred(
+                sql,
+                "reservation_id IN UNNEST(@ids)",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "AND settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                "o.authorization_id = tr_reservation.authorization_id",
+                "reservation-terminal-backfill",
+            )
+            _require_pred(
+                sql,
+                f"o.status IN ({_GUARD_STATUS_SQL})",
+                "reservation-terminal-backfill",
+            )
+            ids = p.get("ids")
+            if not isinstance(ids, list):
+                raise AssertionError(
+                    "reservation-terminal-backfill requires an @ids array binding"
+                )
+            updated = 0
+            for rid in ids:
+                rec = self._reservation_current(str(rid))
+                if (
+                    rec is None
+                    or not rec.get("settled")
+                    or rec.get("terminal_at") is not None
+                    or self._has_guarded_outbox_intent(
+                        str(rec.get("authorization_id"))
+                    )
+                ):
+                    continue
+                new = dict(rec, terminal_at=p["terminal_at"])
+                self.pending_writes.append(
+                    ("update_reservation", str(rid), new)
+                )
+                updated += 1
+            return updated
         if "UPDATE tr_reservation SET settled=true" in sql:
             _require_pred(sql, "reservation_id=@rid AND settled=false", "reservation-claim")
             guarded = "tr_settle_outbox" in sql
@@ -791,7 +899,12 @@ class _FakeTransaction:
         if sql.startswith("UPDATE tr_settle_outbox SET status='pending'"):  # park
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "park")
             _require_pred(sql, "AND status='pending' AND attempts=@attempts", "park")
-            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "park")
+            _require_pred(
+                sql,
+                "(@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner)",
+                "park",
+            )
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)
             if rec is None or rec["status"] != "pending":
@@ -799,7 +912,7 @@ class _FakeTransaction:
             if int(rec.get("attempts", 0) or 0) != int(p["attempts"]):
                 return 0
             owner = rec.get("lease_owner")
-            if owner is not None and owner != p.get("lease_owner"):
+            if owner != p.get("lease_owner"):
                 return 0
             new = dict(
                 rec, status="pending", attempts=rec.get("attempts", 0), last_error=p["err"],
@@ -823,13 +936,18 @@ class _FakeTransaction:
         if sql.startswith("UPDATE tr_settle_outbox SET status=@status"):  # mark
             _require_pred(sql, "authorization_id=@aid AND intent_kind=@kind", "mark")
             _require_pred(sql, "status='pending'", "mark")
-            _require_pred(sql, "lease_owner IS NULL OR lease_owner=@lease_owner", "mark")
+            _require_pred(
+                sql,
+                "(@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner)",
+                "mark",
+            )
             pk = (p["aid"], p["kind"])
             rec = self._settle_outbox_current(pk)
             if rec is None or rec["status"] != "pending":
                 return 0
             owner = rec.get("lease_owner")
-            if owner is not None and owner != p.get("lease_owner"):
+            if owner != p.get("lease_owner"):
                 return 0
             new = dict(
                 rec, status=p["status"], attempts=p["attempts"], last_error=p["err"],
@@ -1027,12 +1145,31 @@ def _execute_settle_outbox_sql(
         )
         aid = p["aid"]
         kind = p["kind"]
+        if txn is not None:
+            # Range read over the authorization's rows (absence included) —
+            # same serialization contract as the MF2 guard count above.
+            range_key = ("outbox_auth", aid)
+            if range_key not in txn.read_versions:
+                txn.read_versions[range_key] = (
+                    db.settle_outbox_auth_versions.get(aid, 0)
+                )
         count = 0
-        for pk, committed in db.settle_outbox.items():
+        pks = set(db.settle_outbox)
+        if txn is not None:
+            pks.update(
+                op[1]
+                for op in txn.pending_writes
+                if op[0] in (
+                    "insert_settle_outbox",
+                    "update_settle_outbox",
+                    "delete_settle_outbox",
+                )
+            )
+        for pk in pks:
             rec = (
                 txn._settle_outbox_current(pk)
                 if txn is not None
-                else committed
+                else db.settle_outbox.get(pk)
             )
             if (
                 rec is not None
@@ -1042,12 +1179,42 @@ def _execute_settle_outbox_sql(
             ):
                 count += 1
         return [[count]]
-    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # reaper-guard predicate (has_intent)
+    if "SELECT COUNT(*) FROM tr_settle_outbox" in sql:  # MF2 guard count / has_intent
         _require_pred(sql, "authorization_id=@aid", "has_intent")
         _require_pred(sql, f"status IN ({_GUARD_STATUS_SQL})", "has_intent")
         aid = p["aid"]
-        # Committed-state read is correct for the in-txn guard too: enqueue
-        # commits in its own txn, and the reaper txn never writes outbox rows.
+        if txn is not None:
+            # MF2: inside settle_atomic's claim transaction this range read —
+            # including its ABSENCE result — must serialize against a
+            # concurrent enqueue commit. Record the per-authorization range
+            # version so _try_commit aborts the claim if any outbox row of this
+            # authorization commits after the count. (An earlier comment argued
+            # committed-state reads were fine here; a diagnostic disproved it —
+            # an enqueue landing between the zero-count and the claim commit
+            # slipped through unvalidated.)
+            range_key = ("outbox_auth", aid)
+            if range_key not in txn.read_versions:
+                txn.read_versions[range_key] = (
+                    db.settle_outbox_auth_versions.get(aid, 0)
+                )
+            pks = set(db.settle_outbox)
+            pks.update(
+                op[1]
+                for op in txn.pending_writes
+                if op[0] in (
+                    "insert_settle_outbox",
+                    "update_settle_outbox",
+                    "delete_settle_outbox",
+                )
+            )
+            n = sum(
+                1
+                for pk in pks
+                if pk[0] == aid
+                and (rec := txn._settle_outbox_current(pk)) is not None
+                and rec.get("status") in GUARD_STATUSES
+            )
+            return [[n]]
         n = sum(
             1 for rec in db.settle_outbox.values()
             if rec.get("authorization_id") == aid and rec.get("status") in GUARD_STATUSES
@@ -1066,6 +1233,134 @@ def _execute_sql(
     params: dict[str, Any],
 ) -> list[list[str]]:
     kind = params.get("kind", "")
+    # Guarded legacy terminal_at backfill. These narrow handlers intentionally
+    # assert every real predicate they model (MF6); a production SQL regression
+    # must fail tests instead of being repaired by the fake's Python filtering.
+    if sql.startswith("SELECT reservation_id FROM tr_reservation"):
+        _require_pred(
+            sql,
+            "WHERE settled AND terminal_at IS NULL",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "AND NOT EXISTS (SELECT 1 FROM tr_settle_outbox o",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "o.authorization_id = tr_reservation.authorization_id",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            f"o.status IN ({_GUARD_STATUS_SQL})",
+            "reservation-terminal-backfill-scan",
+        )
+        _require_pred(
+            sql,
+            "ORDER BY reservation_id LIMIT @batch",
+            "reservation-terminal-backfill-scan",
+        )
+        rows = [
+            [rid]
+            for rid, rec in sorted(db.reservations.items())
+            if rec.get("settled")
+            and rec.get("terminal_at") is None
+            and not any(
+                outbox.get("authorization_id") == rec.get("authorization_id")
+                and outbox.get("status") in GUARD_STATUSES
+                for outbox in db.settle_outbox.values()
+            )
+        ]
+        return rows[: int(params["batch"])]
+    if (
+        sql.startswith("SELECT COUNT(*) FROM tr_reservation")
+        and not params
+    ):
+        if "AND EXISTS (SELECT 1 FROM tr_settle_outbox o" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            _require_pred(
+                sql,
+                "o.authorization_id = tr_reservation.authorization_id",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            _require_pred(
+                sql,
+                f"o.status IN ({_GUARD_STATUS_SQL})",
+                "reservation-terminal-backfill-excluded-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled")
+                    and rec.get("terminal_at") is None
+                    and any(
+                        outbox.get("authorization_id")
+                        == rec.get("authorization_id")
+                        and outbox.get("status") in GUARD_STATUSES
+                        for outbox in db.settle_outbox.values()
+                    )
+                )
+            ]]
+        if "terminal_at IS NULL" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NULL",
+                "reservation-terminal-backfill-candidate-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled") and rec.get("terminal_at") is None
+                )
+            ]]
+        if "terminal_at IS NOT NULL" in sql:
+            _require_pred(
+                sql,
+                "WHERE settled AND terminal_at IS NOT NULL",
+                "reservation-terminal-backfill-armed-count",
+            )
+            return [[
+                sum(
+                    1
+                    for rec in db.reservations.values()
+                    if rec.get("settled") and rec.get("terminal_at") is not None
+                )
+            ]]
+        _require_pred(
+            sql,
+            "WHERE NOT settled",
+            "reservation-terminal-backfill-open-count",
+        )
+        return [[
+            sum(
+                1
+                for rec in db.reservations.values()
+                if not rec.get("settled")
+            )
+        ]]
+    if sql.startswith(
+        "SELECT COUNT(*) FROM tr_gateway_authorization"
+    ):
+        _require_pred(
+            sql,
+            "WHERE settled AND terminal_at IS NULL",
+            "gateway-authorization-terminal-backfill-cross-check",
+        )
+        return [[
+            sum(
+                1
+                for rec in db.gateway_authorizations.values()
+                if rec.get("settled") and rec.get("terminal_at") is None
+            )
+        ]]
     # Reaper scan: expired unsettled reservations. This must precede the generic
     # tr_settle_outbox dispatcher because the guarded scan names both tables; match
     # the more specific query first.

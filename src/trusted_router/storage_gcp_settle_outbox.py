@@ -334,7 +334,9 @@ class SpannerSettleOutbox:
         still incrementing attempts for the audit trail. Dead FREEZES the hold
         (GUARD_STATUSES) until a human sets `release_approved`. Returns the new
         status, or None if the row was not claimable by this owner (lost lease /
-        already resolved). Only 'pending' rows are marked."""
+        already resolved). A worker that lost its lease cannot resolve the row;
+        the winner (or next claimant) re-runs the idempotent apply to re-derive
+        the outcome. Only 'pending' rows are marked."""
         now = _iso_now()
 
         def txn(transaction: Any) -> str | None:
@@ -351,8 +353,10 @@ class SpannerSettleOutbox:
                 rows[0][1],
                 rows[0][2],
             )
-            if lease_owner is not None and cur_owner not in (None, lease_owner):
-                return None  # lost the lease to another worker
+            # Issue #355: anonymous inline callers may touch only unleased rows,
+            # while drain workers may touch only rows they still own.
+            if cur_owner != lease_owner:
+                return None
             next_attempts = attempts + 1
             if done:
                 new_status, next_at, err, terminal_at = "done", None, None, now
@@ -382,7 +386,8 @@ class SpannerSettleOutbox:
                 "settle_body=IF(@done, CAST(NULL AS STRING), settle_body) "
                 "WHERE authorization_id=@aid "
                 "AND intent_kind=@kind AND status='pending' "
-                "AND (lease_owner IS NULL OR lease_owner=@lease_owner)",
+                "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))",
                 params={
                     "status": new_status, "attempts": next_attempts, "err": err,
                     "next_at": next_at, "now": now,
@@ -496,7 +501,9 @@ class SpannerSettleOutbox:
                 return False
             attempts, cur_owner = int(rows[0][0] or 0), rows[0][1]
             parked_reservation_id = rows[0][2]
-            if lease_owner is not None and cur_owner not in (None, lease_owner):
+            # Issue #355: anonymous callers may park only unleased rows, while
+            # drain workers must still own the lease they are fencing with.
+            if cur_owner != lease_owner:
                 return False
             # §6: park != failure. A whole typed-backend outage must not walk
             # frozen rows toward dead; attempts stays unchanged and only the
@@ -506,7 +513,8 @@ class SpannerSettleOutbox:
                 "next_attempt_at=@next_at, lease_owner=NULL, leased_until=NULL, "
                 "updated_at=@now WHERE authorization_id=@aid AND intent_kind=@kind "
                 "AND status='pending' AND attempts=@attempts "
-                "AND (lease_owner IS NULL OR lease_owner=@lease_owner)",
+                "AND ((@lease_owner IS NULL AND lease_owner IS NULL) OR "
+                "(@lease_owner IS NOT NULL AND lease_owner=@lease_owner))",
                 params={
                     "attempts": attempts, "err": note[:1000],
                     "next_at": next_at, "now": now,

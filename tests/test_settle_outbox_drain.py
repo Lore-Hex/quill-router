@@ -977,6 +977,66 @@ def test_activity_pending_lost_lease_skips_false_alert(
     )
 
 
+def test_lost_lease_dead_letter_alerts_only_when_fence_wins(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    ob = _outbox(store)
+    stale_auth = _bare_authorization("gwa-missing-stale-owner")
+    winner_auth = _bare_authorization("gwa-missing-winning-owner")
+    ob.enqueue(_row(stale_auth))
+    ob.enqueue(_row(winner_auth))
+    claimed = {
+        row.authorization_id: row
+        for row in ob.claim(limit=2, lease_seconds=300)
+    }
+    stale = claimed[stale_auth.id]
+    winner = claimed[winner_auth.id]
+    stale_record = db.settle_outbox[(stale_auth.id, "settle")]
+    stale_record["lease_owner"] = None
+    stale_record["leased_until"] = None
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        drain_mod._resolve_row(
+            ob,
+            stale,
+            ApplyOutcome.RESERVATION_MISSING,
+            error_note=None,
+        )
+        drain_mod._resolve_row(
+            ob,
+            winner,
+            ApplyOutcome.RESERVATION_MISSING,
+            error_note=None,
+        )
+
+    stale_row = ob.get(stale_auth.id, "settle")
+    winner_row = ob.get(winner_auth.id, "settle")
+    assert stale_row is not None and stale_row.status == "pending"
+    assert stale_row.last_error is None
+    assert winner_row is not None and winner_row.status == "dead"
+    alerts = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.ERROR and "ALERT" in record.getMessage()
+    ]
+    assert len(alerts) == 1
+    assert f"authorization_id={winner_auth.id}" in alerts[0].getMessage()
+    assert not any(
+        record.levelno == logging.ERROR
+        and f"authorization_id={stale_auth.id}" in record.getMessage()
+        for record in caplog.records
+    )
+    assert any(
+        record.levelno == logging.WARNING
+        and "resolution skipped" in record.getMessage()
+        and f"authorization_id={stale_auth.id}" in record.getMessage()
+        and "intent_kind=settle" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 def test_activity_pending_escalation_keeps_retention_pinned(
     fake_store: tuple[Any, Any, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -1419,6 +1479,93 @@ def test_lost_charge_recovery_end_to_end(
     assert db.reservations[auth.credit_reservation_id]["actual_micro"] == row.actual_cost_micro
     assert _typed_credit(db, ws)["total_usage"] == row.actual_cost_micro
     assert reap_expired_reservations(store._database, store._param_types, now=NOW) == 0
+
+
+def test_charged_settle_then_sibling_refund_resolves_and_arms_retention(
+    fake_store: tuple[Any, Any, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-drain-sibling-refund"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    ob = _outbox(store)
+    settle_row = _row(auth, cost=777_777)
+    refund_row = _row(auth, intent="refund", cost=777_777)
+    ob.enqueue(settle_row)
+    ob.enqueue(refund_row, initial_delay_seconds=60)
+
+    settled = drain_mod.drain_settle_outbox(10)
+
+    assert settled["outcomes"] == {ApplyOutcome.SETTLED_NOW: 1}
+    assert ob.get(auth.id, "settle").status == "done"
+    assert ob.get(auth.id, "refund").status == "pending"
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
+    db.settle_outbox[(auth.id, "refund")]["next_attempt_at"] = (
+        "2000-01-01T00:00:00Z"
+    )
+
+    with caplog.at_level(logging.WARNING, logger=drain_mod.__name__):
+        refunded = drain_mod.drain_settle_outbox(10)
+
+    assert refunded["outcomes"] == {
+        ApplyOutcome.ALREADY_SETTLED_WITH_CHARGE: 1
+    }
+    completed_refund = ob.get(auth.id, "refund")
+    assert completed_refund is not None and completed_refund.status == "done"
+    assert any(
+        "kept charge beat refund intent" in record.getMessage()
+        and f"authorization_id={auth.id}" in record.getMessage()
+        for record in caplog.records
+    )
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is not None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is not None
+    # Money: the settle's charge stands, the refund replay moved no counters.
+    credit = _typed_credit(db, ws)
+    assert credit["reserved"] == 0
+    assert credit["total_usage"] == 777_777
+    key_row = _typed_key(db, key.hash)
+    assert key_row["reserved"] == 0
+    assert key_row["usage"] == 777_777
+
+
+def test_charged_settle_with_no_generation_dead_letters_as_invalid_row(
+    fake_store: tuple[Any, Any, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, db, _bt = fake_store
+    store.request_record_write_mode = "typed"
+    ws = "ws-drain-malformed-settle"
+    _seed_credit(store, ws)
+    key = _make_key(store, ws)
+    auth = _typed_authorization(store, workspace_id=ws, key_hash=key.hash)
+    assert (
+        apply_mod.apply_frozen_settle(_row(auth, cost=777_777))
+        == ApplyOutcome.SETTLED_NOW
+    )
+    ob = _outbox(store)
+    ob.enqueue(_row(auth, cost=777_777))
+
+    def fail_to_build_generation(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        apply_mod,
+        "_frozen_generation",
+        fail_to_build_generation,
+    )
+
+    drained = drain_mod.drain_settle_outbox(10)
+
+    assert drained["outcomes"] == {ApplyOutcome.INVALID_ROW: 1}
+    malformed = ob.get(auth.id, "settle")
+    assert malformed is not None and malformed.status == "dead"
+    assert malformed.last_error == "invalid_row"
+    assert db.reservations[auth.credit_reservation_id]["terminal_at"] is None
+    assert db.gateway_authorizations[auth.id]["terminal_at"] is None
 
 
 def test_drain_leaves_terminal_rows_for_spanner_ttl(
