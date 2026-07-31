@@ -234,14 +234,14 @@ response = client.chat.completions.create(
               {% for region in map_regions %}
               <g class="region-dot {% if region.primary %}primary{% endif %} {% if region.serving %}live{% else %}edge{% endif %}" transform="translate({{ '%.1f'|format(region.x) }} {{ '%.1f'|format(region.y) }})">
                 <circle r="{% if region.primary %}9{% else %}7{% endif %}"></circle>
-                <text x="12" y="-8">{{ region.city }}</text>
+                <text x="12" y="-8">{{ region.city }}{% if region.cloud == "aws" %} · AWS{% elif region.cloud == "azure" %} · Azure{% endif %}</text>
               </g>
               {% endfor %}
             </svg>
           </div>
           <div class="region-map-copy">
-            <strong>{{ map_regions|length }} region footprint</strong>
-            <span>{{ api_region_count }} live regions with additional capacity staged.</span>
+            <strong>{{ map_regions|length }} regions across three clouds</strong>
+            <span>{{ api_region_count }} live GCP regions, plus standalone EU (AWS) and APAC (Azure) deployments. Additional capacity staged.</span>
           </div>
         </div>
       </div>
