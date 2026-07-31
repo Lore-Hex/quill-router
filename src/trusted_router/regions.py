@@ -52,8 +52,26 @@ GCP_REGION_GEO: dict[str, RegionGeo] = {
 
 
 def _lookup_region_geo(region: str) -> RegionGeo | None:
-    """Return geo info for a configured GCP region."""
-    return GCP_REGION_GEO.get(region)
+    """Return geo info for a configured region on any cloud."""
+    return GCP_REGION_GEO.get(region) or MULTICLOUD_REGION_GEO.get(region)
+
+
+# Standalone deployments on other clouds. These are SEPARATE TrustedRouter
+# products — own database, own credits, own status page (see
+# docs/storage-portability/multi-cloud-separation.md) — so their ids are
+# namespaced by cloud rather than pretending to be GCP regions. A dot here
+# must correspond to a deployment that actually serves; the live/staged
+# split is settings.external_live_regions, not this table.
+MULTICLOUD_REGION_GEO: dict[str, RegionGeo] = {
+    "aws-eu-west-1": RegionGeo("aws-eu-west-1", "Dublin", 53.349, -6.260, cloud="aws"),
+    # Stockholm is the DSQL replication peer of the AWS-EU deployment. It
+    # holds live data but no compute yet, so it defaults to "staged" on the
+    # map until compute lands there.
+    "aws-eu-north-1": RegionGeo("aws-eu-north-1", "Stockholm", 59.329, 18.068, cloud="aws"),
+    "azure-australiaeast": RegionGeo(
+        "azure-australiaeast", "Sydney", -33.868, 151.209, cloud="azure"
+    ),
+}
 
 
 def configured_regions(settings: Settings) -> list[str]:
@@ -148,6 +166,16 @@ def region_map_payload(settings: Settings) -> list[dict[str, Any]]:
     intentionally trivial so unit tests can re-derive it."""
     primary = choose_region(settings)
     serving_regions = set(configured_regions(settings))
+    # Standalone deployments on other clouds serve their own traffic, so the
+    # GCP serving list can't know about them. They are declared live
+    # explicitly — and must only be listed once their own smoke
+    # (scripts/deploy/verify_deployment.sh) passes, because this flag is the
+    # difference between a "live" and a "staged" dot on the marketing page.
+    serving_regions |= {
+        item.strip()
+        for item in settings.external_live_regions.split(",")
+        if item.strip()
+    }
     out: list[dict[str, Any]] = []
     for region in configured_marketing_regions(settings):
         geo = _lookup_region_geo(region)

@@ -94,7 +94,8 @@ def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
     settings = Settings(environment="local", regions="us-central1,europe-west4")
     rendered = region_map_payload(settings)
 
-    assert [r["id"] for r in rendered] == [
+    gcp = [r for r in rendered if r["cloud"] == "gcp"]
+    assert [r["id"] for r in gcp] == [
         "us-central1",
         "europe-west4",
         "us-east4",
@@ -103,8 +104,8 @@ def test_default_region_map_shows_gcp_region_marketing_footprint() -> None:
         "asia-southeast1",
         "southamerica-east1",
     ]
-    assert [r["status_label"] for r in rendered[:2]] == ["live", "live"]
-    assert all(r["status_label"] == "edge" for r in rendered[2:])
+    assert [r["status_label"] for r in gcp[:2]] == ["live", "live"]
+    assert all(r["status_label"] == "edge" for r in gcp[2:])
     assert next(r for r in rendered if r["id"] == "asia-east2")["city"] == "Hong Kong"
 
 
@@ -139,3 +140,31 @@ def test_region_map_payload_orders_primary_first() -> None:
     rendered = region_map_payload(settings)
     if rendered:
         assert rendered[0]["id"] == settings.primary_region
+
+
+def test_map_shows_multicloud_deployments_with_honest_serving_flags() -> None:
+    """The marketing map now carries the standalone AWS and Azure deployments.
+
+    The serving flag is a factual claim — external_live_regions must only list
+    deployments whose own smoke passes — so this pins the shipped default:
+    Dublin and Sydney live, Stockholm (database peer, no compute) staged.
+    """
+    settings = Settings(environment="local")
+    rows = {row["id"]: row for row in region_map_payload(settings)}
+
+    assert rows["aws-eu-west-1"]["city"] == "Dublin"
+    assert rows["aws-eu-west-1"]["cloud"] == "aws"
+    assert rows["aws-eu-west-1"]["serving"] is True
+
+    assert rows["azure-australiaeast"]["cloud"] == "azure"
+    assert rows["azure-australiaeast"]["serving"] is True
+
+    # Stockholm replicates the AWS-EU database but has no compute yet. If this
+    # assertion starts failing because someone flipped it live, that flip must
+    # come with compute actually serving there.
+    assert rows["aws-eu-north-1"]["serving"] is False
+
+    # No duplicate cities on the map (Joseph's rule): the Azure Sydney entry
+    # must not coexist with GCP's australia-southeast1 Sydney dot.
+    cities = [row["city"] for row in region_map_payload(settings)]
+    assert len(cities) == len(set(cities)), f"duplicate city dots: {cities}"

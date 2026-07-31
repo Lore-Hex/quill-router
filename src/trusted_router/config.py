@@ -235,8 +235,16 @@ class Settings(BaseSettings):
     marketing_regions: str = (
         "us-central1,europe-west4,us-east4,"
         "asia-northeast1,asia-east2,asia-southeast1,"
-        "southamerica-east1"
+        "southamerica-east1,"
+        # Standalone deployments on other clouds (multi-cloud-separation.md).
+        "aws-eu-west-1,aws-eu-north-1,azure-australiaeast"
     )
+    # Non-GCP deployments that have PASSED their own end-to-end smoke
+    # (verify_deployment.sh --expect-monitor). Listing here turns the map dot
+    # from "staged" to "live", so an entry is a factual claim, not decoration.
+    # Stockholm (aws-eu-north-1) is deliberately absent: it replicates the
+    # AWS-EU database but has no compute yet.
+    external_live_regions: str = "aws-eu-west-1,azure-australiaeast"
     primary_region: str = "us-central1"
     regional_api_hostname_template: str = "api-{region}.quillrouter.com"
     synthetic_monitor_region: str | None = None
