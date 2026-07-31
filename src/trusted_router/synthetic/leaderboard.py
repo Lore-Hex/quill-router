@@ -418,11 +418,16 @@ def aggregate_leaderboard(
         if attribution.counts_toward_provider_availability:
             stats.provider_sample_count += 1
             stats.capacity_attempt_count += 1
-            stats.deadline_sample_count += 1
             if sample.status == "success":
                 stats.provider_success_count += 1
             if attribution.capacity_rejected:
                 stats.capacity_rejection_count += 1
+            # Failed provider attempts missed the first-token deadline even
+            # when no byte arrived. Successful non-streaming observations may
+            # not carry TTFT at all; excluding those unmeasured successes keeps
+            # the denominator honest instead of reporting them as late.
+            if sample.status != "success" or sample.first_token_milliseconds is not None:
+                stats.deadline_sample_count += 1
         if sample.first_token_milliseconds is not None:
             ttft[key].append(sample.first_token_milliseconds)
             provider_ttft[sample.provider].append(sample.first_token_milliseconds)

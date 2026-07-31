@@ -114,12 +114,19 @@ IFS=',' read -ra _REGION_LIST <<<"$SYNTHETIC_MONITOR_REGIONS"
 monitor_index=0
 for monitor_region in "${_REGION_LIST[@]}"; do
   [ -n "$monitor_region" ] || continue
+  regional_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${monitor_region}.run.app"
   job_name="trusted-router-synthetic-${monitor_region//[^a-zA-Z0-9-]/-}"
   scheduler_name="${job_name}-every-five-minutes"
   legacy_scheduler_name="${job_name}-every-minute"
   env_vars=(
     "${BASE_ENV_VARS[@]}"
     "TR_SYNTHETIC_MONITOR_REGION=${monitor_region}"
+    # Probe the public control-plane domain, but ingest through the regional
+    # Cloud Run URL. Otherwise an apex TLS/DNS incident prevents the monitor
+    # from recording the very failure it observed.
+    "TR_SYNTHETIC_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/samples"
+    "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${regional_ingest_base}/v1/internal/synthetic/benchmark"
+    "TR_SYNTHETIC_ROUTE_HEALTH_URL=${regional_ingest_base}/v1/internal/synthetic/route-health"
     "TR_SYNTHETIC_BILLING_CONCURRENCY=2"
     "TR_SYNTHETIC_START_DELAY_SECONDS=$((monitor_index * 20))"
     # Short random provider/model probes feed uptime and TTFT. Sustained
@@ -168,6 +175,7 @@ done
 # has a separate Cloud Run Job so a slow 512-token stream cannot delay or
 # overlap TLS, attestation, billing, fallback, or short provider probes.
 throughput_region="us-central1"
+throughput_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${throughput_region}.run.app"
 throughput_job_name="trusted-router-throughput-${throughput_region}"
 throughput_scheduler_name="${throughput_job_name}-every-five-minutes"
 legacy_throughput_scheduler_names=(
@@ -177,6 +185,9 @@ legacy_throughput_scheduler_names=(
 throughput_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${throughput_region}"
+  "TR_SYNTHETIC_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/samples"
+  "TR_SYNTHETIC_BENCHMARK_INGEST_URL=${throughput_ingest_base}/v1/internal/synthetic/benchmark"
+  "TR_SYNTHETIC_ROUTE_HEALTH_URL=${throughput_ingest_base}/v1/internal/synthetic/route-health"
   "TR_SYNTHETIC_BILLING_CONCURRENCY=1"
   "TR_SYNTHETIC_START_DELAY_SECONDS=45"
   "TR_SYNTHETIC_ROTATION_ENABLED=false"
@@ -230,11 +241,13 @@ done
 # Image generation is materially more expensive than text PONG probes. Keep it
 # isolated and run one canonical end-to-end request every six hours.
 image_region="us-central1"
+image_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${image_region}.run.app"
 image_job_name="trusted-router-image-generation-${image_region}"
 image_scheduler_name="${image_job_name}-every-six-hours"
 image_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${image_region}"
+  "TR_SYNTHETIC_INGEST_URL=${image_ingest_base}/v1/internal/synthetic/samples"
   "TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"
   "TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"
   "TR_SYNTHETIC_IMAGE_TIMEOUT_SECONDS=120"

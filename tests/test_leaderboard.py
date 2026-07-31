@@ -141,6 +141,24 @@ def test_failed_partial_stream_counts_once_against_first_token_deadline() -> Non
     assert model["availability_within_deadline"] == 0.5
 
 
+def test_success_without_ttft_is_not_counted_as_missed_deadline() -> None:
+    samples = [
+        _sample(provider="p", model="p/model", ttft=100),
+        _sample(
+            provider="p",
+            model="p/model",
+            ttft=None,
+            created_at="2026-06-04T00:00:01Z",
+        ),
+    ]
+
+    model = aggregate_leaderboard(samples)["models"][0]
+
+    assert model["provider_availability"] == 1
+    assert model["deadline_sample_count"] == 1
+    assert model["availability_within_deadline"] == 1
+
+
 def test_models_sorted_fastest_first_unmeasured_last() -> None:
     samples = [
         _sample(provider="slow", model="slow/m", ttft=500),
