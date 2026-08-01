@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -18,10 +19,33 @@ from trusted_router.synthetic.probes import (
     video_generation_probe,
 )
 from trusted_router.synthetic.route_health import report_video_generation_failures
+from trusted_router.synthetic.video_generation import (
+    DAILY_VIDEO_PROFILES,
+    DailyVideoProfile,
+    daily_video_profile,
+)
 
 
 def _mp4() -> bytes:
     return b"\x00\x00\x00\x18ftypisom" + (b"\x00" * 2048)
+
+
+def test_daily_video_profiles_rotate_all_direct_providers_at_minimum_cost() -> None:
+    assert len(DAILY_VIDEO_PROFILES) == 7
+    assert len({profile.provider for profile in DAILY_VIDEO_PROFILES}) == 7
+    assert [daily_video_profile(date(2026, 8, day)).provider for day in range(3, 10)] == [
+        "grok",
+        "runway",
+        "alibaba",
+        "kling",
+        "ltx",
+        "google-ai-studio",
+        "minimax",
+    ]
+    assert sum(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) == (
+        2_499_276
+    )
+    assert max(profile.expected_cost_microdollars for profile in DAILY_VIDEO_PROFILES) <= 672_000
 
 
 @pytest.mark.asyncio
@@ -53,10 +77,7 @@ async def test_video_probe_generates_once_validates_media_and_keeps_only_metadat
                     "usage": {"cost_microdollars": 60_000},
                 },
             )
-        if (
-            request.method == "GET"
-            and request.url.path == "/v1/videos/job-video-synthetic/content"
-        ):
+        if request.method == "GET" and request.url.path == "/v1/videos/job-video-synthetic/content":
             return httpx.Response(200, content=_mp4(), headers={"content-type": "video/mp4"})
         return httpx.Response(404)
 
@@ -200,6 +221,17 @@ async def test_daily_video_job_ingests_one_metadata_only_sample(
         return real_async_client(transport=transport, **kwargs)
 
     monkeypatch.setattr(video_job, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        video_job,
+        "daily_video_profile",
+        lambda _day: DailyVideoProfile(
+            VIDEO_GENERATION_MODEL,
+            VIDEO_GENERATION_PROVIDER,
+            VIDEO_GENERATION_DURATION_SECONDS,
+            VIDEO_GENERATION_RESOLUTION,
+            60_000,
+        ),
+    )
     monkeypatch.setattr(video_job.httpx, "AsyncClient", client_factory)
     monkeypatch.setenv(
         "TR_SYNTHETIC_INGEST_URL",
@@ -256,17 +288,20 @@ def test_video_failure_alert_is_grouped_and_content_free(
     ]
 
 
-def test_video_synthetic_deploy_is_one_minimal_generation_per_day() -> None:
+def test_video_synthetic_deploy_is_one_rotating_generation_per_day() -> None:
     script = Path(__file__).resolve().parents[1] / "scripts/deploy/synthetic.sh"
     body = script.read_text()
     section = body.split("daily video-generation Cloud Run job", maxsplit=1)[1]
 
     assert 'video_scheduler_name="${video_job_name}-daily"' in body
-    assert '"TR_SYNTHETIC_VIDEO_MODEL=x-ai/grok-imagine-video"' in body
-    assert '"TR_SYNTHETIC_VIDEO_PROVIDER=grok"' in body
-    assert '"TR_SYNTHETIC_VIDEO_DURATION_SECONDS=1"' in body
-    assert '"TR_SYNTHETIC_VIDEO_RESOLUTION=480p"' in body
+    assert "rotate through seven providers weekly" in body
+    assert "TR_SYNTHETIC_VIDEO_MODEL=" not in section
+    assert "TR_SYNTHETIC_VIDEO_PROVIDER=" not in section
+    assert "TR_SYNTHETIC_VIDEO_DURATION_SECONDS=" not in section
+    assert "TR_SYNTHETIC_VIDEO_RESOLUTION=" not in section
+    assert '"TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS=900"' in body
     assert '--args="-m,trusted_router.synthetic.video_generation"' in section
     assert "--max-retries 0" in section
+    assert "--task-timeout 1200s" in section
     assert '"41 9 * * *"' in section
     assert "*/" not in section.split('"41 9 * * *"', maxsplit=1)[0]

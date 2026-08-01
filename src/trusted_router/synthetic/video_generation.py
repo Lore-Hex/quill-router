@@ -4,19 +4,49 @@ import asyncio
 import json
 import os
 import sys
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 
 import httpx
 
 from trusted_router.config import get_settings
 from trusted_router.synthetic.probes import (
-    VIDEO_GENERATION_DURATION_SECONDS,
-    VIDEO_GENERATION_MODEL,
-    VIDEO_GENERATION_PROVIDER,
-    VIDEO_GENERATION_RESOLUTION,
     SyntheticTarget,
     video_generation_probe,
 )
+
+
+@dataclass(frozen=True)
+class DailyVideoProfile:
+    model: str
+    provider: str
+    duration_seconds: int
+    resolution: str
+    expected_cost_microdollars: int
+
+
+# One shortest-valid direct generation per UTC day. The order is deliberately
+# stable so retries select the same provider and every route is exercised once
+# per week without multiplying the number of paid generations.
+DAILY_VIDEO_PROFILES: tuple[DailyVideoProfile, ...] = (
+    DailyVideoProfile("x-ai/grok-imagine-video", "grok", 1, "480p", 60_000),
+    DailyVideoProfile("runway/gen-4.5", "runway", 2, "720p", 288_000),
+    DailyVideoProfile("alibaba/wan-2.7", "alibaba", 2, "720p", 240_000),
+    DailyVideoProfile("kling/v3-pro", "kling", 3, "720p", 327_276),
+    DailyVideoProfile("lightricks/ltx-2.3-fast", "ltx", 6, "1080p", 432_000),
+    DailyVideoProfile(
+        "google/veo-3.1-fast",
+        "google-ai-studio",
+        4,
+        "720p",
+        480_000,
+    ),
+    DailyVideoProfile("minimax/hailuo-3", "minimax", 4, "2K", 672_000),
+)
+
+
+def daily_video_profile(day: date) -> DailyVideoProfile:
+    return DAILY_VIDEO_PROFILES[day.weekday()]
 
 
 async def run() -> int:
@@ -31,19 +61,21 @@ async def run() -> int:
         return 2
 
     monitor_region = os.environ.get("TR_SYNTHETIC_MONITOR_REGION", "us-central1")
-    model = os.environ.get("TR_SYNTHETIC_VIDEO_MODEL", VIDEO_GENERATION_MODEL)
-    provider = os.environ.get("TR_SYNTHETIC_VIDEO_PROVIDER", VIDEO_GENERATION_PROVIDER)
+    run_day = datetime.now(UTC).date()
+    profile = daily_video_profile(run_day)
+    model = os.environ.get("TR_SYNTHETIC_VIDEO_MODEL", profile.model)
+    provider = os.environ.get("TR_SYNTHETIC_VIDEO_PROVIDER", profile.provider)
     duration_seconds = max(
         1,
         int(
             os.environ.get(
                 "TR_SYNTHETIC_VIDEO_DURATION_SECONDS",
-                str(VIDEO_GENERATION_DURATION_SECONDS),
+                str(profile.duration_seconds),
             )
         ),
     )
-    resolution = os.environ.get("TR_SYNTHETIC_VIDEO_RESOLUTION", VIDEO_GENERATION_RESOLUTION)
-    timeout_seconds = float(os.environ.get("TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS", "300"))
+    resolution = os.environ.get("TR_SYNTHETIC_VIDEO_RESOLUTION", profile.resolution)
+    timeout_seconds = float(os.environ.get("TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS", "900"))
     poll_interval_seconds = max(
         0.0,
         float(os.environ.get("TR_SYNTHETIC_VIDEO_POLL_INTERVAL_SECONDS", "5")),
@@ -60,7 +92,7 @@ async def run() -> int:
         "TR_SYNTHETIC_VIDEO_IDEMPOTENCY_PREFIX",
         "trustedrouter-daily-video",
     )
-    idempotency_key = f"{idempotency_prefix}-{datetime.now(UTC):%Y-%m-%d}"
+    idempotency_key = f"{idempotency_prefix}-{run_day:%Y-%m-%d}"
     target = SyntheticTarget("canonical", settings.api_base_url, settings.primary_region)
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
@@ -92,6 +124,7 @@ async def run() -> int:
                 "error_type": sample.error_type,
                 "model": sample.model,
                 "provider": sample.selected_provider or sample.provider,
+                "expected_cost_microdollars": profile.expected_cost_microdollars,
                 "generation_id": sample.generation_id,
                 "cost_microdollars": sample.cost_microdollars,
                 "ingest_status": response.status_code,

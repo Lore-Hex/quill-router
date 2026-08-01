@@ -276,10 +276,11 @@ upsert_scheduler \
   "$image_region" \
   "17 */6 * * *"
 
-# Video generation is the most expensive synthetic. Run exactly one minimal
-# 1-second, 480p, no-audio direct xAI job per day. At the launch quote this is
-# $0.06/day including TrustedRouter's 20% fee ($1.80 per 30-day month).
-# max-retries=0 plus a date-scoped idempotency key prevents duplicate billing.
+# Video generation is the most expensive synthetic. Run exactly one shortest-
+# valid direct generation per day and rotate through seven providers weekly.
+# The current seven-day total is $2.499276 including TrustedRouter's 20% fee,
+# or about $10.71 per 30 days. max-retries=0 plus a date-scoped idempotency key
+# prevents duplicate billing.
 video_region="us-central1"
 video_ingest_base="https://${SERVICE}-${PROJECT_NUMBER}.${video_region}.run.app"
 video_job_name="trusted-router-video-generation-${video_region}"
@@ -288,11 +289,7 @@ video_env_vars=(
   "${BASE_ENV_VARS[@]}"
   "TR_SYNTHETIC_MONITOR_REGION=${video_region}"
   "TR_SYNTHETIC_INGEST_URL=${video_ingest_base}/v1/internal/synthetic/samples"
-  "TR_SYNTHETIC_VIDEO_MODEL=x-ai/grok-imagine-video"
-  "TR_SYNTHETIC_VIDEO_PROVIDER=grok"
-  "TR_SYNTHETIC_VIDEO_DURATION_SECONDS=1"
-  "TR_SYNTHETIC_VIDEO_RESOLUTION=480p"
-  "TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS=300"
+  "TR_SYNTHETIC_VIDEO_TIMEOUT_SECONDS=900"
   "TR_SYNTHETIC_VIDEO_POLL_INTERVAL_SECONDS=5"
 )
 video_set_env_vars="$(IFS='|'; echo "^|^${video_env_vars[*]}")"
@@ -307,7 +304,7 @@ gc run jobs deploy "$video_job_name" \
   --set-env-vars "$video_set_env_vars" \
   --update-secrets "$UPDATE_SECRETS" \
   --max-retries 0 \
-  --task-timeout 600s \
+  --task-timeout 1200s \
   --cpu 1 \
   --memory 512Mi \
   --quiet >/dev/null
