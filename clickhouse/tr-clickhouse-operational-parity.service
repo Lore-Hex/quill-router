@@ -10,6 +10,7 @@ WorkingDirectory=/opt/tr-clickhouse
 Environment=PYTHONPATH=/opt/tr-clickhouse/src
 EnvironmentFile=/etc/tr-clickhouse-ingest.env
 ExecStart=/opt/tr-clickhouse/venv/bin/python -m clickhouse.verify_operational_parity
+TimeoutStartSec=5m
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true

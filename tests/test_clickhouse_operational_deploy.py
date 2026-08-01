@@ -88,6 +88,13 @@ def test_cutover_requires_soak_logs_queue_replica_and_positive_parity() -> None:
     assert "TR_ANALYTICS_READ_MODE=clickhouse" in script
 
 
+def test_operational_parity_worker_has_a_bounded_runtime() -> None:
+    service = (
+        ROOT / "clickhouse/tr-clickhouse-operational-parity.service"
+    ).read_text()
+    assert "TimeoutStartSec=5m" in service
+
+
 def test_capacity_probe_is_disposable_and_uses_a_conservative_gate() -> None:
     script = (ROOT / "scripts/deploy/clickhouse_capacity_smoke.sh").read_text()
     assert "trap cleanup EXIT" in script
