@@ -164,6 +164,28 @@ def test_status_host_does_not_receive_attribution_cookie(client: TestClient) -> 
 
 
 @pytest.mark.parametrize(
+    "path",
+    [
+        "/leaderboard",
+        "/leaderboard/video",
+        "/leaderboard/video.json",
+        "/status",
+        "/status.json",
+        "/status/history?window=24h&format=json",
+    ],
+)
+def test_public_analytics_pages_are_cookie_free_for_shared_edge_cache(
+    client: TestClient,
+    path: str,
+) -> None:
+    response = client.get(path, headers={"host": "trustedrouter.com"})
+
+    assert response.status_code == 200
+    assert ATTRIBUTION_COOKIE_NAME not in response.headers.get("set-cookie", "")
+    assert "public" in response.headers.get("cache-control", "")
+
+
+@pytest.mark.parametrize(
     ("header", "value"),
     [
         ("purpose", "prefetch"),

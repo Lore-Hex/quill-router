@@ -81,6 +81,16 @@ STATUS_HOST_EXACT_PATHS = frozenset(
     }
 )
 STATUS_HOST_PATH_PREFIXES = ("/static/", "/status/")
+COOKIE_FREE_PUBLIC_ANALYTICS_PATHS = frozenset(
+    {
+        "/leaderboard",
+        "/leaderboard/video",
+        "/leaderboard/video.json",
+        "/status",
+        "/status.json",
+        "/status/history",
+    }
+)
 
 
 def register_http_middleware(app: FastAPI, settings: Settings) -> None:
@@ -152,9 +162,12 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        if is_status_hostname(settings, request_hostname(request)):
-            # Status is operational infrastructure, not an acquisition page.
-            # Keeping it cookie-free also lets Cloud CDN cache it safely.
+        if is_status_hostname(
+            settings, request_hostname(request)
+        ) or _cookie_free_public_analytics_path(request.url.path):
+            # Public operational analytics are not acquisition pages. Keeping
+            # them cookie-free also lets Cloud CDN cache one shared response
+            # instead of forcing an origin request for every anonymous viewer.
             request.state.acquisition_attribution = None
             attribution, attribution_changed = None, False
         else:
@@ -289,6 +302,10 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
 
 def _status_host_path(path: str) -> bool:
     return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
+
+
+def _cookie_free_public_analytics_path(path: str) -> bool:
+    return path in COOKIE_FREE_PUBLIC_ANALYTICS_PATHS
 
 
 def _apex_public_url(settings: Settings, request: Request, hostname: str) -> str:
