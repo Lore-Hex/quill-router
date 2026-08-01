@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from trusted_router.auth import ManagementPrincipal, SettingsDep, principal_from_request
+from trusted_router.config import Settings
+from trusted_router.domains import request_control_origin
 from trusted_router.errors import api_error, deprecated
 from trusted_router.money import money_pair
 from trusted_router.routes.helpers import json_body
@@ -52,6 +54,7 @@ def register_billing_routes(router: APIRouter) -> None:
 
     @router.post("/billing/checkout")
     async def billing_checkout(
+        request: Request,
         body: CheckoutRequest,
         principal: ManagementPrincipal,
         settings: SettingsDep,
@@ -59,6 +62,7 @@ def register_billing_routes(router: APIRouter) -> None:
         workspace_id = body.workspace_id or principal.workspace.id
         if workspace_id != principal.workspace.id:
             raise api_error(403, "Forbidden", ErrorType.FORBIDDEN)
+        body = _checkout_body_with_first_party_returns(body, request, settings)
         account = STORE.get_credit_account(workspace_id)
         return JSONResponse(
             {
@@ -176,13 +180,14 @@ def register_billing_routes(router: APIRouter) -> None:
         settings: SettingsDep,
     ) -> dict[str, dict[str, str]]:
         body = await json_body(request)
-        return_url = str(body.get("return_url") or f"https://{settings.trusted_domain}/billing")
+        return_url = str(body.get("return_url") or f"{request_control_origin(request, settings)}/billing")
         account = STORE.get_credit_account(principal.workspace.id)
         customer_id = account.stripe_customer_id if account else None
         return {"data": create_billing_portal_session(customer_id=customer_id, return_url=return_url, settings=settings)}
 
     @router.post("/billing/payment-methods/setup")
     async def billing_payment_method_setup(
+        request: Request,
         principal: ManagementPrincipal,
         settings: SettingsDep,
     ) -> JSONResponse:
@@ -193,8 +198,14 @@ def register_billing_routes(router: APIRouter) -> None:
                     workspace_id=principal.workspace.id,
                     customer_email=_checkout_customer_email(principal),
                     customer_id=account.stripe_customer_id if account else None,
-                    success_url=f"https://{settings.trusted_domain}/billing/payment-methods/success",
-                    cancel_url=f"https://{settings.trusted_domain}/billing/payment-methods",
+                    success_url=(
+                        f"{request_control_origin(request, settings)}"
+                        "/billing/payment-methods/success"
+                    ),
+                    cancel_url=(
+                        f"{request_control_origin(request, settings)}"
+                        "/billing/payment-methods"
+                    ),
                     settings=settings,
                 )
             },
@@ -214,6 +225,26 @@ def _checkout_customer_email(principal: Any) -> str | None:
         if user is not None and user.email and "@" in user.email:
             return user.email
     return None
+
+
+def _checkout_body_with_first_party_returns(
+    body: CheckoutRequest,
+    request: Request,
+    settings: Settings,
+) -> CheckoutRequest:
+    origin = request_control_origin(request, settings)
+    if body.payment_method == "paypal":
+        default_success = f"{origin}/billing/paypal/success"
+        default_cancel = f"{origin}/billing/paypal/cancel"
+    else:
+        default_success = f"{origin}/billing/success"
+        default_cancel = f"{origin}/billing"
+    return body.model_copy(
+        update={
+            "success_url": body.success_url or default_success,
+            "cancel_url": body.cancel_url or default_cancel,
+        }
+    )
 
 
 def _validated_x402_body(model: Any, body: dict[str, Any]) -> Any:

@@ -21,5 +21,5 @@ def register(app: FastAPI) -> None:
             page_subtitle="Account and sign-in.",
             provider=ctx.session.provider,
             environment=settings.environment,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))

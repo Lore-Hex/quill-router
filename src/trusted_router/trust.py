@@ -5,6 +5,10 @@ import json
 from typing import Any
 
 from trusted_router.config import Settings
+from trusted_router.domains import (
+    api_base_url_for_domain,
+    configured_control_domains,
+)
 
 ATTESTED_GATEWAY_REPO = "https://github.com/Lore-Hex/quill-cloud-proxy"
 CLOUD_INFRA_REPO = "https://github.com/Lore-Hex/quill-cloud-infra"
@@ -15,6 +19,7 @@ JAVASCRIPT_SDK_REPO = "https://github.com/Lore-Hex/trusted-router-js"
 
 
 def gcp_release(settings: Settings) -> dict[str, Any]:
+    api_hostnames = [f"api.{domain}" for domain in configured_control_domains(settings)]
     return {
         "platform": "gcp-confidential-space",
         "source_repo": ATTESTED_GATEWAY_REPO,
@@ -32,9 +37,14 @@ def gcp_release(settings: Settings) -> dict[str, Any]:
         "attestation_issuer": "https://confidentialcomputing.googleapis.com",
         "attestation_audience": "quill-cloud",
         "api_base_url": settings.api_base_url,
+        "api_base_urls": [
+            api_base_url_for_domain(settings, domain)
+            for domain in configured_control_domains(settings)
+        ],
         "tls": {
             "mode": "acme-inside-confidential-space",
             "hostname": "api.trustedrouter.com",
+            "hostnames": api_hostnames,
         },
         "data_policy": {
             "prompt_output_storage": False,
@@ -47,12 +57,21 @@ def gcp_release_json(settings: Settings) -> str:
     return json.dumps(gcp_release(settings), indent=2, sort_keys=True) + "\n"
 
 
-def trust_html(settings: Settings) -> str:
+def trust_html(
+    settings: Settings,
+    *,
+    public_domain: str | None = None,
+    api_base_url: str | None = None,
+) -> str:
     release = gcp_release(settings)
     digest = html.escape(str(release["image_digest"]))
     image = html.escape(str(release["image_reference"]))
     source = html.escape(str(release["source_commit"]))
-    api = html.escape(settings.api_base_url)
+    domain = public_domain or settings.trusted_domain
+    resolved_api_base_url = api_base_url or api_base_url_for_domain(settings, domain)
+    api = html.escape(resolved_api_base_url)
+    api_hostname = html.escape(resolved_api_base_url.removeprefix("https://").split("/", 1)[0])
+    control_origin = html.escape(f"https://{domain}")
     control_repo = html.escape(CONTROL_PLANE_REPO)
     gateway_repo = html.escape(ATTESTED_GATEWAY_REPO)
     infra_repo = html.escape(CLOUD_INFRA_REPO)
@@ -112,8 +131,8 @@ def trust_html(settings: Settings) -> str:
 <body>
   <header>
     <nav>
-      <a class="brand" href="https://trustedrouter.com"><span class="mark">TR</span><span>TrustedRouter</span></a>
-      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="{quill_repo}">Quill repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{api}">API</a><a href="https://trustedrouter.com">Console</a></div>
+      <a class="brand" href="{control_origin}"><span class="mark">TR</span><span>TrustedRouter</span></a>
+      <div class="links"><a href="{control_repo}">Control repo</a><a href="{gateway_repo}">Gateway repo</a><a href="{infra_repo}">Infra repo</a><a href="{quill_repo}">Quill repo</a><a href="/trust/gcp-release.json">gcp-release.json</a><a href="{api}">API</a><a href="{control_origin}">Console</a></div>
     </nav>
   </header>
   <main class="wrap">
@@ -121,7 +140,7 @@ def trust_html(settings: Settings) -> str:
       <div class="panel">
         <p class="status"><span class="dot"></span>Trust boundary</p>
         <h1>Verify that the hosted API runs the published open-source workload.</h1>
-        <p><code>api.trustedrouter.com</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
+        <p><code>{api_hostname}</code> is the prompt path. Public TLS terminates inside the measured GCP Confidential Space workload. The TrustedRouter control plane does not serve production inference routes and does not receive prompt or output bodies.</p>
         <p>Clients can fetch the live attestation, verify issuer/audience/digest, and compare the measured image digest with the release data published here.</p>
       </div>
       <aside class="panel">
@@ -139,7 +158,7 @@ def trust_html(settings: Settings) -> str:
       <div class="panel">
         <h2>Client Verification</h2>
         <ul class="checks">
-          <li><span class="check">OK</span><span>Fetch <code>https://api.trustedrouter.com/attestation</code> over normal public TLS.</span></li>
+          <li><span class="check">OK</span><span>Fetch <code>https://{api_hostname}/attestation</code> over normal public TLS.</span></li>
           <li><span class="check">OK</span><span>Verify the JWT issuer is <code>https://confidentialcomputing.googleapis.com</code>.</span></li>
           <li><span class="check">OK</span><span>Verify the audience is <code>quill-cloud</code>.</span></li>
           <li><span class="check">OK</span><span>Compare the attested image digest with this page.</span></li>
@@ -154,7 +173,7 @@ def trust_html(settings: Settings) -> str:
       </div>
       <div class="panel warn">
         <h2>DNS Requirement</h2>
-        <p><code>api.trustedrouter.com</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
+        <p><code>{api_hostname}</code> must remain DNS-only or TCP-passthrough. TLS termination by a CDN would break the hosted-code trust claim because the prompt path certificate key must remain inside the measured workload.</p>
       </div>
     </section>
     <section class="grid">

@@ -37,7 +37,7 @@ def register(app: FastAPI) -> None:
             page_title="BYOK",
             page_subtitle="Bring your own provider keys.",
             providers=providers,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
 
     @app.post("/console/byok")

@@ -17,8 +17,9 @@ from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
 
-from trusted_router.auth import SESSION_COOKIE_NAME
+from trusted_router.auth import SESSION_COOKIE_NAME, SettingsDep
 from trusted_router.config import Settings
+from trusted_router.domains import request_api_base_url
 from trusted_router.money import format_money_display
 from trusted_router.storage import (
     STORE,
@@ -38,9 +39,10 @@ class ConsoleContext:
     session: AuthSession
     workspace: Workspace
     workspaces: list[Workspace]
+    api_base_url: str
 
 
-def require_console_context(request: Request) -> ConsoleContext:
+def require_console_context(request: Request, settings: SettingsDep) -> ConsoleContext:
     """FastAPI dependency. Resolves the active console session or raises a
     302 redirect to the marketing page so it can pop the sign-in modal."""
     cookie_token = request.cookies.get(SESSION_COOKIE_NAME)
@@ -54,7 +56,13 @@ def require_console_context(request: Request) -> ConsoleContext:
     if not workspaces:
         raise HTTPException(status_code=302, headers={"Location": "/?reason=signin"})
     workspace = _selected_console_workspace(session, workspaces)
-    return ConsoleContext(user=user, session=session, workspace=workspace, workspaces=workspaces)
+    return ConsoleContext(
+        user=user,
+        session=session,
+        workspace=workspace,
+        workspaces=workspaces,
+        api_base_url=request_api_base_url(request, settings),
+    )
 
 
 ConsoleDep = Annotated[ConsoleContext, Depends(require_console_context)]

@@ -26,6 +26,7 @@ from trusted_router.auth import (
     SettingsDep,
     set_session_cookie,
 )
+from trusted_router.domains import request_control_domain
 from trusted_router.errors import api_error
 from trusted_router.services.email import build_verification_email, get_email_service
 from trusted_router.storage import STORE
@@ -56,12 +57,18 @@ class WalletVerifyRequest(BaseModel):
 def register_wallet_oauth_routes(router: APIRouter) -> None:
     @router.post("/auth/wallet/challenge")
     async def wallet_challenge(
+        request: Request,
         body: WalletChallengeRequest,
         settings: SettingsDep,
     ) -> JSONResponse:
         if not ADDRESS_RE.match(body.address):
             raise api_error(400, "Invalid Ethereum address", ErrorType.BAD_REQUEST)
-        domain = settings.siwe_domain or settings.trusted_domain
+        request_domain = request_control_domain(request, settings)
+        domain = (
+            settings.siwe_domain
+            if request_domain == settings.trusted_domain and settings.siwe_domain
+            else request_domain
+        )
         nonce = secrets.token_urlsafe(32)
         message, _ = build_siwe_message(
             domain=domain,

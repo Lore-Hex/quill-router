@@ -1317,13 +1317,18 @@ def _static_version(settings: Settings) -> str:
         return "local"
 
 
-def dashboard_html(settings: Settings) -> str:
+def dashboard_html(
+    settings: Settings,
+    *,
+    api_base_url: str | None = None,
+) -> str:
     domain = settings.trusted_domain
+    resolved_api_base_url = api_base_url or settings.api_base_url
     environment = settings.environment.lower()
     tr_config = {
         "environment": environment,
         "defaultDevUser": "" if environment == "production" else DEV_USER_FALLBACK,
-        "apiBaseUrl": settings.api_base_url,
+        "apiBaseUrl": resolved_api_base_url,
         "stablecoinCheckoutEnabled": settings.stablecoin_checkout_enabled,
         "paypalEnabled": settings.paypal_enabled,
         "googleEnabled": settings.google_oauth_enabled,
@@ -1335,7 +1340,7 @@ def dashboard_html(settings: Settings) -> str:
         _env()
         .get_template("dashboard.html")
         .render(
-            api_base_url=settings.api_base_url,
+            api_base_url=resolved_api_base_url,
             site_url=f"https://{domain}/",
             og_image=f"https://{domain}/og.png",
             og_title=OG_TITLE,

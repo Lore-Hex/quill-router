@@ -62,7 +62,7 @@ def register(app: FastAPI) -> None:
             created_key=created_key,
             flash=flash,
             suggested=suggested,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
 
     @app.get("/console/api-keys")

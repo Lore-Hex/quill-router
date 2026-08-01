@@ -88,6 +88,15 @@ from trusted_router.dashboard import (
     soc2_readiness_json,
     subprocessors_json,
 )
+from trusted_router.domains import (
+    control_domain_for_hostname,
+    is_status_hostname,
+    is_trust_hostname,
+    request_api_base_url,
+    request_control_domain,
+    request_hostname,
+    status_hostname_for_domain,
+)
 from trusted_router.og import OG_PNG_PATH
 from trusted_router.provider_contract import (
     PROVIDER_CATALOG_SCHEMA,
@@ -408,11 +417,16 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
 
     @public_html_route("/", include_slash=False)
     async def dashboard(request: Request, background_tasks: BackgroundTasks) -> Any:
-        host = request.headers.get("host", "")
-        hostname = host.split(":", 1)[0].lower()
-        if hostname == "trust.trustedrouter.com":
-            return trust_html(settings)
-        if hostname == "status.trustedrouter.com":
+        hostname = request_hostname(request)
+        domain = request_control_domain(request, settings)
+        api_base_url = request_api_base_url(request, settings)
+        if is_trust_hostname(settings, hostname):
+            return trust_html(
+                settings,
+                public_domain=domain,
+                api_base_url=api_base_url,
+            )
+        if is_status_hostname(settings, hostname):
             return _cached_status_page_response(
                 settings,
                 host=hostname,
@@ -420,11 +434,15 @@ def register_public_routes(app: FastAPI, settings: Settings) -> None:
             )
         if hostname == "eu.trustedrouter.com":
             return public_page_html(settings, "eu", site_url="https://eu.trustedrouter.com/")
-        return dashboard_html(settings)
+        return dashboard_html(settings, api_base_url=api_base_url)
 
     @public_html_route("/trust")
-    async def trust_page() -> str:
-        return trust_html(settings)
+    async def trust_page(request: Request) -> str:
+        return trust_html(
+            settings,
+            public_domain=request_control_domain(request, settings),
+            api_base_url=request_api_base_url(request, settings),
+        )
 
     @public_html_route("/compare/openrouter")
     async def compare_openrouter() -> str:
@@ -1240,9 +1258,9 @@ def _cached_status_page_response(
 
 
 def _status_render_host(settings: Settings, host: str) -> str:
-    """Collapse arbitrary Host headers to the two rendered page variants."""
+    """Collapse arbitrary Host headers to configured status/apex variants."""
     hostname = host.partition(":")[0].strip().lower()
-    if hostname == "status.trustedrouter.com":
+    if is_status_hostname(settings, hostname):
         return hostname
     return settings.trusted_domain
 
@@ -1407,9 +1425,11 @@ def _status_history_page_html(
     history: dict[str, Any],
 ) -> str:
     hostname = host.split(":", 1)[0].lower()
+    domain = control_domain_for_hostname(settings, hostname)
+    status_hostname = status_hostname_for_domain(domain)
     site_url = (
-        f"https://status.trustedrouter.com/status/history?window={window}"
-        if hostname == "status.trustedrouter.com"
+        f"https://{status_hostname}/status/history?window={window}"
+        if is_status_hostname(settings, hostname)
         else f"https://{settings.trusted_domain}/status/history?window={window}"
     )
     title = {
@@ -1669,9 +1689,10 @@ def _dates_covering_recent_hours(*, hours: int) -> list[str]:
 
 def _status_page_html(settings: Settings, *, host: str) -> str:
     hostname = host.split(":", 1)[0].lower()
+    domain = control_domain_for_hostname(settings, hostname)
     site_url = (
-        "https://status.trustedrouter.com/"
-        if hostname == "status.trustedrouter.com"
+        f"https://{status_hostname_for_domain(domain)}/"
+        if is_status_hostname(settings, hostname)
         else f"https://{settings.trusted_domain}/status"
     )
     snapshot = _status_snapshot(settings)
@@ -1695,7 +1716,11 @@ def _status_page_html(settings: Settings, *, host: str) -> str:
     )
     return render_template(
         "public/status.html",
-        api_base_url=settings.api_base_url,
+        api_base_url=(
+            f"https://api.{domain}/v1"
+            if domain != settings.trusted_domain
+            else settings.api_base_url
+        ),
         site_url=site_url,
         title="Status | TrustedRouter",
         heading="TrustedRouter Status",

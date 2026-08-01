@@ -91,7 +91,7 @@ def register(app: FastAPI) -> None:
             page_title="Observability",
             page_subtitle="Per-request metadata, no prompt content.",
             activity=events,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
 
     @app.get("/console/activity/usage.json")

@@ -40,7 +40,7 @@ def register(app: FastAPI) -> None:
             page_subtitle="Export generation metadata to PostHog or an OTLP webhook.",
             destinations=destinations,
             default_posthog_endpoint=POSTHOG_DEFAULT_ENDPOINT,
-            api_base_url=settings.api_base_url,
+            api_base_url=ctx.api_base_url,
         ))
 
     @app.post("/console/broadcast")

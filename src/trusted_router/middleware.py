@@ -43,6 +43,12 @@ from trusted_router.acquisition import (
 )
 from trusted_router.auth import get_authorization_bearer
 from trusted_router.config import Settings
+from trusted_router.domains import (
+    control_domain_for_hostname,
+    is_status_hostname,
+    is_www_hostname,
+    request_hostname,
+)
 from trusted_router.errors import error_response
 from trusted_router.storage import STORE
 from trusted_router.storage_models import RateLimitHit
@@ -127,16 +133,16 @@ def register_http_middleware(app: FastAPI, settings: Settings) -> None:
         Redirecting those escaped paths prevents duplicate pages and
         status-host 404s without changing the status API or static assets.
         """
-        hostname = request.headers.get("host", "").split(":", 1)[0].lower()
+        hostname = request_hostname(request)
         path = request.url.path
-        if hostname == f"www.{settings.trusted_domain}":
+        if is_www_hostname(settings, hostname):
             return RedirectResponse(
-                url=_canonical_public_url(settings, request),
+                url=_apex_public_url(settings, request, hostname),
                 status_code=308,
             )
-        if hostname == f"status.{settings.trusted_domain}" and not _status_host_path(path):
+        if is_status_hostname(settings, hostname) and not _status_host_path(path):
             return RedirectResponse(
-                url=_canonical_public_url(settings, request),
+                url=_apex_public_url(settings, request, hostname),
                 status_code=308,
             )
         return await call_next(request)
@@ -279,10 +285,11 @@ def _status_host_path(path: str) -> bool:
     return path in STATUS_HOST_EXACT_PATHS or path.startswith(STATUS_HOST_PATH_PREFIXES)
 
 
-def _canonical_public_url(settings: Settings, request: Request) -> str:
+def _apex_public_url(settings: Settings, request: Request, hostname: str) -> str:
     query = request.url.query
     suffix = f"?{query}" if query else ""
-    return f"https://{settings.trusted_domain}{request.url.path}{suffix}"
+    domain = control_domain_for_hostname(settings, hostname)
+    return f"https://{domain}{request.url.path}{suffix}"
 
 
 def _rate_limit_request(
