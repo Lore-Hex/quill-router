@@ -7,8 +7,8 @@ HTTP middleware registers in order from outermost to innermost:
   3. public_pageview — captures signed first-party attribution and emits
                        metadata-only public pageview events.
   4. rate_limit  — enforces process-local limits for anonymous safe reads and
-                   shared per-(key|ip|internal-token) limits for other traffic;
-                   logs structured 429s with the request_id from (1).
+                   internal traffic, plus shared per-(key|ip) limits for other
+                   traffic; logs structured 429s with the request_id from (1).
   5. security_headers — sets HSTS so browsers remember to skip http://
                         on subsequent visits.
 
@@ -319,8 +319,8 @@ def _rate_limit_request(
     # Public catalog and marketing reads are cacheable. A durable
     # read-modify-write counter here turns one crawler into a single-row
     # Spanner hotspot before the application can return the page. Use a
-    # process-local guard for safe anonymous reads; authenticated, internal,
-    # and state-changing requests remain on the shared application limiter.
+    # process-local guard for safe anonymous reads; authenticated and
+    # state-changing requests remain on the shared application limiter.
     public_read = (
         request.method.upper() in {"GET", "HEAD", "OPTIONS"}
         and not bearer
@@ -337,7 +337,12 @@ def _rate_limit_request(
         namespace = "internal"
         subject = _fingerprint(internal_token or bearer or ip)
         limit = settings.rate_limit_internal_per_window
-        hit_rate_limit = STORE.hit_rate_limit
+        # Authenticated fleet-internal calls share one token. A globally
+        # consistent Spanner counter serialized every billing call on one row's
+        # write lock (issue #399; prod lock stats 2026-08-01). A per-instance
+        # bucket keeps the backstop off the money path; fleet capacity is limit
+        # times the number of instances.
+        hit_rate_limit = public_read_rate_limits.hit
     elif bearer:
         namespace = "key"
         subject = _fingerprint(bearer)
