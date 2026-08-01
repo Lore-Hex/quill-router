@@ -16,9 +16,11 @@ Long-term analytics uses tiers instead of retaining every hot row forever:
 
 | Tier | Retention | Purpose |
 |---|---:|---|
-| Replicated raw ClickHouse rows | 400 days | Recent investigation and exact re-aggregation |
-| Hourly ClickHouse rollups | 3 years | Detailed trends and provider operations |
-| Daily and monthly ClickHouse rollups | No TTL | Long-term product and provider analytics |
+| Provider and activity raw rows | 400 days | Recent investigation and exact re-aggregation |
+| Raw synthetic probe rows | 14 days | Fine-grained status diagnosis before compaction |
+| Synthetic status rollups | 24 months | Public reliability history |
+| Hourly provider rollups | 3 years | Detailed trends and provider operations |
+| Daily and monthly provider rollups | No TTL | Long-term product and provider analytics |
 | Verified Parquet archive in GCS | 7 years | Immutable, portable raw history and disaster recovery |
 | Persistent-disk snapshots | 30 daily snapshots | Fast node recovery |
 
@@ -62,16 +64,17 @@ explicitly reviewed cleanup.
 
 ## Durable archive
 
-`clickhouse/archive_daily.py` exports each closed UTC day from the canonical
-raw table with `FINAL`. It computes a full row-set fingerprint, writes Parquet,
-reads the Parquet back with `clickhouse-local`, and compares row count, hash
-sum, and hash XOR before publishing a manifest.
+`clickhouse/archive_daily.py` exports each closed UTC day with `FINAL` for
+provider benchmarks, tenant activity, raw synthetic probes, and synthetic
+status rollups. It computes a full row-set fingerprint, writes Parquet, reads
+the Parquet back with `clickhouse-local`, and compares row count, hash sum, and
+hash XOR before publishing a manifest.
 
 Objects are immutable and revisioned:
 
 ```text
 gs://quill-cloud-proxy-tr-clickhouse-archive/
-  raw/provider_benchmark_samples/day=YYYY-MM-DD/
+  raw/<dataset>/day=YYYY-MM-DD/
     _latest.json
     revisions/<fingerprint>/manifest.json
     revisions/<fingerprint>/part-*.parquet
@@ -80,7 +83,10 @@ gs://quill-cloud-proxy-tr-clickhouse-archive/
 A rerun with unchanged data is a no-op. Late reconciled rows produce a new
 immutable revision and atomically advance `_latest.json`. Bucket versioning,
 uniform access, and public-access prevention are enabled. The daily service
-rechecks seven closed days so late rows are captured.
+rechecks seven closed days so late rows are captured. A separate daily restore
+drill downloads every part for the previous closed day, validates object
+SHA256 values, parses each Parquet file, and must reproduce the source
+fingerprint before updating `archive-restore.json`.
 
 ## Aggregate tiers
 
@@ -109,7 +115,16 @@ scripts/deploy/clickhouse_resize_disk.sh --apply
 scripts/deploy/clickhouse_cluster.sh --apply
 scripts/deploy/clickhouse_live_ingestion.sh
 scripts/deploy/rollout.sh
+scripts/deploy/prepare_bigtable_retirement.sh --apply
+scripts/deploy/clickhouse_analytics_cutover.sh --apply
+# Wait for the second clean seven-day soak.
+scripts/deploy/retire_bigtable_runtime.sh --apply
 ```
+
+The final script deploys one region at a time, switches to
+`spanner-clickhouse` plus `clickhouse-only`, and disables Bigtable mirror
+writes. It never deletes the Bigtable instance or its data. The retained copy
+is rollback evidence until a separate, explicit deletion review.
 
 `clickhouse_cluster.sh` stages all Keeper configs before restarts, starts the
 two new voters together, migrates only after full-fingerprint parity, pauses
@@ -197,9 +212,10 @@ are the faster same-platform recovery source.
 ## Alerts and capacity
 
 Cloud Monitoring pages on node unavailability and disk use at 75 percent.
-The ClickHouse server, archive timer, rollup timers, and ingester must also be
-checked during incident response. Alert delivery uses the verified
-TrustedRouter infrastructure notification channel.
+The ClickHouse server, archive and restore timers, Spanner delivery verifier,
+rollup timers, and ingester must also be checked during incident response.
+Alert delivery uses the verified TrustedRouter infrastructure notification
+channel.
 
 At 75 percent disk use, do not merely expand forever. Measure rows per second,
 compressed bytes per row, parts, merge backlog, query latency, Keeper latency,

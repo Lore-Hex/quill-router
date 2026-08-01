@@ -119,7 +119,9 @@ def test_bigtable_and_outbox_best_effort_attempts_are_independent(
 
     # Both failures are analytics-only and may not escape to settle callers.
     generations.record_benchmark(_sample())
-    assert attempts == ["bigtable", "outbox"]
+    # The durable Spanner hand-off is authoritative. The migration-only
+    # Bigtable mirror is attempted afterward and cannot prevent the enqueue.
+    assert attempts == ["outbox", "bigtable"]
 
 
 def test_normalise_is_identical_for_backfill_and_outbox_payload() -> None:

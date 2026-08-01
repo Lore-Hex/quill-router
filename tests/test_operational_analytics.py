@@ -31,7 +31,11 @@ from trusted_router.storage_gcp_operational_analytics_outbox import (
     analytics_surrogate,
     operational_analytics_shard,
 )
-from trusted_router.storage_models import Generation, SyntheticProbeSample
+from trusted_router.storage_models import (
+    Generation,
+    ProviderBenchmarkSample,
+    SyntheticProbeSample,
+)
 from trusted_router.types import UsageType
 
 
@@ -128,6 +132,112 @@ def test_operational_outbox_enqueue_is_sharded_and_commit_timestamped() -> None:
         "event_kind": "STRING",
         "event_id": "STRING",
         "payload": "STRING",
+    }
+
+
+def test_clickhouse_balanced_benchmark_reader_uses_one_window_query() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.url.params["param_per_provider_limit"] == "25"
+        assert request.url.params["param_limit"] == "5000"
+        assert request.url.params["param_cutoff"] == "2026-07-31T00:00:00Z"
+        sql = request.content.decode()
+        assert "row_number() OVER" in sql
+        assert "PARTITION BY provider" in sql
+        assert "provider_rank <= {per_provider_limit:UInt32}" in sql
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "bench-balanced-1",
+                        "model": "anthropic/claude-haiku-4.5",
+                        "provider": "anthropic",
+                        "provider_name": "Anthropic",
+                        "status": "success",
+                        "usage_type": "Credits",
+                        "streamed": 1,
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "total_cost_microdollars": 7,
+                        "speed_tokens_per_second": 8.0,
+                        "elapsed_milliseconds": 250,
+                        "first_token_milliseconds": 100,
+                        "ttfb_milliseconds": 20,
+                        "finish_reason": "stop",
+                        "error_type": None,
+                        "error_status": None,
+                        "error_message": None,
+                        "region": "us-central1",
+                        "source": "synthetic",
+                        "app": "TrustedRouter Synthetic",
+                        "created_at": "2026-07-31 12:34:56.789",
+                    }
+                ]
+            },
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="sec" + "ret",
+        transport=httpx.MockTransport(handler),
+    )
+    rows = client.balanced_benchmark_samples(
+        cutoff="2026-07-31T00:00:00Z",
+        per_provider_limit=25,
+        limit=5000,
+    )
+
+    assert calls == 1
+    assert rows == [
+        ProviderBenchmarkSample(
+            id="bench-balanced-1",
+            model="anthropic/claude-haiku-4.5",
+            provider="anthropic",
+            provider_name="Anthropic",
+            status="success",
+            usage_type="Credits",
+            streamed=True,
+            input_tokens=10,
+            output_tokens=2,
+            total_cost_microdollars=7,
+            speed_tokens_per_second=8.0,
+            elapsed_milliseconds=250,
+            first_token_milliseconds=100,
+            ttfb_milliseconds=20,
+            finish_reason="stop",
+            region="us-central1",
+            source="synthetic",
+            app="TrustedRouter Synthetic",
+            created_at="2026-07-31T12:34:56.789Z",
+        )
+    ]
+
+
+def test_public_snapshot_reads_newest_revision_across_month_partitions() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        sql = request.content.decode()
+        assert "WHERE name = {name:String}" in sql
+        assert "ORDER BY generated_at DESC" in sql
+        assert request.url.params["param_name"] == "leaderboard"
+        return httpx.Response(
+            200,
+            json={"data": [{"payload": '{"generated_at":"2026-08-01T00:00:00Z"}'}]},
+        )
+
+    client = OperationalAnalyticsClient(
+        base_url="http://clickhouse",
+        user="reader",
+        password="sec" + "ret",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert client.public_snapshot("leaderboard") == {
+        "generated_at": "2026-08-01T00:00:00Z"
     }
 
 

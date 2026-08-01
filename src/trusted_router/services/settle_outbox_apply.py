@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 # ServiceUnavailable, plus the backend-neutral StoreConflict/StoreUnavailable.
 _TRANSIENT_STORE_EXCS = transient_store_error_types()
 
+# Rolling legacy rows can still carry this historical marker. New typed rows
+# atomically enqueue ClickHouse delivery in the settlement transaction and do
+# not park on the optional Bigtable migration mirror.
 _ACTIVITY_PARK_NOTE = "bigtable activity index pending"
 
 
@@ -88,11 +91,11 @@ def apply_frozen_settle(row: SettleOutboxRow) -> str:
 
     SF7: this dormant primitive is intentionally narrower than the HTTP settle
     handler. It must not import or call pricing, auto-refill, budget alert, or
-    metadata broadcast code. The one side effect it does fire is the
-    claim-gated, at-most-once Bigtable activity index and provider-benchmark
-    sample via index_after_commit on SETTLED_NOW, matching the inline typed path;
-    replay outcomes do not fire it. Increment 4's drain will interpret the rich
-    §3 outcome and decide row status/alerting.
+    metadata broadcast code. A new typed settlement atomically writes the
+    bounded generation record and ClickHouse delivery intent. Post-commit work
+    is limited to loss-tolerant benchmark delivery and an optional migration
+    mirror; rolling legacy rows still use index_after_commit repair. Increment
+    4's drain interprets the rich §3 outcome and decides row status/alerting.
     """
     parsed_body = _parse_settle_body(row.settle_body)
     if parsed_body is None:
@@ -254,13 +257,20 @@ def _apply_typed(
             authorization=auth_settled,
             auth_body_settled=_json_body(auth_settled),
             generation_writes=generation_writes,
+            generation=generation,
         )
     except _TRANSIENT_STORE_EXCS:
         return ApplyOutcome.PARK_TYPED_UNAVAILABLE
     outcome = result.get("outcome")
     if outcome == SettleOutcome.SETTLED:
+        # The typed transaction atomically persisted the bounded generation
+        # record and operational analytics outbox row. Bigtable is only an
+        # optional migration mirror and cannot keep settlement work pending.
         if success and generation is not None:
-            if not _index_generation_after_commit(typed_store, generation):
+            generation_store = cast(Any, typed_store).generation_store
+            if result.get("activity_durable"):
+                generation_store.mirror_after_commit(generation)
+            elif not _index_generation_after_commit(typed_store, generation):
                 return ApplyOutcome.ACTIVITY_PENDING
         return ApplyOutcome.SETTLED_NOW
     if outcome == SettleOutcome.NOT_FOUND:

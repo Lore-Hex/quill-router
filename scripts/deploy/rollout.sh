@@ -108,6 +108,61 @@ case "$REQUEST_RECORD_WRITE_MODE" in
     ;;
 esac
 
+LIVE_STORAGE_BACKEND="$(
+  gc run services describe "$SERVICE" \
+    --region="$TR_PRIMARY_REGION" \
+    --format=json 2>/dev/null \
+    | jq -r '
+        [
+          .spec.template.spec.containers[0].env[]?
+          | select(.name == "TR_STORAGE_BACKEND")
+          | .value
+        ][0] // "spanner-bigtable"
+      ' || true
+)"
+STORAGE_BACKEND="${TR_STORAGE_BACKEND:-${LIVE_STORAGE_BACKEND:-spanner-bigtable}}"
+case "$STORAGE_BACKEND" in
+  spanner-bigtable|spanner-clickhouse) ;;
+  *)
+    log "refusing rollout: TR_STORAGE_BACKEND must be spanner-bigtable or spanner-clickhouse"
+    exit 1
+    ;;
+esac
+
+LIVE_GENERATION_RECORDS_ENABLED="$(
+  gc run services describe "$SERVICE" \
+    --region="$TR_PRIMARY_REGION" \
+    --format=json 2>/dev/null \
+    | jq -r '
+        [
+          .spec.template.spec.containers[0].env[]?
+          | select(.name == "TR_GENERATION_RECORDS_ENABLED")
+          | .value
+        ][0] // empty
+      ' || true
+)"
+LIVE_BIGTABLE_MIRROR_WRITES_ENABLED="$(
+  gc run services describe "$SERVICE" \
+    --region="$TR_PRIMARY_REGION" \
+    --format=json 2>/dev/null \
+    | jq -r '
+        [
+          .spec.template.spec.containers[0].env[]?
+          | select(.name == "TR_BIGTABLE_MIRROR_WRITES_ENABLED")
+          | .value
+        ][0] // empty
+      ' || true
+)"
+GENERATION_RECORDS_ENABLED="${TR_GENERATION_RECORDS_ENABLED:-${LIVE_GENERATION_RECORDS_ENABLED:-true}}"
+BIGTABLE_MIRROR_WRITES_ENABLED="${TR_BIGTABLE_MIRROR_WRITES_ENABLED:-${LIVE_BIGTABLE_MIRROR_WRITES_ENABLED:-true}}"
+case "$GENERATION_RECORDS_ENABLED:$BIGTABLE_MIRROR_WRITES_ENABLED" in
+  true:true|true:false|false:true|false:false) ;;
+  *)
+    log "refusing rollout: generation-record and Bigtable-mirror flags must be true or false"
+    exit 1
+    ;;
+esac
+
 LIVE_ANALYTICS_READ_MODE="$(
   gc run services describe "$SERVICE" \
     --region="$TR_PRIMARY_REGION" \
@@ -122,12 +177,34 @@ LIVE_ANALYTICS_READ_MODE="$(
 )"
 ANALYTICS_READ_MODE="${TR_ANALYTICS_READ_MODE:-$LIVE_ANALYTICS_READ_MODE}"
 case "$ANALYTICS_READ_MODE" in
-  bigtable|dual|clickhouse) ;;
+  bigtable|dual|clickhouse|clickhouse-only) ;;
   *)
-    log "refusing rollout: TR_ANALYTICS_READ_MODE must be bigtable, dual, or clickhouse"
+    log "refusing rollout: invalid TR_ANALYTICS_READ_MODE"
     exit 1
     ;;
 esac
+if [ "$STORAGE_BACKEND" = "spanner-clickhouse" ] && \
+   [ "$ANALYTICS_READ_MODE" != "clickhouse-only" ]; then
+  log "refusing rollout: spanner-clickhouse requires clickhouse-only reads"
+  exit 1
+fi
+if [ "$STORAGE_BACKEND" = "spanner-clickhouse" ] && \
+   { [ "$BIGTABLE_MIRROR_WRITES_ENABLED" != "false" ] ||
+     [ "$GENERATION_RECORDS_ENABLED" != "true" ] ||
+     [ "$REQUEST_RECORD_WRITE_MODE" != "typed" ]; }; then
+  log "refusing rollout: spanner-clickhouse requires typed generation records and no Bigtable mirror"
+  exit 1
+fi
+if [ "$GENERATION_RECORDS_ENABLED" = "true" ]; then
+  generation_table_count="$(gc spanner databases execute-sql "$SPANNER_DATABASE_ID" \
+    --instance="$SPANNER_INSTANCE_ID" \
+    --sql="SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_name='tr_generation'" \
+    --format='value(rows[0])')"
+  if [ "${generation_table_count:-0}" != "1" ]; then
+    log "refusing rollout: tr_generation is missing; run migrate_generation_records.sh --apply"
+    exit 1
+  fi
+fi
 
 ANALYTICS_DUAL_READ_STARTED_AT="${TR_ANALYTICS_DUAL_READ_STARTED_AT:-}"
 if [ -z "$ANALYTICS_DUAL_READ_STARTED_AT" ]; then
@@ -151,6 +228,28 @@ if [ "$ANALYTICS_READ_MODE" = "dual" ] && {
   ANALYTICS_DUAL_READ_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 fi
 
+ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="${TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT:-}"
+if [ -z "$ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" ]; then
+  ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(
+    gc run services describe "$SERVICE" \
+      --region="$TR_PRIMARY_REGION" \
+      --format=json 2>/dev/null \
+      | jq -r '
+          [
+            .spec.template.spec.containers[0].env[]?
+            | select(.name == "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT")
+            | .value
+          ][0] // empty
+        ' || true
+  )"
+fi
+if [ "$ANALYTICS_READ_MODE" = "clickhouse" ] && {
+  [ "$LIVE_ANALYTICS_READ_MODE" != "clickhouse" ] ||
+  [ -z "$ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT" ];
+}; then
+  ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+fi
+
 # Prefer the private three-replica ClickHouse load balancer once provisioned.
 # The direct node-1 address remains only as a migration fallback for projects
 # that have not run clickhouse_cluster.sh yet.
@@ -171,7 +270,7 @@ ENV_VARS=(
   "TR_ENABLE_LIVE_PROVIDERS=false"
   "TR_API_BASE_URL=https://api.trustedrouter.com/v1"
   "TR_TRUSTED_DOMAIN=trustedrouter.com"
-  "TR_STORAGE_BACKEND=spanner-bigtable"
+  "TR_STORAGE_BACKEND=${STORAGE_BACKEND}"
   # Exactly $0.10 once per newly created email/OAuth account. Wallet-only
   # accounts stay at $0. Keep this explicit so stale env cannot change policy.
   "TR_SIGNUP_TRIAL_CREDIT_MICRODOLLARS=100000"
@@ -180,6 +279,8 @@ ENV_VARS=(
   "TR_SPANNER_DATABASE_ID=${SPANNER_DATABASE_ID}"
   "TR_BIGTABLE_INSTANCE_ID=${BIGTABLE_INSTANCE_ID}"
   "TR_BIGTABLE_GENERATION_TABLE=${BIGTABLE_GENERATION_TABLE}"
+  "TR_BIGTABLE_MIRROR_WRITES_ENABLED=${BIGTABLE_MIRROR_WRITES_ENABLED}"
+  "TR_GENERATION_RECORDS_ENABLED=${GENERATION_RECORDS_ENABLED}"
   "TR_BYOK_KMS_KEY_NAME=${BYOK_KMS_KEY_NAME}"
   "TR_REGIONS=${TR_REGIONS}"
   "TR_PRIMARY_REGION=${TR_PRIMARY_REGION}"
@@ -211,16 +312,10 @@ ENV_VARS=(
   # Flipped 2026-07-04 with Joseph's authorization. Remove to revert — the
   # flag-off settle path is byte-identical.
   "TR_SETTLE_OUTBOX_ENABLED=true"
-  # Analytics outbox -> ClickHouse (docs/clickhouse-reliability.md). Enqueue is
-  # a SEPARATE transaction from settle and is best-effort:
-  # analytics is not worth destabilising money code for, and
-  # clickhouse/reconcile_benchmark_samples.py replays from Bigtable to repair
-  # anything dropped. Table DDL applied 2026-07-28 with a 7-day ROW DELETION
-  # POLICY, so a dead drainer cannot grow it without bound the way
-  # tr_settle_outbox and tr_entities did (#334). Ingester + reconciler run on
-  # tr-clickhouse-1 under systemd. Provider analytics reads use the private
-  # three-replica load balancer below; inference and billing never depend on
-  # ClickHouse. Remove this line to stop enqueueing new analytics rows.
+  # Provider benchmark events use their own best-effort durable queue. Tenant
+  # activity is different: its operational outbox insert is part of the typed
+  # settlement transaction, so a charge and its delivery intent cannot split.
+  # ClickHouse remains asynchronous and never participates in inference.
   "TR_ANALYTICS_OUTBOX_ENABLED=true"
   "TR_OPERATIONAL_ANALYTICS_OUTBOX_ENABLED=true"
   # Private provider operations portal. Direct VPC egress below reaches this
@@ -236,6 +331,7 @@ ENV_VARS=(
   "TR_ANALYTICS_READ_MODE=${ANALYTICS_READ_MODE}"
   "TR_ANALYTICS_DUAL_READ_GRACE_SECONDS=30"
   "TR_ANALYTICS_DUAL_READ_STARTED_AT=${ANALYTICS_DUAL_READ_STARTED_AT}"
+  "TR_ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT=${ANALYTICS_CLICKHOUSE_PRIMARY_STARTED_AT}"
   # The first expand deployment defaults to legacy. After an explicit typed
   # cutover, preserve the primary region's live mode on later deploys unless an
   # operator overrides it. This prevents routine rollouts from reopening the

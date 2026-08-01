@@ -8,7 +8,7 @@
 # partial deploys. The shared config + helpers live in scripts/deploy/_lib.sh.
 #
 #   1. infra.sh    — enable APIs, provision Spanner + Bigtable
-#   2. migrate_typed_counters.sh + migrate_request_retention.sh — additive schema
+#   2. typed billing, bounded request records, and analytics outboxes
 #   3. image.sh    — Artifact Registry repo + buildx push (linux/amd64)
 #   4. secrets.sh  — Secret Manager + runtime IAM bindings
 #   5. rollout.sh  — parallel multi-region Cloud Run deploy + LB wiring
@@ -21,6 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bash "${SCRIPT_DIR}/deploy/infra.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_typed_counters.sh"
 bash "${SCRIPT_DIR}/deploy/migrate_request_retention.sh" --apply
+bash "${SCRIPT_DIR}/deploy/migrate_generation_records.sh" --apply
+bash "${SCRIPT_DIR}/deploy/migrate_analytics_outbox.sh"
+bash "${SCRIPT_DIR}/deploy/migrate_operational_analytics_outbox.sh"
 bash "${SCRIPT_DIR}/deploy/image.sh"
 bash "${SCRIPT_DIR}/deploy/secrets.sh"
 bash "${SCRIPT_DIR}/deploy/rollout.sh"

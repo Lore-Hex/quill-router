@@ -127,6 +127,49 @@ FORMAT JSON
         )
         return [_benchmark_sample(row) for row in rows]
 
+    def balanced_benchmark_samples(
+        self,
+        *,
+        cutoff: str | None,
+        per_provider_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        """Read one provider-balanced window without application-side fanout."""
+        params: dict[str, str | int] = {
+            "per_provider_limit": max(1, per_provider_limit),
+            "limit": max(1, limit),
+        }
+        where = "1"
+        if cutoff is not None:
+            where = "created_at >= parseDateTime64BestEffort({cutoff:String}, 3)"
+            params["cutoff"] = cutoff
+        rows = self._query(
+            """
+SELECT
+  id, model, provider, provider_name, status, usage_type, streamed,
+  input_tokens, output_tokens, total_cost_microdollars,
+  speed_tokens_per_second, elapsed_milliseconds,
+  first_token_milliseconds, ttfb_milliseconds, finish_reason,
+  error_type, error_status, error_message, region, source, app, created_at
+FROM
+(
+  SELECT *, row_number() OVER (
+    PARTITION BY provider ORDER BY created_at DESC, id DESC
+  ) AS provider_rank
+  FROM provider_benchmark_samples FINAL
+  WHERE """
+            + where
+            + """
+)
+WHERE provider_rank <= {per_provider_limit:UInt32}
+ORDER BY created_at DESC, id DESC
+LIMIT {limit:UInt32}
+FORMAT JSON
+""",
+            params=params,
+        )
+        return [_benchmark_sample(row) for row in rows]
+
     def activity_generations(
         self,
         *,
@@ -254,6 +297,25 @@ FORMAT JSON
                 for rollup in rollups
             ]
         return rollups
+
+    def public_snapshot(self, name: str) -> dict[str, Any] | None:
+        if name not in {"leaderboard", "apps"}:
+            raise ValueError("unsupported public analytics snapshot")
+        rows = self._query(
+            """
+SELECT payload
+FROM public_analytics_snapshots FINAL
+WHERE name = {name:String}
+ORDER BY generated_at DESC
+LIMIT 1
+FORMAT JSON
+""",
+            params={"name": name},
+        )
+        if not rows:
+            return None
+        payload = json.loads(str(rows[0].get("payload") or "{}"))
+        return payload if isinstance(payload, dict) else None
 
 
 def _dataclass_from_row(cls: type[T], row: dict[str, Any]) -> T:

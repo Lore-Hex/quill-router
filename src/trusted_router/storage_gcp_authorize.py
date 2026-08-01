@@ -42,6 +42,7 @@ from trusted_router.storage_gcp_counter_dml import (
     reserve_key,
 )
 from trusted_router.storage_gcp_counters import UNSHARDED
+from trusted_router.storage_gcp_generation_records import insert_generation_record
 from trusted_router.storage_gcp_io import run_in_transaction_with_retry
 from trusted_router.storage_gcp_request_records import (
     close_reaped_gateway_authorization,
@@ -49,7 +50,7 @@ from trusted_router.storage_gcp_request_records import (
     mark_gateway_authorization_settled,
 )
 from trusted_router.storage_gcp_settle_outbox import _GUARD_STATUS_SQL, GUARD_COUNT_SQL
-from trusted_router.storage_models import GatewayAuthorization
+from trusted_router.storage_models import GatewayAuthorization, Generation
 
 log = logging.getLogger(__name__)
 
@@ -740,6 +741,9 @@ def typed_finalize_atomic(
     authorization: GatewayAuthorization | None = None,
     auth_body_settled: str,
     generation_writes: list[tuple[str, str, str]] | None = None,
+    generation: Generation | None = None,
+    persist_generation_record: bool = False,
+    operational_analytics_outbox: Any | None = None,
 ) -> dict:
     """Full DML-only finalize for the typed path (codex 3e, Option B).
 
@@ -747,8 +751,8 @@ def typed_finalize_atomic(
     behavior so a crash can't leave counters charged but the authorization
     active: claim the reservation -> release the EXACT holds (key then credit)
     and book actual -> DML-mark the authorization settled. Typed request records
-    keep their repair payload until Bigtable indexing is confirmed; rolling
-    legacy records retain the old generic generation repair rows.
+    keep their repair payload until durable analytics delivery is confirmed;
+    rolling legacy records retain the old generic generation repair rows.
 
     `auth_body_settled` and `generation_writes` remain for rolling compatibility
     with an authorization created by the generic-table revision. Returns
@@ -841,12 +845,27 @@ def typed_finalize_atomic(
                 terminal_at=now,
                 outbox_available=resolved_outbox_available,
             )
+        if success and generation is not None:
+            if persist_generation_record:
+                insert_generation_record(
+                    transaction,
+                    pt,
+                    generation,
+                    terminal_at=now,
+                )
+            if operational_analytics_outbox is not None:
+                operational_analytics_outbox.enqueue_activity_tx(
+                    transaction,
+                    generation,
+                )
         if marked != 1:
             raise _SettleError("gateway_authorization update row-count != 1")
         return {
             "outcome": SettleOutcome.SETTLED,
             "missing_key_releases": missing_key_releases,
             "request_record_typed": request_record_typed,
+            "activity_durable": generation is None
+            or operational_analytics_outbox is not None,
         }
 
     try:

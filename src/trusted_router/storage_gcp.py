@@ -138,11 +138,12 @@ def _add_usage_metrics(bucket: dict[str, Any], metrics: dict[str, int]) -> None:
 
 
 class SpannerBigtableStore:
-    """Production Spanner + Bigtable implementation.
+    """Production Spanner store with ClickHouse analytics.
 
     Spanner owns strongly consistent control-plane state: users, orgs, API
     keys, reservations, credit ledger state, BYOK metadata, and Stripe event
-    idempotency. Bigtable receives append-oriented generation metadata rows.
+    idempotency. ClickHouse receives bounded analytics through durable Spanner
+    outboxes. Bigtable can remain attached as a migration-only mirror.
 
     Sibling of `InMemoryStore` rather than subclass — both implement the
     `Store` Protocol. The intentional non-inheritance means a method
@@ -167,9 +168,12 @@ class SpannerBigtableStore:
         project_id: str,
         spanner_instance_id: str,
         spanner_database_id: str,
-        bigtable_instance_id: str,
-        generation_table: str,
+        bigtable_instance_id: str | None = None,
+        generation_table: str = "trustedrouter-generations",
         bigtable_app_profile_id: str = "",
+        bigtable_enabled: bool = True,
+        bigtable_writes_enabled: bool = True,
+        generation_records_enabled: bool = False,
         request_record_write_mode: str = "legacy",
         analytics_outbox_enabled: bool = False,
         operational_analytics_outbox_enabled: bool = False,
@@ -180,13 +184,27 @@ class SpannerBigtableStore:
         analytics_read_mode: str = "bigtable",
         analytics_dual_read_grace_seconds: int = 30,
     ) -> None:
-        if not spanner_instance_id or not spanner_database_id or not bigtable_instance_id:
-            raise ValueError("Spanner and Bigtable IDs are required")
+        if not spanner_instance_id or not spanner_database_id:
+            raise ValueError("Spanner instance and database IDs are required")
+        if bigtable_enabled and not bigtable_instance_id:
+            raise ValueError("Bigtable instance ID is required when Bigtable is enabled")
         if request_record_write_mode not in {"legacy", "typed"}:
             raise ValueError("request_record_write_mode must be 'legacy' or 'typed'")
-        if analytics_read_mode not in {"bigtable", "dual", "clickhouse"}:
-            raise ValueError("analytics_read_mode must be bigtable, dual, or clickhouse")
+        if analytics_read_mode not in {
+            "bigtable",
+            "dual",
+            "clickhouse",
+            "clickhouse-only",
+        }:
+            raise ValueError(
+                "analytics_read_mode must be bigtable, dual, clickhouse, or clickhouse-only"
+            )
+        if not bigtable_enabled and analytics_read_mode != "clickhouse-only":
+            raise ValueError("Bigtable-free storage requires clickhouse-only reads")
         self.request_record_write_mode = request_record_write_mode
+        self._generation_records_enabled = generation_records_enabled
+        self._bigtable_enabled = bigtable_enabled
+        self._bigtable_writes_enabled = bigtable_writes_enabled and bigtable_enabled
         self._analytics_read_mode = analytics_read_mode
         self._analytics_dual_read_grace_seconds = max(
             0,
@@ -206,12 +224,11 @@ class SpannerBigtableStore:
         self._analytics_parity_log_lock = threading.Lock()
         self._analytics_last_parity_log: dict[str, float] = {}
         try:
-            from google.cloud import bigtable, spanner
+            from google.cloud import spanner
             from google.cloud.spanner_v1 import FixedSizePool, param_types
         except ImportError as exc:  # pragma: no cover - exercised in prod image.
             raise RuntimeError(
-                "Install google-cloud-spanner and google-cloud-bigtable for "
-                "TR_STORAGE_BACKEND=spanner-bigtable"
+                "Install google-cloud-spanner for persistent GCP storage"
             ) from exc
 
         # GCP credential bootstrap. On GCP (Cloud Run / GCE) the default ADC
@@ -263,17 +280,25 @@ class SpannerBigtableStore:
         # writes go to the closest healthy cluster of three. Activates
         # once the 3rd BT cluster (us-east4-a) is provisioned and the
         # profile is created. See the multi-region expansion plan.
-        bt_instance = bigtable.Client(
-            project=project_id,
-            credentials=credentials,
-            admin=True,
-        ).instance(bigtable_instance_id)
-        if bigtable_app_profile_id:
-            self._bt_table = bt_instance.table(
-                generation_table, app_profile_id=bigtable_app_profile_id
-            )
-        else:
-            self._bt_table = bt_instance.table(generation_table)
+        self._bt_table = None
+        if bigtable_enabled:
+            try:
+                from google.cloud import bigtable
+            except ImportError as exc:  # pragma: no cover - production image.
+                raise RuntimeError(
+                    "Install google-cloud-bigtable when Bigtable mirroring is enabled"
+                ) from exc
+            bt_instance = bigtable.Client(
+                project=project_id,
+                credentials=credentials,
+                admin=True,
+            ).instance(bigtable_instance_id)
+            if bigtable_app_profile_id:
+                self._bt_table = bt_instance.table(
+                    generation_table, app_profile_id=bigtable_app_profile_id
+                )
+            else:
+                self._bt_table = bt_instance.table(generation_table)
         self._bigtable_app_profile_id = bigtable_app_profile_id
         # Composed feature stores. Each owns its own logic and is importable
         # on its own — keeps the core SpannerBigtableStore body focused on
@@ -307,6 +332,9 @@ class SpannerBigtableStore:
         self.generation_store = SpannerGenerations(
             io,
             bt_table=self._bt_table,
+            param_types=self._param_types,
+            generation_records_enabled=generation_records_enabled,
+            bigtable_writes_enabled=bigtable_writes_enabled,
             activity_family=self.activity_family,
             benchmark_family=self.benchmark_family,
             legacy_family=self.legacy_generation_family,
@@ -1394,6 +1422,14 @@ class SpannerBigtableStore:
     def typed_finalize_gateway(self, **kwargs: Any) -> dict:
         from trusted_router.storage_gcp_authorize import typed_finalize_atomic
 
+        kwargs.setdefault(
+            "operational_analytics_outbox",
+            getattr(self, "_operational_analytics_outbox", None),
+        )
+        kwargs.setdefault(
+            "persist_generation_record",
+            getattr(self, "_generation_records_enabled", False),
+        )
         return typed_finalize_atomic(self._database, self._param_types, **kwargs)
 
     def typed_finalize_gateway_authorization(
@@ -1425,9 +1461,9 @@ class SpannerBigtableStore:
         """Route-facing typed settle: same contract as
         finalize_gateway_authorization, with explicit activity-index status.
 
-        The billing transaction commits before the Bigtable activity write. A
-        false ``activity_indexed`` leaves the durable outbox pending so its
-        deterministic generation can be retried without double charging.
+        The billing transaction atomically commits the bounded generation row
+        and ClickHouse delivery intent. A false ``activity_indexed`` leaves the
+        durable settle outbox pending for a no-double-charge repair replay.
         """
         from trusted_router.storage_gcp_authorize import SettleOutcome, typed_finalize_atomic
 
@@ -1459,27 +1495,47 @@ class SpannerBigtableStore:
             authorization=authorization,
             auth_body_settled=_json_body(authorization),
             generation_writes=generation_writes,
+            generation=generation,
+            persist_generation_record=getattr(
+                self,
+                "_generation_records_enabled",
+                False,
+            ),
+            operational_analytics_outbox=getattr(
+                self,
+                "_operational_analytics_outbox",
+                None,
+            ),
         )
         spanner_ms = (time.perf_counter() - spanner_start) * 1000
         if result["outcome"] == SettleOutcome.ERROR:
             raise RuntimeError("typed finalize failed: release row-count != 1")
         if result["outcome"] == SettleOutcome.SETTLED:
-            index_ms = 0.0
-            activity_indexed = True
+            mirror_ms = 0.0
+            activity_indexed = bool(result.get("activity_durable", generation is None))
             if success and generation is not None:
-                index_start = time.perf_counter()
-                activity_indexed = self.generation_store.index_after_commit(generation)
-                index_ms = (time.perf_counter() - index_start) * 1000
+                mirror_start = time.perf_counter()
+                if getattr(self, "_operational_analytics_outbox", None) is None:
+                    activity_indexed = self.generation_store.index_after_commit(
+                        generation
+                    )
+                else:
+                    self.generation_store.mirror_after_commit(generation)
+                mirror_ms = (time.perf_counter() - mirror_start) * 1000
             # Splits the settle-path finalize_ms hotspot (2026-07-05 investigation)
-            # into Spanner-txn vs Bigtable-index time.
+            # into the authoritative Spanner transaction and best-effort
+            # analytics mirrors. Mirror latency never changes settle success.
             # attempts counts only OUTER wrapper retries; Spanner's own internal
             # Aborted retries are invisible, so attempts>1 is definitive severe
             # contention while attempts==1 does not rule out absorbed contention.
             log.info(
-                "typed finalize timing authorization_id=%s spanner_ms=%.1f index_ms=%.1f attempts=%d",
+                # Keep index_ms for log-query compatibility. It now measures
+                # optional post-commit mirrors rather than durable delivery.
+                "typed finalize timing authorization_id=%s spanner_ms=%.1f "
+                "index_ms=%.1f attempts=%d",
                 authorization_id,
                 spanner_ms,
-                index_ms,
+                mirror_ms,
                 result.get("attempts", 1),
             )
             return TypedFinalizeResult(
@@ -1935,14 +1991,23 @@ class SpannerBigtableStore:
             ),
         )
 
-    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
-        _bt_write_synthetic_probe_sample(
-            self._bt_table,
-            self.synthetic_family,
-            sample,
-            rollup_family=self.synthetic_rollup_family,
-            legacy_family=self.legacy_generation_family,
+    def provider_balanced_benchmark_samples(
+        self,
+        *,
+        cutoff: str | None,
+        per_provider_limit: int,
+        limit: int,
+    ) -> list[ProviderBenchmarkSample]:
+        return self._require_operational_analytics().balanced_benchmark_samples(
+            cutoff=cutoff,
+            per_provider_limit=per_provider_limit,
+            limit=limit,
         )
+
+    def public_analytics_snapshot(self, name: str) -> dict[str, Any] | None:
+        return self._require_operational_analytics().public_snapshot(name)
+
+    def record_synthetic_probe_sample(self, sample: SyntheticProbeSample) -> None:
         if self._operational_analytics_outbox is not None:
             try:
                 self._operational_analytics_outbox.enqueue_synthetic(sample)
@@ -1955,9 +2020,32 @@ class SpannerBigtableStore:
                         "target": sample.target,
                         "error_class": type(exc).__name__,
                         "error_message": str(exc)[:500],
-                        "loss_tolerated": True,
+                        "retryable": True,
                     },
                 )
+                raise
+        if not getattr(self, "_bigtable_writes_enabled", True):
+            return
+        try:
+            _bt_write_synthetic_probe_sample(
+                self._bt_table,
+                self.synthetic_family,
+                sample,
+                rollup_family=self.synthetic_rollup_family,
+                legacy_family=self.legacy_generation_family,
+            )
+        except Exception as exc:
+            log.exception(
+                "bigtable.synthetic_mirror_write_failed",
+                extra={
+                    "sample_id": sample.id,
+                    "probe_type": sample.probe_type,
+                    "target": sample.target,
+                    "error_class": type(exc).__name__,
+                    "error_message": str(exc)[:500],
+                    "migration_mirror_only": True,
+                },
+            )
 
     def synthetic_probe_samples(
         self,
@@ -2172,6 +2260,8 @@ class SpannerBigtableStore:
     ) -> T:
         if self._analytics_read_mode == "bigtable":
             return bigtable()
+        if self._analytics_read_mode == "clickhouse-only":
+            return clickhouse()
         if self._analytics_read_mode == "dual":
             primary = bigtable()
             try:

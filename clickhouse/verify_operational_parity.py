@@ -5,11 +5,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import datetime as dt
-import hashlib
 import json
 import os
-import re
-import struct
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -22,6 +19,7 @@ from clickhouse.ingest_operational_outbox import (
     OperationalOutboxRow,
     normalise_operational_event,
 )
+from clickhouse.operational_fingerprint import canonical_fingerprint, clickhouse_rows
 from clickhouse.rollup_synthetic import build_raw_rollups, complete_window_rollups
 from trusted_router.storage_gcp_codec import reverse_time_key
 from trusted_router.storage_gcp_operational_analytics_outbox import (
@@ -34,10 +32,14 @@ from trusted_router.storage_models import (
     SyntheticProbeSample,
 )
 
+# Compatibility aliases for the existing parity tests and any one-off operator
+# scripts importing the old private helpers during the migration window.
+_canonical = canonical_fingerprint
+_clickhouse_rows = clickhouse_rows
+
 PROJECT = "quill-cloud-proxy"
 INSTANCE = "trusted-router-logs"
 TABLE = "trustedrouter-generations"
-SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 T = TypeVar("T")
 
 
@@ -61,83 +63,6 @@ def _parse(cls: type[T], payload: dict[str, Any] | None) -> T | None:
         return cls(**payload)
     except (TypeError, ValueError):
         return None
-
-
-def _iso(value: Any) -> str:
-    text = str(value).replace(" ", "T")
-    try:
-        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return text if text.endswith("Z") else text + "Z"
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.UTC)
-    return (
-        parsed.astimezone(dt.UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
-
-
-def _canonical(payload: dict[str, Any], *, surface: str) -> str:
-    payload = dict(payload)
-    payload.pop("ingest_version", None)
-    payload.pop("updated_at", None)
-    for field in ("created_at", "period_start", "last_checked_at"):
-        if payload.get(field) is not None:
-            payload[field] = _iso(payload[field])
-    if surface == "synthetic":
-        for field in ("connection_reused", "output_match"):
-            if payload.get(field) is not None:
-                payload[field] = bool(payload[field])
-    if surface == "activity":
-        for field in ("streamed", "usage_estimated"):
-            if payload.get(field) is not None:
-                payload[field] = bool(payload[field])
-    if surface == "rollup" and payload.get("target_region") is None:
-        payload["target_region"] = ""
-    if surface == "benchmark" and payload.get("speed_tokens_per_second") is not None:
-        payload["speed_tokens_per_second"] = struct.unpack(
-            "!f",
-            struct.pack("!f", float(payload["speed_tokens_per_second"])),
-        )[0]
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
-    ).hexdigest()
-
-
-def _clickhouse_rows(
-    clickhouse: ClickHouse,
-    *,
-    table: str,
-    id_column: str,
-    ids: list[str],
-) -> dict[str, dict[str, Any]]:
-    allowed = {
-        ("provider_benchmark_samples", "id"),
-        ("activity_generations", "generation_id"),
-        ("synthetic_probe_samples", "id"),
-        ("synthetic_status_rollups", "id"),
-    }
-    if (table, id_column) not in allowed:
-        raise ValueError("unsupported parity table")
-    if not ids:
-        return {}
-    if any(SAFE_ID.fullmatch(item) is None for item in ids):
-        raise ValueError("source contains an invalid record ID")
-    payload = ("\n".join(ids) + "\n").encode()
-    result = clickhouse.query(
-        f"SELECT * EXCEPT ingest_version FROM {table} FINAL "  # noqa: S608
-        f"WHERE {id_column} IN (SELECT id FROM wanted) "
-        "FORMAT JSONEachRow",
-        input_bytes=payload,
-        external_ids=True,
-    )
-    rows: dict[str, dict[str, Any]] = {}
-    for line in result.splitlines():
-        row = json.loads(line)
-        if isinstance(row, dict):
-            rows[str(row[id_column])] = row
-    return rows
 
 
 def _stable_source_row(
@@ -297,7 +222,7 @@ def compare_surface(
         grace_seconds=grace_seconds,
     )
     ch_table, id_column = destinations[surface]
-    destination = _clickhouse_rows(
+    destination = clickhouse_rows(
         clickhouse,
         table=ch_table,
         id_column=id_column,
@@ -309,7 +234,9 @@ def compare_surface(
         destination_row = destination.get(record_id)
         if destination_row is None:
             missing += 1
-        elif _canonical(source_row, surface=surface) != _canonical(
+        elif canonical_fingerprint(
+            source_row, surface=surface
+        ) != canonical_fingerprint(
             destination_row,
             surface=surface,
         ):

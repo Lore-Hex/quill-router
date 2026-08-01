@@ -7,7 +7,7 @@ came from a real incident; the linked commits are the receipts.
 Index:
 - [Router-core four-nines page fires](#router-core-page)
 - [Drain or disable one gateway region](#region-drain)
-- [Spanner or Bigtable is degraded](#storage-degraded)
+- [Spanner or ClickHouse is degraded](#storage-degraded)
 - [Provider returns 502 "provider error" via the gateway](#provider-502)
 - [Provider returns sustained 429 "rate limit exceeded"](#provider-429)
 - [Provider returns 401 "Invalid API key" via the gateway](#provider-401)
@@ -82,10 +82,12 @@ Provider emergency disable:
 3. Watch the affected provider row on `/status` and `/leaderboard`, not
    `router_core`, for the remaining provider impact.
 
-## <a id="storage-degraded"></a>Spanner or Bigtable is degraded
+## <a id="storage-degraded"></a>Spanner or ClickHouse is degraded
 
-Spanner remains the source of truth for billing and settlement. Bigtable
-activity/status rows are repairable metadata.
+Spanner remains the source of truth for billing and settlement. Content-free
+activity and status analytics are delivered from a durable Spanner outbox to
+replicated ClickHouse. Bigtable is only a temporary migration mirror and is not
+part of the `spanner-clickhouse` runtime.
 
 Spanner degraded:
 1. Check whether regional quota leases can continue authorizing bounded spend.
@@ -95,17 +97,16 @@ Spanner degraded:
    and key-limit enforcement is still local/leased.
 4. After recovery, reconcile reservations and stuck authorizations.
 
-Bigtable degraded:
-1. Keep inference alive if Spanner settlement succeeds.
-2. Expect missing activity/status rows.
-3. Run:
-   ```bash
-   curl -X POST https://trustedrouter.com/v1/internal/reconcile/generation-activity \
-     -H "Authorization: Bearer $TR_INTERNAL_GATEWAY_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"workspace_id":"<workspace_id>","limit":10000}'
-   ```
-4. Verify `/activity`, `/generation`, and provider benchmark rollups recover.
+ClickHouse degraded:
+1. Keep inference and Spanner settlement alive. Never make ClickHouse part of
+   the synchronous prompt or billing path.
+2. Check `tr_operational_analytics_outbox` and `tr_analytics_outbox` oldest-row
+   lag. The drainer must catch up before either queue's retention window.
+3. Check all three ClickHouse replicas, disk capacity, and Keeper delay.
+4. Start `tr-clickhouse-operational-ingest.service`, then run
+   `clickhouse.verify_spanner_delivery` and confirm no missing or mismatched
+   generation rows.
+5. Verify `/activity`, `/status`, `/leaderboard`, and provider rollups recover.
 
 ---
 
@@ -519,7 +520,7 @@ Outcome cheat-sheet:
 | `invalid_row` | Dead; no page. |
 | `park_typed_unavailable` | Typed-store outage; retries without burning attempts. |
 | `resolved_zero_cost_elsewhere` | Benign $0 race (reaper free-release or a refund won); done, no page. The activity index is attempted first whenever the row carries a generation, so this outcome means the index SUCCEEDED; if it fails the row stays `activity_pending` and keeps its payload. |
-| `activity_pending` | Charge committed but the Bigtable activity-index write failed. Parks every 60s without burning attempts. After 6 hours of *continuous* activity failure the row goes `dead` with `ALERT settle outbox activity repair expired`. See below. |
+| `activity_pending` | Rolling-legacy only: charge committed but its historical Bigtable activity-index write failed. New typed rows atomically enqueue ClickHouse delivery and cannot enter this state because of a mirror failure. |
 
 `activity_pending` is the one outcome where the terminal transition is NOT a
 money problem. The charge already committed in Spanner (the billing source of
@@ -528,6 +529,10 @@ finalize and from the `ALREADY_SETTLED` replay branches, so seeing it on a
 replay is normal. The customer is billed correctly; only the per-request
 Bigtable activity row is missing, so the request may be absent from their
 activity view.
+
+This section is retained only to drain rows created by revisions predating the
+Spanner operational outbox. Once the retirement gate has confirmed there are no
+such rows, a Bigtable outage cannot create new `activity_pending` work.
 
 Two things about this outcome are easy to get wrong:
 

@@ -132,7 +132,8 @@ LEADERBOARD_RANK_MIN_TTFT_SAMPLES = 3
 LEADERBOARD_RECENT_WINDOW_MINUTES = PUBLIC_BENCHMARK_RECENT_MINUTES
 LEADERBOARD_SNAPSHOT_CACHE_SECONDS = 300
 LEADERBOARD_RESPONSE_CACHE_SECONDS = 60
-LEADERBOARD_RESPONSE_STALE_SECONDS = 0
+LEADERBOARD_RESPONSE_STALE_SECONDS = 600
+PUBLIC_ANALYTICS_SNAPSHOT_MAX_AGE_SECONDS = 600
 VIDEO_LEADERBOARD_SAMPLE_LIMIT = 5_000
 VIDEO_LEADERBOARD_RECENT_WINDOW_MINUTES = 30 * 24 * 60
 CHOOSE_PAGE_CACHE_SECONDS = 300
@@ -1449,26 +1450,45 @@ def _leaderboard_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _LEADERBOARD_CACHE
         if now - cached_at < LEADERBOARD_SNAPSHOT_CACHE_SECONDS:
             return payload
-    samples = public_benchmark_samples(
-        limit=LEADERBOARD_SAMPLE_LIMIT,
-        recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
-    )
-    payload = aggregate_leaderboard(
-        samples,
-        min_samples=LEADERBOARD_MIN_SAMPLES,
-        model_rank_min_samples=LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
-        provider_rank_min_samples=LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
-        rank_min_ttft_samples=LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
-    )
-    payload["rank_minimums"] = {
-        "model_availability_samples": LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
-        "provider_availability_samples": LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
-        "ttft_samples": LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
-    }
-    payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
-    payload["sample_window_count"] = len(samples)
-    payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
-    payload["window_label"] = f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
+    if settings.environment != "test":
+        try:
+            precomputed = _precomputed_public_analytics_snapshot("leaderboard")
+        except Exception:
+            log.exception("public_analytics_snapshot_read_failed name=leaderboard")
+            if _LEADERBOARD_CACHE is not None:
+                return _LEADERBOARD_CACHE[1]
+        else:
+            if precomputed is not None:
+                _LEADERBOARD_CACHE = (now, precomputed)
+                return precomputed
+    try:
+        samples = public_benchmark_samples(
+            limit=LEADERBOARD_SAMPLE_LIMIT,
+            recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
+        )
+        payload = aggregate_leaderboard(
+            samples,
+            min_samples=LEADERBOARD_MIN_SAMPLES,
+            model_rank_min_samples=LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+            provider_rank_min_samples=LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+            rank_min_ttft_samples=LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+        )
+        payload["rank_minimums"] = {
+            "model_availability_samples": LEADERBOARD_MODEL_RANK_MIN_SAMPLES,
+            "provider_availability_samples": LEADERBOARD_PROVIDER_RANK_MIN_SAMPLES,
+            "ttft_samples": LEADERBOARD_RANK_MIN_TTFT_SAMPLES,
+        }
+        payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
+        payload["sample_window_count"] = len(samples)
+        payload["sample_limit"] = LEADERBOARD_SAMPLE_LIMIT
+        payload["window_label"] = (
+            f"rolling benchmark set of up to {LEADERBOARD_SAMPLE_LIMIT:,} samples"
+        )
+    except Exception:
+        if settings.environment != "test" and _LEADERBOARD_CACHE is not None:
+            log.exception("leaderboard_live_fallback_failed_serving_stale")
+            return _LEADERBOARD_CACHE[1]
+        raise
     if settings.environment != "test":
         _LEADERBOARD_CACHE = (now, payload)
     return payload
@@ -1506,6 +1526,17 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
         cached_at, payload = _APPS_CACHE
         if now - cached_at < STATUS_SNAPSHOT_CACHE_SECONDS:
             return payload
+    if settings.environment != "test":
+        try:
+            precomputed = _precomputed_public_analytics_snapshot("apps")
+        except Exception:
+            log.exception("public_analytics_snapshot_read_failed name=apps")
+            if _APPS_CACHE is not None:
+                return _APPS_CACHE[1]
+        else:
+            if precomputed is not None:
+                _APPS_CACHE = (now, precomputed)
+                return precomputed
     samples = public_benchmark_samples(
         limit=LEADERBOARD_SAMPLE_LIMIT,
         recent_minutes=LEADERBOARD_RECENT_WINDOW_MINUTES,
@@ -1514,6 +1545,28 @@ def _apps_snapshot(settings: Settings) -> dict[str, Any]:
     payload["generated_at"] = utcnow().isoformat().replace("+00:00", "Z")
     if settings.environment != "test":
         _APPS_CACHE = (now, payload)
+    return payload
+
+
+def _precomputed_public_analytics_snapshot(name: str) -> dict[str, Any] | None:
+    reader = getattr(STORE, "public_analytics_snapshot", None)
+    if not callable(reader):
+        return None
+    payload = reader(name)
+    if not isinstance(payload, dict):
+        return None
+    generated_at = payload.get("generated_at")
+    if not isinstance(generated_at, str):
+        return None
+    try:
+        generated = dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=dt.UTC)
+    age = (dt.datetime.now(dt.UTC) - generated.astimezone(dt.UTC)).total_seconds()
+    if age < 0 or age > PUBLIC_ANALYTICS_SNAPSHOT_MAX_AGE_SECONDS:
+        return None
     return payload
 
 

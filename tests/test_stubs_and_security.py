@@ -707,6 +707,38 @@ def test_production_config_fails_closed() -> None:
         )
 
 
+def test_production_spanner_clickhouse_config_is_explicit_and_bigtable_free() -> None:
+    values = {
+        "environment": "production",
+        "internal_gateway_token": "tok" + "en",
+        "stripe_webhook_secret": "whsec_" + "test",
+        "stripe_secret_key": "sk_" + "test_secret",
+        "sentry_dsn": "https://example@example.ingest.sentry.io/1",
+        "storage_backend": "spanner-clickhouse",
+        "spanner_instance_id": "trusted-router",
+        "spanner_database_id": "trusted-router",
+        "byok_kms_key_name": TEST_BYOK_KMS_KEY_NAME,
+        "analytics_read_mode": "clickhouse-only",
+        "generation_records_enabled": True,
+        "operational_analytics_outbox_enabled": True,
+        "analytics_outbox_enabled": True,
+        "bigtable_mirror_writes_enabled": False,
+        "request_record_write_mode": "typed",
+        "settle_outbox_enabled": True,
+        "operational_analytics_clickhouse_url": "http://10.0.0.1:8123",
+        "operational_analytics_clickhouse_password": "pass" + "word",
+    }
+
+    settings = Settings(**values)
+    assert settings.storage_backend == "spanner-clickhouse"
+    assert settings.bigtable_mirror_writes_enabled is False
+
+    with pytest.raises(ValidationError, match="BIGTABLE_MIRROR"):
+        Settings(**{**values, "bigtable_mirror_writes_enabled": True})
+    with pytest.raises(ValidationError, match="clickhouse-only"):
+        Settings(**{**values, "analytics_read_mode": "clickhouse"})
+
+
 def test_production_control_plane_does_not_register_inference_routes() -> None:
     internal_token = "tok" + "en"
     webhook_secret = "whsec_" + "test"

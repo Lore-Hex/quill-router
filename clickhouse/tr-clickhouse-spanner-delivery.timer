@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify TrustedRouter Spanner to ClickHouse delivery every 30 minutes
+
+[Timer]
+OnBootSec=7m
+OnUnitActiveSec=30m
+RandomizedDelaySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
