@@ -2543,7 +2543,10 @@ def test_synthetic_deploy_targets_public_api_domain() -> None:
     )
     assert '"TR_SYNTHETIC_IMAGE_MODEL=google/gemini-3.1-flash-image-preview"' in body
     assert '"TR_SYNTHETIC_IMAGE_PROVIDER=google-ai-studio"' in body
+    assert '"TR_SYNTHETIC_IMAGE_CONFIRMATION_DELAY_SECONDS=2"' in body
     assert '--args="-m,trusted_router.synthetic.image_generation"' in body
+    image_job = body.split("deploying isolated image-generation", maxsplit=1)[1]
+    assert "--task-timeout 300s" in image_job
     assert '"17 */6 * * *"' in body
 
 
@@ -2610,6 +2613,77 @@ async def test_image_generation_job_runs_one_probe_and_ingests_metadata(
     output = json.loads(capsys.readouterr().out)
     assert output["status"] == "up"
     assert output["generation_id"] == "gen-image-job"
+
+
+@pytest.mark.asyncio
+async def test_image_generation_job_confirms_a_text_only_response(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from trusted_router.synthetic import image_generation as image_job
+
+    image = b"\xff\xd8\xff" + (b"\x00" * 2048) + b"\xff\xd9"
+    data_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+    chat_calls = 0
+    ingested: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal chat_calls
+        if request.url.path == "/v1/chat/completions":
+            chat_calls += 1
+            if chat_calls == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "id": "chatcmpl-text-only",
+                        "choices": [{"message": {"content": "I cannot create an image."}}],
+                        "usage": {"cost_microdollars": 82},
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-image-confirmed",
+                    "choices": [{"message": {"content": data_url}}],
+                    "usage": {"cost_microdollars": 90_000},
+                },
+            )
+        if request.url.path == "/v1/internal/synthetic/samples":
+            ingested.append(json.loads(request.content))
+            return httpx.Response(200, json={"data": {"recorded": 2}})
+        return httpx.Response(404)
+
+    settings = Settings(
+        environment="test",
+        api_base_url="https://api.trustedrouter.com/v1",
+        internal_gateway_token="internal-test",  # noqa: S106 - test placeholder.
+        synthetic_monitor_api_key="sk-tr-test",
+    )
+    real_async_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+        return real_async_client(transport=transport, **kwargs)
+
+    monkeypatch.setattr(image_job, "get_settings", lambda: settings)
+    monkeypatch.setattr(image_job.httpx, "AsyncClient", client_factory)
+    monkeypatch.setenv(
+        "TR_SYNTHETIC_INGEST_URL",
+        "https://trustedrouter.com/v1/internal/synthetic/samples",
+    )
+    monkeypatch.setenv("TR_SYNTHETIC_IMAGE_CONFIRMATION_DELAY_SECONDS", "0")
+
+    result = await image_job.run()
+
+    assert result == 0
+    assert chat_calls == 2
+    assert len(ingested) == 1
+    assert [sample["status"] for sample in ingested[0]["samples"]] == ["down", "up"]
+    assert data_url not in json.dumps(ingested)
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "up"
+    assert output["attempts"] == 2
+    assert output["generation_id"] == "chatcmpl-image-confirmed"
 
 
 class _FakeCell:
@@ -3707,15 +3781,7 @@ def test_image_generation_failure_alert_is_fingerprinted_and_metadata_only(
         error_type="invalid_image_payload",
         http_status=200,
     )
-    healthy = _sample(
-        id="syn_image_healthy",
-        probe_type="image_generation",
-        status="up",
-        provider=IMAGE_GENERATION_PROVIDER,
-        model=IMAGE_GENERATION_MODEL,
-    )
-
-    report_image_generation_failures([healthy, failed])
+    report_image_generation_failures([failed])
 
     assert captured == [
         (
@@ -3734,6 +3800,69 @@ def test_image_generation_failure_alert_is_fingerprinted_and_metadata_only(
     ]
     assert "prompt" not in json.dumps(scopes[0].tags).lower()
     assert "output" not in json.dumps(scopes[0].tags).lower()
+
+
+def test_image_generation_confirmation_success_does_not_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sentry_sdk
+
+    captured: list[str] = []
+    monkeypatch.setattr(
+        sentry_sdk,
+        "capture_message",
+        lambda message, *, level: captured.append(f"{level}:{message}"),
+    )
+    failed = _sample(
+        id="syn_image_first_failed",
+        probe_type="image_generation",
+        status="down",
+        provider=IMAGE_GENERATION_PROVIDER,
+        model=IMAGE_GENERATION_MODEL,
+        error_type="invalid_image_payload",
+        http_status=200,
+    )
+    confirmed = _sample(
+        id="syn_image_confirmation_up",
+        probe_type="image_generation",
+        status="up",
+        provider=IMAGE_GENERATION_PROVIDER,
+        model=IMAGE_GENERATION_MODEL,
+        http_status=200,
+    )
+
+    report_image_generation_failures([failed, confirmed])
+
+    assert captured == []
+
+
+def test_image_generation_double_failure_alerts_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sentry_sdk
+
+    captured: list[str] = []
+    monkeypatch.setattr(
+        sentry_sdk,
+        "capture_message",
+        lambda message, *, level: captured.append(f"{level}:{message}"),
+    )
+    failures = [
+        _sample(
+            id=f"syn_image_failed_{attempt}",
+            probe_type="image_generation",
+            status="down",
+            provider=IMAGE_GENERATION_PROVIDER,
+            model=IMAGE_GENERATION_MODEL,
+            error_type="invalid_image_payload",
+            http_status=200,
+        )
+        for attempt in range(2)
+    ]
+
+    report_image_generation_failures(failures)
+
+    assert len(captured) == 1
 
 
 def test_internal_route_health_reports_flags_and_requires_token(

@@ -145,20 +145,28 @@ def report_route_health(flags: list[RouteHealthFlag]) -> None:
 
 
 def report_image_generation_failures(samples: list[SyntheticProbeSample]) -> None:
-    """Report image-route failures without carrying generated content."""
-    failures = [
-        sample
-        for sample in samples
-        if sample.probe_type == "image_generation" and sample.status != "up"
+    """Report only image routes whose full confirmation batch failed."""
+    grouped: dict[tuple[str, str], list[SyntheticProbeSample]] = {}
+    for sample in samples:
+        if sample.probe_type != "image_generation":
+            continue
+        provider = sample.selected_provider or sample.provider or "unknown"
+        model = sample.selected_model or sample.model or "unknown"
+        grouped.setdefault((provider, model), []).append(sample)
+
+    confirmed_failures = [
+        route_samples[-1]
+        for route_samples in grouped.values()
+        if route_samples and all(sample.status != "up" for sample in route_samples)
     ]
-    if not failures:
+    if not confirmed_failures:
         return
     try:
         import sentry_sdk
     except ImportError:
         return
 
-    for sample in failures:
+    for sample in confirmed_failures:
         provider = sample.selected_provider or sample.provider or "unknown"
         model = sample.selected_model or sample.model or "unknown"
         error_type = sample.error_type or "unknown"
